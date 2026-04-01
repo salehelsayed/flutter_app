@@ -499,6 +499,64 @@ func TestInboxStore_PaginatedRetrieveKeepsFIFOAcrossInstances(t *testing.T) {
 	}
 }
 
+func TestInboxStore_RetrievePendingRequiresExplicitAckAcrossInstances(t *testing.T) {
+	backend := newMemoryInboxBackend()
+	pushBackend := newMemoryPushTokenStore()
+	pushA := NewPushServiceWithBackend(pushBackend)
+	pushB := NewPushServiceWithBackend(pushBackend)
+	inboxA := NewInboxStoreWithBackend(backend, pushA)
+	inboxB := NewInboxStoreWithBackend(backend, pushB)
+
+	for i := 0; i < 3; i++ {
+		inboxA.Store("peer-recipient", inboxMessage{
+			From:      "peer-sender",
+			Message:   fmt.Sprintf("msg-%d", i),
+			Timestamp: time.Now().UnixMilli(),
+		})
+	}
+
+	page1, hasMore1 := inboxB.RetrievePendingWithMeta("peer-recipient", 2)
+	if len(page1) != 2 {
+		t.Fatalf("expected 2 staged messages, got %d", len(page1))
+	}
+	if !hasMore1 {
+		t.Fatal("expected hasMore=true on first staged page")
+	}
+	if page1[0].ID == "" || page1[1].ID == "" {
+		t.Fatal("expected staged retrieve to expose stable relay entry IDs")
+	}
+
+	repeatPage, hasMoreRepeat := inboxA.RetrievePendingWithMeta("peer-recipient", 2)
+	if len(repeatPage) != 2 {
+		t.Fatalf("expected repeated staged page of 2 messages, got %d", len(repeatPage))
+	}
+	if !hasMoreRepeat {
+		t.Fatal("expected hasMore=true before ack on repeated staged page")
+	}
+	if repeatPage[0].ID != page1[0].ID || repeatPage[1].ID != page1[1].ID {
+		t.Fatal("expected staged retrieve to remain stable before ack")
+	}
+
+	acked, err := inboxA.Ack("peer-recipient", []string{page1[0].ID, page1[1].ID})
+	if err != nil {
+		t.Fatalf("Ack() error: %v", err)
+	}
+	if acked != 2 {
+		t.Fatalf("expected acked=2, got %d", acked)
+	}
+
+	page2, hasMore2 := inboxB.RetrievePendingWithMeta("peer-recipient", 50)
+	if len(page2) != 1 {
+		t.Fatalf("expected 1 remaining staged message, got %d", len(page2))
+	}
+	if hasMore2 {
+		t.Fatal("expected hasMore=false after only one message remains")
+	}
+	if page2[0].Message != "msg-2" {
+		t.Fatalf("expected remaining message 'msg-2', got %q", page2[0].Message)
+	}
+}
+
 func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
 	msg := buildPushMessage("fcm-token", "peer-from")
 
@@ -718,6 +776,126 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 	case <-recorder.sentSignal:
 		t.Fatal("duplicate store re-fanned out push sends")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestHandleInboxStream_RetrievePendingAndAck(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+	senderPeer := env.sender.ID().String()
+
+	storeMessage := func(message string) {
+		t.Helper()
+
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open store stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "store",
+			To:      recipientPeer,
+			From:    senderPeer,
+			Message: message,
+		})
+		resp := recvInboxResp(t, stream)
+		if resp.Status != "OK" {
+			t.Fatalf("store status = %q, want OK", resp.Status)
+		}
+	}
+
+	retrievePending := func() inboxResponse {
+		t.Helper()
+
+		stream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open retrieve_pending stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action: "retrieve_pending",
+			Limit:  50,
+		})
+		return recvInboxResp(t, stream)
+	}
+
+	ackEntries := func(entryIDs []string) inboxResponse {
+		t.Helper()
+
+		stream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open ack stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:   "ack",
+			EntryIds: entryIDs,
+		})
+		return recvInboxResp(t, stream)
+	}
+
+	storeMessage("msg-0")
+	storeMessage("msg-1")
+
+	first := retrievePending()
+	if first.Status != "OK" {
+		t.Fatalf("first retrieve_pending status = %q, want OK", first.Status)
+	}
+	if len(first.Messages) != 2 {
+		t.Fatalf("expected 2 staged messages, got %d", len(first.Messages))
+	}
+	if first.Messages[0].ID == "" || first.Messages[1].ID == "" {
+		t.Fatal("expected staged retrieve response to include stable entry IDs")
+	}
+
+	second := retrievePending()
+	if second.Status != "OK" {
+		t.Fatalf("second retrieve_pending status = %q, want OK", second.Status)
+	}
+	if len(second.Messages) != 2 {
+		t.Fatalf("expected repeated staged messages, got %d", len(second.Messages))
+	}
+	if second.Messages[0].ID != first.Messages[0].ID || second.Messages[1].ID != first.Messages[1].ID {
+		t.Fatal("expected retrieve_pending to remain stable before ack")
+	}
+
+	ackResp := ackEntries([]string{first.Messages[0].ID})
+	if ackResp.Status != "OK" {
+		t.Fatalf("ack status = %q, want OK", ackResp.Status)
+	}
+	if ackResp.Acked != 1 {
+		t.Fatalf("expected acked=1, got %d", ackResp.Acked)
+	}
+
+	remaining := retrievePending()
+	if remaining.Status != "OK" {
+		t.Fatalf("remaining retrieve_pending status = %q, want OK", remaining.Status)
+	}
+	if len(remaining.Messages) != 1 {
+		t.Fatalf("expected 1 remaining staged message, got %d", len(remaining.Messages))
+	}
+	if remaining.Messages[0].Message != "msg-1" {
+		t.Fatalf("expected remaining message 'msg-1', got %q", remaining.Messages[0].Message)
+	}
+
+	ackResp = ackEntries([]string{remaining.Messages[0].ID})
+	if ackResp.Status != "OK" {
+		t.Fatalf("final ack status = %q, want OK", ackResp.Status)
+	}
+	if ackResp.Acked != 1 {
+		t.Fatalf("expected final acked=1, got %d", ackResp.Acked)
+	}
+
+	final := retrievePending()
+	if final.Status != "NO_MESSAGES" {
+		t.Fatalf("expected final retrieve_pending status NO_MESSAGES, got %q", final.Status)
 	}
 }
 

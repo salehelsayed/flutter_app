@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_repository.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
@@ -62,6 +64,95 @@ class _FakeBridge extends Bridge {
       'errorCode': 'UNHANDLED',
       'errorMessage': 'no handler for $cmd',
     });
+  }
+}
+
+class _FakeInboxStagingRepository implements InboxStagingRepository {
+  final Map<String, InboxStagingEntry> _entries = {};
+
+  void seed(InboxStagingEntry entry) {
+    _entries[entry.entryId] = entry;
+  }
+
+  InboxStagingEntry? entry(String entryId) => _entries[entryId];
+
+  @override
+  Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
+    for (final entry in entries) {
+      _entries.putIfAbsent(entry.entryId, () => entry);
+    }
+    return entries.map((entry) => entry.entryId).toList();
+  }
+
+  @override
+  Future<List<InboxStagingEntry>> getRecoverableEntries({
+    int limit = 50,
+  }) async {
+    final entries =
+        _entries.values
+            .where(
+              (entry) =>
+                  entry.status == 'pending' || entry.status == 'retryable',
+            )
+            .toList()
+          ..sort((a, b) => a.relayTimestamp.compareTo(b.relayTimestamp));
+    return entries.take(limit).toList();
+  }
+
+  @override
+  Future<List<InboxStagingEntry>> getRecoverableEntriesByIds(
+    List<String> entryIds,
+  ) async {
+    return entryIds
+        .map((entryId) => _entries[entryId])
+        .whereType<InboxStagingEntry>()
+        .where(
+          (entry) => entry.status == 'pending' || entry.status == 'retryable',
+        )
+        .toList();
+  }
+
+  @override
+  Future<InboxStagingEntry?> getEntry(String entryId) async =>
+      _entries[entryId];
+
+  @override
+  Future<void> deleteEntry(String entryId) async {
+    _entries.remove(entryId);
+  }
+
+  @override
+  Future<void> markRetryable(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    final existing = _entries[entryId];
+    if (existing == null) return;
+    _entries[entryId] = existing.copyWith(
+      status: 'retryable',
+      attemptCount: existing.attemptCount + 1,
+      lastAttemptedAt: '2026-04-01T00:00:00.000Z',
+      rejectReasonCode: reasonCode,
+      rejectReasonDetail: reasonDetail,
+    );
+  }
+
+  @override
+  Future<void> markRejected(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    final existing = _entries[entryId];
+    if (existing == null) return;
+    _entries[entryId] = existing.copyWith(
+      status: 'rejected',
+      attemptCount: existing.attemptCount + 1,
+      lastAttemptedAt: '2026-04-01T00:00:00.000Z',
+      rejectReasonCode: reasonCode,
+      rejectReasonDetail: reasonDetail,
+    );
   }
 }
 
@@ -256,6 +347,364 @@ void main() {
       expect(result.acked, isTrue);
       expect(result.transport, 'relay');
     });
+  });
+
+  group('durable inbox staging', () {
+    test('replays staged chat rows before fetching new relay pages', () async {
+      final repo = _FakeInboxStagingRepository();
+      repo.seed(
+        InboxStagingEntry(
+          entryId: 'entry-existing',
+          ownerPeerId: 'self-peer',
+          senderPeerId: 'remote-peer',
+          messageType: 'chat_message',
+          relayTimestamp: '2026-04-01T00:00:00.000Z',
+          envelope: jsonEncode({
+            'type': 'chat_message',
+            'version': '1',
+            'payload': {
+              'id': 'msg-existing',
+              'text': 'hello',
+              'senderPeerId': 'remote-peer',
+              'senderUsername': 'Alice',
+              'timestamp': '2026-04-01T00:00:00.000Z',
+            },
+          }),
+          stagedAt: '2026-04-01T00:00:01.000Z',
+        ),
+      );
+      final replayedIds = <String>[];
+
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand('inbox:retrieve_pending', (_) {
+        expect(replayedIds, ['msg-existing']);
+        return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+      });
+
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        replayRecoveredInboxChatMessage: (message) async {
+          final payload =
+              (jsonDecode(message.content) as Map<String, dynamic>)['payload']
+                  as Map<String, dynamic>;
+          replayedIds.add(payload['id'] as String);
+          return (
+            disposition: RecoveredInboxChatDisposition.committed,
+            reasonCode: 'stored',
+            reasonDetail: null,
+          );
+        },
+      );
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      await service.drainOfflineInbox();
+
+      expect(repo.entry('entry-existing'), isNull);
+      expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+    });
+
+    test('stages, acks, and deletes committed chat entries', () async {
+      final repo = _FakeInboxStagingRepository();
+      final replayedIds = <String>[];
+
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'self-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve_pending',
+        (_) => jsonEncode({
+          'ok': true,
+          'messages': [
+            {
+              'id': 'entry-001',
+              'from': 'remote-peer',
+              'message': jsonEncode({
+                'type': 'chat_message',
+                'version': '1',
+                'payload': {
+                  'id': 'msg-001',
+                  'text': 'hello',
+                  'senderPeerId': 'remote-peer',
+                  'senderUsername': 'Alice',
+                  'timestamp': '2026-04-01T00:00:00.000Z',
+                },
+              }),
+              'timestamp': '2026-04-01T00:00:00.000Z',
+            },
+          ],
+          'hasMore': false,
+        }),
+      );
+      bridge.whenCommand('inbox:ack', (payload) {
+        expect(payload?['entryIds'], ['entry-001']);
+        return jsonEncode({'ok': true, 'acked': 1});
+      });
+
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: repo,
+        replayRecoveredInboxChatMessage: (message) async {
+          final payload =
+              (jsonDecode(message.content) as Map<String, dynamic>)['payload']
+                  as Map<String, dynamic>;
+          replayedIds.add(payload['id'] as String);
+          return (
+            disposition: RecoveredInboxChatDisposition.committed,
+            reasonCode: 'stored',
+            reasonDetail: null,
+          );
+        },
+      );
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      await service.drainOfflineInbox();
+
+      expect(replayedIds, ['msg-001']);
+      expect(repo.entry('entry-001'), isNull);
+      expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+      expect(bridge.calledCommands, contains('inbox:ack'));
+    });
+
+    test(
+      'retryable chat outcomes keep the staged row with exact reason',
+      () async {
+        final repo = _FakeInboxStagingRepository();
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'id': 'entry-retry',
+                'from': 'remote-peer',
+                'message': jsonEncode({
+                  'type': 'chat_message',
+                  'version': '2',
+                  'senderPeerId': 'remote-peer',
+                  'encrypted': {
+                    'kem': 'kem-blob',
+                    'ciphertext': 'cipher-blob',
+                    'nonce': 'nonce-blob',
+                  },
+                }),
+                'timestamp': '2026-04-01T00:00:00.000Z',
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:ack',
+          (_) => jsonEncode({'ok': true, 'acked': 1}),
+        );
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage: (_) async {
+            return (
+              disposition: RecoveredInboxChatDisposition.retryable,
+              reasonCode: 'missing_mlkem_secret',
+              reasonDetail: 'secret unavailable',
+            );
+          },
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+        await service.drainOfflineInbox();
+
+        final entry = repo.entry('entry-retry');
+        expect(entry, isNotNull);
+        expect(entry!.status, 'retryable');
+        expect(entry.rejectReasonCode, 'missing_mlkem_secret');
+        expect(entry.rejectReasonDetail, 'secret unavailable');
+        expect(entry.attemptCount, 1);
+      },
+    );
+
+    test(
+      'falls back to legacy inbox retrieve when retrieve_pending is unsupported',
+      () async {
+        final repo = _FakeInboxStagingRepository();
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'from': 'remote-peer',
+                'message': jsonEncode({
+                  'type': 'chat_message',
+                  'version': '1',
+                  'payload': {
+                    'id': 'msg-legacy',
+                    'text': 'legacy inbox message',
+                    'senderPeerId': 'remote-peer',
+                    'senderUsername': 'Alice',
+                    'timestamp': '2026-04-01T00:00:00.000Z',
+                  },
+                }),
+                'timestamp': '2026-04-01T00:00:00.000Z',
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+        final received = <ChatMessage>[];
+        final sub = service.messageStream.listen(received.add);
+
+        await service.drainOfflineInbox();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+        expect(bridge.calledCommands, contains('inbox:retrieve'));
+        expect(bridge.calledCommands, isNot(contains('inbox:ack')));
+        expect(received, hasLength(1));
+        expect(received.single.transport, 'inbox');
+        expect(received.single.from, 'remote-peer');
+
+        await sub.cancel();
+      },
+    );
+
+    test(
+      'falls back to legacy inbox retrieve when pending rows lack stable entry ids',
+      () async {
+        final repo = _FakeInboxStagingRepository();
+
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'self-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'from': 'remote-peer',
+                'message': jsonEncode({
+                  'type': 'chat_message',
+                  'version': '1',
+                  'payload': {
+                    'id': 'msg-missing-id',
+                    'text': 'pending row missing id',
+                    'senderPeerId': 'remote-peer',
+                    'senderUsername': 'Alice',
+                    'timestamp': '2026-04-01T00:00:00.000Z',
+                  },
+                }),
+                'timestamp': '2026-04-01T00:00:00.000Z',
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({
+            'ok': true,
+            'messages': [
+              {
+                'from': 'remote-peer',
+                'message': jsonEncode({
+                  'type': 'chat_message',
+                  'version': '1',
+                  'payload': {
+                    'id': 'msg-missing-id',
+                    'text': 'pending row missing id',
+                    'senderPeerId': 'remote-peer',
+                    'senderUsername': 'Alice',
+                    'timestamp': '2026-04-01T00:00:00.000Z',
+                  },
+                }),
+                'timestamp': '2026-04-01T00:00:00.000Z',
+              },
+            ],
+            'hasMore': false,
+          }),
+        );
+
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+
+        final received = <ChatMessage>[];
+        final sub = service.messageStream.listen(received.add);
+
+        await service.drainOfflineInbox();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
+        expect(bridge.calledCommands, contains('inbox:retrieve'));
+        expect(bridge.calledCommands, isNot(contains('inbox:ack')));
+        expect(received, hasLength(1));
+        expect(received.single.content, contains('msg-missing-id'));
+
+        await sub.cancel();
+      },
+    );
   });
 
   group('Phase 1 — startup and warm background', () {

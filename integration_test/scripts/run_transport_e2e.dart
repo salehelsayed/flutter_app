@@ -5,7 +5,7 @@
 // running on an iOS simulator or Android emulator.
 //
 // Usage:
-//   dart run integration_test/scripts/run_transport_e2e.dart [--device <id>] [--platform <ios|android>] [--phase4-only]
+//   dart run integration_test/scripts/run_transport_e2e.dart [--device <id>] [--platform <ios|android>] [--phase4-only] [--allow-physical-device]
 //
 // Examples:
 //   dart run integration_test/scripts/run_transport_e2e.dart -p ios
@@ -611,16 +611,24 @@ String _stringValue(dynamic value) => value?.toString() ?? '';
 Future<List<_OrchestratorResult>> _runScenarios(
   TestPeer peer,
   _RunPaths paths,
+  Future<int> flutterExitCodeFuture,
 ) async {
   final results = <_OrchestratorResult>[];
 
   _log('ORCH', 'Waiting for Flutter peer fixture...');
 
+  var flutterExited = false;
+  var flutterExitCode = -1;
+  unawaited(
+    flutterExitCodeFuture.then((code) {
+      flutterExited = true;
+      flutterExitCode = code;
+    }),
+  );
+
   // Wait for Flutter to write its fixture file.
   Map<String, dynamic>? flutterPeer;
-  for (var i = 0; i < 120; i++) {
-    await Future.delayed(const Duration(seconds: 1));
-
+  for (var i = 0; i < 360; i++) {
     try {
       final content = await _appReadFile(paths.flutterFixture);
       if (content != null) {
@@ -628,15 +636,25 @@ Future<List<_OrchestratorResult>> _runScenarios(
         break;
       }
     } catch (_) {}
+
+    if (flutterExited) {
+      break;
+    }
+
+    await Future.delayed(const Duration(seconds: 1));
   }
 
   if (flutterPeer == null) {
-    _log('ORCH', 'ERROR: Flutter peer fixture not found after 120s');
+    final detail = flutterExited
+        ? 'Flutter peer fixture not found before Flutter test exited '
+              '(exitCode=$flutterExitCode)'
+        : 'Flutter peer fixture not found after 360s';
+    _log('ORCH', 'ERROR: $detail');
     results.add(
       _OrchestratorResult(
         'SETUP',
         false,
-        'Flutter peer fixture not found after 120s',
+        detail,
       ),
     );
     return results;
@@ -1708,6 +1726,14 @@ Future<List<_OrchestratorResult>> _runPhase4OnlyScenario(
 // Main
 // ---------------------------------------------------------------------------
 
+bool _isPhysicalIosDeviceId(String? deviceId) {
+  if (deviceId == null) return false;
+  return RegExp(
+    r'^[0-9A-F]{8}-[0-9A-F]{16}$',
+    caseSensitive: false,
+  ).hasMatch(deviceId);
+}
+
 void main(List<String> args) async {
   _log('ORCH', 'E2E Transport Test Orchestrator');
 
@@ -1715,6 +1741,7 @@ void main(List<String> args) async {
   String? deviceId;
   String? platform;
   var phase4Only = false;
+  var allowPhysicalDevice = false;
   for (var i = 0; i < args.length; i++) {
     if (args[i] == '--device' || args[i] == '-d') {
       if (i + 1 < args.length) {
@@ -1730,6 +1757,10 @@ void main(List<String> args) async {
     }
     if (args[i] == '--phase4-only') {
       phase4Only = true;
+      continue;
+    }
+    if (args[i] == '--allow-physical-device') {
+      allowPhysicalDevice = true;
     }
   }
 
@@ -1744,6 +1775,17 @@ void main(List<String> args) async {
       );
       exit(1);
     }
+  }
+
+  final isPhysicalIosDevice = _isPhysicalIosDeviceId(deviceId);
+  if (isPhysicalIosDevice && !allowPhysicalDevice) {
+    _log(
+      'ORCH',
+      'ERROR: Refusing to run on physical iOS device $deviceId without '
+          '--allow-physical-device. Use a simulator unless you explicitly '
+          'intend to reinstall the app and replace on-device app data.',
+    );
+    exit(2);
   }
 
   // Create unique temp directory for this run (isolation + cleanup).
@@ -1836,8 +1878,15 @@ void main(List<String> args) async {
     _log('ORCH', 'Launching Flutter integration test...');
 
     final flutterArgs = [
-      'test',
-      'integration_test/transport_e2e_test.dart',
+      if (isPhysicalIosDevice) ...[
+        'drive',
+        '--driver=test_driver/integration_test.dart',
+        '--target=integration_test/transport_e2e_test.dart',
+        '--publish-port',
+      ] else ...[
+        'test',
+        'integration_test/transport_e2e_test.dart',
+      ],
       '--dart-define=CLI_PEER_FIXTURE=${paths.cliFixture}',
       '--dart-define=E2E_TEMP_DIR=$deviceDir',
       '--dart-define=E2E_WRITE_DIR=$appWriteDir',
@@ -1854,12 +1903,14 @@ void main(List<String> args) async {
     );
 
     // Step 8: Run scenarios in parallel with the Flutter test.
+    final flutterExitCodeFuture = flutterProcess.exitCode;
+
     final scenariosFuture = phase4Only
         ? _runPhase4OnlyScenario(peer, paths)
-        : _runScenarios(peer, paths);
+        : _runScenarios(peer, paths, flutterExitCodeFuture);
 
     // Wait for Flutter test to complete.
-    final flutterExitCode = await flutterProcess.exitCode;
+    final flutterExitCode = await flutterExitCodeFuture;
     _log('ORCH', 'Flutter test exited with code $flutterExitCode');
 
     // Wait for scenarios to finish (with timeout).
