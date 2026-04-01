@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -10,6 +11,8 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 
@@ -34,6 +37,11 @@ void main() {
     bool isActiveQuoteUnavailable = false,
     VoidCallback? onClearQuote,
     ValueChanged<String>? onQuoteReply,
+    ValueChanged<String>? onEditMessage,
+    ValueChanged<String>? onDeleteMessage,
+    bool isEditingMessage = false,
+    VoidCallback? onCancelEdit,
+    bool allowEditAction = true,
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
   }) {
@@ -66,6 +74,11 @@ void main() {
           isActiveQuoteUnavailable: isActiveQuoteUnavailable,
           onClearQuote: onClearQuote,
           onQuoteReply: onQuoteReply,
+          onEditMessage: onEditMessage,
+          onDeleteMessage: onDeleteMessage,
+          isEditingMessage: isEditingMessage,
+          onCancelEdit: onCancelEdit,
+          allowEditAction: allowEditAction,
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
         ),
@@ -81,6 +94,9 @@ void main() {
     String status = 'delivered',
     List<MediaAttachment> media = const [],
     String? quotedMessageId,
+    String? deletedAt,
+    String? deletedByPeerId,
+    String? hiddenAt,
   }) {
     return ConversationMessage(
       id: id,
@@ -95,6 +111,9 @@ void main() {
       createdAt: '2026-02-09T15:30:01.000Z',
       media: media,
       quotedMessageId: quotedMessageId,
+      deletedAt: deletedAt,
+      deletedByPeerId: deletedByPeerId,
+      hiddenAt: hiddenAt,
     );
   }
 
@@ -314,6 +333,327 @@ void main() {
       await tester.pump();
 
       expect(find.text('Alice'), findsOneWidget);
+    });
+
+    testWidgets(
+      'long-press on incoming text shows overlay with reactions, reply, and copy',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [makeMessage(id: 'incoming-1', text: 'Context menu me')],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Context menu me'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.reactionBarKey),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(MessageContextOverlay.selectedMessageKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+        expect(find.text('👍'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(MessageContextOverlay.selectedMessageKey),
+            matching: find.text('Context menu me'),
+          ),
+          findsOneWidget,
+        );
+
+        final reactionRect = tester.getRect(
+          find.byKey(MessageContextOverlay.reactionBarKey),
+        );
+        final selectedRect = tester.getRect(
+          find.byKey(MessageContextOverlay.selectedMessageKey),
+        );
+        final menuRect = tester.getRect(
+          find.byKey(MessageContextOverlay.menuKey),
+        );
+
+        expect(reactionRect.bottom, lessThanOrEqualTo(selectedRect.top));
+        expect(selectedRect.bottom, lessThanOrEqualTo(menuRect.top));
+      },
+    );
+
+    testWidgets('long-press reply is available for outgoing messages', (
+      tester,
+    ) async {
+      String? quotedId;
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'outgoing-1',
+              isIncoming: false,
+              text: 'My own message',
+            ),
+          ],
+          initialLoadDone: true,
+          onQuoteReply: (messageId) => quotedId = messageId,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.text('My own message'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(
+        find.byKey(MessageContextOverlay.selectedMessageKey),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(MessageContextOverlay.selectedMessageKey),
+          matching: find.text('My own message'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(quotedId, 'outgoing-1');
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+    });
+
+    testWidgets(
+      'edit action appears for the last sent text row even when a newer incoming row exists',
+      (tester) async {
+        String? editedId;
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'outgoing-last-sent',
+                isIncoming: false,
+                text: 'Editable text',
+              ),
+              makeMessage(
+                id: 'incoming-newer',
+                isIncoming: true,
+                text: 'Newer incoming',
+                timestamp: '2026-02-09T15:31:00.000Z',
+              ),
+            ],
+            initialLoadDone: true,
+            onEditMessage: (messageId) => editedId = messageId,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Editable text'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsOneWidget);
+
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+
+        expect(editedId, 'outgoing-last-sent');
+      },
+    );
+
+    testWidgets('edit action stays hidden for older sent rows', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'older-sent',
+              isIncoming: false,
+              text: 'Older sent',
+            ),
+            makeMessage(
+              id: 'latest-sent',
+              isIncoming: false,
+              text: 'Latest sent',
+              timestamp: '2026-02-09T15:31:00.000Z',
+            ),
+          ],
+          initialLoadDone: true,
+          onEditMessage: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.text('Older sent'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+    });
+
+    testWidgets('copy action copies exact text and dismisses the overlay', (
+      tester,
+    ) async {
+      String? copiedText;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>)['text'] as String?;
+        }
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage(id: 'copy-1', text: 'Copy this exactly')],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.text('Copy this exactly'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(copiedText, 'Copy this exactly');
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+      expect(find.text('Message copied to clipboard'), findsOneWidget);
+    });
+
+    testWidgets('media-only long-press hides copy action', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'media-only',
+              text: '',
+              media: [makeImageAttachment()],
+            ),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.byType(LetterCard));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsNothing);
+    });
+
+    testWidgets('delete action is available on normal visible rows', (
+      tester,
+    ) async {
+      String? deletedId;
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage(id: 'delete-row', text: 'Delete me')],
+          initialLoadDone: true,
+          onDeleteMessage: (messageId) => deletedId = messageId,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.text('Delete me'));
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.byKey(MessageContextOverlay.deleteActionKey), findsOneWidget);
+
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await tester.pump();
+
+      expect(deletedId, 'delete-row');
+    });
+
+    testWidgets('deleted rows render placeholder and stay inert', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'deleted-row',
+              text: '',
+              deletedAt: '2026-02-09T15:32:00.000Z',
+              deletedByPeerId: '12D3KooWTestPeerId1234567890',
+            ),
+          ],
+          initialLoadDone: true,
+          onDeleteMessage: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('This message was deleted'), findsOneWidget);
+
+      await tester.longPress(find.text('This message was deleted'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+    });
+
+    testWidgets('quoted deleted parents render as unavailable', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'deleted-parent',
+              text: '',
+              deletedAt: '2026-02-09T15:32:00.000Z',
+              deletedByPeerId: '12D3KooWMyPeerId1234567890',
+            ),
+            makeMessage(
+              id: 'reply-after-delete',
+              text: 'Still replying',
+              isIncoming: false,
+              quotedMessageId: 'deleted-parent',
+              timestamp: '2026-02-09T15:33:00.000Z',
+            ),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Message unavailable'), findsOneWidget);
+    });
+
+    testWidgets('shows edit banner and routes cancel action', (tester) async {
+      var cancelled = false;
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'editable-row',
+              isIncoming: false,
+              text: 'Editing now',
+            ),
+          ],
+          initialLoadDone: true,
+          isEditingMessage: true,
+          onCancelEdit: () => cancelled = true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.byKey(ConversationScreen.editModeBannerKey), findsOneWidget);
+      expect(find.text('Editing message'), findsOneWidget);
+
+      await tester.tap(find.byKey(ConversationScreen.cancelEditKey));
+      await tester.pump();
+
+      expect(cancelled, isTrue);
     });
 
     testWidgets('shows origin marker when messages present and no more older', (

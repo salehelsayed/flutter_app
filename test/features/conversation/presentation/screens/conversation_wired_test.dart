@@ -15,6 +15,7 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/recording_overlay.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -509,6 +511,9 @@ void main() {
     required FakeMessageRepository messageRepo,
     required ChatMessageListener chatListener,
     required SendChatMessageFn sendFn,
+    EditChatMessageFn? editFn,
+    DeleteMessageForMeFn? deleteForMeFn,
+    DeleteMessageForEveryoneFn? deleteForEveryoneFn,
     P2PService? p2pService,
     Bridge? bridge,
     UploadMediaFn? uploadMediaFn,
@@ -541,6 +546,10 @@ void main() {
           p2pService: p2pService ?? FakeP2PService(),
           bridge: bridge,
           sendChatMessageFn: sendFn,
+          editChatMessageFn: editFn ?? editChatMessage,
+          deleteMessageForMeFn: deleteForMeFn ?? deleteMessageForMe,
+          deleteMessageForEveryoneFn:
+              deleteForEveryoneFn ?? deleteMessageForEveryone,
           uploadMediaFn: uploadMediaFn ?? uploadMedia,
           sendVoiceMessageFn: sendVoiceMessageFn ?? sendVoiceMessage,
           contactRepo: contactRepo,
@@ -1890,6 +1899,606 @@ void main() {
       expect(saved.quotedMessageId, 'incoming-1');
     });
 
+    testWidgets(
+      'long-press reply on an outgoing message requests focus and sends quotedMessageId',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final outgoing = ConversationMessage(
+          id: 'outgoing-1',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Quote this sent message',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(outgoing);
+
+        String? capturedQuotedMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          capturedQuotedMessageId = quotedMessageId;
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+            quotedMessageId: quotedMessageId,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (SendChatMessageResult.success, delivered);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+        );
+
+        await tester.longPress(find.text('Quote this sent message'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(MessageContextOverlay.selectedMessageKey),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(MessageContextOverlay.selectedMessageKey),
+            matching: find.text('Quote this sent message'),
+          ),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+        await tester.pump();
+
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(find.text('Quote this sent message'), findsWidgets);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).focusNode?.hasFocus,
+          isTrue,
+        );
+
+        await tester.enterText(
+          find.byType(TextField),
+          'Quoted after long press',
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(capturedQuotedMessageId, 'outgoing-1');
+        expect(find.text('Replying to'), findsNothing);
+
+        final saved = messageRepo.store.values
+            .where((message) => message.text == 'Quoted after long press')
+            .first;
+        expect(saved.quotedMessageId, 'outgoing-1');
+      },
+    );
+
+    testWidgets(
+      'edit action prefills the composer and cancel exits edit mode',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final outgoing = ConversationMessage(
+          id: 'editable-1',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Fix this typo',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(outgoing);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        await tester.longPress(find.text('Fix this typo'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+
+        expect(
+          find.byKey(ConversationScreen.editModeBannerKey),
+          findsOneWidget,
+        );
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Fix this typo',
+        );
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).focusNode?.hasFocus,
+          isTrue,
+        );
+
+        await tester.tap(find.byKey(ConversationScreen.cancelEditKey));
+        await tester.pump();
+
+        expect(find.byKey(ConversationScreen.editModeBannerKey), findsNothing);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '',
+        );
+      },
+    );
+
+    testWidgets('identical-text edit submit is a no-op', (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final outgoing = ConversationMessage(
+        id: 'editable-noop',
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeIdentity().peerId,
+        text: 'Same text',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: false,
+        createdAt: '2026-02-09T15:30:01.000Z',
+      );
+      await messageRepo.saveMessage(outgoing);
+
+      var editCalls = 0;
+
+      Future<(SendChatMessageResult, ConversationMessage?)> editFn({
+        required P2PService p2pService,
+        required MessageRepository messageRepo,
+        required ConversationMessage originalMessage,
+        required String updatedText,
+        required String senderUsername,
+        Bridge? bridge,
+        String? recipientMlKemPublicKey,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+        bool emitTimingEvent = true,
+      }) async {
+        editCalls++;
+        return (SendChatMessageResult.success, originalMessage);
+      }
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        editFn: editFn,
+      );
+
+      await tester.longPress(find.text('Same text'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+
+      expect(editCalls, 0);
+      expect(messageRepo.store['editable-noop']?.editedAt, isNull);
+      expect(find.byKey(ConversationScreen.editModeBannerKey), findsNothing);
+    });
+
+    testWidgets(
+      'changed edit submit updates the same row through the shared edit path',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final outgoing = ConversationMessage(
+          id: 'editable-submit',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Before edit',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+          quotedMessageId: 'quoted-parent',
+        );
+        await messageRepo.saveMessage(outgoing);
+
+        String? capturedOriginalId;
+        String? capturedUpdatedText;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> editFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required ConversationMessage originalMessage,
+          required String updatedText,
+          required String senderUsername,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          bool emitTimingEvent = true,
+        }) async {
+          capturedOriginalId = originalMessage.id;
+          capturedUpdatedText = updatedText;
+          final edited = originalMessage.copyWith(
+            text: updatedText,
+            editedAt: '2026-02-09T16:00:00.000Z',
+          );
+          await messageRepo.saveMessage(edited);
+          return (SendChatMessageResult.success, edited);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          editFn: editFn,
+        );
+
+        await tester.longPress(find.text('Before edit'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+
+        await tester.enterText(find.byType(TextField), 'After edit');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+
+        expect(capturedOriginalId, 'editable-submit');
+        expect(capturedUpdatedText, 'After edit');
+        expect(messageRepo.store['editable-submit']?.text, 'After edit');
+        expect(
+          messageRepo.store['editable-submit']?.quotedMessageId,
+          'quoted-parent',
+        );
+        expect(
+          messageRepo.store['editable-submit']?.editedAt,
+          '2026-02-09T16:00:00.000Z',
+        );
+        expect(find.byKey(ConversationScreen.editModeBannerKey), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'delivered outgoing rows offer delete-for-me and delete-for-everyone',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-options-outgoing',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeIdentity().peerId,
+            text: 'Delete options',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        await tester.longPress(find.text('Delete options'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(ConversationWired.deleteSheetKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+
+        expect(find.byKey(ConversationWired.deleteSheetKey), findsOneWidget);
+        expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+        expect(
+          find.byKey(ConversationWired.deleteForEveryoneKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(ConversationWired.deleteCancelKey), findsOneWidget);
+      },
+    );
+
+    testWidgets('incoming rows only offer delete-for-me and cancel', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'incoming-delete-options',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Incoming delete options',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.longPress(find.text('Incoming delete options'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await pumpUntil(
+        tester,
+        () =>
+            find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+      );
+
+      expect(find.byKey(ConversationWired.deleteSheetKey), findsOneWidget);
+      expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+      expect(find.byKey(ConversationWired.deleteForEveryoneKey), findsNothing);
+      expect(find.byKey(ConversationWired.deleteCancelKey), findsOneWidget);
+    });
+
+    testWidgets('failed outgoing rows only offer delete-for-me and cancel', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'failed-delete-options',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Failed delete options',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.longPress(find.text('Failed delete options'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await pumpUntil(
+        tester,
+        () =>
+            find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+      );
+
+      expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+      expect(find.byKey(ConversationWired.deleteForEveryoneKey), findsNothing);
+    });
+
+    testWidgets('delete-for-me removes the row from Orbit locally', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'delete-for-me-row',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Delete for me only',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.longPress(find.text('Delete for me only'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await pumpUntil(
+        tester,
+        () =>
+            find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+      );
+      tester
+          .widget<InkWell>(
+            find.descendant(
+              of: find.byKey(ConversationWired.deleteForMeKey),
+              matching: find.byType(InkWell),
+            ),
+          )
+          .onTap!();
+      await pumpUntil(
+        tester,
+        () => find.text('Delete for me only').evaluate().isEmpty,
+      );
+
+      expect(find.text('Delete for me only'), findsNothing);
+      expect(messageRepo.store.containsKey('delete-for-me-row'), isFalse);
+      expect(find.text('Connected!'), findsWidgets);
+    });
+
+    testWidgets('hidden outgoing tombstones are removed from the Orbit list', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      final original = ConversationMessage(
+        id: 'delete-for-everyone-row',
+        contactPeerId: makeContact().peerId,
+        senderPeerId: makeIdentity().peerId,
+        text: 'Delete everywhere',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: false,
+        createdAt: '2026-02-09T15:30:01.000Z',
+      );
+      await messageRepo.saveMessage(original);
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await messageRepo.saveMessage(
+        original.copyWith(
+          text: '',
+          deletedAt: '2026-03-31T11:00:00.000Z',
+          deletedByPeerId: original.senderPeerId,
+          hiddenAt: '2026-03-31T11:00:00.000Z',
+          media: const [],
+        ),
+      );
+      await pumpUntil(
+        tester,
+        () => find.text('Delete everywhere').evaluate().isEmpty,
+      );
+
+      expect(find.text('Delete everywhere'), findsNothing);
+      expect(messageRepo.store['delete-for-everyone-row']?.isHidden, isTrue);
+    });
+
+    testWidgets(
+      'incoming deleted tombstones refresh into the Orbit placeholder',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final original = ConversationMessage(
+          id: 'incoming-tombstone',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Original incoming text',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(original);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        await messageRepo.saveMessage(
+          original.copyWith(
+            text: '',
+            deletedAt: '2026-03-31T11:05:00.000Z',
+            deletedByPeerId: makeContact().peerId,
+            media: const [],
+          ),
+        );
+        await pumpUntil(
+          tester,
+          () => find.text('This message was deleted').evaluate().isNotEmpty,
+        );
+
+        expect(find.text('Original incoming text'), findsNothing);
+        expect(find.text('This message was deleted'), findsOneWidget);
+      },
+    );
+
     testWidgets('swipe-to-reply voice send preserves quotedMessageId', (
       tester,
     ) async {
@@ -2541,7 +3150,7 @@ void main() {
     });
 
     testWidgets(
-      'cancel on the active upload banner restores composer state and leaves a retryable failed row',
+      'cancel on the active upload banner restores video composer state and suppresses the final send',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
         final messageRepo = FakeMessageRepository();
@@ -2559,18 +3168,52 @@ void main() {
             tempDir.deleteSync(recursive: true);
           }
         });
-        final attachment = File('${tempDir.path}/cancel.jpg')
+        final attachment = File('${tempDir.path}/cancel.mp4')
           ..writeAsStringSync('0123456789');
 
         final uploadGate = Completer<void>();
         final uploadStarted = Completer<void>();
+        var sendCalls = 0;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          sendCalls++;
+          return _instantSuccessSendFn(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: targetPeerId,
+            text: text,
+            senderPeerId: senderPeerId,
+            senderUsername: senderUsername,
+            messageId: messageId,
+            timestamp: timestamp,
+            bridge: bridge,
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+            quotedMessageId: quotedMessageId,
+            mediaAttachments: mediaAttachments,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+          );
+        }
 
         await pumpScreen(
           tester,
           identityRepo: identityRepo,
           messageRepo: messageRepo,
           chatListener: chatListener,
-          sendFn: _instantSuccessSendFn,
+          sendFn: sendFn,
           bridge: FakeBridge(),
           mediaAttachmentRepo: mediaAttachmentRepo,
           uploadMediaFn:
@@ -2636,6 +3279,7 @@ void main() {
         );
 
         expect(find.text('Upload cancelled.'), findsOneWidget);
+        expect(find.text('Failed to upload media. Try again.'), findsNothing);
         expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
         expect(
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
@@ -2649,7 +3293,134 @@ void main() {
             .getAttachmentsForMessage(failedMessageId);
         expect(storedAttachments, hasLength(1));
         expect(storedAttachments.single.downloadStatus, 'upload_failed');
+        expect(sendCalls, 0);
         expect(UploadWakeLockController.debugActiveHolds, 0);
+      },
+    );
+
+    testWidgets(
+      'cancel requested before an upload failure resolves still shows the cancel outcome',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_cancel_upload_failure_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/cancel-failure.mp4')
+          ..writeAsStringSync('0123456789');
+
+        final uploadGate = Completer<void>();
+        final uploadStarted = Completer<void>();
+        var sendCalls = 0;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          sendCalls++;
+          return _instantSuccessSendFn(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: targetPeerId,
+            text: text,
+            senderPeerId: senderPeerId,
+            senderUsername: senderUsername,
+            messageId: messageId,
+            timestamp: timestamp,
+            bridge: bridge,
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+            quotedMessageId: quotedMessageId,
+            mediaAttachments: mediaAttachments,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+          );
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async {
+                uploadStarted.complete();
+                await uploadGate.future;
+                return null;
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'Cancel failed upload');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await uploadStarted.future;
+        await tester.pump();
+
+        await tester.tap(
+          find.byKey(const ValueKey('upload-progress-cancel-button')),
+        );
+        await tester.pump();
+
+        uploadGate.complete();
+        await pumpUntil(
+          tester,
+          () =>
+              find
+                  .byKey(const ValueKey('upload-progress-banner'))
+                  .evaluate()
+                  .isEmpty &&
+              wakeLockDriver.disableCalls == 1,
+        );
+
+        expect(find.text('Upload cancelled.'), findsOneWidget);
+        expect(find.text('Failed to upload media. Try again.'), findsNothing);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Cancel failed upload',
+        );
+        expect(sendCalls, 0);
+        expect(messageRepo.store.values.single.status, 'failed');
+        final failedMessageId = messageRepo.store.values.single.id;
+        final storedAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(failedMessageId);
+        expect(storedAttachments, hasLength(1));
+        expect(storedAttachments.single.downloadStatus, 'upload_failed');
       },
     );
 

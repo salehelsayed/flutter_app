@@ -43,7 +43,9 @@ void main() {
       expect(find.text('Posts'), findsNothing);
     });
 
-    testWidgets('feedBadgeCount is only passed to Feed button', (tester) async {
+    testWidgets('feed and orbit badge counts are passed independently', (
+      tester,
+    ) async {
       suppressAssetErrors(tester);
       await tester.pumpWidget(
         wrap(
@@ -51,6 +53,7 @@ void main() {
             activeTab: 'feed',
             onSwitchView: (_) {},
             feedBadgeCount: 5,
+            orbitBadgeCount: 3,
           ),
         ),
       );
@@ -60,7 +63,23 @@ void main() {
           .widgetList<NavBarButton>(find.byType(NavBarButton))
           .toList();
       expect(buttons[0].badgeCount, 5); // Feed
-      expect(buttons[1].badgeCount, 0); // Orbit
+      expect(buttons[1].badgeCount, 3); // Orbit
+    });
+
+    testWidgets('marks Orbit as active when orbit tab is selected', (
+      tester,
+    ) async {
+      suppressAssetErrors(tester);
+      await tester.pumpWidget(
+        wrap(FeedNavigationBar(activeTab: 'orbit', onSwitchView: (_) {})),
+      );
+      await tester.pump();
+
+      final buttons = tester
+          .widgetList<NavBarButton>(find.byType(NavBarButton))
+          .toList();
+      expect(buttons[0].isActive, isFalse);
+      expect(buttons[1].isActive, isTrue);
     });
 
     testWidgets('bar shrink-wraps to fit buttons', (tester) async {

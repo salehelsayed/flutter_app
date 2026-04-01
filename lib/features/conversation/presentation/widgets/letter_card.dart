@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -23,6 +24,8 @@ class LetterCard extends StatelessWidget {
   final String? transport;
   final String? quotedText;
   final bool isQuoteUnavailable;
+  final bool isEdited;
+  final bool isDeleted;
   final List<MediaAttachment> media;
   final void Function(int index)? onMediaTap;
   final List<MessageReaction> reactions;
@@ -44,6 +47,8 @@ class LetterCard extends StatelessWidget {
     this.transport,
     this.quotedText,
     this.isQuoteUnavailable = false,
+    this.isEdited = false,
+    this.isDeleted = false,
     this.media = const [],
     this.onMediaTap,
     this.reactions = const [],
@@ -63,6 +68,8 @@ class LetterCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
     return GestureDetector(
       onLongPress: onLongPress,
       child: ClipRRect(
@@ -221,15 +228,54 @@ class LetterCard extends StatelessWidget {
                     if (text.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                        child: LinkableText(
-                          text: text,
-                          textDirection: detectTextDirection(text),
-                          style: TextStyle(
+                        child: isDeleted
+                            ? Text(
+                                text,
+                                textDirection: detectTextDirection(text),
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w400,
+                                  fontStyle: FontStyle.italic,
+                                  color: Color.fromRGBO(255, 255, 255, 0.48),
+                                  height: 1.65,
+                                  letterSpacing: 0.2,
+                                ),
+                              )
+                            : LinkableText(
+                                text: text,
+                                textDirection: detectTextDirection(text),
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w400,
+                                  color: isIncoming
+                                      ? const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.90,
+                                        )
+                                      : const Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.80,
+                                        ),
+                                  height: 1.65,
+                                  letterSpacing: 0.2,
+                                ),
+                              ),
+                      )
+                    else if (isDeleted)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                        child: Text(
+                          l10n?.conversation_message_deleted ??
+                              'This message was deleted',
+                          style: const TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w400,
-                            color: isIncoming
-                                ? const Color.fromRGBO(255, 255, 255, 0.90)
-                                : const Color.fromRGBO(255, 255, 255, 0.80),
+                            fontStyle: FontStyle.italic,
+                            color: Color.fromRGBO(255, 255, 255, 0.48),
                             height: 1.65,
                             letterSpacing: 0.2,
                           ),
@@ -237,7 +283,8 @@ class LetterCard extends StatelessWidget {
                       )
                     else if (media.isNotEmpty)
                       const SizedBox(height: 12),
-                    if (onRetryFailedMedia != null || onDeleteFailedMedia != null)
+                    if (onRetryFailedMedia != null ||
+                        onDeleteFailedMedia != null)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                         child: Wrap(
@@ -292,6 +339,17 @@ class LetterCard extends StatelessWidget {
                               color: Color.fromRGBO(255, 255, 255, 0.35),
                             ),
                           ),
+                          if (isEdited && l10n != null) ...[
+                            const SizedBox(width: 6),
+                            Text(
+                              l10n.conversation_edited_indicator,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w400,
+                                color: Color.fromRGBO(255, 255, 255, 0.35),
+                              ),
+                            ),
+                          ],
                           if (!isIncoming && status != null) ...[
                             const SizedBox(width: 4),
                             Semantics(

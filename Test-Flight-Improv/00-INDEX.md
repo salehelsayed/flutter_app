@@ -1,6 +1,6 @@
 # Test-Flight-1 Improvement Reports
 
-Generated: 2026-03-29
+Generated: 2026-04-01
 
 **Closure note:** Sessions `1` through `29` are closed execution artifacts.
 `session-30-plan.md` is a plan-only narrow reopen artifact and should not be
@@ -10,7 +10,30 @@ read as landed work. `session-31-plan.md`, `session-32-plan.md`,
 intro-to-Orbit / intro-to-Feed follow-up closure from Session `35`. Sessions
 `44` through `47` are completed Report `24` execution/closure artifacts, with
 `24-cancel-media-upload-session-breakdown.md` and the stable messaging closure
-references carrying the maintenance-time meaning.
+references carrying the maintenance-time meaning. Sessions `54` and `55` are
+completed Report `27` execution/closure artifacts, with
+`27-persistent-nav-bar-orbit-session-breakdown.md` carrying the
+maintenance-time meaning. Session `56` is the completed Report `28`
+execution/closure artifact, with
+`28-orbit-intro-badge-session-breakdown.md` carrying the maintenance-time
+meaning. Sessions `58` and `59` are the completed Report `29`
+execution/closure artifacts, with
+`29-batch-parallel-intro-sending-session-breakdown.md` carrying the
+maintenance-time meaning. The doc-scoped Sessions `59` and `60` for Report
+`30` are the completed Report `30` execution/closure artifacts, with
+`30-swipe-nav-feed-orbit-session-breakdown.md` carrying the maintenance-time
+meaning. The doc-scoped Session `1` for Report `34` is the completed Report
+`34` execution/closure artifact, with
+`34-orbit-intros-swipe-delete-missing-session-breakdown.md` carrying the
+maintenance-time meaning. The doc-scoped Session `1` for Report `35` is the
+completed narrow reopen/closure artifact for the late-boundary 1:1 video
+cancel seam, with
+`35-cancelled-video-upload-still-sends-session-breakdown.md` carrying the
+maintenance-time meaning. The doc-scoped Sessions `1` through `3` for Report
+`41` are the completed inbox-recovery and notification-open trust closure
+artifacts, with
+`41-notification-open-missing-incoming-messages-session-breakdown.md` plus the
+refreshed 1:1 closure reference carrying the maintenance-time meaning.
 Roadmaps `15` and `16` plus the residual reliability/measurement sessions `24`
 through `29` remain historical execution artifacts. Reports `01` through `14`
 remain the rationale archive. The current closure state lives in Sections `8`,
@@ -138,6 +161,25 @@ remain the rationale archive. The current closure state lives in Sections `8`,
 | [session-45-plan.md](session-45-plan.md) | Historical 1:1 cancelable-upload surface session |
 | [session-46-plan.md](session-46-plan.md) | Historical group/announcement parity session for cancelable uploads |
 | [session-47-plan.md](session-47-plan.md) | Historical acceptance-only closure refresh for cancelable uploads |
+| [27-persistent-nav-bar-orbit-session-breakdown.md](27-persistent-nav-bar-orbit-session-breakdown.md) | Historical multi-session breakdown and closure-owner artifact for Report `27` |
+| [27-persistent-nav-bar-orbit-session-54-plan.md](27-persistent-nav-bar-orbit-session-54-plan.md) | Historical already-covered in-app Orbit persistent-nav session artifact |
+| [27-persistent-nav-bar-orbit-session-55-plan.md](27-persistent-nav-bar-orbit-session-55-plan.md) | Historical intro-notification Orbit parity and closure session |
+| [28-orbit-intro-badge-session-breakdown.md](28-orbit-intro-badge-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `28` |
+| [28-orbit-intro-badge-session-56-plan.md](28-orbit-intro-badge-session-56-plan.md) | Historical shared Orbit intro badge and freshness-wiring session artifact |
+| [29-batch-parallel-intro-sending-session-breakdown.md](29-batch-parallel-intro-sending-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `29` |
+| [29-batch-parallel-intro-sending-session-58-plan.md](29-batch-parallel-intro-sending-session-58-plan.md) | Historical capped intro batching and progress-contract session artifact |
+| [29-batch-parallel-intro-sending-session-59-plan.md](29-batch-parallel-intro-sending-session-59-plan.md) | Historical picker progress UX and closure session artifact |
+| [30-swipe-nav-feed-orbit-session-breakdown.md](30-swipe-nav-feed-orbit-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `30` |
+| [30-swipe-nav-feed-orbit-session-59-plan.md](30-swipe-nav-feed-orbit-session-59-plan.md) | Historical shared-host migration and preserved-state session artifact for Report `30` |
+| [30-swipe-nav-feed-orbit-session-60-plan.md](30-swipe-nav-feed-orbit-session-60-plan.md) | Historical horizontal swipe / gesture arbitration closure session artifact for Report `30` |
+| [34-orbit-intros-swipe-delete-missing-session-breakdown.md](34-orbit-intros-swipe-delete-missing-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `34` |
+| [34-orbit-intros-swipe-delete-missing-session-1-plan.md](34-orbit-intros-swipe-delete-missing-session-1-plan.md) | Historical live Orbit intro swipe-delete / closure session artifact for Report `34` |
+| [35-cancelled-video-upload-still-sends-session-breakdown.md](35-cancelled-video-upload-still-sends-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `35` |
+| [35-cancelled-video-upload-still-sends-session-1-plan.md](35-cancelled-video-upload-still-sends-session-1-plan.md) | Historical late-boundary 1:1 video cancel reopen/closure session artifact for Report `35` |
+| [41-notification-open-missing-incoming-messages-session-breakdown.md](41-notification-open-missing-incoming-messages-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `41` |
+| [41-notification-open-missing-incoming-messages-session-1-plan.md](41-notification-open-missing-incoming-messages-session-1-plan.md) | Historical two-phase relay inbox retrieve/ack session artifact for Report `41` |
+| [41-notification-open-missing-incoming-messages-session-2-plan.md](41-notification-open-missing-incoming-messages-session-2-plan.md) | Historical durable inbox staging/replay and reject-observability session artifact for Report `41` |
+| [41-notification-open-missing-incoming-messages-session-3-plan.md](41-notification-open-missing-incoming-messages-session-3-plan.md) | Historical app-root notification parity and closure session artifact for Report `41` |
 | [17-roadmap-closure-audit.md](17-roadmap-closure-audit.md) | Post-execution closure audit and current reading order for the folder |
 
 **Top finding:** The folder has now moved from backlog mode into closure mode.
@@ -149,8 +191,19 @@ intro-to-Orbit / intro-to-Feed stale follow-up seam, Sessions `34` and `36`
 closed the reviewed standalone CLI-backed transport and post-verify proof
 seams, Session `37` closed the narrow deterministic failed-send recovery
 coverage seam, Sessions `44` through `47` closed the Report `24`
-cancelable-upload rollout and refreshed the stable messaging closure refs, and
-Session `30` remains a plan-only residual artifact rather than executed work.
+cancelable-upload rollout and refreshed the stable messaging closure refs,
+Sessions `54` and `55` closed the Report `27` persistent-nav rollout and
+refreshed the folder closure docs, Session `56` closed the Report `28` shared
+Orbit intro badge truth and freshness wiring seam and refreshed the closure
+docs, Sessions `58` and `59` closed the Report `29` ordered intro-batching and
+truthful picker-progress rollout, the doc-scoped Sessions `59` and `60`
+closed the Report `30` shared-host plus horizontal-swipe Feed/Orbit rollout,
+the doc-scoped Session `1` for Report `35` reclosed the narrow late-boundary
+1:1 video cancel seam without reopening the broader Report `24`
+cancelable-upload program, the doc-scoped Sessions `1` through `3` for Report
+`41` closed the staged inbox recovery plus app-root notification-open trust
+seam and refreshed the stable 1:1 closure wording, and Session `30` remains a
+plan-only residual artifact rather than executed work.
 The closure audit now describes what is historical rationale, what remains
 open, and what should only be reopened if a real residual gap appears.
 
@@ -164,13 +217,22 @@ open, and what should only be reopened if a real residual gap appears.
 | Maintain | Keep the lean local messaging measurement events coherent with the current flow-event contract | Future send/retry/media/rejoin work should extend the landed local event layer, not invent a second metrics stack | 10 / 29 |
 | Maintain | Use the direct standalone CLI-backed transport command alongside the named transport gate when touching the Sessions `34` / `36` seams | The named transport gate can run `transport_e2e_test.dart` without the CLI fixture/orchestrator path | 19 / 34 / 36 |
 | Maintain | Use the direct intro/orbit/feed maintenance suite plus `baseline` when intro follow-up wiring changes | No named gate directly owns this seam; maintenance-time safety sits in `orbit_wired_test.dart`, `orbit_intros_wiring_test.dart`, `feed_wired_test.dart`, and the intro listener/regression/integration suites | 35 / test-gate-definitions |
-| Maintain | Use the stable 1:1/group closure refs plus `24-cancel-media-upload-session-breakdown.md` for cancelable-upload maintenance | Session `47` closed the rollout without widening gate definitions or announcement-specific architecture; later work should reopen only on real regression | 19 / 20 / 24 / 47 |
+| Maintain | Use the stable 1:1/group closure refs plus `24-cancel-media-upload-session-breakdown.md` and `35-cancelled-video-upload-still-sends-session-breakdown.md` for cancelable-upload maintenance | Session `47` closed the broad rollout and the doc-scoped Session `1` for Report `35` reclosed the narrow late-boundary 1:1 video cancel seam without widening gate definitions or announcement-specific architecture | 19 / 20 / 24 / 35 / 47 |
+| Maintain | Use `41-notification-open-missing-incoming-messages-session-breakdown.md`, the direct notification-open suites, `./scripts/run_test_gates.sh 1to1`, and `baseline` when shared 1:1 inbox recovery or app-root notification-open routing changes | The doc-scoped Report `41` sessions closed durable fetched-envelope staging/replay plus prepare-before-route parity for terminated remote, warm remote, terminated local, and warm local notification opens; `transport` becomes required again only if later work broadens into startup/resume/inbox-drain ordering changes | 19 / 41 / test-gate-definitions |
+| Maintain | Use `27-persistent-nav-bar-orbit-session-breakdown.md`, `intro_notification_orbit_route_test.dart`, the direct Orbit/Feed nav suites, and `baseline` when app-root intro-open wiring changes | Session `55` closed the notification-opened Orbit persistent-nav seam without widening into sibling-tab hosting, keep-alive, or swipe navigation scope | 27 / 54 / 55 |
+| Maintain | Use `28-orbit-intro-badge-session-breakdown.md`, the direct Feed/Orbit intro badge suites, `intro_notification_orbit_route_test.dart`, and `baseline` when shared Orbit pending-intro badge truth changes | Session `56` closed shared badge coexistence, expiry-aware load, live refresh, route-return freshness, and persistent-nav Orbit parity without widening into a second unread system or root-owned badge controller | 28 / 56 |
+| Maintain | Use `29-batch-parallel-intro-sending-session-breakdown.md`, the direct intro application/picker/integration suites, and rerun `baseline` only when broader conversation or banner entry wiring changes | Sessions `58` and `59` closed capped batch intro sending plus truthful picker progress without widening into Go/bridge batch APIs or new named-gate ownership | 29 / 58 / 59 |
+| Maintain | Use `30-swipe-nav-feed-orbit-session-breakdown.md`, the direct Feed/Orbit swipe and local-gesture suites, and `baseline` when the shared Feed/Orbit navigation seam changes | The doc-scoped Sessions `59` and `60` closed the shared-host plus horizontal-swipe rollout without widening into notification-opened Orbit routing parity, a broader app-root tab shell, or unread/badge architecture work | 30 / 59 / 60 |
+| Maintain | Use `34-orbit-intros-swipe-delete-missing-session-breakdown.md`, `orbit_wired_test.dart`, `orbit_intros_wiring_test.dart`, `orbit_screen_archived_groups_test.dart`, `swipeable_friend_row_test.dart`, and `baseline` when live Orbit intro delete behavior changes | The doc-scoped Session `1` closed the live Orbit intro swipe-delete seam without widening into intro protocol, loader, or broader Feed/Orbit architecture work | 34 / doc-scoped 1 |
 | Follow up only if needed | Complete external CI / release owner wiring for Session `12` if the local handoff artifact is still the final state | This is the only clearly externalized closure item | 16 |
 | Follow up only if needed | Revalidate Session `30` before any execution | The plan file alone should not reopen the already-closed broader program | 17 / 30 |
 | Residual only | Reopen group reliability only if voice publish-failure retry becomes a real escaped bug or a clearly justified trust gap | The broader discussion reliability program is closed | 18 / 24 / 25 / 26 / 27 |
 | Residual only | Reopen intro follow-up work only if a real regression makes `mutualAccepted` contacts reappear under `Intros`, hides the Feed connection card, or breaks the blocked-accept listener contract | Session `35` closed the UI-state race without reopening listener or protocol work | 35 |
+| Residual only | Reopen Orbit intro badge work only if pending-intro badge truth regresses on cold load, live intro updates, route return from Orbit accept/pass, or persistent-nav Orbit parity | Session `56` closed the report; later work should reopen only on real badge-truth regressions, not to invent a new root-level badge architecture | 28 / 56 |
+| Residual only | Reopen live Orbit intro delete work only if swipe-delete affordance, confirmation, grouped-row cleanup, empty-state truth, or pending-intro badge truth regresses after delete | The doc-scoped Session `1` for Report `34` closed the local Orbit intro delete seam; later work should reopen only on real UI/count regressions, not to invent P2P delete sync or widened intro-status scope | 34 / doc-scoped 1 |
 | Residual only | Reopen 1:1 transport-label/truth work only if new outgoing or incoming 1:1 rows regress to misleading transport labels | Sessions `31` and `32` closed new-row reuse fast-path labeling and Go/libp2p direct-vs-relay truth; old `reuse` rows remain legacy-only fallback | 19 / 31 / 32 |
 | Residual only | Reopen 1:1 failed-send recovery coverage only if the deterministic foreground online-transition or lock-after-failure resume regressions stop proving exact-once healing | Session `37` closed the missing matrix cell for visible failure during network switch followed by later foreground or resume recovery | 19 / 33 / 37 |
+| Residual only | Reopen the late-boundary 1:1 video cancel seam only if accepted cancel again falls through into the ordinary upload-failure UX or the later final-send path for that same attempt | The doc-scoped Session `1` for Report `35` reclosed that narrow seam without reopening group parity, retry ownership, or status-model scope | 19 / 24 / 35 |
 | Residual only | Reopen standalone CLI-backed transport work only if a current direct run reintroduces the previously closed transport-truth or post-verify proof seams | Sessions `34` and `36` closed the reviewed `A1` / `A4` / `A2` / `A5` / `D4` / `A7` / `A8` / `A8b` / `C3` / `B8` / `G6` / `E8` / `RECV-A1` / `RECV-A4` / `RECV-A6` seams; the direct command remains required maintenance proof alongside the named gate | 19 / 34 / 36 |
 | Residual only | Reopen a roadmap item only if a real regression, failed gate, or newly proven gap appears | Avoids restarting broad cleanup work without evidence | 17 |
 | Intentionally deferred | Product-scope items such as read receipts, typing indicators, search, exporter/dashboard work | These were deferred by design, not missed correctness work | 08 / 09 / 10 |
@@ -200,14 +262,36 @@ open, and what should only be reopened if a real residual gap appears.
 | [26-long-press-message-context-menu.md](26-long-press-message-context-menu.md) | Signal-like long-press overlay with emoji bar, blurred background, and Reply/Copy context menu on messages |
 | [27-persistent-nav-bar-orbit.md](27-persistent-nav-bar-orbit.md) | Bottom nav bar disappears when navigating to Orbit; should persist with active tab indicator |
 | [28-orbit-intro-badge.md](28-orbit-intro-badge.md) | Badge/dot on Orbit nav button when pending introductions exist |
-| [29-batch-parallel-intro-sending.md](29-batch-parallel-intro-sending.md) | Parallel batch sending of introductions with concurrency cap of 10 |
+| [29-batch-parallel-intro-sending.md](29-batch-parallel-intro-sending.md) | Ordered batched introduction sending with concurrency cap of 10 and truthful picker progress |
 | [30-swipe-nav-feed-orbit.md](30-swipe-nav-feed-orbit.md) | Horizontal swipe navigation between Feed and Orbit screens |
 | [31-edit-last-sent-message.md](31-edit-last-sent-message.md) | Edit last sent message via long-press context menu with P2P sync |
 | [32-notification-card-interactions.md](32-notification-card-interactions.md) | Profile picture tap and collapse bar non-responsive on notification-opened feed cards |
 | [33-delete-message-for-me-everyone.md](33-delete-message-for-me-everyone.md) | Delete messages with "Delete for Me" and "Delete for Everyone" via long-press context menu |
+| [34-orbit-intros-swipe-delete-missing.md](34-orbit-intros-swipe-delete-missing.md) | Live Orbit intros are missing the existing swipe-to-delete affordance and confirmation flow |
+| [35-cancelled-video-upload-still-sends.md](35-cancelled-video-upload-still-sends.md) | Accepted cancel on a 1:1 video upload can still fall through into failure/send; cancel should stop delivery for that attempt |
 
 **Context:** These specs address user-facing gaps discovered during TestFlight
 usage. Report `24` directly relates to the upload reliability path covered by
 reports `08`, `19`, and `22`, and its landed maintenance-time meaning now
 lives in `24-cancel-media-upload-session-breakdown.md` plus the refreshed
-closure references rather than in the proposal alone.
+closure references rather than in the proposal alone. Report `27` directly
+relates to the intro/orbit/feed navigation seam first narrowed by Session
+`35`, and its landed maintenance-time meaning now lives in
+`27-persistent-nav-bar-orbit-session-breakdown.md` plus the refreshed closure
+docs rather than in the proposal alone. Report `28` directly relates to that
+same intro/orbit/feed seam, and its landed maintenance-time meaning now lives
+in `28-orbit-intro-badge-session-breakdown.md` plus the refreshed closure docs
+rather than in the proposal alone. Report `29` directly relates to the same
+intro sending seam, and its landed maintenance-time meaning now lives in
+`29-batch-parallel-intro-sending-session-breakdown.md` plus the refreshed
+closure docs rather than in the proposal alone. Report `30` directly relates to
+that same Feed/Orbit navigation seam, and its landed maintenance-time meaning
+now lives in `30-swipe-nav-feed-orbit-session-breakdown.md` plus the refreshed
+closure docs rather than in the proposal alone. Report `34` directly relates to
+the same intro/orbit/feed seam, and its landed maintenance-time meaning now
+lives in `34-orbit-intros-swipe-delete-missing-session-breakdown.md` plus the
+refreshed closure docs rather than in the proposal alone. Report `35` directly
+relates to the Report `24` 1:1 cancel seam, and its landed maintenance-time
+meaning now lives in
+`35-cancelled-video-upload-still-sends-session-breakdown.md` plus the
+refreshed 1:1 closure docs rather than in the proposal alone.

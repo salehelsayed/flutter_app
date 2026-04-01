@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -11,9 +13,9 @@ import '../../../shared/fakes/in_memory_introduction_repository.dart';
 
 void main() {
   late FakeP2PNetwork network;
-  late FakeP2PService p2pServiceA;
+  late _ControlledP2PService p2pServiceA;
   late PassthroughCryptoBridge bridge;
-  late InMemoryContactRepository contactRepo;
+  late _TrackingContactRepository contactRepo;
   late InMemoryIntroductionRepository introRepo;
 
   late ContactModel contactB;
@@ -22,13 +24,13 @@ void main() {
 
   setUp(() {
     network = FakeP2PNetwork();
-    p2pServiceA = FakeP2PService(peerId: 'peer-A', network: network);
+    p2pServiceA = _ControlledP2PService(peerId: 'peer-A', network: network);
     // Register receivers on the network so delivery succeeds
     FakeP2PService(peerId: 'peer-B', network: network);
     FakeP2PService(peerId: 'peer-C', network: network);
     FakeP2PService(peerId: 'peer-D', network: network);
     bridge = PassthroughCryptoBridge();
-    contactRepo = InMemoryContactRepository();
+    contactRepo = _TrackingContactRepository();
     introRepo = InMemoryIntroductionRepository();
 
     contactB = ContactModel(
@@ -66,7 +68,29 @@ void main() {
     contactRepo.addTestContact(contactD);
   });
 
-  Future<List<IntroductionModel>> _sendTwoFriends() {
+  ContactModel _createFriend(int index, {bool hasMlKemKey = true}) {
+    final suffix = index.toString().padLeft(2, '0');
+    final contact = ContactModel(
+      peerId: 'peer-F$suffix',
+      publicKey: 'pk-peer-F$suffix',
+      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+      username: 'Friend $suffix',
+      signature: 'sig-peer-F$suffix',
+      scannedAt: DateTime.now().toUtc().toIso8601String(),
+      mlKemPublicKey: hasMlKemKey ? 'test-mlkem-pk-peer-F$suffix' : null,
+    );
+    contactRepo.addTestContact(contact);
+    FakeP2PService(peerId: contact.peerId, network: network);
+    return contact;
+  }
+
+  List<ContactModel> _createFriends(int count) =>
+      List.generate(count, (index) => _createFriend(index + 1));
+
+  Future<List<IntroductionModel>> _sendFriends(
+    List<ContactModel> friends, {
+    void Function(int completed, int total)? onProgress,
+  }) {
     return sendIntroductions(
       contactRepo: contactRepo,
       introRepo: introRepo,
@@ -77,8 +101,13 @@ void main() {
       recipientPeerId: 'peer-B',
       recipientUsername: 'Bob',
       recipientMlKemPublicKey: contactB.mlKemPublicKey,
-      friendsToIntroduce: [contactC, contactD],
+      friendsToIntroduce: friends,
+      onProgress: onProgress,
     );
+  }
+
+  Future<List<IntroductionModel>> _sendTwoFriends() {
+    return _sendFriends([contactC, contactD]);
   }
 
   test('creates N introduction records for N selected friends', () async {
@@ -133,8 +162,9 @@ void main() {
   test('v2 encryption used when target has ML-KEM key', () async {
     await _sendTwoFriends();
     // All 4 targets (recipient x2, friend-C, friend-D) have ML-KEM keys
-    final encryptCalls =
-        bridge.commandLog.where((cmd) => cmd == 'message.encrypt').length;
+    final encryptCalls = bridge.commandLog
+        .where((cmd) => cmd == 'message.encrypt')
+        .length;
     expect(encryptCalls, 4);
   });
 
@@ -169,8 +199,9 @@ void main() {
     );
 
     // Neither recipient nor introduced friend has ML-KEM key → no encrypt calls
-    final encryptCalls =
-        bridge.commandLog.where((cmd) => cmd == 'message.encrypt').length;
+    final encryptCalls = bridge.commandLog
+        .where((cmd) => cmd == 'message.encrypt')
+        .length;
     expect(encryptCalls, 0);
   });
 
@@ -194,4 +225,237 @@ void main() {
       expect(persisted.recipientId, 'peer-B');
     }
   });
+
+  test(
+    'caps active intro work at 10 and splits later friends into a second batch',
+    () async {
+      final friends = _createFriends(15);
+      p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
+
+      final sendFuture = _sendFriends(friends);
+
+      await p2pServiceA.waitForBlockedSendCount(10);
+      expect(p2pServiceA.activeBlockedSends, 10);
+      expect(p2pServiceA.peakBlockedSends, 10);
+
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(p2pServiceA.blockedSendCount, 10);
+
+      p2pServiceA.releaseBlockedSendsThrough(10);
+
+      await p2pServiceA.waitForBlockedSendCount(15);
+      await p2pServiceA.waitForActiveBlockedSends(5);
+      expect(p2pServiceA.peakBlockedSends, lessThanOrEqualTo(10));
+
+      p2pServiceA.releaseAllBlockedSends();
+
+      final results = await sendFuture;
+      expect(
+        results.map((model) => model.introducedId).toList(),
+        friends.map((friend) => friend.peerId).toList(),
+      );
+    },
+  );
+
+  test(
+    'continues across inbox fallback in the same and later batches',
+    () async {
+      final friends = _createFriends(12);
+      final fallbackTargets = {friends[2].peerId, friends[10].peerId};
+      p2pServiceA.failMatcher = (targetPeerId, _) =>
+          fallbackTargets.contains(targetPeerId);
+
+      final results = await _sendFriends(friends);
+
+      expect(results.length, 12);
+      expect(
+        results.map((model) => model.introducedId).toList(),
+        friends.map((friend) => friend.peerId).toList(),
+      );
+      expect(p2pServiceA.storeInInboxTargets.toSet(), fallbackTargets);
+      expect(network.storeInInboxCallCount, 2);
+    },
+  );
+
+  test(
+    'returns results in input friend order instead of completion order',
+    () async {
+      final friends = _createFriends(3);
+      p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
+
+      final sendFuture = _sendFriends(friends);
+
+      await p2pServiceA.waitForBlockedSendCount(3);
+
+      p2pServiceA.releaseBlockedSendAt(2);
+      p2pServiceA.releaseBlockedSendAt(1);
+      p2pServiceA.releaseBlockedSendAt(0);
+
+      final results = await sendFuture;
+
+      expect(
+        p2pServiceA.completedBlockedTargets,
+        friends.reversed.map((friend) => friend.peerId).toList(),
+      );
+      expect(
+        results.map((model) => model.introducedId).toList(),
+        friends.map((friend) => friend.peerId).toList(),
+      );
+    },
+  );
+
+  test('sets introsSentAt once after all batches finish', () async {
+    final friends = _createFriends(12);
+    p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
+
+    final sendFuture = _sendFriends(friends);
+
+    await p2pServiceA.waitForBlockedSendCount(10);
+    expect(contactRepo.setIntrosSentAtCallCount, 0);
+
+    p2pServiceA.releaseBlockedSendsThrough(10);
+
+    await p2pServiceA.waitForBlockedSendCount(12);
+    expect(contactRepo.setIntrosSentAtCallCount, 0);
+
+    p2pServiceA.releaseAllBlockedSends();
+
+    await sendFuture;
+    expect(contactRepo.setIntrosSentAtCallCount, 1);
+  });
+
+  test('reports truthful progress only when an intro chain settles', () async {
+    final friends = _createFriends(3);
+    final progressUpdates = <String>[];
+    p2pServiceA.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
+
+    final sendFuture = _sendFriends(
+      friends,
+      onProgress: (completed, total) {
+        progressUpdates.add('$completed/$total');
+      },
+    );
+
+    await p2pServiceA.waitForBlockedSendCount(3);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(progressUpdates, ['0/3']);
+
+    p2pServiceA.releaseBlockedSendAt(1);
+    await _waitForCondition(() => progressUpdates.length == 2);
+    expect(progressUpdates, ['0/3', '1/3']);
+
+    p2pServiceA.releaseBlockedSendAt(0);
+    await _waitForCondition(() => progressUpdates.length == 3);
+    expect(progressUpdates, ['0/3', '1/3', '2/3']);
+
+    p2pServiceA.releaseBlockedSendAt(2);
+
+    final results = await sendFuture;
+    expect(results.length, 3);
+    expect(progressUpdates, ['0/3', '1/3', '2/3', '3/3']);
+  });
+}
+
+Future<void> _waitForCondition(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for test condition');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+class _ControlledP2PService extends FakeP2PService {
+  _ControlledP2PService({required super.peerId, required super.network});
+
+  bool Function(String targetPeerId, String message)? blockMatcher;
+  bool Function(String targetPeerId, String message)? failMatcher;
+
+  final List<String> storeInInboxTargets = [];
+  final List<String> completedBlockedTargets = [];
+  final List<Completer<void>> _blockedSendCompleters = [];
+
+  int blockedSendCount = 0;
+  int activeBlockedSends = 0;
+  int peakBlockedSends = 0;
+
+  @override
+  Future<bool> sendMessage(String targetPeerId, String message) async {
+    final shouldBlock = blockMatcher?.call(targetPeerId, message) ?? false;
+    if (shouldBlock) {
+      final completer = Completer<void>();
+      _blockedSendCompleters.add(completer);
+      blockedSendCount++;
+      activeBlockedSends++;
+      peakBlockedSends = peakBlockedSends > activeBlockedSends
+          ? peakBlockedSends
+          : activeBlockedSends;
+      try {
+        await completer.future;
+      } finally {
+        activeBlockedSends--;
+      }
+    }
+
+    if (failMatcher?.call(targetPeerId, message) ?? false) {
+      return false;
+    }
+
+    final sent = await super.sendMessage(targetPeerId, message);
+    if (shouldBlock) {
+      completedBlockedTargets.add(targetPeerId);
+    }
+    return sent;
+  }
+
+  @override
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    storeInInboxTargets.add(toPeerId);
+    return super.storeInInbox(toPeerId, message);
+  }
+
+  void releaseBlockedSendAt(int index) {
+    final completer = _blockedSendCompleters[index];
+    if (!completer.isCompleted) {
+      completer.complete();
+    }
+  }
+
+  void releaseBlockedSendsThrough(int count) {
+    for (
+      var index = 0;
+      index < count && index < _blockedSendCompleters.length;
+      index++
+    ) {
+      releaseBlockedSendAt(index);
+    }
+  }
+
+  void releaseAllBlockedSends() {
+    for (var index = 0; index < _blockedSendCompleters.length; index++) {
+      releaseBlockedSendAt(index);
+    }
+  }
+
+  Future<void> waitForBlockedSendCount(int count) {
+    return _waitForCondition(() => blockedSendCount >= count);
+  }
+
+  Future<void> waitForActiveBlockedSends(int count) {
+    return _waitForCondition(() => activeBlockedSends == count);
+  }
+}
+
+class _TrackingContactRepository extends InMemoryContactRepository {
+  int setIntrosSentAtCallCount = 0;
+
+  @override
+  Future<void> setIntrosSentAt(String peerId, String timestamp) async {
+    setIntrosSentAtCallCount++;
+    await super.setIntrosSentAt(peerId, timestamp);
+  }
 }

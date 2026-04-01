@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -26,6 +27,7 @@ import 'package:flutter_app/features/contacts/application/unblock_contact_use_ca
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -94,11 +96,54 @@ typedef SendVoiceMessageFn =
       String? blobId,
     });
 
+typedef EditChatMessageFn =
+    Future<(SendChatMessageResult, ConversationMessage?)> Function({
+      required P2PService p2pService,
+      required MessageRepository messageRepo,
+      required ConversationMessage originalMessage,
+      required String updatedText,
+      required String senderUsername,
+      Bridge? bridge,
+      String? recipientMlKemPublicKey,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      bool emitTimingEvent,
+    });
+
+typedef DeleteMessageForMeFn =
+    Future<int> Function({
+      required ConversationMessage message,
+      required MessageRepository messageRepo,
+      ReactionRepository? reactionRepo,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      MediaFileManager? mediaFileManager,
+    });
+
+typedef DeleteMessageForEveryoneFn =
+    Future<(SendChatMessageResult, ConversationMessage?)> Function({
+      required P2PService p2pService,
+      required MessageRepository messageRepo,
+      required ConversationMessage originalMessage,
+      ReactionRepository? reactionRepo,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      MediaFileManager? mediaFileManager,
+      Bridge? bridge,
+      String? recipientMlKemPublicKey,
+      bool emitTimingEvent,
+    });
+
 /// Wired widget that connects ConversationScreen to business logic.
 ///
 /// Loads identity and messages on init, subscribes to incoming message stream,
 /// and handles sending messages via use cases.
 class ConversationWired extends StatefulWidget {
+  static const deleteSheetKey = ValueKey('conversation-delete-message-sheet');
+  static const deletePromptKey = ValueKey('conversation-delete-message-prompt');
+  static const deleteForMeKey = ValueKey('conversation-delete-for-me-action');
+  static const deleteForEveryoneKey = ValueKey(
+    'conversation-delete-for-everyone-action',
+  );
+  static const deleteCancelKey = ValueKey('conversation-delete-cancel-action');
+
   final ContactModel contact;
   final IdentityRepository identityRepo;
   final MessageRepository messageRepo;
@@ -106,6 +151,9 @@ class ConversationWired extends StatefulWidget {
   final P2PService p2pService;
   final Bridge? bridge;
   final SendChatMessageFn sendChatMessageFn;
+  final EditChatMessageFn editChatMessageFn;
+  final DeleteMessageForMeFn deleteMessageForMeFn;
+  final DeleteMessageForEveryoneFn deleteMessageForEveryoneFn;
   final List<ConversationMessage>? initialMessages;
   final ContactRepository? contactRepo;
   final MediaAttachmentRepository? mediaAttachmentRepo;
@@ -135,6 +183,9 @@ class ConversationWired extends StatefulWidget {
     required this.p2pService,
     this.bridge,
     this.sendChatMessageFn = sendChatMessage,
+    this.editChatMessageFn = editChatMessage,
+    this.deleteMessageForMeFn = deleteMessageForMe,
+    this.deleteMessageForEveryoneFn = deleteMessageForEveryone,
     this.initialMessages,
     this.contactRepo,
     this.mediaAttachmentRepo,
@@ -197,6 +248,8 @@ class _ConversationWiredState extends State<ConversationWired> {
   bool _showIntroBanner = false;
   bool _hasOtherFriends = false;
   String? _activeQuoteMessageId;
+  String? _editingMessageId;
+  String? _editingOriginalText;
   String _draftText = '';
   bool _isTrackingRelayUpload = false;
   int _trackedUploadTotalBytes = 0;
@@ -902,9 +955,10 @@ class _ConversationWiredState extends State<ConversationWired> {
     _repoChangeSubscription = changeSource.messageChanges
         .where(
           (message) =>
-              !message.isIncoming &&
               message.contactPeerId == _contact.peerId &&
-              _shouldRefreshFromRepositoryChange(message.status),
+              ((!message.isIncoming &&
+                      _shouldRefreshFromRepositoryChange(message.status)) ||
+                  message.isDeleted),
         )
         .listen(
           (message) {
@@ -939,12 +993,134 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   void _onQuoteReply(String messageId) {
     if (!mounted) return;
-    setState(() => _activeQuoteMessageId = messageId);
+    setState(() {
+      _editingMessageId = null;
+      _editingOriginalText = null;
+      _activeQuoteMessageId = messageId;
+    });
   }
 
   void _onClearQuote() {
     if (!mounted) return;
     setState(() => _activeQuoteMessageId = null);
+  }
+
+  void _onEditMessage(String messageId) {
+    if (!mounted || !_canEnterEditMode) return;
+    final message = _messages.where((m) => m.id == messageId).firstOrNull;
+    if (message == null || message.isIncoming || message.text.trim().isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _activeQuoteMessageId = null;
+      _editingMessageId = message.id;
+      _editingOriginalText = message.text;
+      _draftText = message.text;
+    });
+  }
+
+  void _onCancelEdit() {
+    if (!mounted) return;
+    setState(() {
+      _editingMessageId = null;
+      _editingOriginalText = null;
+      _draftText = '';
+    });
+  }
+
+  Future<void> _onDeleteMessage(String messageId) async {
+    if (!mounted) return;
+    final message = _messages.where((m) => m.id == messageId).firstOrNull;
+    if (message == null || message.isDeleted) return;
+
+    final action = await _showDeleteMessageSheet(
+      canDeleteForEveryone: _canDeleteForEveryone(message),
+    );
+    if (!mounted || action == null || action == _DeleteMessageAction.cancel) {
+      return;
+    }
+
+    if (_editingMessageId == messageId) {
+      setState(() {
+        _editingMessageId = null;
+        _editingOriginalText = null;
+        _draftText = '';
+      });
+    }
+    if (_activeQuoteMessageId == messageId && mounted) {
+      setState(() => _activeQuoteMessageId = null);
+    }
+
+    if (action == _DeleteMessageAction.forMe) {
+      final deleted = await widget.deleteMessageForMeFn(
+        message: message,
+        messageRepo: widget.messageRepo,
+        reactionRepo: widget.reactionRepo,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        mediaFileManager: widget.mediaFileManager,
+      );
+      if (deleted > 0 && mounted) {
+        _removeLocalMessage(messageId);
+      }
+      return;
+    }
+
+    final (result, updatedMessage) = await widget.deleteMessageForEveryoneFn(
+      p2pService: widget.p2pService,
+      messageRepo: widget.messageRepo,
+      originalMessage: message,
+      reactionRepo: widget.reactionRepo,
+      mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      mediaFileManager: widget.mediaFileManager,
+      bridge: widget.bridge,
+      recipientMlKemPublicKey: _contact.mlKemPublicKey,
+    );
+
+    if (!mounted) return;
+    if (updatedMessage != null) {
+      setState(() => _upsertMessageById(updatedMessage));
+      return;
+    }
+    if (result != SendChatMessageResult.success) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.conversation_delete_failed,
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  bool get _canEnterEditMode =>
+      _pendingAttachments.isEmpty &&
+      !_composerViewState.isProcessing &&
+      !_composerViewState.isUploading &&
+      !_isRecording &&
+      !_isSending;
+
+  bool _canDeleteForEveryone(ConversationMessage message) {
+    final ownPeerId = _identity?.peerId;
+    if (ownPeerId == null) return false;
+    if (message.isIncoming || message.isDeleted) return false;
+    if (message.senderPeerId != ownPeerId) return false;
+    return message.status == 'delivered';
+  }
+
+  Future<_DeleteMessageAction?> _showDeleteMessageSheet({
+    required bool canDeleteForEveryone,
+  }) {
+    return showModalBottomSheet<_DeleteMessageAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) =>
+          _DeleteMessageSheet(canDeleteForEveryone: canDeleteForEveryone),
+    );
   }
 
   (String?, bool) _resolveActiveQuotePreview() {
@@ -990,8 +1166,71 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     final hasAttachments = _pendingAttachments.isNotEmpty;
     final sanitizedText = sanitizeMessageText(text);
+    final editingMessage = _editingMessageId == null
+        ? null
+        : _messages.where((m) => m.id == _editingMessageId).firstOrNull;
     if (sanitizedText.isEmpty && !hasAttachments) return;
     if (_isSending) return;
+
+    if (editingMessage != null) {
+      final originalText = _editingOriginalText ?? editingMessage.text;
+      if (sanitizedText == originalText) {
+        if (!mounted) return;
+        setState(() {
+          _editingMessageId = null;
+          _editingOriginalText = null;
+          _draftText = '';
+        });
+        return;
+      }
+
+      setState(() => _isSending = true);
+
+      try {
+        final (result, message) = await widget.editChatMessageFn(
+          p2pService: widget.p2pService,
+          messageRepo: widget.messageRepo,
+          originalMessage: editingMessage,
+          updatedText: sanitizedText,
+          senderUsername: identity.username,
+          bridge: widget.bridge,
+          recipientMlKemPublicKey: _contact.mlKemPublicKey,
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        );
+
+        if (!mounted) return;
+
+        setState(() {
+          _editingMessageId = null;
+          _editingOriginalText = null;
+          _draftText = '';
+          if (message != null) {
+            _upsertMessageById(message);
+          }
+        });
+
+        if (message != null) {
+          _scrollToBottom();
+        }
+
+        if (result != SendChatMessageResult.success && message == null) {
+          messenger
+            ?..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                content: Text('Failed to save edit.'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _isSending = false);
+        }
+      }
+      return;
+    }
+
     setState(() => _isSending = true);
 
     try {
@@ -1169,6 +1408,12 @@ class _ConversationWiredState extends State<ConversationWired> {
                   durationMs: media.durationMs,
                 );
 
+                if (await _cancelActiveAttachmentUploadIfRequested(
+                  messenger: messenger,
+                )) {
+                  return;
+                }
+
                 if (result == null) {
                   if (relayTrackingStarted) {
                     await _stopRelayUploadTracking();
@@ -1198,6 +1443,11 @@ class _ConversationWiredState extends State<ConversationWired> {
             }
             if (relayTrackingStarted) {
               await _stopRelayUploadTracking();
+            }
+            if (await _cancelActiveAttachmentUploadIfRequested(
+              messenger: messenger,
+            )) {
+              return;
             }
             if (mounted) {
               _updateComposerState(isUploading: false);
@@ -2260,6 +2510,12 @@ class _ConversationWiredState extends State<ConversationWired> {
   }
 
   void _upsertMessageById(ConversationMessage message) {
+    if (message.isHidden) {
+      _messages = _messages
+          .where((existing) => existing.id != message.id)
+          .toList();
+      return;
+    }
     final index = _messages.indexWhere((m) => m.id == message.id);
     if (index == -1) {
       _messages = [..._messages, message];
@@ -2678,9 +2934,167 @@ class _ConversationWiredState extends State<ConversationWired> {
           onMakeIntroductions: _onMakeIntroductions,
           onMaybeLater: _onMaybeLater,
           onQuoteReply: _onQuoteReply,
+          onDeleteMessage: _onDeleteMessage,
           activeQuoteText: activeQuoteText,
           isActiveQuoteUnavailable: isActiveQuoteUnavailable,
           onClearQuote: _onClearQuote,
+          onEditMessage: _onEditMessage,
+          isEditingMessage: _editingMessageId != null,
+          onCancelEdit: _editingMessageId != null ? _onCancelEdit : null,
+          allowEditAction: _canEnterEditMode,
+        ),
+      ),
+    );
+  }
+}
+
+enum _DeleteMessageAction { forMe, forEveryone, cancel }
+
+class _DeleteMessageSheet extends StatelessWidget {
+  final bool canDeleteForEveryone;
+
+  const _DeleteMessageSheet({required this.canDeleteForEveryone});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final maxHeight = MediaQuery.of(context).size.height * 0.72;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              key: ConversationWired.deleteSheetKey,
+              decoration: BoxDecoration(
+                color: const Color.fromRGBO(18, 20, 28, 0.96),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: const Color.fromRGBO(255, 255, 255, 0.10),
+                ),
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: const Color.fromRGBO(255, 255, 255, 0.18),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        l10n.conversation_delete_message_prompt,
+                        key: ConversationWired.deletePromptKey,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Color.fromRGBO(255, 255, 255, 0.94),
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _DeleteSheetAction(
+                        key: ConversationWired.deleteForMeKey,
+                        label: l10n.conversation_delete_for_me,
+                        icon: Icons.delete_outline_rounded,
+                        color: const Color(0xFFFF8A80),
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop(_DeleteMessageAction.forMe),
+                      ),
+                      if (canDeleteForEveryone) ...[
+                        const SizedBox(height: 10),
+                        _DeleteSheetAction(
+                          key: ConversationWired.deleteForEveryoneKey,
+                          label: l10n.conversation_delete_for_everyone,
+                          icon: Icons.person_remove_alt_1_rounded,
+                          color: const Color(0xFFFFB38A),
+                          onTap: () => Navigator.of(
+                            context,
+                          ).pop(_DeleteMessageAction.forEveryone),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      _DeleteSheetAction(
+                        key: ConversationWired.deleteCancelKey,
+                        label: l10n.conversation_delete_cancel,
+                        icon: Icons.close_rounded,
+                        color: const Color.fromRGBO(255, 255, 255, 0.72),
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop(_DeleteMessageAction.cancel),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeleteSheetAction extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _DeleteSheetAction({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color.fromRGBO(255, 255, 255, 0.05),
+            border: Border.all(
+              color: const Color.fromRGBO(255, 255, 255, 0.08),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: color,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

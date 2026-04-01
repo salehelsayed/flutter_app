@@ -1,17 +1,18 @@
-import 'dart:ui' show TextDirection;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
 
@@ -34,15 +35,6 @@ void main() {
         matching: find.byType(RichText),
       ),
     );
-  }
-
-  Text _textWidget(WidgetTester tester, String text) {
-    final finder = find.byWidgetPredicate(
-      (widget) => widget is Text && widget.data == text,
-      description: 'Text("$text")',
-    );
-    expect(finder, findsOneWidget);
-    return tester.widget<Text>(finder);
   }
 
   bool _hasPositionedAncestor(Finder finder) {
@@ -142,6 +134,47 @@ void main() {
 
       expect(find.textContaining('Hello world'), findsOneWidget);
       expect(find.textContaining('3:30 PM'), findsOneWidget);
+    });
+
+    testWidgets('renders edited indicator for edited outgoing rows', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          const MessageBubble(
+            text: 'Updated text',
+            time: '3:30 PM',
+            isIncoming: false,
+            senderLabel: 'You',
+            status: 'delivered',
+            isEdited: true,
+          ),
+        ),
+      );
+
+      expect(find.text('(edited)'), findsOneWidget);
+    });
+
+    testWidgets('renders deleted placeholder instead of linkable body text', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          const MessageBubble(
+            text: '',
+            time: '3:30 PM',
+            isIncoming: false,
+            senderLabel: 'You',
+            isDeleted: true,
+            isEdited: true,
+            status: 'delivered',
+          ),
+        ),
+      );
+
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(find.byType(LinkableText), findsNothing);
+      expect(find.text('(edited)'), findsNothing);
     });
   });
 
@@ -353,7 +386,10 @@ void main() {
         );
 
         final body = _linkableTextWidget(tester, 'مرحبا');
-        expect(_bodyRichTextWidget(tester, 'مرحبا').textDirection, TextDirection.rtl);
+        expect(
+          _bodyRichTextWidget(tester, 'مرحبا').textDirection,
+          TextDirection.rtl,
+        );
         expect(body.prefixSpans, isNull);
         expect(body.suffixSpans, isNull);
         expect(find.text('You:'), findsOneWidget);
@@ -381,7 +417,10 @@ void main() {
         );
 
         final body = _linkableTextWidget(tester, bodyText);
-        expect(_bodyRichTextWidget(tester, bodyText).textDirection, TextDirection.rtl);
+        expect(
+          _bodyRichTextWidget(tester, bodyText).textDirection,
+          TextDirection.rtl,
+        );
         expect(body.prefixSpans, isNull);
         expect(body.suffixSpans, isNull);
         expect(find.text('You:'), findsOneWidget);
@@ -409,7 +448,10 @@ void main() {
         );
 
         final body = _linkableTextWidget(tester, bodyText);
-        expect(_bodyRichTextWidget(tester, bodyText).textDirection, TextDirection.ltr);
+        expect(
+          _bodyRichTextWidget(tester, bodyText).textDirection,
+          TextDirection.ltr,
+        );
         expect(body.prefixSpans, isNull);
         expect(body.suffixSpans, isNull);
         expect(find.text('You:'), findsOneWidget);
@@ -676,42 +718,41 @@ void main() {
   });
 
   group('MessageBubble inline reactions', () {
-    testWidgets('inline reactions render below text, timestamp lives in footer', (
-      tester,
-    ) async {
-      final reactions = [
-        MessageReaction(
-          id: 'r1',
-          messageId: 'm1',
-          emoji: '👍',
-          senderPeerId: 'peer-a',
-          timestamp: '2026-02-27T10:00:00Z',
-          createdAt: '2026-02-27T10:00:00Z',
-        ),
-      ];
-
-      await tester.pumpWidget(
-        wrap(
-          MessageBubble(
-            text: 'Hello',
-            time: '3:00 PM',
-            isIncoming: true,
-            reactions: reactions,
-            ownPeerId: 'my-peer',
+    testWidgets(
+      'inline reactions render below text, timestamp lives in footer',
+      (tester) async {
+        final reactions = [
+          MessageReaction(
+            id: 'r1',
+            messageId: 'm1',
+            emoji: '👍',
+            senderPeerId: 'peer-a',
+            timestamp: '2026-02-27T10:00:00Z',
+            createdAt: '2026-02-27T10:00:00Z',
           ),
-        ),
-      );
+        ];
 
-      // Reactions in a Wrap below text
-      expect(find.text('👍'), findsOneWidget);
-      expect(find.byType(Wrap), findsOneWidget);
-      expect(find.text('3:00 PM'), findsOneWidget);
-      expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
-    });
+        await tester.pumpWidget(
+          wrap(
+            MessageBubble(
+              text: 'Hello',
+              time: '3:00 PM',
+              isIncoming: true,
+              reactions: reactions,
+              ownPeerId: 'my-peer',
+            ),
+          ),
+        );
 
-    testWidgets('no reactions still keeps timestamp in footer', (
-      tester,
-    ) async {
+        // Reactions in a Wrap below text
+        expect(find.text('👍'), findsOneWidget);
+        expect(find.byType(Wrap), findsOneWidget);
+        expect(find.text('3:00 PM'), findsOneWidget);
+        expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
+      },
+    );
+
+    testWidgets('no reactions still keeps timestamp in footer', (tester) async {
       await tester.pumpWidget(
         wrap(
           const MessageBubble(

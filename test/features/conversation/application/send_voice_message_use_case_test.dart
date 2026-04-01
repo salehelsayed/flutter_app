@@ -24,6 +24,11 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
 
   @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async => 0;
+
+  @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
     String messageId,
   ) async {

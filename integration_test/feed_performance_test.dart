@@ -10,6 +10,7 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart'
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -158,6 +159,9 @@ Future<void> _pumpFeedScreen(
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: _FeedTestHarness(
         feedItems: items,
         initialExpandedCardId: expandedCardId,

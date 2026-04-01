@@ -458,6 +458,16 @@ void main() {
         final sentMessage = (await messageRepo.getMessagesForContact(
           contact.peerId,
         )).last;
+        await _pumpUntilAsync(tester, () async {
+          final currentAttachments = await mediaAttachmentRepo
+              .getAttachmentsForMessage(sentMessage.id);
+          final pending = await mediaAttachmentRepo
+              .getUploadPendingAttachments();
+          return currentAttachments.length == 1 &&
+              currentAttachments.single.id == optimisticAttachmentId &&
+              currentAttachments.single.downloadStatus == 'done' &&
+              pending.isEmpty;
+        });
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           sentMessage.id,
         );

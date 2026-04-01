@@ -34,6 +34,8 @@ class CollapsedModeCardBody extends StatelessWidget {
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
+  final bool isEditingMessage;
+  final VoidCallback? onCancelEdit;
   final String? activeQuoteText;
   final VoidCallback? onClearQuote;
   final VoidCallback? onAttach;
@@ -41,7 +43,8 @@ class CollapsedModeCardBody extends StatelessWidget {
   final ValueListenable<List<MessageReaction>>? Function(String messageId)?
   reactionListenableForMessage;
   final String? ownPeerId;
-  final void Function(String messageId)? onMessageLongPress;
+  final void Function(ThreadMessage message, BuildContext bubbleContext)?
+  onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
 
   const CollapsedModeCardBody({
@@ -60,6 +63,8 @@ class CollapsedModeCardBody extends StatelessWidget {
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onInputFocusChanged,
+    this.isEditingMessage = false,
+    this.onCancelEdit,
     this.activeQuoteText,
     this.onClearQuote,
     this.onAttach,
@@ -209,7 +214,7 @@ class CollapsedModeCardBody extends StatelessWidget {
       previewMsg = thread.latestMessage; // for label logic
     } else {
       previewMsg = thread.collapsedPreviewMessage;
-      displayText = _previewText(previewMsg);
+      displayText = _previewText(context, previewMsg);
     }
 
     final isSent = sessionReply != null || !previewMsg.isIncoming;
@@ -223,9 +228,15 @@ class CollapsedModeCardBody extends StatelessWidget {
     }
     final labelColor = isSent ? FeedColors.accentTeal : Colors.white;
     final previewTextDirection = detectTextDirection(displayText ?? '');
+    final showEditedIndicator =
+        sessionReply == null && previewMsg.isEdited && !previewMsg.isDeleted;
+    final l10n = AppLocalizations.of(context)!;
 
     // Find a downloadable thumbnail from media attachments
-    final hasMedia = sessionReply == null && previewMsg.media.isNotEmpty;
+    final hasMedia =
+        sessionReply == null &&
+        !previewMsg.isDeleted &&
+        previewMsg.media.isNotEmpty;
     final thumbAttachment = hasMedia
         ? _firstThumbnailAttachment(previewMsg.media)
         : null;
@@ -292,6 +303,17 @@ class CollapsedModeCardBody extends StatelessWidget {
               ),
             ),
           ),
+          if (showEditedIndicator) ...[
+            const SizedBox(width: 6),
+            Text(
+              l10n.conversation_edited_indicator,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w400,
+                color: Color.fromRGBO(255, 255, 255, 0.45),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -350,7 +372,10 @@ class CollapsedModeCardBody extends StatelessWidget {
     return null;
   }
 
-  String? _previewText(ThreadMessage msg) {
+  String? _previewText(BuildContext context, ThreadMessage msg) {
+    if (msg.isDeleted) {
+      return AppLocalizations.of(context)!.conversation_message_deleted;
+    }
     if (msg.text.isNotEmpty) return msg.text;
     if (msg.media.isNotEmpty) return mediaPreviewText(msg.media);
     return null;
@@ -371,6 +396,8 @@ class CollapsedModeCardBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (isEditingMessage && onCancelEdit != null)
+            _FeedEditModeBanner(onCancel: onCancelEdit!),
           if (activeQuoteText != null)
             QuotePreviewBar(text: activeQuoteText!, onDismiss: onClearQuote),
           InlineReplyInput(
@@ -404,6 +431,53 @@ class CollapsedModeCardBody extends StatelessWidget {
           fontSize: 13,
           color: Color.fromRGBO(255, 255, 255, 0.45),
         ),
+      ),
+    );
+  }
+}
+
+class _FeedEditModeBanner extends StatelessWidget {
+  final VoidCallback onCancel;
+
+  const _FeedEditModeBanner({required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      key: const ValueKey('feed-edit-mode-banner'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(29, 185, 84, 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color.fromRGBO(29, 185, 84, 0.22)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              l10n.conversation_editing_message,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color.fromRGBO(255, 255, 255, 0.86),
+              ),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('feed-cancel-edit-action'),
+            onPressed: onCancel,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color.fromRGBO(255, 255, 255, 0.72),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(l10n.conversation_cancel_edit),
+          ),
+        ],
       ),
     );
   }

@@ -35,6 +35,9 @@ import 'package:flutter_app/core/database/migrations/023_introduction_recipient_
 import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
+import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
+import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
@@ -92,6 +95,9 @@ void main() {
     await runContactIntroducedByPeerIdMigration(db);
     await runIntroductionAlreadyConnectedMigration(db);
     await runGroupQuotedMessageIdMigration(db);
+    await runMessagesEditedAtMigration(db);
+    await runMessagesDeletedStateMigration(db);
+    await runInboxStagingEntriesMigration(db);
   }
 
   group('Full DB migration chain', () {
@@ -120,6 +126,7 @@ void main() {
           'group_keys',
           'group_messages',
           'introductions',
+          'inbox_staging_entries',
         ]),
       );
 

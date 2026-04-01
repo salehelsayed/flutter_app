@@ -4,8 +4,7 @@ import 'swipe_action_buttons.dart';
 /// Swipeable wrapper for friend rows with slide-to-reveal action buttons.
 ///
 /// Left-swipe reveals action buttons behind the card content:
-/// - Active tab (not blocked): Block + Delete + Archive (218px action area)
-/// - Active tab (blocked): Unblock + Delete + Archive (218px action area)
+/// - Active tab: buttons for the callbacks that are actually provided
 /// - Archived tab: "Unarchive" pill button (180px action area)
 ///
 /// Uses a [ValueNotifier] to ensure only one row is open at a time.
@@ -48,11 +47,24 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
 
   // Active with block: 3 buttons (48×3) + gaps (8×2) + padding (8×2) = 176 → 180
   // Active without block: 2 buttons (48×2) + gap (8×1) + padding (8×2) = 128 → 130
+  // Delete-only: 1 button (48) + padding = ~80
   // Archived: Unarchive pill (~170) + padding
   bool get _hasBlockAction =>
       widget.onBlock != null || widget.onUnblock != null;
-  double get _actionWidth =>
-      widget.isArchived ? 180.0 : (_hasBlockAction ? 180.0 : 130.0);
+  bool get _hasDeleteAction => widget.onDelete != null;
+  bool get _hasArchiveAction => widget.onArchive != null;
+  int get _actionCount =>
+      (_hasBlockAction ? 1 : 0) +
+      (_hasDeleteAction ? 1 : 0) +
+      (_hasArchiveAction ? 1 : 0);
+  double get _actionWidth => widget.isArchived
+      ? 180.0
+      : switch (_actionCount) {
+          0 => 0.0,
+          1 => 82.0,
+          2 => 130.0,
+          _ => 180.0,
+        };
 
   static const _snapThreshold = 0.5; // 50% of action width
   static const _snapCurve = Cubic(0.25, 0.46, 0.45, 0.94);
@@ -66,6 +78,7 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
       duration: _snapDuration,
       value: 0,
     );
+    _slideController.addListener(_syncOpenRowNotifier);
     widget.openRowNotifier.addListener(_onOpenRowChanged);
   }
 
@@ -79,8 +92,26 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
   @override
   void dispose() {
     widget.openRowNotifier.removeListener(_onOpenRowChanged);
+    _slideController.removeListener(_syncOpenRowNotifier);
+    if (widget.openRowNotifier.value == widget.key) {
+      widget.openRowNotifier.value = null;
+    }
     _slideController.dispose();
     super.dispose();
+  }
+
+  void _syncOpenRowNotifier() {
+    final isOpen = _slideController.value > 0;
+    if (isOpen) {
+      if (widget.openRowNotifier.value != widget.key) {
+        widget.openRowNotifier.value = widget.key;
+      }
+      return;
+    }
+
+    if (widget.openRowNotifier.value == widget.key) {
+      widget.openRowNotifier.value = null;
+    }
   }
 
   void _onDragStart(DragStartDetails details) {
@@ -176,6 +207,10 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.isArchived && _actionCount == 0) {
+      return widget.child;
+    }
+
     return AnimatedBuilder(
       animation: _slideController,
       builder: (context, child) {
@@ -213,6 +248,28 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
   Widget _buildActionButtons(double t) {
     // Parallax: buttons slide in from right at 60% of the card's speed
     final buttonOffset = (1 - t) * _actionWidth * 0.6;
+    final buttons = <Widget>[];
+
+    void addButton(Widget button) {
+      if (buttons.isNotEmpty) {
+        buttons.add(const SizedBox(width: 8));
+      }
+      buttons.add(button);
+    }
+
+    if (_hasBlockAction) {
+      addButton(
+        widget.isBlocked
+            ? UnblockActionButton(onTap: _handleUnblock)
+            : BlockActionButton(onTap: _handleBlock),
+      );
+    }
+    if (_hasDeleteAction) {
+      addButton(DeleteActionButton(onTap: _handleDelete));
+    }
+    if (_hasArchiveAction) {
+      addButton(ArchiveActionButton(onTap: _handleArchive));
+    }
 
     return Transform.translate(
       offset: Offset(buttonOffset, 0),
@@ -229,19 +286,7 @@ class _SwipeableFriendRowState extends State<SwipeableFriendRow>
                 width: _actionWidth,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (_hasBlockAction) ...[
-                      if (widget.isBlocked)
-                        UnblockActionButton(onTap: _handleUnblock)
-                      else
-                        BlockActionButton(onTap: _handleBlock),
-                      const SizedBox(width: 8),
-                    ],
-                    DeleteActionButton(onTap: _handleDelete),
-                    const SizedBox(width: 8),
-                    ArchiveActionButton(onTap: _handleArchive),
-                    const SizedBox(width: 8),
-                  ],
+                  children: buttons,
                 ),
               ),
       ),

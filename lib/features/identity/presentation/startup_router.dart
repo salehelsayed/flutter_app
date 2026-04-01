@@ -37,7 +37,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/push/application/handle_initial_remote_message_use_case.dart';
-import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
+import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
@@ -648,30 +648,15 @@ class _StartupRouterState extends State<StartupRouter> {
   Future<void> _prepareNotificationRouteTarget(
     NotificationRouteTarget routeTarget,
   ) async {
-    final result = await prepareNotificationOpen(
+    await prepareNotificationRouteTarget(
       routeTarget: routeTarget,
       drainOfflineInbox: widget.p2pService.drainOfflineInbox,
-      drainGroupOfflineInboxForGroup: (groupId) async {
-        final groupRepo = widget.groupRepository;
-        final groupMsgRepo = widget.groupMessageRepository;
-        if (groupRepo == null || groupMsgRepo == null) {
-          throw StateError('group notification recovery is unavailable');
-        }
-
-        await drainGroupOfflineInboxForGroup(
-          bridge: widget.bridge,
-          groupRepo: groupRepo,
-          msgRepo: groupMsgRepo,
-          groupId: groupId,
-          mediaAttachmentRepo: widget.mediaAttachmentRepository,
-          reactionRepo: widget.reactionRepository,
-        );
-      },
+      bridge: widget.bridge,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+      reactionRepository: widget.reactionRepository,
     );
-
-    if (!result.ok) {
-      throw StateError(result.error ?? 'notification open preparation failed');
-    }
   }
 
   Route<void> _buildPendingShareRoute(ShareIntent intent) {

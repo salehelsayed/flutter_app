@@ -98,6 +98,76 @@ func TestRedisInboxBackend_RetrieveOnceAcrossClients(t *testing.T) {
 	}
 }
 
+func TestRedisInboxBackend_RetrievePendingRequiresExplicitAckAcrossClients(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	maxPerPeer := DefaultServerLimits().MaxInboxMessagesPerPeer
+	backendA := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
+	backendB := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
+
+	for i := 0; i < 4; i++ {
+		backendA.Store("peer-recipient", inboxMessage{
+			From:      "peer-sender",
+			Message:   fmt.Sprintf("msg-%d", i),
+			Timestamp: time.Now().UnixMilli(),
+		})
+	}
+
+	page1, hasMore1 := backendB.RetrievePending("peer-recipient", 2)
+	if len(page1) != 2 {
+		t.Fatalf("expected first staged page of 2 messages, got %d", len(page1))
+	}
+	if !hasMore1 {
+		t.Fatal("expected hasMore=true after first staged page")
+	}
+	if page1[0].ID == "" || page1[1].ID == "" {
+		t.Fatal("expected staged retrieval to expose stable relay entry IDs")
+	}
+
+	page1Again, hasMoreAgain := backendA.RetrievePending("peer-recipient", 2)
+	if len(page1Again) != 2 {
+		t.Fatalf("expected repeated staged page of 2 messages, got %d", len(page1Again))
+	}
+	if !hasMoreAgain {
+		t.Fatal("expected hasMore=true before ack on repeated staged page")
+	}
+	if page1Again[0].ID != page1[0].ID || page1Again[1].ID != page1[1].ID {
+		t.Fatal("expected staged retrieval to remain stable before ack")
+	}
+
+	acked, err := backendB.Ack("peer-recipient", []string{page1[0].ID, page1[1].ID})
+	if err != nil {
+		t.Fatalf("Ack() error: %v", err)
+	}
+	if acked != 2 {
+		t.Fatalf("expected acked=2, got %d", acked)
+	}
+
+	page2, hasMore2 := backendA.RetrievePending("peer-recipient", 10)
+	if len(page2) != 2 {
+		t.Fatalf("expected 2 remaining messages after ack, got %d", len(page2))
+	}
+	if hasMore2 {
+		t.Fatal("expected hasMore=false after retrieving final staged page")
+	}
+	if page2[0].Message != "msg-2" || page2[1].Message != "msg-3" {
+		t.Fatalf("unexpected remaining staged page: %q, %q", page2[0].Message, page2[1].Message)
+	}
+
+	acked, err = backendA.Ack("peer-recipient", []string{page2[0].ID, page2[1].ID})
+	if err != nil {
+		t.Fatalf("Ack() second page error: %v", err)
+	}
+	if acked != 2 {
+		t.Fatalf("expected second ack to remove 2 messages, got %d", acked)
+	}
+
+	final, hasMoreFinal := backendB.RetrievePending("peer-recipient", 10)
+	if len(final) != 0 || hasMoreFinal {
+		t.Fatalf("expected inbox to be empty after staged ack flow, got %d message(s), hasMore=%v", len(final), hasMoreFinal)
+	}
+}
+
 func TestRedisPushTokenBackend_SurvivesAcrossClients(t *testing.T) {
 	server := miniredis.RunT(t)
 

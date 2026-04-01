@@ -8,6 +8,24 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/intro_test_user.dart';
 
+Future<IntroductionModel> waitForIntroReceived(
+  IntroTestUser user,
+  String introId,
+) {
+  return user.introListener.introReceivedStream
+      .firstWhere((intro) => intro.id == introId)
+      .timeout(const Duration(seconds: 2));
+}
+
+Future<IntroductionModel> waitForIntroStatusChanged(
+  IntroTestUser user,
+  String introId,
+) {
+  return user.introListener.introStatusChangedStream
+      .firstWhere((intro) => intro.id == introId)
+      .timeout(const Duration(seconds: 2));
+}
+
 void main() {
   late FakeP2PNetwork network;
   late IntroTestUser userA;
@@ -511,6 +529,102 @@ void main() {
         messageCount: 0,
       );
       expect(after, isFalse);
+    });
+
+    test(
+        'live accept delivery converges for recipient-first order without manual helper injection',
+        () async {
+      final friendC = await userA.contactRepo.getContact('peer-C');
+      final intros = await userA.sendIntroductions(
+        recipientPeerId: 'peer-B',
+        friends: [friendC!],
+      );
+      final introId = intros.first.id;
+
+      await Future.wait([
+        waitForIntroReceived(userB, introId),
+        waitForIntroReceived(userC, introId),
+      ]);
+
+      final cSawBAccept = waitForIntroStatusChanged(userC, introId);
+      await userB.acceptIntro(introId);
+
+      final cAfterRemoteAccept = await cSawBAccept;
+      expect(cAfterRemoteAccept.recipientStatus, IntroductionStatus.accepted);
+      expect(cAfterRemoteAccept.introducedStatus, IntroductionStatus.pending);
+      expect(cAfterRemoteAccept.status, IntroductionOverallStatus.pending);
+      expect(
+        (await userC.loadPendingIntros()).map((intro) => intro.id),
+        contains(introId),
+      );
+
+      final bSawCAccept = waitForIntroStatusChanged(userB, introId);
+      await userC.acceptIntro(introId);
+      await bSawCAccept;
+
+      final bFinal = await userB.introRepo.getIntroduction(introId);
+      final cFinal = await userC.introRepo.getIntroduction(introId);
+
+      expect(bFinal, isNotNull);
+      expect(cFinal, isNotNull);
+      expect(bFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(bFinal.recipientStatus, IntroductionStatus.accepted);
+      expect(bFinal.introducedStatus, IntroductionStatus.accepted);
+      expect(cFinal.recipientStatus, IntroductionStatus.accepted);
+      expect(cFinal.introducedStatus, IntroductionStatus.accepted);
+      expect(await userB.loadPendingIntros(), isEmpty);
+      expect(await userC.loadPendingIntros(), isEmpty);
+      expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
+      expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
+    });
+
+    test(
+        'live accept delivery converges for introduced-first order without manual helper injection',
+        () async {
+      final friendC = await userA.contactRepo.getContact('peer-C');
+      final intros = await userA.sendIntroductions(
+        recipientPeerId: 'peer-B',
+        friends: [friendC!],
+      );
+      final introId = intros.first.id;
+
+      await Future.wait([
+        waitForIntroReceived(userB, introId),
+        waitForIntroReceived(userC, introId),
+      ]);
+
+      final bSawCAccept = waitForIntroStatusChanged(userB, introId);
+      await userC.acceptIntro(introId);
+
+      final bAfterRemoteAccept = await bSawCAccept;
+      expect(bAfterRemoteAccept.recipientStatus, IntroductionStatus.pending);
+      expect(bAfterRemoteAccept.introducedStatus, IntroductionStatus.accepted);
+      expect(bAfterRemoteAccept.status, IntroductionOverallStatus.pending);
+      expect(
+        (await userB.loadPendingIntros()).map((intro) => intro.id),
+        contains(introId),
+      );
+
+      final cSawBAccept = waitForIntroStatusChanged(userC, introId);
+      await userB.acceptIntro(introId);
+      await cSawBAccept;
+
+      final bFinal = await userB.introRepo.getIntroduction(introId);
+      final cFinal = await userC.introRepo.getIntroduction(introId);
+
+      expect(bFinal, isNotNull);
+      expect(cFinal, isNotNull);
+      expect(bFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(bFinal.recipientStatus, IntroductionStatus.accepted);
+      expect(bFinal.introducedStatus, IntroductionStatus.accepted);
+      expect(cFinal.recipientStatus, IntroductionStatus.accepted);
+      expect(cFinal.introducedStatus, IntroductionStatus.accepted);
+      expect(await userB.loadPendingIntros(), isEmpty);
+      expect(await userC.loadPendingIntros(), isEmpty);
+      expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
+      expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
     });
 
     test('intro between existing contacts gets alreadyConnected status',

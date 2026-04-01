@@ -1,10 +1,7 @@
-import 'dart:ui' show TextDirection;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
-import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -15,7 +12,7 @@ void main() {
     home: Scaffold(body: SingleChildScrollView(child: child)),
   );
 
-  bool _hasPositionedAncestor(Finder finder) {
+  bool hasPositionedAncestor(Finder finder) {
     final element = finder.evaluate().single;
     var hasPositioned = false;
     element.visitAncestorElements((ancestor) {
@@ -28,7 +25,7 @@ void main() {
     return hasPositioned;
   }
 
-  LinkableText _linkableTextWidget(WidgetTester tester, String text) {
+  LinkableText linkableTextWidget(WidgetTester tester, String text) {
     final finder = find.byWidgetPredicate(
       (widget) => widget is LinkableText && widget.text == text,
       description: 'LinkableText("$text")',
@@ -37,7 +34,7 @@ void main() {
     return tester.widget<LinkableText>(finder);
   }
 
-  ThreadMessage _msg(String id, {bool isUnread = true}) => ThreadMessage(
+  ThreadMessage msg(String id, {bool isUnread = true}) => ThreadMessage(
     id: id,
     text: 'Message $id',
     time: '3:00 PM',
@@ -51,7 +48,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           ScrollableMessagePreview(
-            messages: [_msg('1'), _msg('2')],
+            messages: [msg('1'), msg('2')],
             contactPeerId: 'peer1',
             contactUsername: 'Alice',
           ),
@@ -70,7 +67,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           ScrollableMessagePreview(
-            messages: [_msg('1'), _msg('2'), _msg('3'), _msg('4'), _msg('5')],
+            messages: [msg('1'), msg('2'), msg('3'), msg('4'), msg('5')],
             contactPeerId: 'peer1',
             contactUsername: 'Alice',
           ),
@@ -86,7 +83,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           ScrollableMessagePreview(
-            messages: [_msg('first'), _msg('second'), _msg('third')],
+            messages: [msg('first'), msg('second'), msg('third')],
             contactPeerId: 'peer1',
             contactUsername: 'Alice',
           ),
@@ -103,7 +100,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           ScrollableMessagePreview(
-            messages: [_msg('1')],
+            messages: [msg('1')],
             contactPeerId: 'peer1',
             contactUsername: 'Alice',
             hasEarlierHistory: true,
@@ -123,7 +120,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           ScrollableMessagePreview(
-            messages: [_msg('1')],
+            messages: [msg('1')],
             contactPeerId: 'peer1',
             contactUsername: 'Alice',
             hasEarlierHistory: false,
@@ -138,7 +135,7 @@ void main() {
       await tester.pumpWidget(
         wrap(
           ScrollableMessagePreview(
-            messages: [_msg('1'), _msg('2'), _msg('3'), _msg('4'), _msg('5')],
+            messages: [msg('1'), msg('2'), msg('3'), msg('4'), msg('5')],
             contactPeerId: 'peer1',
             contactUsername: 'Alice',
           ),
@@ -256,6 +253,41 @@ void main() {
       },
     );
 
+    testWidgets('shows unavailable when the quoted parent was deleted', (
+      tester,
+    ) async {
+      final deletedParent = ThreadMessage(
+        id: 'original',
+        text: '',
+        time: '2:00 PM',
+        timestamp: DateTime(2026, 2, 9, 14, 0),
+        isIncoming: true,
+        isDeleted: true,
+      );
+      final unreadReply = ThreadMessage(
+        id: 'reply',
+        text: 'Unread reply',
+        time: '3:00 PM',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        isUnread: true,
+        isIncoming: true,
+        quotedMessageId: 'original',
+      );
+
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [unreadReply],
+            quoteLookupMessages: [deletedParent, unreadReply],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+          ),
+        ),
+      );
+
+      expect(find.text('Message unavailable'), findsOneWidget);
+    });
+
     testWidgets(
       'uses per-message senderLabel when ThreadMessage has senderUsername',
       (tester) async {
@@ -323,11 +355,11 @@ void main() {
         );
         expect(senderLabel.textDirection, TextDirection.rtl);
         expect(
-          _linkableTextWidget(tester, text).textDirection,
+          linkableTextWidget(tester, text).textDirection,
           TextDirection.rtl,
         );
         expect(find.text('3:00 PM'), findsOneWidget);
-        expect(_hasPositionedAncestor(find.text('3:00 PM')), isFalse);
+        expect(hasPositionedAncestor(find.text('3:00 PM')), isFalse);
       },
     );
 
@@ -363,7 +395,7 @@ void main() {
           ),
         );
 
-        final body = _linkableTextWidget(tester, text);
+        final body = linkableTextWidget(tester, text);
         expect(body.prefixSpans, isNull);
         expect(body.suffixSpans, isNull);
         expect(
@@ -383,7 +415,7 @@ void main() {
         expect(find.text('You:'), findsOneWidget);
         expect(find.text('4:00 PM'), findsOneWidget);
         expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
-        expect(_hasPositionedAncestor(find.text('4:00 PM')), isFalse);
+        expect(hasPositionedAncestor(find.text('4:00 PM')), isFalse);
       },
     );
 
@@ -416,6 +448,41 @@ void main() {
       },
     );
 
+    testWidgets('long-press forwards the selected message and bubble context', (
+      tester,
+    ) async {
+      ThreadMessage? longPressedMessage;
+      BuildContext? bubbleContext;
+      final message = ThreadMessage(
+        id: 'forwarded-msg',
+        text: 'Forward this bubble',
+        time: '3:00 PM',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        isUnread: true,
+        isIncoming: true,
+      );
+
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [message],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+            onMessageLongPress: (selectedMessage, context) {
+              longPressedMessage = selectedMessage;
+              bubbleContext = context;
+            },
+          ),
+        ),
+      );
+
+      await tester.longPress(find.text('Forward this bubble'));
+
+      expect(longPressedMessage?.id, 'forwarded-msg');
+      expect(bubbleContext, isNotNull);
+      expect(bubbleContext!.findRenderObject(), isA<RenderBox>());
+    });
+
     testWidgets('shows unavailable for unknown quoted message', (tester) async {
       final messages = [
         ThreadMessage(
@@ -442,46 +509,72 @@ void main() {
       expect(find.text('Message unavailable'), findsOneWidget);
     });
 
-    testWidgets(
-      'renders pending delivery distinctly in preview surfaces',
-      (tester) async {
-        await tester.pumpWidget(
-          MaterialApp(
-            locale: const Locale('en'),
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
-            supportedLocales: AppLocalizations.supportedLocales,
-            home: Scaffold(
-              body: SingleChildScrollView(
-                child: ScrollableMessagePreview(
-                  messages: [
-                    ThreadMessage(
-                      id: 'pending-outgoing',
-                      text: 'Pending inbox fallback',
-                      time: '3:00 PM',
-                      timestamp: DateTime(2026, 2, 9, 15, 0),
-                      isUnread: false,
-                      isIncoming: false,
-                      status: 'pending',
-                    ),
-                  ],
-                  contactPeerId: 'peer1',
-                  contactUsername: 'Alice',
-                ),
+    testWidgets('long-press forwards message and bubble context', (
+      tester,
+    ) async {
+      ThreadMessage? longPressedMessage;
+      BuildContext? bubbleContext;
+
+      await tester.pumpWidget(
+        wrap(
+          ScrollableMessagePreview(
+            messages: [msg('1')],
+            contactPeerId: 'peer1',
+            contactUsername: 'Alice',
+            onMessageLongPress: (message, context) {
+              longPressedMessage = message;
+              bubbleContext = context;
+            },
+          ),
+        ),
+      );
+
+      await tester.longPress(find.text('Message 1'));
+
+      expect(longPressedMessage?.id, '1');
+      expect(bubbleContext, isNotNull);
+      expect(bubbleContext!.findRenderObject(), isA<RenderBox>());
+    });
+
+    testWidgets('renders pending delivery distinctly in preview surfaces', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: ScrollableMessagePreview(
+                messages: [
+                  ThreadMessage(
+                    id: 'pending-outgoing',
+                    text: 'Pending inbox fallback',
+                    time: '3:00 PM',
+                    timestamp: DateTime(2026, 2, 9, 15, 0),
+                    isUnread: false,
+                    isIncoming: false,
+                    status: 'pending',
+                  ),
+                ],
+                contactPeerId: 'peer1',
+                contactUsername: 'Alice',
               ),
             ),
           ),
-        );
+        ),
+      );
 
-        final iconFinder = find.byIcon(Icons.schedule_rounded);
-        expect(iconFinder, findsOneWidget);
+      final iconFinder = find.byIcon(Icons.schedule_rounded);
+      expect(iconFinder, findsOneWidget);
 
-        final icon = tester.widget<Icon>(iconFinder);
-        expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
-        expect(
-          find.bySemanticsLabel('Message status: pending delivery via inbox'),
-          findsOneWidget,
-        );
-      },
-    );
+      final icon = tester.widget<Icon>(iconFinder);
+      expect(icon.color, const Color.fromRGBO(255, 200, 100, 0.50));
+      expect(
+        find.bySemanticsLabel('Message status: pending delivery via inbox'),
+        findsOneWidget,
+      );
+    });
   });
 }

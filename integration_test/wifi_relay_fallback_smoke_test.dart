@@ -23,6 +23,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
@@ -67,27 +68,43 @@ class _FakeSecureKeyStore implements SecureKeyStore {
 // Temp directory + signal file paths (shared with orchestrator)
 // ---------------------------------------------------------------------------
 
-/// Read dir: orchestrator pushes signals here (readable by app on Android).
-const _readDir = String.fromEnvironment('E2E_TEMP_DIR', defaultValue: '/tmp');
+const _configuredTempDir = String.fromEnvironment(
+  'E2E_TEMP_DIR',
+  defaultValue: '',
+);
+const _configuredWriteDir = String.fromEnvironment(
+  'E2E_WRITE_DIR',
+  defaultValue: '',
+);
+const _configuredCliPeerFixture = String.fromEnvironment(
+  'CLI_PEER_FIXTURE',
+  defaultValue: '',
+);
 
-/// Write dir: app writes signals here (app-private cache on Android).
-const _writeDir = String.fromEnvironment('E2E_WRITE_DIR', defaultValue: '/tmp');
+String _tempDirPath() => _configuredTempDir.isNotEmpty
+    ? _configuredTempDir
+    : Directory.systemTemp.path;
+
+String _writeDirPath() => _configuredWriteDir.isNotEmpty
+    ? _configuredWriteDir
+    : Directory.systemTemp.path;
+
+String _cliPeerFixturePath() => _configuredCliPeerFixture.isNotEmpty
+    ? _configuredCliPeerFixture
+    : '${Directory.systemTemp.path}/cli_peer_fixture.json';
 
 /// Path for reading orchestrator->Flutter signals.
-String _readSignalPath(String name) => '$_readDir/$name';
+String _readSignalPath(String name) => '${_tempDirPath()}/$name';
 
 /// Path for writing Flutter->orchestrator signals.
-String _writeSignalPath(String name) => '$_writeDir/$name';
+String _writeSignalPath(String name) => '${_writeDirPath()}/$name';
 
 // ---------------------------------------------------------------------------
 // CLI peer fixture loader
 // ---------------------------------------------------------------------------
 
 Map<String, dynamic>? _loadCliPeerFixture() {
-  const fixturePath = String.fromEnvironment(
-    'CLI_PEER_FIXTURE',
-    defaultValue: '/tmp/cli_peer_fixture.json',
-  );
+  final fixturePath = _cliPeerFixturePath();
 
   final file = File(fixturePath);
   if (!file.existsSync()) return null;
@@ -105,7 +122,7 @@ void _writeFlutterPeerFixture({
   String? mlKemPublicKey,
 }) {
   final fixturePath = _writeSignalPath('flutter_peer_fixture.json');
-  Directory(_writeDir).createSync(recursive: true);
+  Directory(_writeDirPath()).createSync(recursive: true);
   final data = {
     'peerId': peerId,
     'publicKey': publicKey,
@@ -120,6 +137,25 @@ void _writeFlutterPeerFixture({
 // ---------------------------------------------------------------------------
 
 var _testCounter = 0;
+
+Future<void> _deleteTestDatabase(String dbName) async {
+  try {
+    final dbPath = await sqlcipher.getDatabasesPath();
+    final fullPath = '$dbPath/$dbName';
+    for (final path in [
+      fullPath,
+      '$fullPath-wal',
+      '$fullPath-shm',
+      '$fullPath.encrypted',
+    ]) {
+      final file = File(path);
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    }
+    await sqlcipher.deleteDatabase(fullPath);
+  } catch (_) {}
+}
 
 Future<_SmokeTestStack> _setupStack() async {
   _testCounter++;
@@ -143,6 +179,7 @@ Future<_SmokeTestStack> _setupStack() async {
 
   final secureKeyStore = _FakeSecureKeyStore();
   final dbName = 'smoke_test_$_testCounter.db';
+  await _deleteTestDatabase(dbName);
 
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
@@ -214,6 +251,7 @@ Future<_SmokeTestStack> _setupStack() async {
         dbCountTotalUnreadExcludingArchived(db),
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
+    dbDeleteMessage: (id) => dbDeleteMessage(db, id),
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
         dbLoadMessagesPage(
           db,
@@ -288,15 +326,13 @@ Future<_SmokeTestStack> _setupStack() async {
       print('[SMOKE] ML-KEM keys generated');
     }
 
-    // Write Flutter peer fixture for orchestrator.
-    _writeFlutterPeerFixture(
-      peerId: ownPeerId,
-      publicKey: identity['publicKey'] as String,
-      mlKemPublicKey: ownMlKemPublicKey,
-    );
-
     // Add CLI peer as contact (required for handleIncomingChatMessage).
     if (cliPeerId != null) {
+      _writeFlutterPeerFixture(
+        peerId: ownPeerId,
+        publicKey: identity['publicKey'] as String,
+        mlKemPublicKey: ownMlKemPublicKey,
+      );
       await contactRepo.addContact(
         ContactModel(
           peerId: cliPeerId,
@@ -332,6 +368,7 @@ Future<_SmokeTestStack> _setupStack() async {
 
     return _SmokeTestStack(
       db: db,
+      dbName: dbName,
       bridge: bridge,
       p2pService: p2pService,
       contactRepo: contactRepo,
@@ -355,6 +392,7 @@ Future<_SmokeTestStack> _setupStack() async {
 
 class _SmokeTestStack {
   final dynamic db;
+  final String dbName;
   final GoBridgeClient bridge;
   final P2PServiceImpl p2pService;
   final ContactRepositoryImpl contactRepo;
@@ -370,6 +408,7 @@ class _SmokeTestStack {
 
   _SmokeTestStack({
     required this.db,
+    required this.dbName,
     required this.bridge,
     required this.p2pService,
     required this.contactRepo,
@@ -390,6 +429,7 @@ class _SmokeTestStack {
     p2pService.dispose();
     bridge.dispose();
     await db.close();
+    await _deleteTestDatabase(dbName);
     try {
       File(_writeSignalPath('flutter_peer_fixture.json')).deleteSync();
     } catch (_) {}

@@ -35,7 +35,8 @@ class ScrollableMessagePreview extends StatefulWidget {
   final ValueListenable<List<MessageReaction>>? Function(String messageId)?
   reactionListenableForMessage;
   final String? ownPeerId;
-  final void Function(String messageId)? onMessageLongPress;
+  final void Function(ThreadMessage message, BuildContext bubbleContext)?
+  onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
 
   const ScrollableMessagePreview({
@@ -234,12 +235,13 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
     ThreadMessage msg,
     Map<String, ThreadMessage> quoteLookupById,
   ) {
-    if (msg.quotedMessageId == null) return (null, false);
+    if (msg.isDeleted || msg.quotedMessageId == null) return (null, false);
 
     final quoted = quoteLookupById[msg.quotedMessageId];
 
     if (quoted == null) return (null, true); // unavailable
 
+    if (quoted.isDeleted) return (null, true);
     if (quoted.text.isNotEmpty) return (quoted.text, false);
     if (quoted.media.isNotEmpty) return (mediaPreviewText(quoted.media), false);
     return (null, true);
@@ -272,32 +274,36 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
       );
 
       Widget buildBubble(List<MessageReaction> reactions) {
-        return MessageBubble(
-          text: msg.text,
-          time: msg.time,
-          isUnread: msg.isUnread,
-          isIncoming: msg.isIncoming,
-          status: msg.status,
-          senderPeerId: msg.isIncoming
-              ? (msg.senderPeerId ?? widget.contactPeerId)
-              : null,
-          senderLabel: msg.isIncoming
-              ? (msg.senderUsername ?? widget.contactUsername)
-              : AppLocalizations.of(context)!.feed_you,
-          media: msg.media,
-          onMediaTap: msg.media.isNotEmpty
-              ? (index) => _openMediaViewer(context, msg.media, index)
-              : null,
-          quotedText: quotedText,
-          isQuoteUnavailable: isQuoteUnavailable,
-          reactions: reactions,
-          ownPeerId: widget.ownPeerId,
-          onLongPress: widget.onMessageLongPress != null
-              ? () => widget.onMessageLongPress!(msg.id)
-              : null,
-          onReactionTap: widget.onReactionTap != null
-              ? (emoji) => widget.onReactionTap!(msg.id, emoji)
-              : null,
+        return Builder(
+          builder: (bubbleContext) => MessageBubble(
+            text: msg.text,
+            time: msg.time,
+            isUnread: msg.isUnread,
+            isIncoming: msg.isIncoming,
+            isDeleted: msg.isDeleted,
+            status: msg.status,
+            isEdited: msg.isEdited,
+            senderPeerId: msg.isIncoming
+                ? (msg.senderPeerId ?? widget.contactPeerId)
+                : null,
+            senderLabel: msg.isIncoming
+                ? (msg.senderUsername ?? widget.contactUsername)
+                : AppLocalizations.of(context)!.feed_you,
+            media: msg.media,
+            onMediaTap: msg.media.isNotEmpty
+                ? (index) => _openMediaViewer(context, msg.media, index)
+                : null,
+            quotedText: quotedText,
+            isQuoteUnavailable: isQuoteUnavailable,
+            reactions: msg.isDeleted ? const [] : reactions,
+            ownPeerId: widget.ownPeerId,
+            onLongPress: !msg.isDeleted && widget.onMessageLongPress != null
+                ? () => widget.onMessageLongPress!(msg, bubbleContext)
+                : null,
+            onReactionTap: !msg.isDeleted && widget.onReactionTap != null
+                ? (emoji) => widget.onReactionTap!(msg.id, emoji)
+                : null,
+          ),
         );
       }
 
@@ -308,7 +314,7 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
             )
           : buildBubble(widget.reactions[msg.id] ?? const []);
 
-      if (msg.isIncoming && widget.onQuoteReply != null) {
+      if (!msg.isDeleted && msg.isIncoming && widget.onQuoteReply != null) {
         bubble = SwipeToQuoteBubble(
           onQuoteTriggered: () => widget.onQuoteReply!(msg.id),
           child: bubble,

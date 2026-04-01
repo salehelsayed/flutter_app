@@ -29,6 +29,9 @@ void main() {
     List<ContactModel>? availableFriends,
     Set<String> selectedPeerIds = const {},
     String searchQuery = '',
+    bool isSending = false,
+    int sendCompletedCount = 0,
+    int sendTotalCount = 0,
     ValueChanged<String>? onSearchChanged,
     ValueChanged<String>? onToggleFriend,
     VoidCallback? onSend,
@@ -46,6 +49,9 @@ void main() {
             availableFriends: availableFriends ?? friends,
             selectedPeerIds: selectedPeerIds,
             searchQuery: searchQuery,
+            isSending: isSending,
+            sendCompletedCount: sendCompletedCount,
+            sendTotalCount: sendTotalCount,
             onSearchChanged: onSearchChanged ?? (_) {},
             onToggleFriend: onToggleFriend ?? (_) {},
             onSend: onSend ?? () {},
@@ -121,6 +127,36 @@ void main() {
     await tester.pumpWidget(buildSubject(selectedPeerIds: {'peer-A'}));
     final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));
     expect(button.onPressed, isNotNull);
+  });
+
+  testWidgets('sending progress is shown while send is in flight', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildSubject(
+        selectedPeerIds: {'peer-A', 'peer-B'},
+        isSending: true,
+        sendCompletedCount: 1,
+        sendTotalCount: 2,
+      ),
+    );
+
+    expect(find.text('Sending 1 of 2'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets('button stays disabled while sending', (tester) async {
+    await tester.pumpWidget(
+      buildSubject(
+        selectedPeerIds: {'peer-A'},
+        isSending: true,
+        sendCompletedCount: 0,
+        sendTotalCount: 1,
+      ),
+    );
+
+    final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));
+    expect(button.onPressed, isNull);
   });
 
   testWidgets('tapping friend row triggers onToggleFriend', (tester) async {

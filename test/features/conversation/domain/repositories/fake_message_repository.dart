@@ -46,7 +46,7 @@ class FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async {
-    return _messages.where((m) => m.contactPeerId == contactPeerId).toList()
+    return _visibleMessagesForContact(contactPeerId).toList()
       ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
   }
 
@@ -54,9 +54,8 @@ class FakeMessageRepository implements MessageRepository {
   Future<ConversationMessage?> getLatestMessageForContact(
     String contactPeerId,
   ) async {
-    final msgs =
-        _messages.where((m) => m.contactPeerId == contactPeerId).toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final msgs = _visibleMessagesForContact(contactPeerId).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return msgs.isNotEmpty ? msgs.first : null;
   }
 
@@ -84,7 +83,7 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async {
-    return _messages.where((m) => m.contactPeerId == contactPeerId).length;
+    return _visibleMessagesForContact(contactPeerId).length;
   }
 
   @override
@@ -100,6 +99,7 @@ class FakeMessageRepository implements MessageRepository {
         .where(
           (m) =>
               m.contactPeerId == contactPeerId &&
+              !m.isHidden &&
               m.isIncoming &&
               m.readAt == null,
         )
@@ -108,7 +108,9 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> getTotalUnreadCount() async {
-    return _messages.where((m) => m.isIncoming && m.readAt == null).length;
+    return _messages
+        .where((m) => !m.isHidden && m.isIncoming && m.readAt == null)
+        .length;
   }
 
   @override
@@ -146,9 +148,7 @@ class FakeMessageRepository implements MessageRepository {
     int limit = 50,
     String? beforeTimestamp,
   }) async {
-    var msgs = _messages
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList();
+    var msgs = _visibleMessagesForContact(contactPeerId).toList();
     if (beforeTimestamp != null) {
       msgs = msgs
           .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
@@ -211,8 +211,9 @@ class FakeMessageRepository implements MessageRepository {
   Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
     required Duration olderThan,
   }) async {
-    if (stuckSendingOutgoingOverride != null)
+    if (stuckSendingOutgoingOverride != null) {
       return stuckSendingOutgoingOverride!;
+    }
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     return _messages
         .where(
@@ -269,5 +270,13 @@ class FakeMessageRepository implements MessageRepository {
     wireEnvelopeUpdates.add((id: id, envelope: envelope));
     lastWireEnvelopeValue = envelope;
     onUpdateWireEnvelope?.call();
+  }
+
+  Iterable<ConversationMessage> _visibleMessagesForContact(
+    String contactPeerId,
+  ) {
+    return _messages.where(
+      (message) => message.contactPeerId == contactPeerId && !message.isHidden,
+    );
   }
 }

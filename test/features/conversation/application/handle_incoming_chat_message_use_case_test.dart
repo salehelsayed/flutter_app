@@ -9,6 +9,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -94,13 +95,21 @@ class FakeContactRepository implements ContactRepository {
 // -- Fake Message Repository --
 class FakeMessageRepository implements MessageRepository {
   final List<ConversationMessage> saved = [];
-  final Set<String> existingIds;
+  final Set<String> _existingIds;
+  final Map<String, ConversationMessage> _existingMessages;
 
-  FakeMessageRepository({this.existingIds = const {}});
+  FakeMessageRepository({
+    Set<String> existingIds = const {},
+    Map<String, ConversationMessage> existingMessages = const {},
+  }) : _existingIds = existingIds.toSet(),
+       _existingMessages = Map<String, ConversationMessage>.from(
+         existingMessages,
+       );
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     saved.add(message);
+    _existingMessages[message.id] = message;
   }
 
   @override
@@ -121,10 +130,24 @@ class FakeMessageRepository implements MessageRepository {
   Future<void> updateMessageStatus(String id, String status) async {}
 
   @override
-  Future<ConversationMessage?> getMessage(String id) async => null;
+  Future<ConversationMessage?> getMessage(String id) async =>
+      _existingMessages[id] ??
+      (_existingIds.contains(id)
+          ? ConversationMessage(
+              id: id,
+              contactPeerId: 'existing-contact',
+              senderPeerId: 'existing-sender',
+              text: 'existing text',
+              timestamp: '2026-02-09T15:30:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T15:30:01.000Z',
+            )
+          : null);
 
   @override
-  Future<bool> messageExists(String id) async => existingIds.contains(id);
+  Future<bool> messageExists(String id) async =>
+      _existingIds.contains(id) || _existingMessages.containsKey(id);
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async => 0;
@@ -145,6 +168,9 @@ class FakeMessageRepository implements MessageRepository {
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 
   @override
+  Future<int> deleteMessage(String id) async => 0;
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -160,7 +186,9 @@ class FakeMessageRepository implements MessageRepository {
   }) async => [];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
@@ -213,6 +241,11 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
@@ -332,7 +365,13 @@ void main() {
     );
   }
 
-  String buildValidChatJson({String? id, String? text}) {
+  String buildValidChatJson({
+    String? id,
+    String? text,
+    String? action,
+    String? editedAt,
+    String? quotedMessageId,
+  }) {
     return jsonEncode({
       'type': 'chat_message',
       'version': '1',
@@ -342,6 +381,9 @@ void main() {
         'senderPeerId': senderPeerId,
         'senderUsername': 'Alice',
         'timestamp': '2026-02-09T15:30:00.000Z',
+        if (action != null) 'action': action,
+        if (editedAt != null) 'editedAt': editedAt,
+        if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       },
     });
   }
@@ -427,9 +469,72 @@ void main() {
       expect(messageRepo.saved, isEmpty);
     });
 
+    test(
+      'returns editMissingOriginal when edit has no stored original',
+      () async {
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            action: MessagePayload.actionEdit,
+            editedAt: '2026-02-09T16:00:00.000Z',
+          ),
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.editMissingOriginal);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+
+    test('applies same-id edit payloads to existing messages', () async {
+      const original = ConversationMessage(
+        id: 'msg-uuid-001',
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: 'Original text',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-09T15:30:01.000Z',
+        quotedMessageId: 'quoted-001',
+      );
+      messageRepo = FakeMessageRepository(
+        existingMessages: {'msg-uuid-001': original},
+      );
+      final message = buildP2PMessage(
+        buildValidChatJson(
+          text: 'Edited text',
+          action: MessagePayload.actionEdit,
+          editedAt: '2026-02-09T16:00:00.000Z',
+          quotedMessageId: 'quoted-001',
+        ),
+      );
+
+      final (result, msg, _) = await handleIncomingChatMessage(
+        message: message,
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+      );
+
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(msg, isNotNull);
+      expect(msg!.id, original.id);
+      expect(msg.text, 'Edited text');
+      expect(msg.timestamp, original.timestamp);
+      expect(msg.createdAt, original.createdAt);
+      expect(msg.quotedMessageId, original.quotedMessageId);
+      expect(msg.editedAt, '2026-02-09T16:00:00.000Z');
+      expect(messageRepo.saved.single.text, 'Edited text');
+    });
+
     group('v2 encrypted envelopes', () {
       test(
-        'returns notChatMessage when v2 envelope lacks bridge/key',
+        'returns missingMlKemSecret when v2 envelope lacks bridge/key',
         () async {
           final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
 
@@ -439,7 +544,7 @@ void main() {
             contactRepo: contactRepo,
           );
 
-          expect(result, HandleChatMessageResult.notChatMessage);
+          expect(result, HandleChatMessageResult.missingMlKemSecret);
           expect(msg, isNull);
           expect(messageRepo.saved, isEmpty);
         },
@@ -472,7 +577,9 @@ void main() {
           expect(messageRepo.saved, isEmpty);
           expect(bridge.decryptCallCount, 1);
           expect(
-            lines.any((line) => line.contains('CHAT_MSG_RECEIVE_DECRYPT_FAILED')),
+            lines.any(
+              (line) => line.contains('CHAT_MSG_RECEIVE_DECRYPT_FAILED'),
+            ),
             isTrue,
           );
           expect(

@@ -1,11 +1,10 @@
-import 'dart:ui' show TextDirection;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
 void main() {
@@ -18,6 +17,8 @@ void main() {
     String? transport,
     String? quotedText,
     bool isQuoteUnavailable = false,
+    bool isEdited = false,
+    bool isDeleted = false,
     List<MediaAttachment> media = const [],
     List<MessageReaction> reactions = const [],
     String? ownPeerId,
@@ -28,6 +29,9 @@ void main() {
     String? failedMediaActionKeySuffix,
   }) {
     return MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: SingleChildScrollView(
           child: LetterCard(
@@ -40,6 +44,8 @@ void main() {
             transport: transport,
             quotedText: quotedText,
             isQuoteUnavailable: isQuoteUnavailable,
+            isEdited: isEdited,
+            isDeleted: isDeleted,
             media: media,
             reactions: reactions,
             ownPeerId: ownPeerId,
@@ -69,6 +75,33 @@ void main() {
       testWidgets('shows time', (tester) async {
         await tester.pumpWidget(buildTestWidget(isIncoming: true));
         expect(find.text('3:30 PM'), findsOneWidget);
+      });
+
+      testWidgets('shows edited indicator when the row is edited', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildTestWidget(isIncoming: true, isEdited: true),
+        );
+
+        expect(find.text('(edited)'), findsOneWidget);
+      });
+
+      testWidgets('shows deleted placeholder styling when the row is deleted', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: true,
+            isDeleted: true,
+            text: 'This message was deleted',
+          ),
+        );
+
+        final placeholder = tester.widget<Text>(
+          find.text('This message was deleted'),
+        );
+        expect(placeholder.style?.fontStyle, FontStyle.italic);
       });
 
       testWidgets('does not show delivery note', (tester) async {
@@ -625,10 +658,6 @@ void main() {
 
         // The time's Row should NOT contain a UserAvatar descendant
         // (that would mean it's in the header row)
-        final avatarInTimeRow = find.descendant(
-          of: find.byWidget(timeRow!),
-          matching: find.byType(SizedBox).first,
-        );
         // Check there's no 32x32 avatar in the same row
         bool hasAvatar = false;
         timeRowElement!.visitChildElements((child) {

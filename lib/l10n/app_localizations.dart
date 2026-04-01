@@ -796,6 +796,90 @@ abstract class AppLocalizations {
   /// **'Reply...'**
   String get conversation_reply;
 
+  /// No description provided for @conversation_context_reply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get conversation_context_reply;
+
+  /// No description provided for @conversation_context_edit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit'**
+  String get conversation_context_edit;
+
+  /// No description provided for @conversation_context_copy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get conversation_context_copy;
+
+  /// No description provided for @conversation_context_delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get conversation_context_delete;
+
+  /// No description provided for @conversation_context_copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Message copied to clipboard'**
+  String get conversation_context_copied;
+
+  /// No description provided for @conversation_editing_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Editing message'**
+  String get conversation_editing_message;
+
+  /// No description provided for @conversation_cancel_edit.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get conversation_cancel_edit;
+
+  /// No description provided for @conversation_edited_indicator.
+  ///
+  /// In en, this message translates to:
+  /// **'(edited)'**
+  String get conversation_edited_indicator;
+
+  /// No description provided for @conversation_delete_message_prompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Who would you like to delete this message for?'**
+  String get conversation_delete_message_prompt;
+
+  /// No description provided for @conversation_delete_for_me.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for Me'**
+  String get conversation_delete_for_me;
+
+  /// No description provided for @conversation_delete_for_everyone.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete for Everyone'**
+  String get conversation_delete_for_everyone;
+
+  /// No description provided for @conversation_delete_cancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get conversation_delete_cancel;
+
+  /// No description provided for @conversation_message_deleted.
+  ///
+  /// In en, this message translates to:
+  /// **'This message was deleted'**
+  String get conversation_message_deleted;
+
+  /// No description provided for @conversation_delete_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t finish deleting this message.'**
+  String get conversation_delete_failed;
+
   /// No description provided for @conversation_continue.
   ///
   /// In en, this message translates to:
@@ -885,6 +969,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Introduce'**
   String get picker_introduce;
+
+  /// No description provided for @picker_sending_progress.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending {completed} of {total}'**
+  String picker_sending_progress(int completed, int total);
 
   /// No description provided for @picker_search_contacts.
   ///

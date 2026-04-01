@@ -43,6 +43,8 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
   List<ContactModel> _availableFriends = [];
   bool _isLoading = true;
   bool _isSending = false;
+  int _sendCompletedCount = 0;
+  int _sendTotalCount = 0;
 
   @override
   void initState() {
@@ -97,43 +99,80 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
   Future<void> _onSend() async {
     if (_isSending || _selectedPeerIds.isEmpty) return;
 
-    setState(() => _isSending = true);
+    setState(() {
+      _isSending = true;
+      _sendCompletedCount = 0;
+      _sendTotalCount = _selectedPeerIds.length;
+    });
 
     final identity = await widget.identityRepo.loadIdentity();
     if (identity == null) {
-      if (mounted) setState(() => _isSending = false);
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendCompletedCount = 0;
+          _sendTotalCount = 0;
+        });
+      }
       return;
     }
 
     final friendsToIntroduce = _selectedPeerIds
-        .map((id) =>
-            _availableFriends.where((c) => c.peerId == id).firstOrNull)
+        .map((id) => _availableFriends.where((c) => c.peerId == id).firstOrNull)
         .whereType<ContactModel>()
         .toList();
 
     if (friendsToIntroduce.isEmpty) {
-      if (mounted) setState(() => _isSending = false);
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendCompletedCount = 0;
+          _sendTotalCount = 0;
+        });
+      }
       return;
     }
 
-    // Use the send_introduction_use_case which saves records locally
-    // AND sends P2P messages to both recipient and introduced friends
-    final introductions = await sendIntroductions(
-      contactRepo: widget.contactRepo,
-      introRepo: widget.introRepo,
-      p2pService: widget.p2pService,
-      bridge: widget.bridge,
-      introducerPeerId: identity.peerId,
-      introducerUsername: identity.username ?? 'Unknown',
-      recipientPeerId: widget.recipient.peerId,
-      recipientUsername: widget.recipient.username,
-      recipientMlKemPublicKey: widget.recipient.mlKemPublicKey,
-      friendsToIntroduce: friendsToIntroduce,
-    );
+    try {
+      // Use the send_introduction_use_case which saves records locally
+      // AND sends P2P messages to both recipient and introduced friends.
+      final introductions = await sendIntroductions(
+        contactRepo: widget.contactRepo,
+        introRepo: widget.introRepo,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        introducerPeerId: identity.peerId,
+        introducerUsername: identity.username ?? 'Unknown',
+        recipientPeerId: widget.recipient.peerId,
+        recipientUsername: widget.recipient.username,
+        recipientMlKemPublicKey: widget.recipient.mlKemPublicKey,
+        friendsToIntroduce: friendsToIntroduce,
+        onProgress: (completed, total) {
+          if (!mounted) return;
+          setState(() {
+            _sendCompletedCount = completed;
+            _sendTotalCount = total;
+          });
+        },
+      );
 
-    if (mounted) {
-      setState(() => _isSending = false);
-      widget.onIntroductionsSent(introductions);
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendCompletedCount = 0;
+          _sendTotalCount = 0;
+        });
+        widget.onIntroductionsSent(introductions);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isSending = false;
+          _sendCompletedCount = 0;
+          _sendTotalCount = 0;
+        });
+      }
+      rethrow;
     }
   }
 
@@ -160,6 +199,9 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
       availableFriends: _availableFriends,
       selectedPeerIds: _selectedPeerIds,
       searchQuery: _searchQuery,
+      isSending: _isSending,
+      sendCompletedCount: _sendCompletedCount,
+      sendTotalCount: _sendTotalCount,
       onSearchChanged: (query) => setState(() => _searchQuery = query),
       onToggleFriend: _onToggleFriend,
       onSend: _onSend,

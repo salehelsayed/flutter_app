@@ -17,6 +17,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
@@ -46,6 +47,8 @@ import 'package:flutter_app/core/database/migrations/023_introduction_recipient_
 import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
+import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
@@ -77,17 +80,36 @@ class _FakeSecureKeyStore implements SecureKeyStore {
 // Temp directory + signal file paths (shared with orchestrator)
 // ---------------------------------------------------------------------------
 
-/// Read dir: orchestrator pushes signals here (readable by app on Android).
-const _readDir = String.fromEnvironment('E2E_TEMP_DIR', defaultValue: '/tmp');
+const _configuredTempDir = String.fromEnvironment(
+  'E2E_TEMP_DIR',
+  defaultValue: '',
+);
+const _configuredWriteDir = String.fromEnvironment(
+  'E2E_WRITE_DIR',
+  defaultValue: '',
+);
+const _configuredCliPeerFixture = String.fromEnvironment(
+  'CLI_PEER_FIXTURE',
+  defaultValue: '',
+);
 
-/// Write dir: app writes signals here (app-private cache on Android).
-const _writeDir = String.fromEnvironment('E2E_WRITE_DIR', defaultValue: '/tmp');
+String _tempDirPath() => _configuredTempDir.isNotEmpty
+    ? _configuredTempDir
+    : Directory.systemTemp.path;
+
+String _writeDirPath() => _configuredWriteDir.isNotEmpty
+    ? _configuredWriteDir
+    : Directory.systemTemp.path;
+
+String _cliPeerFixturePath() => _configuredCliPeerFixture.isNotEmpty
+    ? _configuredCliPeerFixture
+    : '${Directory.systemTemp.path}/cli_peer_fixture.json';
 
 /// Path for reading orchestrator→Flutter signals.
-String _readSignalPath(String name) => '$_readDir/$name';
+String _readSignalPath(String name) => '${_tempDirPath()}/$name';
 
 /// Path for writing Flutter→orchestrator signals.
-String _writeSignalPath(String name) => '$_writeDir/$name';
+String _writeSignalPath(String name) => '${_writeDirPath()}/$name';
 
 const _phase4Only = bool.fromEnvironment(
   'E2E_PHASE4_ONLY',
@@ -99,10 +121,7 @@ const _phase4Only = bool.fromEnvironment(
 // ---------------------------------------------------------------------------
 
 Map<String, dynamic>? _loadCliPeerFixture() {
-  const fixturePath = String.fromEnvironment(
-    'CLI_PEER_FIXTURE',
-    defaultValue: '/tmp/cli_peer_fixture.json',
-  );
+  final fixturePath = _cliPeerFixturePath();
 
   final file = File(fixturePath);
   if (!file.existsSync()) return null;
@@ -121,7 +140,7 @@ void _writeFlutterPeerFixture({
 }) {
   final fixturePath = _writeSignalPath('flutter_peer_fixture.json');
   // Ensure the write directory exists (app cache dir on Android).
-  Directory(_writeDir).createSync(recursive: true);
+  Directory(_writeDirPath()).createSync(recursive: true);
   final data = {
     'peerId': peerId,
     'publicKey': publicKey,
@@ -131,11 +150,54 @@ void _writeFlutterPeerFixture({
   print('[TEST] Flutter peer fixture written to $fixturePath');
 }
 
+Future<ContactModel> _generateUnreachableContact({
+  required GoBridgeClient bridge,
+  required String username,
+}) async {
+  final response = await bridge.send(
+    jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
+  );
+  final parsed = jsonDecode(response) as Map<String, dynamic>;
+  if (parsed['ok'] != true) {
+    throw StateError('identity.generate for $username failed: $parsed');
+  }
+  final identity = parsed['identity'] as Map<String, dynamic>;
+  final peerId = identity['peerId'] as String;
+  final publicKey = identity['publicKey'] as String;
+  return ContactModel(
+    peerId: peerId,
+    publicKey: publicKey,
+    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+    username: username,
+    signature: 'sig-$username',
+    scannedAt: DateTime.now().toUtc().toIso8601String(),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Shared setup — builds the full DI stack
 // ---------------------------------------------------------------------------
 
 var _testCounter = 0;
+
+Future<void> _deleteTestDatabase(String dbName) async {
+  try {
+    final dbPath = await sqlcipher.getDatabasesPath();
+    final fullPath = '$dbPath/$dbName';
+    for (final path in [
+      fullPath,
+      '$fullPath-wal',
+      '$fullPath-shm',
+      '$fullPath.encrypted',
+    ]) {
+      final file = File(path);
+      if (file.existsSync()) {
+        file.deleteSync();
+      }
+    }
+    await sqlcipher.deleteDatabase(fullPath);
+  } catch (_) {}
+}
 
 Future<_TestStack> _setupStack() async {
   _testCounter++;
@@ -159,11 +221,12 @@ Future<_TestStack> _setupStack() async {
 
   final secureKeyStore = _FakeSecureKeyStore();
   final dbName = 'transport_e2e_test_$_testCounter.db';
+  await _deleteTestDatabase(dbName);
 
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 26,
+    version: 44,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -190,6 +253,8 @@ Future<_TestStack> _setupStack() async {
       await runContactIntroducedByPeerIdMigration(db);
       await runIntroductionAlreadyConnectedMigration(db);
       await runGroupQuotedMessageIdMigration(db);
+      await runMessagesEditedAtMigration(db);
+      await runMessagesDeletedStateMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -216,9 +281,11 @@ Future<_TestStack> _setupStack() async {
       if (oldVersion < 24) await runContactIntroducedByPeerIdMigration(db);
       if (oldVersion < 25) await runIntroductionAlreadyConnectedMigration(db);
       if (oldVersion < 26) await runGroupQuotedMessageIdMigration(db);
+      if (oldVersion < 43) await runMessagesEditedAtMigration(db);
+      if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
     },
   );
-  print('[TEST] Database initialized (version 26)');
+  print('[TEST] Database initialized (version 44)');
 
   final contactRepo = ContactRepositoryImpl(
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -258,6 +325,7 @@ Future<_TestStack> _setupStack() async {
         dbCountTotalUnreadExcludingArchived(db),
     dbDeleteMessagesForContact: (contactPeerId) =>
         dbDeleteMessagesForContact(db, contactPeerId),
+    dbDeleteMessage: (id) => dbDeleteMessage(db, id),
     dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
         dbLoadMessagesPage(
           db,
@@ -332,15 +400,13 @@ Future<_TestStack> _setupStack() async {
       print('[TEST] ML-KEM keys generated');
     }
 
-    // Write Flutter peer fixture for orchestrator.
-    _writeFlutterPeerFixture(
-      peerId: ownPeerId,
-      publicKey: identity['publicKey'] as String,
-      mlKemPublicKey: ownMlKemPublicKey,
-    );
-
     // Add CLI peer as contact (required for handleIncomingChatMessage).
     if (cliPeerId != null) {
+      _writeFlutterPeerFixture(
+        peerId: ownPeerId,
+        publicKey: identity['publicKey'] as String,
+        mlKemPublicKey: ownMlKemPublicKey,
+      );
       await contactRepo.addContact(
         ContactModel(
           peerId: cliPeerId,
@@ -376,6 +442,7 @@ Future<_TestStack> _setupStack() async {
 
     return _TestStack(
       db: db,
+      dbName: dbName,
       bridge: bridge,
       p2pService: p2pService,
       contactRepo: contactRepo,
@@ -400,6 +467,7 @@ Future<_TestStack> _setupStack() async {
 
 class _TestStack {
   final dynamic db;
+  final String dbName;
   final GoBridgeClient bridge;
   final P2PServiceImpl p2pService;
   final ContactRepositoryImpl contactRepo;
@@ -415,6 +483,7 @@ class _TestStack {
 
   _TestStack({
     required this.db,
+    required this.dbName,
     required this.bridge,
     required this.p2pService,
     required this.contactRepo,
@@ -435,6 +504,7 @@ class _TestStack {
     p2pService.dispose();
     bridge.dispose();
     await db.close();
+    await _deleteTestDatabase(dbName);
     // Signal files live in the orchestrator's temp dir which it cleans up.
     // Only delete our own fixture as a courtesy.
     try {
@@ -512,7 +582,7 @@ Future<void> _runPhase4LongRunningScenario(_TestStack stack) async {
     fail('Phase 4 real-stack validation requires a CLI peer fixture.');
   }
 
-  Directory(_writeDir).createSync(recursive: true);
+  Directory(_writeDirPath()).createSync(recursive: true);
   final resultFile = File(_writeSignalPath('e2e_phase4_result.json'));
   final result = <String, dynamic>{
     'scenario': 'phase4_personal_discoverability',
@@ -1726,17 +1796,12 @@ void main() {
       // ==== B1: Send to offline peer (inbox fallback) — self-contained ====
       print('\n--- B1: Inbox fallback (offline peer) ---');
       try {
-        const offlinePeerId = '12D3KooWOfflinePeerForInboxTest0001';
-        await stack.contactRepo.addContact(
-          ContactModel(
-            peerId: offlinePeerId,
-            publicKey: 'pk-offline',
-            rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-            username: 'OfflinePeer',
-            signature: 'sig-offline',
-            scannedAt: DateTime.now().toUtc().toIso8601String(),
-          ),
+        final offlineContact = await _generateUnreachableContact(
+          bridge: stack.bridge,
+          username: 'OfflinePeer',
         );
+        final offlinePeerId = offlineContact.peerId;
+        await stack.contactRepo.addContact(offlineContact);
 
         final (result, msg) = await sendChatMessage(
           p2pService: stack.p2pService,
@@ -1812,17 +1877,12 @@ void main() {
     final stack = await _setupStack();
 
     try {
-      const fakePeerId = '12D3KooWFakePeerForSelfContainedTest01';
-      await stack.contactRepo.addContact(
-        ContactModel(
-          peerId: fakePeerId,
-          publicKey: 'pk-fake',
-          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-          username: 'FakePeer',
-          signature: 'sig-fake',
-          scannedAt: DateTime.now().toUtc().toIso8601String(),
-        ),
+      final fakeContact = await _generateUnreachableContact(
+        bridge: stack.bridge,
+        username: 'FakePeer',
       );
+      final fakePeerId = fakeContact.peerId;
+      await stack.contactRepo.addContact(fakeContact);
 
       final (result, msg) = await sendChatMessage(
         p2pService: stack.p2pService,
@@ -1862,17 +1922,12 @@ void main() {
     final stack = await _setupStack();
 
     try {
-      const fakePeerId = '12D3KooWFakePeerForEmptyMsgTest00001';
-      await stack.contactRepo.addContact(
-        ContactModel(
-          peerId: fakePeerId,
-          publicKey: 'pk-fake-e2',
-          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-          username: 'FakePeerE2',
-          signature: 'sig-fake-e2',
-          scannedAt: DateTime.now().toUtc().toIso8601String(),
-        ),
+      final fakeContact = await _generateUnreachableContact(
+        bridge: stack.bridge,
+        username: 'FakePeerE2',
       );
+      final fakePeerId = fakeContact.peerId;
+      await stack.contactRepo.addContact(fakeContact);
 
       // Attempt to send empty text.
       final (result, msg) = await sendChatMessage(

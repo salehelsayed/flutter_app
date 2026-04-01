@@ -10,6 +10,9 @@ import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
+import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
+import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
+import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 
@@ -33,6 +36,9 @@ void main() {
     await runBlockColumnsMigration(db);
     await runQuotedMessageIdMigration(db);
     await runTransportColumnMigration(db);
+    await runWireEnvelopeMigration(db);
+    await runMessagesEditedAtMigration(db);
+    await runMessagesDeletedStateMigration(db);
   });
 
   tearDown(() async {
@@ -48,9 +54,14 @@ void main() {
     String status = 'sent',
     int isIncoming = 0,
     String createdAt = '2026-01-01T00:00:00.000Z',
+    String? editedAt,
     String? readAt,
     String? quotedMessageId,
+    String? deletedAt,
+    String? deletedByPeerId,
+    String? hiddenAt,
     String? transport,
+    String? wireEnvelope,
   }) {
     return {
       'id': id,
@@ -61,9 +72,14 @@ void main() {
       'status': status,
       'is_incoming': isIncoming,
       'created_at': createdAt,
+      'edited_at': editedAt,
       'read_at': readAt,
       'quoted_message_id': quotedMessageId,
+      'deleted_at': deletedAt,
+      'deleted_by_peer_id': deletedByPeerId,
+      'hidden_at': hiddenAt,
       'transport': transport,
+      'wire_envelope': wireEnvelope,
     };
   }
 
@@ -111,6 +127,32 @@ void main() {
       expect(rows.length, 1);
       expect(rows[0]['text'], 'Replaced');
     });
+
+    test('persists edited_at when present', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(editedAt: '2026-01-02T00:00:00.000Z'),
+      );
+
+      final rows = await db.query('messages');
+      expect(rows.single['edited_at'], '2026-01-02T00:00:00.000Z');
+    });
+
+    test('persists deleted state metadata when present', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          deletedAt: '2026-01-03T00:00:00.000Z',
+          deletedByPeerId: 'peer-a',
+          hiddenAt: '2026-01-03T00:00:00.000Z',
+        ),
+      );
+
+      final rows = await db.query('messages');
+      expect(rows.single['deleted_at'], '2026-01-03T00:00:00.000Z');
+      expect(rows.single['deleted_by_peer_id'], 'peer-a');
+      expect(rows.single['hidden_at'], '2026-01-03T00:00:00.000Z');
+    });
   });
 
   group('dbLoadMessagesPage', () {
@@ -120,18 +162,18 @@ void main() {
     });
 
     test('returns messages in chronological (ASC) order', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-1',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-2',
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-3',
-        timestamp: '2026-01-03T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-1', timestamp: '2026-01-01T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-2', timestamp: '2026-01-02T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-3', timestamp: '2026-01-03T00:00:00.000Z'),
+      );
 
       final results = await dbLoadMessagesPage(db, 'peer-a');
       expect(results.length, 3);
@@ -141,18 +183,18 @@ void main() {
     });
 
     test('respects limit parameter', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-1',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-2',
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-3',
-        timestamp: '2026-01-03T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-1', timestamp: '2026-01-01T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-2', timestamp: '2026-01-02T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-3', timestamp: '2026-01-03T00:00:00.000Z'),
+      );
 
       final results = await dbLoadMessagesPage(db, 'peer-a', limit: 2);
       expect(results.length, 2);
@@ -162,26 +204,26 @@ void main() {
     });
 
     test('uses beforeTimestamp cursor for pagination', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-1',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-2',
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-3',
-        timestamp: '2026-01-03T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-4',
-        timestamp: '2026-01-04T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-5',
-        timestamp: '2026-01-05T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-1', timestamp: '2026-01-01T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-2', timestamp: '2026-01-02T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-3', timestamp: '2026-01-03T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-4', timestamp: '2026-01-04T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-5', timestamp: '2026-01-05T00:00:00.000Z'),
+      );
 
       // Cursor before msg-3: should return msg-1 and msg-2
       final results = await dbLoadMessagesPage(
@@ -197,10 +239,13 @@ void main() {
     test('returns most recent page when no cursor', () async {
       // Insert 5 messages, default limit is 50 so all should come back
       for (var i = 1; i <= 5; i++) {
-        await dbInsertMessage(db, makeMessageRow(
-          id: 'msg-$i',
-          timestamp: '2026-01-0${i}T00:00:00.000Z',
-        ));
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-$i',
+            timestamp: '2026-01-0${i}T00:00:00.000Z',
+          ),
+        );
       }
 
       final results = await dbLoadMessagesPage(db, 'peer-a');
@@ -209,18 +254,41 @@ void main() {
       expect(results[0]['id'], 'msg-1');
       expect(results[4]['id'], 'msg-5');
     });
+
+    test('excludes hidden rows from the visible page', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-visible',
+          timestamp: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          timestamp: '2026-01-02T00:00:00.000Z',
+          deletedAt: '2026-01-02T00:01:00.000Z',
+          deletedByPeerId: 'peer-a',
+          hiddenAt: '2026-01-02T00:01:00.000Z',
+        ),
+      );
+
+      final results = await dbLoadMessagesPage(db, 'peer-a');
+      expect(results.map((row) => row['id']), ['msg-visible']);
+    });
   });
 
   group('dbLoadMessagesForContact', () {
     test('returns only messages for the given contact', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-a1',
-        contactPeerId: 'peer-a',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-b1',
-        contactPeerId: 'peer-b',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-a1', contactPeerId: 'peer-a'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-b1', contactPeerId: 'peer-b'),
+      );
 
       final results = await dbLoadMessagesForContact(db, 'peer-a');
       expect(results.length, 1);
@@ -228,19 +296,35 @@ void main() {
     });
 
     test('ordered by timestamp ASC', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-2',
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-1',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-2', timestamp: '2026-01-02T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-1', timestamp: '2026-01-01T00:00:00.000Z'),
+      );
 
       final results = await dbLoadMessagesForContact(db, 'peer-a');
       expect(results.length, 2);
       expect(results[0]['id'], 'msg-1');
       expect(results[1]['id'], 'msg-2');
+    });
+
+    test('excludes hidden rows', () async {
+      await dbInsertMessage(db, makeMessageRow(id: 'msg-visible'));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          deletedAt: '2026-01-01T01:00:00.000Z',
+          deletedByPeerId: 'peer-a',
+          hiddenAt: '2026-01-01T01:00:00.000Z',
+        ),
+      );
+
+      final results = await dbLoadMessagesForContact(db, 'peer-a');
+      expect(results.map((row) => row['id']), ['msg-visible']);
     });
   });
 
@@ -251,19 +335,46 @@ void main() {
     });
 
     test('returns the most recent message', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-old',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-new',
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-old', timestamp: '2026-01-01T00:00:00.000Z'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-new', timestamp: '2026-01-02T00:00:00.000Z'),
+      );
 
       final result = await dbLoadLatestMessageForContact(db, 'peer-a');
       expect(result, isNotNull);
       expect(result!['id'], 'msg-new');
     });
+
+    test(
+      'skips hidden tombstone rows when selecting latest visible message',
+      () async {
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-visible',
+            timestamp: '2026-01-01T00:00:00.000Z',
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-hidden',
+            timestamp: '2026-01-02T00:00:00.000Z',
+            deletedAt: '2026-01-02T00:01:00.000Z',
+            deletedByPeerId: 'peer-a',
+            hiddenAt: '2026-01-02T00:01:00.000Z',
+          ),
+        );
+
+        final result = await dbLoadLatestMessageForContact(db, 'peer-a');
+        expect(result, isNotNull);
+        expect(result!['id'], 'msg-visible');
+      },
+    );
   });
 
   group('dbUpdateMessageStatus', () {
@@ -306,18 +417,18 @@ void main() {
     });
 
     test('returns total count across all contacts', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-a1',
-        contactPeerId: 'peer-a',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-b1',
-        contactPeerId: 'peer-b',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-a2',
-        contactPeerId: 'peer-a',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-a1', contactPeerId: 'peer-a'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-b1', contactPeerId: 'peer-b'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-a2', contactPeerId: 'peer-a'),
+      );
 
       final count = await dbGetMessageCount(db);
       expect(count, 3);
@@ -326,36 +437,45 @@ void main() {
 
   group('dbCountMessagesForContact', () {
     test('returns count for specific contact only', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-a1',
-        contactPeerId: 'peer-a',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-a2',
-        contactPeerId: 'peer-a',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-b1',
-        contactPeerId: 'peer-b',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-a1', contactPeerId: 'peer-a'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-a2', contactPeerId: 'peer-a'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-b1', contactPeerId: 'peer-b'),
+      );
 
       final count = await dbCountMessagesForContact(db, 'peer-a');
       expect(count, 2);
+    });
+
+    test('does not count hidden rows', () async {
+      await dbInsertMessage(db, makeMessageRow(id: 'msg-visible'));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-hidden', hiddenAt: '2026-01-01T01:00:00.000Z'),
+      );
+
+      final count = await dbCountMessagesForContact(db, 'peer-a');
+      expect(count, 1);
     });
   });
 
   group('dbMarkConversationAsRead', () {
     test('marks unread incoming messages as read', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-in1',
-        isIncoming: 1,
-        readAt: null,
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-in2',
-        isIncoming: 1,
-        readAt: null,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-in1', isIncoming: 1, readAt: null),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-in2', isIncoming: 1, readAt: null),
+      );
 
       await dbMarkConversationAsRead(db, 'peer-a');
 
@@ -366,11 +486,10 @@ void main() {
     });
 
     test('does NOT mark outgoing messages', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-out',
-        isIncoming: 0,
-        readAt: null,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-out', isIncoming: 0, readAt: null),
+      );
 
       await dbMarkConversationAsRead(db, 'peer-a');
 
@@ -380,11 +499,10 @@ void main() {
 
     test('does NOT re-mark already read messages', () async {
       const alreadyRead = '2026-01-01T12:00:00.000Z';
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-read',
-        isIncoming: 1,
-        readAt: alreadyRead,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-read', isIncoming: 1, readAt: alreadyRead),
+      );
 
       await dbMarkConversationAsRead(db, 'peer-a');
 
@@ -394,61 +512,95 @@ void main() {
     });
 
     test('returns count of newly marked messages', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-unread1',
-        isIncoming: 1,
-        readAt: null,
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-unread2',
-        isIncoming: 1,
-        readAt: null,
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-already-read',
-        isIncoming: 1,
-        readAt: '2026-01-01T12:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-unread1', isIncoming: 1, readAt: null),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-unread2', isIncoming: 1, readAt: null),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-already-read',
+          isIncoming: 1,
+          readAt: '2026-01-01T12:00:00.000Z',
+        ),
+      );
 
       final count = await dbMarkConversationAsRead(db, 'peer-a');
       expect(count, 2);
+    });
+
+    test('does not mark hidden rows as read', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          isIncoming: 1,
+          readAt: null,
+          hiddenAt: '2026-01-01T01:00:00.000Z',
+        ),
+      );
+
+      final count = await dbMarkConversationAsRead(db, 'peer-a');
+      final msg = await dbLoadMessage(db, 'msg-hidden');
+
+      expect(count, 0);
+      expect(msg!['read_at'], isNull);
     });
   });
 
   group('dbCountUnreadForContact', () {
     test('returns count of unread incoming messages', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-unread1',
-        isIncoming: 1,
-        readAt: null,
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-unread2',
-        isIncoming: 1,
-        readAt: null,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-unread1', isIncoming: 1, readAt: null),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-unread2', isIncoming: 1, readAt: null),
+      );
 
       final count = await dbCountUnreadForContact(db, 'peer-a');
       expect(count, 2);
     });
 
     test('does not count outgoing messages', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-out',
-        isIncoming: 0,
-        readAt: null,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-out', isIncoming: 0, readAt: null),
+      );
 
       final count = await dbCountUnreadForContact(db, 'peer-a');
       expect(count, 0);
     });
 
     test('does not count already-read messages', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-read',
-        isIncoming: 1,
-        readAt: '2026-01-01T12:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-read',
+          isIncoming: 1,
+          readAt: '2026-01-01T12:00:00.000Z',
+        ),
+      );
+
+      final count = await dbCountUnreadForContact(db, 'peer-a');
+      expect(count, 0);
+    });
+
+    test('does not count hidden unread rows', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          isIncoming: 1,
+          readAt: null,
+          hiddenAt: '2026-01-01T01:00:00.000Z',
+        ),
+      );
 
       final count = await dbCountUnreadForContact(db, 'peer-a');
       expect(count, 0);
@@ -457,92 +609,204 @@ void main() {
 
   group('dbCountTotalUnread', () {
     test('counts across all contacts', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-a1',
-        contactPeerId: 'peer-a',
-        isIncoming: 1,
-        readAt: null,
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-b1',
-        contactPeerId: 'peer-b',
-        senderPeerId: 'peer-b',
-        isIncoming: 1,
-        readAt: null,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-a1',
+          contactPeerId: 'peer-a',
+          isIncoming: 1,
+          readAt: null,
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-b1',
+          contactPeerId: 'peer-b',
+          senderPeerId: 'peer-b',
+          isIncoming: 1,
+          readAt: null,
+        ),
+      );
 
       final count = await dbCountTotalUnread(db);
       expect(count, 2);
+    });
+
+    test('does not count hidden unread rows', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          isIncoming: 1,
+          readAt: null,
+          hiddenAt: '2026-01-01T01:00:00.000Z',
+        ),
+      );
+
+      final count = await dbCountTotalUnread(db);
+      expect(count, 0);
     });
   });
 
   group('dbCountTotalUnreadExcludingArchived', () {
     test('excludes messages from archived contacts', () async {
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-archived',
-        isArchived: 1,
-        archivedAt: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-archived',
-        contactPeerId: 'peer-archived',
-        senderPeerId: 'peer-archived',
-        isIncoming: 1,
-        readAt: null,
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-archived',
+          isArchived: 1,
+          archivedAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-archived',
+          contactPeerId: 'peer-archived',
+          senderPeerId: 'peer-archived',
+          isIncoming: 1,
+          readAt: null,
+        ),
+      );
 
       final count = await dbCountTotalUnreadExcludingArchived(db);
       expect(count, 0);
     });
 
     test('excludes messages from blocked contacts', () async {
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-blocked',
-        isBlocked: 1,
-        blockedAt: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-blocked',
-        contactPeerId: 'peer-blocked',
-        senderPeerId: 'peer-blocked',
-        isIncoming: 1,
-        readAt: null,
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-blocked',
+          isBlocked: 1,
+          blockedAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-blocked',
+          contactPeerId: 'peer-blocked',
+          senderPeerId: 'peer-blocked',
+          isIncoming: 1,
+          readAt: null,
+        ),
+      );
 
       final count = await dbCountTotalUnreadExcludingArchived(db);
       expect(count, 0);
     });
 
     test('includes messages from active contacts', () async {
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-active',
-        isArchived: 0,
-        isBlocked: 0,
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-active',
-        contactPeerId: 'peer-active',
-        senderPeerId: 'peer-active',
-        isIncoming: 1,
-        readAt: null,
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(peerId: 'peer-active', isArchived: 0, isBlocked: 0),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-active',
+          contactPeerId: 'peer-active',
+          senderPeerId: 'peer-active',
+          isIncoming: 1,
+          readAt: null,
+        ),
+      );
 
       // Also add an archived contact with a message to verify it is excluded
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-archived',
-        isArchived: 1,
-        archivedAt: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-archived',
-        contactPeerId: 'peer-archived',
-        senderPeerId: 'peer-archived',
-        isIncoming: 1,
-        readAt: null,
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-archived',
+          isArchived: 1,
+          archivedAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-archived',
+          contactPeerId: 'peer-archived',
+          senderPeerId: 'peer-archived',
+          isIncoming: 1,
+          readAt: null,
+        ),
+      );
 
       final count = await dbCountTotalUnreadExcludingArchived(db);
       expect(count, 1);
+    });
+
+    test('does not count hidden rows from active contacts', () async {
+      await dbUpsertContact(db, makeContactRow(peerId: 'peer-active'));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          contactPeerId: 'peer-active',
+          senderPeerId: 'peer-active',
+          isIncoming: 1,
+          readAt: null,
+          hiddenAt: '2026-01-01T01:00:00.000Z',
+        ),
+      );
+
+      final count = await dbCountTotalUnreadExcludingArchived(db);
+      expect(count, 0);
+    });
+  });
+
+  group('dbLoadConversationThreadSummaries', () {
+    test('excludes hidden rows from counts and latest projection', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-visible',
+          contactPeerId: 'peer-a',
+          text: 'visible',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          isIncoming: 1,
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          contactPeerId: 'peer-a',
+          text: '',
+          timestamp: '2026-01-02T00:00:00.000Z',
+          isIncoming: 1,
+          deletedAt: '2026-01-02T00:01:00.000Z',
+          deletedByPeerId: 'peer-a',
+          hiddenAt: '2026-01-02T00:01:00.000Z',
+        ),
+      );
+
+      final summaries = await dbLoadConversationThreadSummaries(db, ['peer-a']);
+      expect(summaries, hasLength(1));
+      expect(summaries.single['message_count'], 1);
+      expect(summaries.single['unread_count'], 1);
+      expect(summaries.single['latest_id'], 'msg-visible');
+    });
+
+    test('includes deleted metadata for the latest visible row', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-deleted',
+          contactPeerId: 'peer-a',
+          text: '',
+          timestamp: '2026-01-02T00:00:00.000Z',
+          deletedAt: '2026-01-02T00:01:00.000Z',
+          deletedByPeerId: 'peer-a',
+        ),
+      );
+
+      final summaries = await dbLoadConversationThreadSummaries(db, ['peer-a']);
+      expect(summaries.single['latest_deleted_at'], '2026-01-02T00:01:00.000Z');
+      expect(summaries.single['latest_deleted_by_peer_id'], 'peer-a');
+      expect(summaries.single['latest_hidden_at'], isNull);
     });
   });
 
@@ -566,14 +830,14 @@ void main() {
     });
 
     test('does not delete messages for other contacts', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-a1',
-        contactPeerId: 'peer-a',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-b1',
-        contactPeerId: 'peer-b',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-a1', contactPeerId: 'peer-a'),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-b1', contactPeerId: 'peer-b'),
+      );
 
       await dbDeleteMessagesForContact(db, 'peer-a');
 
@@ -586,16 +850,14 @@ void main() {
 
   group('dbLoadFailedOutgoingMessages', () {
     test('returns only failed outgoing messages', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-failed-out',
-        status: 'failed',
-        isIncoming: 0,
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-sent-out',
-        status: 'sent',
-        isIncoming: 0,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-failed-out', status: 'failed', isIncoming: 0),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-sent-out', status: 'sent', isIncoming: 0),
+      );
 
       final results = await dbLoadFailedOutgoingMessages(db);
       expect(results.length, 1);
@@ -603,29 +865,34 @@ void main() {
     });
 
     test('does not return failed incoming messages', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-failed-in',
-        status: 'failed',
-        isIncoming: 1,
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(id: 'msg-failed-in', status: 'failed', isIncoming: 1),
+      );
 
       final results = await dbLoadFailedOutgoingMessages(db);
       expect(results, isEmpty);
     });
 
     test('ordered by timestamp ASC', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-f2',
-        status: 'failed',
-        isIncoming: 0,
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-f1',
-        status: 'failed',
-        isIncoming: 0,
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-f2',
+          status: 'failed',
+          isIncoming: 0,
+          timestamp: '2026-01-02T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-f1',
+          status: 'failed',
+          isIncoming: 0,
+          timestamp: '2026-01-01T00:00:00.000Z',
+        ),
+      );
 
       final results = await dbLoadFailedOutgoingMessages(db);
       expect(results.length, 2);
@@ -634,24 +901,33 @@ void main() {
     });
 
     test('respects limit', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-f1',
-        status: 'failed',
-        isIncoming: 0,
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-f2',
-        status: 'failed',
-        isIncoming: 0,
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-f3',
-        status: 'failed',
-        isIncoming: 0,
-        timestamp: '2026-01-03T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-f1',
+          status: 'failed',
+          isIncoming: 0,
+          timestamp: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-f2',
+          status: 'failed',
+          isIncoming: 0,
+          timestamp: '2026-01-02T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-f3',
+          status: 'failed',
+          isIncoming: 0,
+          timestamp: '2026-01-03T00:00:00.000Z',
+        ),
+      );
 
       final results = await dbLoadFailedOutgoingMessages(db, limit: 2);
       expect(results.length, 2);
@@ -673,6 +949,24 @@ void main() {
       expect(result, isNotNull);
       expect(result!['id'], 'msg-exists');
       expect(result['text'], 'Hello world');
+    });
+
+    test('returns hidden tombstone rows for direct lookup', () async {
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-hidden',
+          text: '',
+          deletedAt: '2026-01-01T01:00:00.000Z',
+          deletedByPeerId: 'peer-a',
+          hiddenAt: '2026-01-01T01:00:00.000Z',
+        ),
+      );
+
+      final result = await dbLoadMessage(db, 'msg-hidden');
+      expect(result, isNotNull);
+      expect(result!['hidden_at'], '2026-01-01T01:00:00.000Z');
+      expect(result['deleted_at'], '2026-01-01T01:00:00.000Z');
     });
   });
 
@@ -715,16 +1009,22 @@ void main() {
     });
 
     test('transport appears in dbLoadMessagesPage results', () async {
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-wifi',
-        transport: 'wifi',
-        timestamp: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbInsertMessage(db, makeMessageRow(
-        id: 'msg-relay',
-        transport: 'relay',
-        timestamp: '2026-01-02T00:00:00.000Z',
-      ));
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-wifi',
+          transport: 'wifi',
+          timestamp: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-relay',
+          transport: 'relay',
+          timestamp: '2026-01-02T00:00:00.000Z',
+        ),
+      );
 
       final results = await dbLoadMessagesPage(db, 'peer-a');
       expect(results.length, 2);

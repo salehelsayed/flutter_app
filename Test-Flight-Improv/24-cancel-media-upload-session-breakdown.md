@@ -7,6 +7,9 @@
 - Session `47` status: `accepted`; this artifact is the stable closure-owner
   record for Report `24`, and future work should reopen only on real
   regressions.
+- Report `35` later reopened one narrow 1:1 late-boundary video-cancel seam
+  and reclosed it in its own doc-scoped Session `1` without changing the
+  broader accepted program state recorded here.
 - Downstream workflow rule:
   - detailed planning happens one session at a time
   - later sessions must be refreshed against landed code before execution
@@ -34,6 +37,9 @@
   - Session `47` reran the named gates and direct suites for the rollout, with
     baseline validated on this multi-device machine via
     `FLUTTER_DEVICE_ID=macos`
+  - Report `35` later added the missing direct 1:1 proof for cancel-before-
+    failure-resolve and late-boundary final-send suppression without reopening
+    group parity, retry ownership, or status-model scope
   - `transport` and `completeness-check` were correctly left out because the
     accepted rollout did not widen into lifecycle/startup/device-recovery
     changes or gate-definition changes
@@ -49,6 +55,9 @@
     gallery/source files
   - the rollout remains foreground-only rather than broadening into a
     background-upload architecture
+  - the later Report `35` follow-up stayed a narrow 1:1 regression reopen
+    rather than turning back into a new cross-surface cancelable-upload
+    program
 
 ## Recommended plan count
 

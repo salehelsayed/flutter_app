@@ -19,6 +19,10 @@ enum HandleChatMessageResult {
   /// Not a chat_message type — ignore.
   notChatMessage,
 
+  /// V2 chat message could not be decrypted because required local key
+  /// material is not currently available.
+  missingMlKemSecret,
+
   /// V2 chat message decryption failed.
   decryptionFailed,
 
@@ -27,6 +31,9 @@ enum HandleChatMessageResult {
 
   /// Duplicate message ID already stored.
   duplicate,
+
+  /// Edit references an original message that is not stored locally.
+  editMissingOriginal,
 }
 
 /// Parses an incoming P2P ChatMessage for chat_message type,
@@ -74,7 +81,7 @@ handleIncomingChatMessage({
         event: 'CHAT_MSG_RECEIVE_V2_NO_KEY',
         details: {},
       );
-      return (HandleChatMessageResult.notChatMessage, null, null);
+      return (HandleChatMessageResult.missingMlKemSecret, null, null);
     }
 
     final encrypted = v2Envelope['encrypted'] as Map<String, dynamic>;
@@ -91,9 +98,7 @@ handleIncomingChatMessage({
         emitFlowEvent(
           layer: 'FL',
           event: 'CHAT_MSG_RECEIVE_DECRYPT_FAILED',
-          details: {
-            'errorCode': decryptResult['errorCode'],
-          },
+          details: {'errorCode': decryptResult['errorCode']},
         );
         return (HandleChatMessageResult.decryptionFailed, null, null);
       }
@@ -126,6 +131,8 @@ handleIncomingChatMessage({
     senderPeerId: payload.senderPeerId,
     senderUsername: sanitizeUsername(payload.senderUsername),
     timestamp: payload.timestamp,
+    action: payload.action,
+    editedAt: payload.editedAt,
     quotedMessageId: payload.quotedMessageId,
     media: payload.media,
   );
@@ -147,15 +154,23 @@ handleIncomingChatMessage({
     return (HandleChatMessageResult.unknownSender, null, null);
   }
 
-  // 3. Check for duplicate
-  final exists = await messageRepo.messageExists(payload.id);
-  if (exists) {
+  // 3. Check for duplicate / same-ID edit update
+  final existingMessage = await messageRepo.getMessage(payload.id);
+  if (existingMessage != null && !payload.isEdit) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_RECEIVE_DUPLICATE',
       details: {'id': payload.id.substring(0, 8)},
     );
     return (HandleChatMessageResult.duplicate, null, null);
+  }
+  if (existingMessage == null && payload.isEdit) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL',
+      details: {'id': payload.id.substring(0, 8)},
+    );
+    return (HandleChatMessageResult.editMissingOriginal, null, null);
   }
 
   // 4. Detect + persist contact name change
@@ -177,20 +192,33 @@ handleIncomingChatMessage({
   }
 
   // 5. Persist message
-  final conversationMessage = payload.toConversationMessage(
-    contactPeerId: payload.senderPeerId,
-    isIncoming: true,
-    status: 'delivered',
-    transport: transport,
-  );
+  final conversationMessage = payload.isEdit && existingMessage != null
+      ? existingMessage.copyWith(
+          senderPeerId: payload.senderPeerId,
+          text: payload.text,
+          status: 'delivered',
+          editedAt:
+              payload.editedAt ?? DateTime.now().toUtc().toIso8601String(),
+          quotedMessageId:
+              payload.quotedMessageId ?? existingMessage.quotedMessageId,
+          transport: transport ?? existingMessage.transport,
+        )
+      : payload.toConversationMessage(
+          contactPeerId: payload.senderPeerId,
+          isIncoming: true,
+          status: 'delivered',
+          editedAt: payload.editedAt,
+          transport: transport,
+        );
   await messageRepo.saveMessage(conversationMessage);
 
   // 6. Persist media attachment metadata and collect parsed attachments
   final parsedAttachments = <MediaAttachment>[];
   if (mediaAttachmentRepo != null && payload.media != null) {
     for (final mediaJson in payload.media!) {
-      final attachment = MediaAttachment.fromJson(mediaJson)
-          .copyWith(messageId: payload.id);
+      final attachment = MediaAttachment.fromJson(
+        mediaJson,
+      ).copyWith(messageId: payload.id);
       await mediaAttachmentRepo.saveAttachment(attachment);
       parsedAttachments.add(attachment);
     }
@@ -221,9 +249,5 @@ handleIncomingChatMessage({
     status: 'delivered',
     text: payload.text,
   );
-  return (
-    HandleChatMessageResult.chatMessage,
-    hydratedMessage,
-    updatedContact,
-  );
+  return (HandleChatMessageResult.chatMessage, hydratedMessage, updatedContact);
 }

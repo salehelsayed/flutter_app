@@ -36,6 +36,7 @@ class ComposeArea extends StatefulWidget {
   final String? quotedText;
   final bool isQuoteUnavailable;
   final VoidCallback? onClearQuote;
+  final bool shouldRequestFocus;
 
   const ComposeArea({
     super.key,
@@ -56,6 +57,7 @@ class ComposeArea extends StatefulWidget {
     this.quotedText,
     this.isQuoteUnavailable = false,
     this.onClearQuote,
+    this.shouldRequestFocus = false,
   });
 
   @override
@@ -144,6 +146,11 @@ class _ComposeAreaState extends State<ComposeArea>
     }
     if (oldWidget.hasAttachments != widget.hasAttachments) {
       _updateSendButton();
+    }
+    if (widget.shouldRequestFocus &&
+        !oldWidget.shouldRequestFocus &&
+        !_focusNode.hasFocus) {
+      _focusNode.requestFocus();
     }
   }
 

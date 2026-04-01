@@ -14,6 +14,7 @@ class ReactionBar extends StatefulWidget {
   final VoidCallback onPlusTap;
   final VoidCallback onDismiss;
   final double? anchorY;
+  final bool inline;
 
   const ReactionBar({
     super.key,
@@ -22,6 +23,7 @@ class ReactionBar extends StatefulWidget {
     required this.onPlusTap,
     required this.onDismiss,
     this.anchorY,
+    this.inline = false,
   });
 
   @override
@@ -40,9 +42,10 @@ class _ReactionBarState extends State<ReactionBar>
       duration: const Duration(milliseconds: 200),
       vsync: this,
     );
-    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
-    );
+    _scaleAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
     _controller.forward();
   }
 
@@ -81,32 +84,31 @@ class _ReactionBarState extends State<ReactionBar>
       ),
     );
 
+    if (widget.inline) {
+      return barContent;
+    }
+
     // Bar height ~60px (44 emoji + 8+8 padding). Place it above the card
     // with an 8px gap. Clamp to keep it on-screen.
     const barHeight = 60.0;
     const gap = 8.0;
 
-    final Widget positioned;
-    if (widget.anchorY != null) {
-      final topOffset = (widget.anchorY! - barHeight - gap).clamp(8.0, double.infinity);
-      positioned = Padding(
-        padding: EdgeInsets.only(top: topOffset),
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: barContent,
-        ),
-      );
-    } else {
-      positioned = Center(child: barContent);
-    }
+    final Widget positioned = widget.anchorY != null
+        ? Padding(
+            padding: EdgeInsets.only(
+              top: (widget.anchorY! - barHeight - gap).clamp(
+                8.0,
+                double.infinity,
+              ),
+            ),
+            child: Align(alignment: Alignment.topCenter, child: barContent),
+          )
+        : Center(child: barContent);
 
     return GestureDetector(
       onTap: widget.onDismiss,
       behavior: HitTestBehavior.opaque,
-      child: Container(
-        color: Colors.transparent,
-        child: positioned,
-      ),
+      child: Container(color: Colors.transparent, child: positioned),
     );
   }
 
@@ -124,10 +126,7 @@ class _ReactionBarState extends State<ReactionBar>
               : Colors.transparent,
           borderRadius: BorderRadius.circular(22),
         ),
-        child: Text(
-          emoji,
-          style: const TextStyle(fontSize: 24),
-        ),
+        child: Text(emoji, style: const TextStyle(fontSize: 24)),
       ),
     );
   }

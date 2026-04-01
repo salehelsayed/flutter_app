@@ -227,12 +227,22 @@ When User-A confirms the introduction, create Introduction records and notify al
 
 **Behavior:**
 1. User-A taps "Introduce (N)" in the picker
-2. Close the picker sheet
-3. For each selected friend (User-C, User-D, etc.):
+2. Keep the picker sheet open in a sending state instead of closing
+   immediately
+3. Immediately show truthful in-flight progress (`Sending 0 of N`) and a
+   determinate progress bar in the picker
+4. Process selected friends in ordered batches capped at `10`; no more than
+   `10` intro-send chains are active at once, and the next batch waits for the
+   current batch to settle
+5. For each selected friend (User-C, User-D, etc.):
    - Create an `Introduction` record with status `pending`
-4. Set `introsSentAt = now()` on the User-A ↔ User-B friendship
-5. Set `introsBannerDismissed = true` (banner should never reappear)
-6. Navigate to the **Sent Confirmation** screen
+6. Keep the send button disabled for the entire send window; also disable
+   search, close, and row-toggle interactions so progress stays truthful and
+   double-send is prevented
+7. Set `introsSentAt = now()` on the User-A ↔ User-B friendship after all
+   batches complete
+8. Set `introsBannerDismissed = true` (banner should never reappear)
+9. Close the picker sheet and navigate to the **Sent Confirmation** screen
 
 **Notifications to send (via the app's P2P messaging layer):**
 - **To User-B (recipient):** "New introductions from [User-A name]" — single notification regardless of how many people were introduced
@@ -250,8 +260,13 @@ This is a non-deletable, non-editable system event. It appears as a centered, mu
 - Notification/messaging layer
 - Conversation message store (insert system message)
 - Friendship metadata store
+- Friend picker wired/UI layer (truthful progress and disabled in-flight state)
 
 **Unit tests:**
+- Selected friends are split into ordered batches capped at `10`
+- Progress reports truthfully from `0 / N` through `N / N`
+- Send button stays disabled for the entire in-flight send window
+- Search, close, and row-toggle interactions are disabled while sending
 - N Introduction records created for N selected friends
 - Each record has correct `introducerId`, `recipientId`, `introducedId`
 - Each record initializes with `recipientStatus: 'pending'`, `introducedStatus: 'pending'`, `status: 'pending'`
@@ -261,11 +276,11 @@ This is a non-deletable, non-editable system event. It appears as a centered, mu
 - System message text matches: "You introduced [N] people to [User-B name] · [date]"
 - Notification sent to User-B: "New introductions from [User-A name]"
 - Notification sent to each User-C: "[User-A name] introduced you to [User-B name]"
-- Picker sheet closes after sending
+- Picker sheet stays open while progress is visible, then closes after sending
 - Navigation goes to Sent Confirmation screen
 
 **Integration tests:**
-- Full flow: open picker → select 3 friends → tap "Introduce (3)" → verify 3 Introduction records created → verify confirmation screen shown → verify system message appears in conversation → verify notifications sent to User-B (1 notification) and each User-C (3 notifications)
+- Full flow: open picker → select 3 friends → tap "Introduce (3)" → verify truthful progress appears while sending and the button stays disabled → verify 3 Introduction records created → verify confirmation screen shown → verify system message appears in conversation → verify notifications sent to User-B (1 notification) and each User-C (3 notifications)
 
 ---
 

@@ -13,7 +13,11 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -51,6 +55,24 @@ Text _textFor(WidgetTester tester, String text) {
   );
   expect(finder, findsOneWidget);
   return tester.widget<Text>(finder);
+}
+
+IntroductionModel pendingIntroduction({
+  required String ownPeerId,
+  required String otherPeerId,
+  required String createdAt,
+  String id = 'orbit-intro',
+}) {
+  return IntroductionModel(
+    id: id,
+    introducerId: 'peer-A',
+    recipientId: ownPeerId,
+    introducedId: otherPeerId,
+    createdAt: createdAt,
+    introducerUsername: 'Noor',
+    recipientUsername: 'Alice',
+    introducedUsername: 'Dora',
+  );
 }
 
 void main() {
@@ -158,6 +180,20 @@ void main() {
     addTearDown(() => FlutterError.onError = originalOnError);
   }
 
+  void suppressNavAssetErrors() {
+    final originalOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final message = details.exceptionAsString();
+      if (message.contains('Unable to load asset') ||
+          message.contains('SvgPicture') ||
+          message.contains('ImageFilter')) {
+        return;
+      }
+      originalOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = originalOnError);
+  }
+
   /// Builds an OrbitWired widget with default fakes, wrapped in MaterialApp.
   ///
   /// [contactRequestListener] and [chatMessageListener] can be overridden
@@ -176,6 +212,10 @@ void main() {
     InMemoryGroupMessageRepository? groupMessageRepository,
     bool wrapInNavigator = false,
     String? initialFilterTab,
+    AppShellController? appShellController,
+    ValueNotifier<int>? feedUnreadCountListenable,
+    ValueChanged<FeedRouteChanges?>? onEmbeddedExit,
+    ValueChanged<bool>? onRowActionOpenChanged,
     VoidCallback? onHeaderBuild,
     VoidCallback? onListBuild,
     List<NavigatorObserver>? navigatorObservers,
@@ -225,7 +265,11 @@ void main() {
       groupMessageListener: gmListener,
       introductionRepository: introductionRepository,
       introductionListener: introductionListener,
+      appShellController: appShellController,
       postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+      feedUnreadCountListenable: feedUnreadCountListenable,
+      onEmbeddedExit: onEmbeddedExit,
+      onRowActionOpenChanged: onRowActionOpenChanged,
       initialFilterTab: initialFilterTab,
       debugOnHeaderBuild: onHeaderBuild,
       debugOnListBuild: onListBuild,
@@ -441,6 +485,152 @@ void main() {
       expect(find.text('Open Orbit'), findsOneWidget);
     });
 
+    testWidgets(
+      'embedded close button switches the shell back to feed without popping',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final feedUnreadCountListenable = ValueNotifier<int>(3);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final shellController = AppShellController(
+          initialTab: AppShellTab.orbit,
+        );
+        FeedRouteChanges? exitChanges;
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: shellController,
+            feedUnreadCountListenable: feedUnreadCountListenable,
+            onEmbeddedExit: (changes) => exitChanges = changes,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(find.byType(OrbitCloseButton));
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(shellController.activeTab, AppShellTab.feed);
+        expect(exitChanges, isNull);
+      },
+    );
+
+    testWidgets(
+      'persistent nav shows independent feed unread and orbit intro badges',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final feedUnreadCountListenable = ValueNotifier<int>(7);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final shellController = AppShellController(initialTab: 'orbit');
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'intro-peer-id',
+            createdAt: '2026-03-25T12:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: shellController,
+            feedUnreadCountListenable: feedUnreadCountListenable,
+            introductionRepository: introRepo,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.byType(FeedNavigationBar), findsOneWidget);
+        final buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[0].badgeCount, 7);
+        expect(buttons[0].isActive, isFalse);
+        expect(buttons[1].badgeCount, 1);
+        expect(buttons[1].isActive, isTrue);
+      },
+    );
+
+    testWidgets(
+      'persistent nav feed tap pops the route and switches the shell back to feed',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final feedUnreadCountListenable = ValueNotifier<int>(2);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final observer = _RecordingNavigatorObserver();
+        final shellController = AppShellController(initialTab: 'orbit');
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            wrapInNavigator: true,
+            appShellController: shellController,
+            feedUnreadCountListenable: feedUnreadCountListenable,
+            navigatorObservers: [observer],
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        observer.reset();
+
+        await tester.tap(find.text('Open Orbit'));
+        await pumpOrbitFrames(tester, count: 10);
+
+        await tester.tap(find.text('Feed'));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(find.byType(OrbitWired), findsNothing);
+        expect(find.text('Open Orbit'), findsOneWidget);
+        expect(shellController.activeTab, 'feed');
+        expect(observer.pushCount, 1);
+      },
+    );
+
+    testWidgets('persistent nav orbit tap is a route-level no-op', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      identityRepo.seed(testIdentity);
+
+      final feedUnreadCountListenable = ValueNotifier<int>(1);
+      addTearDown(feedUnreadCountListenable.dispose);
+      final observer = _RecordingNavigatorObserver();
+      final shellController = AppShellController(initialTab: 'orbit');
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          wrapInNavigator: true,
+          appShellController: shellController,
+          feedUnreadCountListenable: feedUnreadCountListenable,
+          navigatorObservers: [observer],
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.tap(find.text('Open Orbit'));
+      await pumpOrbitFrames(tester, count: 10);
+      observer.reset();
+
+      await tester.tap(find.text('Orbit'));
+      await pumpOrbitFrames(tester, count: 6);
+
+      expect(find.byType(OrbitWired), findsOneWidget);
+      expect(find.text('Open Orbit'), findsNothing);
+      expect(observer.pushCount, 0);
+      expect(shellController.activeTab, 'orbit');
+    });
+
     testWidgets('refreshes only the affected friend on incoming message', (
       tester,
     ) async {
@@ -510,7 +700,10 @@ void main() {
 
       // After refresh, the FriendRow should show the mixed-script text.
       expect(find.text('مرحبا Hello 123'), findsOneWidget);
-      expect(_textFor(tester, 'مرحبا Hello 123').textDirection, TextDirection.rtl);
+      expect(
+        _textFor(tester, 'مرحبا Hello 123').textDirection,
+        TextDirection.rtl,
+      );
       expect(spyContactRepo.getActiveContactsCallCount, 0);
       expect(spyContactRepo.getArchivedContactsCallCount, 0);
       expect(spyContactRepo.getContactCallCountByPeerId, {
@@ -897,8 +1090,10 @@ void main() {
       expect(find.text('Alpha Group'), findsOneWidget);
       expect(find.text('Alice'), findsOneWidget);
       expect(find.text('مرحبا Hello 123'), findsOneWidget);
-      expect(_textFor(tester, 'مرحبا Hello 123').textDirection,
-          TextDirection.rtl);
+      expect(
+        _textFor(tester, 'مرحبا Hello 123').textDirection,
+        TextDirection.rtl,
+      );
     });
 
     testWidgets('refreshes only the affected group on incoming group message', (
@@ -1216,6 +1411,180 @@ void main() {
         expect(find.text('Unavailable'), findsNothing);
       },
     );
+
+    testWidgets(
+      'startup repairs a stale persisted mutual acceptance row',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-stale-upgrade-row',
+            introducerId: 'peer-A',
+            recipientId: testIdentity.peerId,
+            introducedId: 'intro-peer-id',
+            introducerUsername: 'Noor',
+            recipientUsername: testIdentity.username,
+            introducedUsername: 'Dora',
+            recipientStatus: IntroductionStatus.accepted,
+            introducedStatus: IntroductionStatus.accepted,
+            status: IntroductionOverallStatus.pending,
+            createdAt: '2026-03-25T12:00:00.000Z',
+          ),
+        );
+
+        await contactRepo.addContact(
+          ContactModel(
+            peerId: 'intro-peer-id',
+            publicKey: 'intro-pk',
+            rendezvous: '/dns4/relay/tcp/443',
+            username: 'Dora',
+            signature: 'intro-sig',
+            scannedAt: '2026-03-25T12:05:00.000Z',
+            introducedBy: 'Noor',
+            introducedByPeerId: 'peer-A',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Waiting for Dora'), findsNothing);
+        expect(find.text('No introductions yet'), findsOneWidget);
+
+        final loaded = await introRepo.getIntroduction('intro-stale-upgrade-row');
+        expect(loaded, isNotNull);
+        expect(loaded!.status, IntroductionOverallStatus.mutualAccepted);
+      },
+    );
+
+    testWidgets(
+      'live intro delete confirmation removes the row, clears the badge, and marks route-return refresh',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'intro-peer-id',
+            createdAt: '2026-03-25T12:00:00.000Z',
+          ),
+        );
+
+        final feedUnreadCountListenable = ValueNotifier<int>(4);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final shellController = AppShellController(
+          initialTab: AppShellTab.orbit,
+        );
+        FeedRouteChanges? exitChanges;
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+            appShellController: shellController,
+            feedUnreadCountListenable: feedUnreadCountListenable,
+            onEmbeddedExit: (changes) => exitChanges = changes,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Dora'), findsOneWidget);
+        var buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[1].badgeCount, 1);
+
+        final center = tester.getCenter(find.text('Dora'));
+        await tester.dragFrom(center, const Offset(-140, 0));
+        await pumpOrbitFrames(tester, count: 4);
+
+        await tester.tap(find.text('Delete').first);
+        await tester.pump();
+        expect(find.text('Delete'), findsNWidgets(2));
+
+        await tester.tap(find.text('Delete').last);
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Dora'), findsNothing);
+        expect(find.text('No introductions yet'), findsOneWidget);
+
+        buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[1].badgeCount, 0);
+
+        await tester.tap(find.text('Feed'));
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(shellController.activeTab, AppShellTab.feed);
+        expect(exitChanges?.refreshPendingIntroductions, isTrue);
+      },
+    );
+
+    testWidgets('canceling live intro delete keeps the row and badge count', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      identityRepo.seed(testIdentity);
+
+      final introRepo = InMemoryIntroductionRepository();
+      await introRepo.saveIntroduction(
+        pendingIntroduction(
+          ownPeerId: testIdentity.peerId,
+          otherPeerId: 'intro-peer-id',
+          createdAt: '2026-03-25T12:00:00.000Z',
+        ),
+      );
+
+      final feedUnreadCountListenable = ValueNotifier<int>(1);
+      addTearDown(feedUnreadCountListenable.dispose);
+      final shellController = AppShellController(initialTab: AppShellTab.orbit);
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          introductionRepository: introRepo,
+          initialFilterTab: 'intros',
+          appShellController: shellController,
+          feedUnreadCountListenable: feedUnreadCountListenable,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 6);
+
+      final center = tester.getCenter(find.text('Dora'));
+      await tester.dragFrom(center, const Offset(-140, 0));
+      await pumpOrbitFrames(tester, count: 4);
+
+      await tester.tap(find.text('Delete').first);
+      await tester.pump();
+      await tester.tap(find.text('Cancel'));
+      await pumpOrbitFrames(tester, count: 4);
+
+      expect(find.text('Dora'), findsOneWidget);
+      final remaining = await introRepo.countPendingIntroductions(
+        testIdentity.peerId,
+      );
+      expect(remaining, 1);
+      final buttons = tester
+          .widgetList<NavBarButton>(find.byType(NavBarButton))
+          .toList();
+      expect(buttons[1].badgeCount, 1);
+      expect(shellController.activeTab, AppShellTab.orbit);
+    });
 
     testWidgets(
       'pushed conversation route shows loading shell before delayed initial page resolves',

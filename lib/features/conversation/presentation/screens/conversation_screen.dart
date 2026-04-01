@@ -1,6 +1,8 @@
+import 'dart:ui';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -13,7 +15,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/date_sepa
 import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -79,6 +81,9 @@ class ConversationComposerViewState {
 /// Displays header, conversation body (empty state or letter cards),
 /// and compose area. No business logic — all data passed via props.
 class ConversationScreen extends StatefulWidget {
+  static const editModeBannerKey = ValueKey('conversation-edit-mode-banner');
+  static const cancelEditKey = ValueKey('conversation-cancel-edit-action');
+
   final String contactPeerId;
   final String contactUsername;
   final String connectionDate;
@@ -124,9 +129,14 @@ class ConversationScreen extends StatefulWidget {
   final ValueChanged<String>? onQuoteReply;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
+  final ValueChanged<String>? onDeleteMessage;
   final String? activeQuoteText;
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
+  final ValueChanged<String>? onEditMessage;
+  final bool isEditingMessage;
+  final VoidCallback? onCancelEdit;
+  final bool allowEditAction;
 
   const ConversationScreen({
     super.key,
@@ -175,9 +185,14 @@ class ConversationScreen extends StatefulWidget {
     this.onQuoteReply,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
+    this.onDeleteMessage,
     this.activeQuoteText,
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
+    this.onEditMessage,
+    this.isEditingMessage = false,
+    this.onCancelEdit,
+    this.allowEditAction = true,
   });
 
   @override
@@ -186,6 +201,7 @@ class ConversationScreen extends StatefulWidget {
 
 class _ConversationScreenState extends State<ConversationScreen> {
   bool _wasEmpty = true;
+  bool _shouldRequestComposerFocus = false;
 
   ConversationComposerViewState get _legacyComposerState =>
       ConversationComposerViewState(
@@ -294,6 +310,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
             processingTotal: composerState.processingTotal,
             onRemove: widget.onRemoveAttachment,
           ),
+        if (widget.isEditingMessage && widget.onCancelEdit != null)
+          _EditModeBanner(
+            key: ConversationScreen.editModeBannerKey,
+            onCancel: widget.onCancelEdit!,
+          ),
         ComposeArea(
           onSend: widget.onSend,
           onAttach: widget.onAttach,
@@ -311,6 +332,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
           quotedText: widget.activeQuoteText,
           isQuoteUnavailable: widget.isActiveQuoteUnavailable,
           onClearQuote: widget.onClearQuote,
+          shouldRequestFocus: _shouldRequestComposerFocus,
         ),
       ],
     );
@@ -396,15 +418,19 @@ class _ConversationScreenState extends State<ConversationScreen> {
               );
             }
 
+            final l10n = AppLocalizations.of(context)!;
             // Resolve quoted message text
             String? quotedText;
             bool isQuoteUnavailable = false;
-            if (message.quotedMessageId != null) {
+            if (!message.isDeleted && message.quotedMessageId != null) {
               final quoted = widget.messages
                   .where((m) => m.id == message.quotedMessageId)
                   .firstOrNull;
               if (quoted != null) {
-                if (quoted.text.isNotEmpty) {
+                if (quoted.isDeleted ||
+                    (quoted.text.isEmpty && quoted.media.isEmpty)) {
+                  isQuoteUnavailable = true;
+                } else if (quoted.text.isNotEmpty) {
                   quotedText = quoted.text;
                 } else if (quoted.media.isNotEmpty) {
                   quotedText = mediaPreviewText(quoted.media);
@@ -416,27 +442,62 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
             final messageReactions = widget.reactions[message.id] ?? const [];
             final showFailedMediaActions =
+                !message.isDeleted &&
                 !message.isIncoming &&
                 message.status == 'failed' &&
                 message.media.isNotEmpty;
+            final canOpenContextOverlay = !message.isDeleted;
+            final displayText = message.isDeleted
+                ? l10n.conversation_message_deleted
+                : message.text;
+            final mediaTapHandler = (int index) {
+              final visual = message.media
+                  .where(
+                    (a) => a.mediaType == 'image' || a.mediaType == 'video',
+                  )
+                  .toList();
+              if (index < visual.length && visual[index].localPath != null) {
+                final allPaths = visual
+                    .where(
+                      (a) => a.localPath != null && a.downloadStatus == 'done',
+                    )
+                    .map((a) => a.localPath!)
+                    .toList();
+                final tappedPath = visual[index].localPath!;
+                final startIndex = allPaths
+                    .indexOf(tappedPath)
+                    .clamp(0, allPaths.length - 1);
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => FullScreenImageViewer(
+                      localPath: tappedPath,
+                      allPaths: allPaths,
+                      initialIndex: startIndex,
+                    ),
+                  ),
+                );
+              }
+            };
 
-            final letterCard = Builder(
-              builder: (cardContext) => LetterCard(
+            LetterCard buildLetterCard({VoidCallback? onLongPress}) {
+              return LetterCard(
                 senderPeerId: message.senderPeerId,
                 senderName: message.isIncoming ? widget.contactUsername : 'You',
-                text: message.text,
+                text: displayText,
                 time: _formatTime(message.timestamp),
                 isIncoming: message.isIncoming,
                 status: message.isIncoming ? null : message.status,
                 transport: message.transport,
                 quotedText: quotedText,
                 isQuoteUnavailable: isQuoteUnavailable,
+                isEdited: message.editedAt != null && !message.isDeleted,
+                isDeleted: message.isDeleted,
                 media: message.media,
-                reactions: messageReactions,
+                reactions: message.isDeleted ? const [] : messageReactions,
                 ownPeerId: widget.ownPeerId,
-                onLongPress: () =>
-                    _showReactionBar(message.id, cardContext: cardContext),
-                onReactionTap: widget.onReactionSelected != null
+                onLongPress: onLongPress,
+                onReactionTap:
+                    !message.isDeleted && widget.onReactionSelected != null
                     ? (emoji) => widget.onReactionSelected!(message.id, emoji)
                     : null,
                 onRetryFailedMedia:
@@ -448,36 +509,19 @@ class _ConversationScreenState extends State<ConversationScreen> {
                     ? () => widget.onDeleteFailedMedia!(message.id)
                     : null,
                 failedMediaActionKeySuffix: message.id,
-                onMediaTap: (index) {
-                  final visual = message.media
-                      .where(
-                        (a) => a.mediaType == 'image' || a.mediaType == 'video',
+                onMediaTap: mediaTapHandler,
+              );
+            }
+
+            final letterCard = Builder(
+              builder: (cardContext) => buildLetterCard(
+                onLongPress: canOpenContextOverlay
+                    ? () => _showMessageContextOverlay(
+                        message,
+                        cardContext: cardContext,
+                        selectedMessage: buildLetterCard(),
                       )
-                      .toList();
-                  if (index < visual.length &&
-                      visual[index].localPath != null) {
-                    final allPaths = visual
-                        .where(
-                          (a) =>
-                              a.localPath != null && a.downloadStatus == 'done',
-                        )
-                        .map((a) => a.localPath!)
-                        .toList();
-                    final tappedPath = visual[index].localPath!;
-                    final startIndex = allPaths
-                        .indexOf(tappedPath)
-                        .clamp(0, allPaths.length - 1);
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => FullScreenImageViewer(
-                          localPath: tappedPath,
-                          allPaths: allPaths,
-                          initialIndex: startIndex,
-                        ),
-                      ),
-                    );
-                  }
-                },
+                    : null,
               ),
             );
 
@@ -491,7 +535,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   )
                 : letterCard;
 
-            if (message.isIncoming && widget.onQuoteReply != null) {
+            if (message.isIncoming &&
+                !message.isDeleted &&
+                widget.onQuoteReply != null) {
               bubble = SwipeToQuoteBubble(
                 onQuoteTriggered: () => widget.onQuoteReply!(message.id),
                 child: bubble,
@@ -546,37 +592,138 @@ class _ConversationScreenState extends State<ConversationScreen> {
     return items.reversed.toList();
   }
 
-  void _showReactionBar(String messageId, {BuildContext? cardContext}) {
-    double? anchorY;
-    if (cardContext != null) {
-      final renderObject = cardContext.findRenderObject();
-      if (renderObject is RenderBox && renderObject.hasSize) {
-        anchorY = renderObject.localToGlobal(Offset.zero).dy;
-      }
+  void _showMessageContextOverlay(
+    ConversationMessage message, {
+    required BuildContext cardContext,
+    required Widget selectedMessage,
+  }) {
+    final renderObject = cardContext.findRenderObject();
+    Rect anchorRect = Rect.fromCenter(
+      center: MediaQuery.of(context).size.center(Offset.zero),
+      width: 0,
+      height: 0,
+    );
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      anchorRect = topLeft & renderObject.size;
     }
 
-    final reactions = widget.reactions[messageId] ?? [];
+    final reactions = widget.reactions[message.id] ?? [];
     final ownReaction = widget.ownPeerId != null
         ? reactions.where((r) => r.senderPeerId == widget.ownPeerId).firstOrNull
         : null;
+    final hasEditAction = _canEditMessage(message);
+    final hasCopyAction = !message.isDeleted && message.text.trim().isNotEmpty;
+    final hasDeleteAction = _canDeleteMessage(message);
 
     showDialog(
-      context: cardContext ?? context,
+      context: context,
+      useSafeArea: false,
       barrierColor: Colors.transparent,
-      builder: (dialogContext) => ReactionBar(
+      builder: (dialogContext) => MessageContextOverlay(
+        anchorRect: anchorRect,
+        selectedMessage: selectedMessage,
         currentEmoji: ownReaction?.emoji,
-        anchorY: anchorY,
+        showEditAction: hasEditAction,
+        showCopyAction: hasCopyAction,
+        showDeleteAction: hasDeleteAction,
+        onDismiss: () => Navigator.of(dialogContext).pop(),
         onReactionSelected: (emoji) {
           Navigator.of(dialogContext).pop();
-          widget.onReactionSelected?.call(messageId, emoji);
+          widget.onReactionSelected?.call(message.id, emoji);
         },
         onPlusTap: () {
           Navigator.of(dialogContext).pop();
-          _showFullPicker(messageId);
+          _showFullPicker(message.id);
         },
-        onDismiss: () => Navigator.of(dialogContext).pop(),
+        onReplyTap: () {
+          Navigator.of(dialogContext).pop();
+          _handleReplyAction(message.id);
+        },
+        onEditTap: hasEditAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                _handleEditAction(message.id);
+              }
+            : null,
+        onCopyTap: hasCopyAction
+            ? () async {
+                Navigator.of(dialogContext).pop();
+                await _copyMessageText(message.text);
+              }
+            : null,
+        onDeleteTap: hasDeleteAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  widget.onDeleteMessage?.call(message.id);
+                });
+              }
+            : null,
       ),
     );
+  }
+
+  void _handleReplyAction(String messageId) {
+    widget.onQuoteReply?.call(messageId);
+    _requestComposerFocus();
+  }
+
+  void _handleEditAction(String messageId) {
+    widget.onEditMessage?.call(messageId);
+    _requestComposerFocus();
+  }
+
+  void _requestComposerFocus() {
+    if (!mounted) return;
+    setState(() => _shouldRequestComposerFocus = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_shouldRequestComposerFocus) return;
+      setState(() => _shouldRequestComposerFocus = false);
+    });
+  }
+
+  bool _canEditMessage(ConversationMessage message) {
+    if (!widget.allowEditAction || widget.onEditMessage == null) return false;
+    if (message.isDeleted) return false;
+    if (widget.ownPeerId == null || message.isIncoming) return false;
+    if (message.senderPeerId != widget.ownPeerId) return false;
+    if (message.text.trim().isEmpty) return false;
+    return _lastSentMessageId() == message.id;
+  }
+
+  bool _canDeleteMessage(ConversationMessage message) {
+    if (widget.onDeleteMessage == null) return false;
+    if (message.isDeleted) return false;
+    return message.transport != 'system';
+  }
+
+  String? _lastSentMessageId() {
+    for (var i = widget.messages.length - 1; i >= 0; i--) {
+      final message = widget.messages[i];
+      if (message.isDeleted) continue;
+      if (!message.isIncoming && message.senderPeerId == widget.ownPeerId) {
+        return message.id;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _copyMessageText(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.conversation_context_copied,
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   void _showFullPicker(String messageId) async {
@@ -613,6 +760,69 @@ class _ConversationScreenState extends State<ConversationScreen> {
     } catch (_) {
       return '';
     }
+  }
+}
+
+class _EditModeBanner extends StatelessWidget {
+  final VoidCallback onCancel;
+
+  const _EditModeBanner({super.key, required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color.fromRGBO(18, 20, 28, 0.92),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: const Color.fromRGBO(255, 255, 255, 0.10),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4ECDC4),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    l10n.conversation_editing_message,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color.fromRGBO(255, 255, 255, 0.88),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  key: ConversationScreen.cancelEditKey,
+                  onPressed: onCancel,
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF4ECDC4),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  child: Text(l10n.conversation_cancel_edit),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

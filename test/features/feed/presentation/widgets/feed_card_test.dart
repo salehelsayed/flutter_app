@@ -408,7 +408,8 @@ void main() {
     testWidgets('long-press on message in open-mode fires onMessageLongPress', (
       tester,
     ) async {
-      String? longPressedMsgId;
+      ThreadMessage? longPressedMessage;
+      BuildContext? bubbleContext;
       final thread = ThreadFeedItem(
         id: 'thread_1',
         timestamp: DateTime(2026, 2, 9),
@@ -424,14 +425,55 @@ void main() {
           FeedCard(
             thread: thread,
             ownPeerId: 'my-peer',
-            onMessageLongPress: (msgId) => longPressedMsgId = msgId,
+            onMessageLongPress: (message, context) {
+              longPressedMessage = message;
+              bubbleContext = context;
+            },
           ),
         ),
       );
 
       await tester.longPress(find.textContaining('Message m1'));
-      expect(longPressedMsgId, 'm1');
+      expect(longPressedMessage?.id, 'm1');
+      expect(bubbleContext, isNotNull);
+      expect(bubbleContext!.findRenderObject(), isA<RenderBox>());
     });
+
+    testWidgets(
+      'long-press on message in expanded collapsed card provides message and bubble context',
+      (tester) async {
+        ThreadMessage? longPressedMessage;
+        BuildContext? bubbleContext;
+        final thread = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [msg('m1'), msg('m2')],
+          conversationState: ConversationState.read,
+        );
+
+        await tester.pumpWidget(
+          wrap(
+            FeedCard(
+              thread: thread,
+              isExpanded: true,
+              ownPeerId: 'my-peer',
+              onMessageLongPress: (message, context) {
+                longPressedMessage = message;
+                bubbleContext = context;
+              },
+            ),
+          ),
+        );
+
+        await tester.longPress(find.textContaining('Message m2'));
+
+        expect(longPressedMessage?.id, 'm2');
+        expect(bubbleContext, isNotNull);
+        expect(bubbleContext!.findRenderObject(), isA<RenderBox>());
+      },
+    );
 
     testWidgets('onReactionTap fires with message ID and emoji', (
       tester,

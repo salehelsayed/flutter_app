@@ -32,6 +32,8 @@ void main() {
     String? displayUsername,
     VoidCallback? onAccept,
     VoidCallback? onPass,
+    IntroductionStatus? ownPartyStatus,
+    String? waitingForUsername,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -44,6 +46,8 @@ void main() {
           showActions: showActions,
           onAccept: onAccept,
           onPass: onPass,
+          ownPartyStatus: ownPartyStatus,
+          waitingForUsername: waitingForUsername,
         ),
       ),
     );
@@ -71,6 +75,24 @@ void main() {
       ));
 
       expect(find.text('Connected'), findsOneWidget);
+      expect(find.text('Accept'), findsNothing);
+      expect(find.text('Pass'), findsNothing);
+    });
+
+    testWidgets('accepted own pending intro shows waiting label', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildWidget(
+        introduction: _makeIntro(
+          status: IntroductionOverallStatus.pending,
+        ),
+        showActions: false,
+        ownPartyStatus: IntroductionStatus.accepted,
+        waitingForUsername: 'Charlie',
+      ));
+
+      expect(find.text('Waiting for Charlie'), findsOneWidget);
+      expect(find.text('Connected'), findsNothing);
       expect(find.text('Accept'), findsNothing);
       expect(find.text('Pass'), findsNothing);
     });

@@ -211,6 +211,7 @@ void main() {
         ownPeerId: 'peer-me',
         onAccept: (_) {},
         onPass: (_) {},
+        onDelete: (_) {},
       );
 
       await tester.pumpWidget(
@@ -231,6 +232,54 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Sarah'), findsOneWidget);
+    });
+
+    testWidgets('live intro row reveals delete on swipe', (tester) async {
+      suppressOverflowErrors();
+      tester.view.physicalSize = testViewSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      var deleteCalled = false;
+      final introsData = OrbitIntrosViewData(
+        groupedIntros: {
+          'peer-noor': [
+            IntroductionModel(
+              id: 'intro-delete',
+              introducerId: 'peer-noor',
+              recipientId: 'peer-me',
+              introducedId: 'peer-sarah',
+              introducerUsername: 'Noor',
+              recipientUsername: 'Me',
+              introducedUsername: 'Sarah',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          ],
+        },
+        introducerUsernames: const {'peer-noor': 'Noor'},
+        ownPeerId: 'peer-me',
+        onAccept: (_) {},
+        onPass: (_) {},
+        onDelete: (_) => deleteCalled = true,
+      );
+
+      await tester.pumpWidget(
+        buildOrbitScreen(filterTab: 'intros', introsData: introsData),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      final center = tester.getCenter(find.text('Sarah'));
+      await tester.dragFrom(center, const Offset(-140, 0));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('Archive'), findsNothing);
+
+      await tester.tap(find.text('Delete'));
+      await tester.pump();
+
+      expect(deleteCalled, isTrue);
     });
   });
 }

@@ -1,5 +1,7 @@
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -28,6 +30,7 @@ class OrbitIntrosViewData {
   final String ownPeerId;
   final void Function(String introductionId) onAccept;
   final void Function(String introductionId) onPass;
+  final void Function(String introductionId)? onDelete;
   final void Function(String peerId)? onSendMessage;
   final Set<String> blockedPeerIds;
 
@@ -37,6 +40,7 @@ class OrbitIntrosViewData {
     required this.ownPeerId,
     required this.onAccept,
     required this.onPass,
+    this.onDelete,
     this.onSendMessage,
     this.blockedPeerIds = const {},
   });
@@ -145,6 +149,9 @@ class OrbitScreen extends StatelessWidget {
   final void Function(OrbitGroup) onArchiveGroup;
   final void Function(OrbitGroup) onUnarchiveGroup;
   final void Function(OrbitGroup) onDeleteGroup;
+  final String? activeTab;
+  final void Function(String)? onSwitchView;
+  final ValueListenable<int>? feedUnreadCountListenable;
   final VoidCallback? onIntroBannerTap;
   final VoidCallback? onHeaderBuild;
   final VoidCallback? onListBuild;
@@ -179,10 +186,94 @@ class OrbitScreen extends StatelessWidget {
     required this.onArchiveGroup,
     required this.onUnarchiveGroup,
     required this.onDeleteGroup,
+    this.activeTab,
+    this.onSwitchView,
+    this.feedUnreadCountListenable,
     this.onIntroBannerTap,
     this.onHeaderBuild,
     this.onListBuild,
   });
+
+  bool get _showsPersistentNav => activeTab != null && onSwitchView != null;
+
+  double _persistentNavBottomOffset(BuildContext context) {
+    final safeBottom = MediaQuery.viewPaddingOf(context).bottom;
+    return math.max(16.0, safeBottom - 14.0);
+  }
+
+  double _persistentNavReservedHeight(BuildContext context) {
+    return _persistentNavBottomOffset(context) + 64;
+  }
+
+  double _closeButtonBottomOffset(
+    BuildContext context, {
+    required bool searchActive,
+  }) {
+    if (!_showsPersistentNav) {
+      return 36;
+    }
+
+    final reservedHeight = _persistentNavReservedHeight(context);
+    return searchActive ? reservedHeight + 112 : reservedHeight + 12;
+  }
+
+  double _searchTriggerBottomOffset(BuildContext context) {
+    if (!_showsPersistentNav) {
+      return 88;
+    }
+    return _persistentNavReservedHeight(context) + 64;
+  }
+
+  double _searchDockBottomOffset(BuildContext context) {
+    if (!_showsPersistentNav) {
+      return 0;
+    }
+    return _persistentNavReservedHeight(context) + 8;
+  }
+
+  double _contentBottomSpacer(
+    BuildContext context,
+    OrbitViewProjection projection,
+  ) {
+    if (!_showsPersistentNav) {
+      return projection.searchActive ? 320 : 100;
+    }
+
+    final reservedHeight = _persistentNavReservedHeight(context);
+    return projection.searchActive ? reservedHeight + 220 : reservedHeight + 96;
+  }
+
+  Widget _buildNavigationBar() {
+    final activeTab = this.activeTab;
+    final onSwitchView = this.onSwitchView;
+    if (activeTab == null || onSwitchView == null) {
+      return const SizedBox.shrink();
+    }
+
+    final unreadCountListenable = feedUnreadCountListenable;
+    return ValueListenableBuilder<OrbitViewProjection>(
+      valueListenable: listProjectionListenable,
+      builder: (context, projection, child) {
+        if (unreadCountListenable == null) {
+          return FeedNavigationBar(
+            activeTab: activeTab,
+            onSwitchView: onSwitchView,
+            orbitBadgeCount: projection.introsCount,
+          );
+        }
+
+        return ValueListenableBuilder<int>(
+          valueListenable: unreadCountListenable,
+          builder: (context, unreadCount, nestedChild) => FeedNavigationBar(
+            activeTab: activeTab,
+            onSwitchView: onSwitchView,
+            feedBadgeCount: unreadCount,
+            orbitBadgeCount: projection.introsCount,
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -232,7 +323,9 @@ class OrbitScreen extends StatelessWidget {
                             Padding(
                               padding: const EdgeInsets.only(top: 20),
                               child: Text(
-                                AppLocalizations.of(context)!.orbit_close_friends,
+                                AppLocalizations.of(
+                                  context,
+                                )!.orbit_close_friends,
                                 style: const TextStyle(
                                   fontSize: 14,
                                   color: Color(0x99FFFFFF),
@@ -293,7 +386,10 @@ class OrbitScreen extends StatelessWidget {
                             _buildContentSliver(projection),
                             SliverToBoxAdapter(
                               child: SizedBox(
-                                height: projection.searchActive ? 320 : 100,
+                                height: _contentBottomSpacer(
+                                  context,
+                                  projection,
+                                ),
                               ),
                             ),
                           ],
@@ -305,20 +401,27 @@ class OrbitScreen extends StatelessWidget {
               ),
             ),
 
-            // Layer 2: Close button (bottom-right, below search)
-            Positioned(
-              bottom: 36,
-              right: 16,
+            // Layer 2: Close button
+            ValueListenableBuilder<OrbitViewProjection>(
+              valueListenable: listProjectionListenable,
+              builder: (context, projection, child) => Positioned(
+                bottom: _closeButtonBottomOffset(
+                  context,
+                  searchActive: projection.searchActive,
+                ),
+                right: 16,
+                child: child!,
+              ),
               child: OrbitCloseButton(onTap: onClose),
             ),
 
-            // Layer 3: Search trigger (bottom-right, above X)
+            // Layer 3: Search trigger
             AnimatedBuilder(
               animation: searchTriggerAnimation,
               builder: (context, child) {
                 final t = searchTriggerAnimation.value;
                 return Positioned(
-                  bottom: 88,
+                  bottom: _searchTriggerBottomOffset(context),
                   right: 16,
                   child: Opacity(
                     opacity: t,
@@ -341,7 +444,7 @@ class OrbitScreen extends StatelessWidget {
               builder: (context, child) {
                 final t = searchDockAnimation.value;
                 return Positioned(
-                  bottom: 0,
+                  bottom: _searchDockBottomOffset(context),
                   left: 0,
                   right: 0,
                   child: Transform.translate(
@@ -362,6 +465,14 @@ class OrbitScreen extends StatelessWidget {
                 ),
               ),
             ),
+
+            if (_showsPersistentNav)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: _persistentNavBottomOffset(context),
+                child: Center(child: _buildNavigationBar()),
+              ),
 
             // Layer 5: ExpandableFab (create group)
             ExpandableFab(
@@ -581,25 +692,34 @@ class OrbitScreen extends StatelessWidget {
             ownPartyStatus == IntroductionStatus.pending &&
             intro.status == IntroductionOverallStatus.pending;
         final isOtherBlocked = data.blockedPeerIds.contains(displayPeerId);
+        final introRow = IntroRow(
+          introduction: intro,
+          displayUsername: displayUsername,
+          displayPeerId: displayPeerId,
+          showActions: showActions,
+          onAccept: showActions ? () => data.onAccept(intro.id) : null,
+          onPass: showActions ? () => data.onPass(intro.id) : null,
+          ownPartyStatus: ownPartyStatus,
+          waitingForUsername: waitingForUsername,
+          onSendMessage:
+              intro.status == IntroductionOverallStatus.mutualAccepted &&
+                  data.onSendMessage != null
+              ? () => data.onSendMessage!(displayPeerId)
+              : null,
+          isOtherBlocked: isOtherBlocked,
+        );
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 8),
-          child: IntroRow(
-            introduction: intro,
-            displayUsername: displayUsername,
-            displayPeerId: displayPeerId,
-            showActions: showActions,
-            onAccept: showActions ? () => data.onAccept(intro.id) : null,
-            onPass: showActions ? () => data.onPass(intro.id) : null,
-            ownPartyStatus: ownPartyStatus,
-            waitingForUsername: waitingForUsername,
-            onSendMessage:
-                intro.status == IntroductionOverallStatus.mutualAccepted &&
-                    data.onSendMessage != null
-                ? () => data.onSendMessage!(displayPeerId)
-                : null,
-            isOtherBlocked: isOtherBlocked,
-          ),
+          child: data.onDelete == null
+              ? introRow
+              : SwipeableFriendRow(
+                  key: ValueKey('orbit-intro-${intro.id}'),
+                  isArchived: false,
+                  openRowNotifier: openRowNotifier,
+                  onDelete: () => data.onDelete!(intro.id),
+                  child: introRow,
+                ),
         );
       case _OrbitIntroEntryType.spacer:
         return const SizedBox(height: 16);

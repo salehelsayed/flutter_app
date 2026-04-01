@@ -100,6 +100,9 @@ class FakeMessageRepository
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 
   @override
+  Future<int> deleteMessage(String id) async => 0;
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -115,7 +118,9 @@ class FakeMessageRepository
   }) async => [];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
@@ -258,10 +263,7 @@ void main() {
     });
 
     test('preserves mixed-script latest activity during bulk load', () async {
-      final contacts = [
-        _makeContact('peer-A'),
-        _makeContact('peer-B'),
-      ];
+      final contacts = [_makeContact('peer-A'), _makeContact('peer-B')];
 
       final msgA = ConversationMessage(
         id: 'msg-a',

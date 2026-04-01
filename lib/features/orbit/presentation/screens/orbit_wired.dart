@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -65,6 +65,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -100,6 +101,10 @@ class OrbitWired extends StatefulWidget {
   final IntroductionRepository? introductionRepository;
   final IntroductionListener? introductionListener;
   final AppShellController? appShellController;
+  final ValueListenable<int>? feedUnreadCountListenable;
+  final ValueChanged<FeedRouteChanges?>? onEmbeddedExit;
+  final ValueChanged<VoidCallback?>? onEmbeddedExitActionChanged;
+  final ValueChanged<bool>? onRowActionOpenChanged;
   final PendingPostTargetStore? pendingPostTargetStore;
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
   final String? initialFilterTab;
@@ -133,6 +138,10 @@ class OrbitWired extends StatefulWidget {
     this.introductionRepository,
     this.introductionListener,
     this.appShellController,
+    this.feedUnreadCountListenable,
+    this.onEmbeddedExit,
+    this.onEmbeddedExitActionChanged,
+    this.onRowActionOpenChanged,
     this.pendingPostTargetStore,
     this.postsPrivacySettingsRepository,
     this.initialFilterTab,
@@ -189,6 +198,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
   final Set<String> _changedGroupIds = <String>{};
+  bool _refreshPendingIntroductionsOnPop = false;
   int _introLoadRequestId = 0;
 
   static const _animCurve = Cubic(0.22, 0.61, 0.36, 1);
@@ -241,6 +251,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         ownPeerId: _identity?.peerId ?? '',
         onAccept: _onAcceptIntro,
         onPass: _onPassIntro,
+        onDelete: _onDeleteIntro,
         onSendMessage: _onIntroSendMessage,
         blockedPeerIds: _blockedPeerIds,
       ),
@@ -264,6 +275,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _publishListProjection();
   }
 
+  void _publishHostGestureContracts() {
+    widget.onEmbeddedExitActionChanged?.call(
+      widget.onEmbeddedExit != null ? _onClose : null,
+    );
+    widget.onRowActionOpenChanged?.call(_openRowNotifier.value != null);
+  }
+
+  void _onOpenRowNotifierChanged() {
+    widget.onRowActionOpenChanged?.call(_openRowNotifier.value != null);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -273,6 +295,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _activeGroupsLoaded = !hasGroupSurfaces;
     _archivedGroupsLoaded = !hasGroupSurfaces;
     _publishAllProjections();
+    _publishHostGestureContracts();
+    _openRowNotifier.addListener(_onOpenRowNotifierChanged);
     emitFlowEvent(layer: 'FL', event: 'ORBIT_FL_SCREEN_INIT', details: {});
 
     _collapseController = AnimationController(
@@ -302,6 +326,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _startListeningForGroupMessages();
     _startListeningForIntroductions();
     _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant OrbitWired oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.onEmbeddedExit != widget.onEmbeddedExit ||
+        oldWidget.onEmbeddedExitActionChanged !=
+            widget.onEmbeddedExitActionChanged ||
+        oldWidget.onRowActionOpenChanged != widget.onRowActionOpenChanged) {
+      _publishHostGestureContracts();
+    }
   }
 
   Future<void> _loadQualityPreference() async {
@@ -571,7 +606,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     try {
       final ownPeerId = _identity!.peerId;
-      await expireOldIntroductions(introRepo: introRepo, peerId: ownPeerId);
+      await expireOldIntroductions(
+        introRepo: introRepo,
+        peerId: ownPeerId,
+        contactRepo: widget.contactRepo,
+        messageRepo: widget.messageRepo,
+        bridge: widget.bridge,
+      );
       final pending = await loadIntroductionsForUser(
         introRepo: introRepo,
         peerId: ownPeerId,
@@ -610,6 +651,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final changes = FeedRouteChanges(
       changedContactPeerIds: Set<String>.from(_changedContactPeerIds),
       changedGroupIds: Set<String>.from(_changedGroupIds),
+      refreshPendingIntroductions: _refreshPendingIntroductionsOnPop,
     );
     return changes.hasChanges ? changes : null;
   }
@@ -677,6 +719,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         await _refreshOrbitFriend(otherPeerId);
       }
     }
+    _refreshPendingIntroductionsOnPop = true;
     await _loadIntroductions();
   }
 
@@ -692,7 +735,35 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       ownPeerId: _identity!.peerId,
       ownUsername: _identity!.username,
     );
+    _refreshPendingIntroductionsOnPop = true;
     await _loadIntroductions();
+  }
+
+  Future<void> _onDeleteIntro(String introductionId) async {
+    final introRepo = widget.introductionRepository;
+    if (_identity == null || introRepo == null) return;
+
+    final confirmed = await showConfirmationDialog(
+      context: context,
+      title: 'Delete introduction?',
+      description:
+          'This removes the introduction from your Orbit list. This cannot be undone.',
+      confirmLabel: 'Delete',
+    );
+    if (!confirmed || !mounted) return;
+
+    try {
+      await introRepo.deleteIntroduction(introductionId);
+      _openRowNotifier.value = null;
+      _refreshPendingIntroductionsOnPop = true;
+      await _loadIntroductions();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DELETE_INTRO_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   void _onIntroSendMessage(String peerId) {
@@ -1135,7 +1206,31 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _onClose() {
+    if (widget.onEmbeddedExit != null) {
+      widget.appShellController?.switchTo(AppShellTab.feed);
+      widget.onEmbeddedExit!(_buildRouteChanges());
+      return;
+    }
     Navigator.of(context).pop(_buildRouteChanges());
+  }
+
+  void _onSwitchView(String tab) {
+    final appShellController = widget.appShellController;
+    if (appShellController == null) {
+      return;
+    }
+
+    if (tab == AppShellTab.feed) {
+      if (widget.onEmbeddedExit != null) {
+        _onClose();
+        return;
+      }
+      appShellController.switchTo(AppShellTab.feed);
+      _onClose();
+      return;
+    }
+
+    appShellController.switchTo(tab);
   }
 
   @override
@@ -1152,6 +1247,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _scrollController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
+    _openRowNotifier.removeListener(_onOpenRowNotifierChanged);
+    widget.onEmbeddedExitActionChanged?.call(null);
+    widget.onRowActionOpenChanged?.call(false);
     _openRowNotifier.dispose();
     _headerProjectionNotifier.dispose();
     _listProjectionNotifier.dispose();
@@ -1160,6 +1258,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final showPersistentNav =
+        widget.appShellController != null &&
+        widget.feedUnreadCountListenable != null;
     return OrbitScreen(
       headerProjectionListenable: _headerProjectionNotifier,
       listProjectionListenable: _listProjectionNotifier,
@@ -1198,6 +1299,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onArchiveGroup: _onArchiveGroup,
       onUnarchiveGroup: _onUnarchiveGroup,
       onDeleteGroup: _onDeleteGroup,
+      activeTab: showPersistentNav
+          ? widget.appShellController!.activeTab
+          : null,
+      onSwitchView: showPersistentNav ? _onSwitchView : null,
+      feedUnreadCountListenable: showPersistentNav
+          ? widget.feedUnreadCountListenable
+          : null,
       onIntroBannerTap: () => _onFilterChanged('intros'),
       onHeaderBuild: widget.debugOnHeaderBuild,
       onListBuild: widget.debugOnListBuild,

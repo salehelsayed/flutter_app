@@ -17,6 +17,7 @@ class IncomingMessageRouter {
   final _chatMessageController = StreamController<ChatMessage>.broadcast();
   final _profileUpdateController = StreamController<ChatMessage>.broadcast();
   final _reactionController = StreamController<ChatMessage>.broadcast();
+  final _messageDeletionController = StreamController<ChatMessage>.broadcast();
   final _groupInviteController = StreamController<ChatMessage>.broadcast();
   final _groupKeyUpdateController = StreamController<ChatMessage>.broadcast();
   final _introductionController = StreamController<ChatMessage>.broadcast();
@@ -46,6 +47,10 @@ class IncomingMessageRouter {
 
   /// Stream of incoming message_reaction messages.
   Stream<ChatMessage> get reactionStream => _reactionController.stream;
+
+  /// Stream of incoming message_deletion messages.
+  Stream<ChatMessage> get messageDeletionStream =>
+      _messageDeletionController.stream;
 
   /// Stream of incoming group_invite messages.
   Stream<ChatMessage> get groupInviteStream => _groupInviteController.stream;
@@ -153,6 +158,8 @@ class IncomingMessageRouter {
           _profileUpdateController.add(message);
         case 'message_reaction':
           _reactionController.add(message);
+        case 'message_deletion':
+          _messageDeletionController.add(message);
         case 'group_invite':
           emitFlowEvent(
             layer: 'FL',
@@ -228,6 +235,7 @@ class IncomingMessageRouter {
     _chatMessageController.close();
     _profileUpdateController.close();
     _reactionController.close();
+    _messageDeletionController.close();
     _groupInviteController.close();
     _groupKeyUpdateController.close();
     _introductionController.close();

@@ -110,15 +110,16 @@ class _FakeP2PService implements P2PService {
     String peerId,
     String message, {
     int? timeoutMs,
-  }) async =>
-      const SendMessageResult(sent: true, reply: 'received: ok');
+  }) async => const SendMessageResult(sent: true, reply: 'received: ok');
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
       null;
   @override
-  Future<bool> dialPeer(String peerId,
-          {List<String>? addresses, int? timeoutMs}) async =>
-      true;
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => true;
   @override
@@ -143,8 +144,7 @@ class _FakeP2PService implements P2PService {
     String message,
     String fromPeerId, {
     int? timeoutMs,
-  }) async =>
-      false;
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -155,8 +155,7 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
-  }) async =>
-      false;
+  }) async => false;
   @override
   String? get lastRecoveryMethod => null;
   @override
@@ -164,7 +163,8 @@ class _FakeP2PService implements P2PService {
 }
 
 /// Minimal in-memory MessageRepository.
-class _FakeMessageRepo implements MessageRepository, MessageRepositoryChangeSource {
+class _FakeMessageRepo
+    implements MessageRepository, MessageRepositoryChangeSource {
   final _ctrl = StreamController<ConversationMessage>.broadcast();
 
   @override
@@ -175,8 +175,7 @@ class _FakeMessageRepo implements MessageRepository, MessageRepositoryChangeSour
   Future<List<ConversationMessage>> getMessagesForContact(String pid) async =>
       [];
   @override
-  Future<ConversationMessage?> getLatestMessageForContact(
-          String pid) async =>
+  Future<ConversationMessage?> getLatestMessageForContact(String pid) async =>
       null;
   @override
   Future<ConversationMessage?> getMessage(String id) async => null;
@@ -197,22 +196,23 @@ class _FakeMessageRepo implements MessageRepository, MessageRepositoryChangeSour
   @override
   Future<int> deleteMessagesForContact(String pid) async => 0;
   @override
+  Future<int> deleteMessage(String id) async => 0;
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String pid, {
     int limit = 50,
     String? beforeTimestamp,
-  }) async =>
-      [];
+  }) async => [];
   @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
-  }) async =>
-      [];
+  }) async => [];
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async =>
-      0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
   @override
@@ -266,13 +266,15 @@ void main() {
       expect(
         bridge.callLog,
         isNot(contains('bg:begin')),
-        reason: 'sendVoiceMessage must NOT call bg:begin — '
+        reason:
+            'sendVoiceMessage must NOT call bg:begin — '
             'background task management belongs to the presentation layer only',
       );
       expect(
         bridge.callLog,
         isNot(contains('bg:end')),
-        reason: 'sendVoiceMessage must NOT call bg:end — '
+        reason:
+            'sendVoiceMessage must NOT call bg:end — '
             'background task management belongs to the presentation layer only',
       );
     });

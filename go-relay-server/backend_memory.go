@@ -115,6 +115,8 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	entry = ensureInboxMessageID(entry)
+
 	// Extract messageId for dedup.
 	msgId := extractMessageId(entry.Message)
 	if msgId != "" {
@@ -147,6 +149,38 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 	return true
 }
 
+func (b *memoryInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMessage, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	messages := b.pruneExpired(b.store[peerId])
+	if len(messages) == 0 {
+		delete(b.store, peerId)
+		delete(b.messageIds, peerId)
+		return nil, false
+	}
+
+	changed := false
+	for i := range messages {
+		normalized := ensureInboxMessageID(messages[i])
+		if normalized.ID != messages[i].ID {
+			messages[i] = normalized
+			changed = true
+		}
+	}
+	if changed || len(messages) != len(b.store[peerId]) {
+		b.store[peerId] = messages
+	}
+
+	if limit > len(messages) {
+		limit = len(messages)
+	}
+
+	result := make([]inboxMessage, limit)
+	copy(result, messages[:limit])
+	return result, len(messages) > limit
+}
+
 func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -177,6 +211,54 @@ func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage,
 	delete(b.store, peerId)
 	delete(b.messageIds, peerId)
 	return result, false
+}
+
+func (b *memoryInboxBackend) Ack(peerId string, entryIDs []string) (int, error) {
+	if len(entryIDs) == 0 {
+		return 0, nil
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	messages := b.pruneExpired(b.store[peerId])
+	if len(messages) == 0 {
+		delete(b.store, peerId)
+		delete(b.messageIds, peerId)
+		return 0, nil
+	}
+
+	targets := make(map[string]struct{}, len(entryIDs))
+	for _, entryID := range entryIDs {
+		if entryID == "" {
+			continue
+		}
+		targets[entryID] = struct{}{}
+	}
+	if len(targets) == 0 {
+		return 0, nil
+	}
+
+	remaining := make([]inboxMessage, 0, len(messages))
+	removed := 0
+	for _, message := range messages {
+		message = ensureInboxMessageID(message)
+		if _, ok := targets[message.ID]; ok {
+			removed++
+			continue
+		}
+		remaining = append(remaining, message)
+	}
+
+	if len(remaining) == 0 {
+		delete(b.store, peerId)
+		delete(b.messageIds, peerId)
+		return removed, nil
+	}
+
+	b.store[peerId] = remaining
+	b.rebuildMessageIds(peerId, remaining)
+	return removed, nil
 }
 
 func (b *memoryInboxBackend) rebuildMessageIds(peerId string, messages []inboxMessage) {

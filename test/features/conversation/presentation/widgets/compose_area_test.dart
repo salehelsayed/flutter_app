@@ -35,6 +35,7 @@ void main() {
     String? quotedText,
     bool isQuoteUnavailable = false,
     VoidCallback? onClearQuote,
+    bool shouldRequestFocus = false,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -58,6 +59,7 @@ void main() {
             quotedText: quotedText,
             isQuoteUnavailable: isQuoteUnavailable,
             onClearQuote: onClearQuote,
+            shouldRequestFocus: shouldRequestFocus,
           ),
         ),
       ),
@@ -302,6 +304,49 @@ void main() {
         );
       },
     );
+
+    testWidgets('requests focus without clearing the existing draft', (
+      tester,
+    ) async {
+      late StateSetter setHostState;
+      var shouldRequestFocus = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
+            _TestAppLocalizationsDelegate(),
+            GlobalMaterialLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+          ],
+          supportedLocales: const <Locale>[Locale('en')],
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                setHostState = setState;
+                return Align(
+                  alignment: Alignment.bottomCenter,
+                  child: ComposeArea(
+                    onSend: (_) {},
+                    initialText: 'Draft stays here',
+                    shouldRequestFocus: shouldRequestFocus,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      setHostState(() => shouldRequestFocus = true);
+      await tester.pump();
+
+      final textField = tester.widget<TextField>(find.byType(TextField));
+      expect(textField.controller?.text, 'Draft stays here');
+      expect(textField.focusNode?.hasFocus, isTrue);
+    });
 
     testWidgets('attachment button fires onAttach callback', (tester) async {
       var attachPressed = false;

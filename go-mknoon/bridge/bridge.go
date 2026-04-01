@@ -864,6 +864,7 @@ func InboxRetrieve() (result string) {
 	msgList := make([]map[string]interface{}, len(msgs))
 	for i, m := range msgs {
 		msgList[i] = map[string]interface{}{
+			"id":        m.ID,
 			"from":      m.From,
 			"message":   m.Message,
 			"timestamp": m.Timestamp,
@@ -912,6 +913,7 @@ func InboxRetrieveWithParams(paramsJSON string) (result string) {
 	msgList := make([]map[string]interface{}, len(res.Messages))
 	for i, m := range res.Messages {
 		msgList[i] = map[string]interface{}{
+			"id":        m.ID,
 			"from":      m.From,
 			"message":   m.Message,
 			"timestamp": m.Timestamp,
@@ -922,6 +924,97 @@ func InboxRetrieveWithParams(paramsJSON string) (result string) {
 		"ok":       true,
 		"messages": msgList,
 		"hasMore":  res.HasMore,
+	})
+}
+
+// InboxRetrievePendingWithParams retrieves pending messages without deleting
+// them from the relay.
+// Input JSON: { "timeoutMs": N } (optional; 0 uses default timeout)
+// Returns JSON: { "ok": true, "messages": [...], "hasMore": true/false }
+func InboxRetrievePendingWithParams(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		TimeoutMs int `json:"timeoutMs"`
+	}
+	if paramsJSON != "" {
+		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+			return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+		}
+	}
+
+	res, err := n.InboxRetrievePendingWithTimeout(params.TimeoutMs)
+	if err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+
+	msgList := make([]map[string]interface{}, len(res.Messages))
+	for i, m := range res.Messages {
+		msgList[i] = map[string]interface{}{
+			"id":        m.ID,
+			"from":      m.From,
+			"message":   m.Message,
+			"timestamp": m.Timestamp,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":       true,
+		"messages": msgList,
+		"hasMore":  res.HasMore,
+	})
+}
+
+// InboxAck deletes only the relay inbox entries whose stable entry IDs match
+// the provided list.
+// Input JSON: { "entryIds": ["..."], "timeoutMs": N }
+// Returns JSON: { "ok": true, "acked": N }
+func InboxAck(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		EntryIds  []string `json:"entryIds"`
+		TimeoutMs int      `json:"timeoutMs"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if len(params.EntryIds) == 0 {
+		return errJSON("INVALID_INPUT", "missing entryIds")
+	}
+
+	acked, err := n.InboxAck(params.EntryIds, params.TimeoutMs)
+	if err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":    true,
+		"acked": acked,
 	})
 }
 

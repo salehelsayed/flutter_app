@@ -128,6 +128,9 @@ class _FakeMessageRepository implements MessageRepository {
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 
   @override
+  Future<int> deleteMessage(String id) async => 0;
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -143,7 +146,9 @@ class _FakeMessageRepository implements MessageRepository {
   }) async => [];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
@@ -213,6 +218,11 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
@@ -410,9 +420,7 @@ ChatMessage _makeChatMessage({
   );
 }
 
-ChatMessage _makeV2EncryptedChatMessage({
-  required String from,
-}) {
+ChatMessage _makeV2EncryptedChatMessage({required String from}) {
   final json = jsonEncode({
     'type': 'chat_message',
     'version': '2',
@@ -467,6 +475,98 @@ const _testMediaJson = [
 ];
 
 void main() {
+  group('ChatMessageListener processIncomingMessage', () {
+    late _FakeMessageRepository messageRepo;
+    late _FakeContactRepository contactRepo;
+
+    setUp(() {
+      messageRepo = _FakeMessageRepository();
+      contactRepo = _FakeContactRepository();
+    });
+
+    ChatMessageListener createListener({
+      Bridge? bridge,
+      Future<String?> Function()? getOwnMlKemSecretKey,
+    }) {
+      return ChatMessageListener(
+        chatMessageStream: const Stream<ChatMessage>.empty(),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: getOwnMlKemSecretKey,
+      );
+    }
+
+    test(
+      'returns blockedSender for blocked contacts before persistence',
+      () async {
+        const senderPeerId = 'sender-peer-blocked';
+        contactRepo.seedContact(
+          _makeContact(senderPeerId, isBlocked: true, username: 'Blocked'),
+        );
+        final listener = createListener();
+
+        final outcome = await listener.processIncomingMessage(
+          _makeChatMessage(from: senderPeerId, id: 'msg-blocked-001'),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.blockedSender);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+
+    test(
+      'returns missingMlKemSecret for staged v2 chat without local key',
+      () async {
+        const senderPeerId = 'sender-peer-v2';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        final listener = createListener();
+
+        final outcome = await listener.processIncomingMessage(
+          _makeV2EncryptedChatMessage(from: senderPeerId),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.missingMlKemSecret);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+
+    test(
+      'returns editMissingOriginal when edit has no stored original',
+      () async {
+        const senderPeerId = 'sender-peer-edit';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        final listener = createListener();
+        final editPayload = jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': 'msg-edit-missing',
+            'text': 'Edited text',
+            'senderPeerId': senderPeerId,
+            'senderUsername': 'Alice',
+            'timestamp': DateTime.now().toUtc().toIso8601String(),
+            'action': 'edit',
+            'editedAt': '2026-04-01T10:00:00.000Z',
+          },
+        });
+
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: senderPeerId,
+            to: '',
+            content: editPayload,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.editMissingOriginal);
+        expect(messageRepo.saved, isEmpty);
+      },
+    );
+  });
+
   group('ChatMessageListener auto-download', () {
     late StreamController<ChatMessage> chatStreamController;
     late _FakeMessageRepository messageRepo;

@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -60,10 +64,15 @@ void main() {
     bool feedLoaded = true,
     String? expandedCardId,
     String? activeFocusPeerId,
+    String? editingContactPeerId,
     EdgeInsets viewInsets = EdgeInsets.zero,
     SessionReplyTracker? sessionReplies,
     Map<String, String>? activeQuoteMessageIds,
     void Function(String contactPeerId)? onClearQuote,
+    void Function(String messageId, String emoji)? onReactionSelected,
+    void Function(String contactPeerId, String messageId)? onEditMessage,
+    void Function(String contactPeerId, String messageId)? onDeleteMessage,
+    void Function(String contactPeerId)? onCancelEdit,
     void Function(String groupId, String text)? onGroupInlineSend,
     void Function(String contactPeerId, String messageId)? onQuoteReply,
     void Function(GroupThreadFeedItem)? onGroupAttach,
@@ -87,8 +96,13 @@ void main() {
               expandedCardId: expandedCardId,
               onToggleExpand: (_) {},
               sessionReplies: sessionReplies,
+              editingContactPeerId: editingContactPeerId,
               activeQuoteMessageIds: activeQuoteMessageIds,
               onClearQuote: onClearQuote,
+              onReactionSelected: onReactionSelected,
+              onEditMessage: onEditMessage,
+              onDeleteMessage: onDeleteMessage,
+              onCancelEdit: onCancelEdit,
               onGroupInlineSend: onGroupInlineSend,
               onQuoteReply: onQuoteReply,
               onGroupAttach: onGroupAttach,
@@ -497,4 +511,471 @@ void main() {
       expect(find.byType(SwipeToQuoteBubble), findsNothing);
     },
   );
+
+  testWidgets(
+    'incoming long-press opens shared overlay and routes reply through feed callback',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final item = ThreadFeedItem(
+        id: 'thread_bob',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        contactPeerId: 'bob-peer',
+        contactUsername: 'Bob',
+        messages: [
+          ThreadMessage(
+            id: 'bob-msg-1',
+            text: 'Incoming from Bob',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+      String? quotedPeerId;
+      String? quotedMessageId;
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [item],
+          onReactionSelected: (_, _) {},
+          onQuoteReply: (contactPeerId, messageId) {
+            quotedPeerId = contactPeerId;
+            quotedMessageId = messageId;
+          },
+        ),
+      );
+      await tester.pump();
+
+      await tester.longPress(find.text('Incoming from Bob'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+      expect(
+        find.byKey(MessageContextOverlay.selectedMessageKey),
+        findsOneWidget,
+      );
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(MessageContextOverlay.selectedMessageKey),
+          matching: find.text('Incoming from Bob'),
+        ),
+        findsOneWidget,
+      );
+
+      final reactionRect = tester.getRect(
+        find.byKey(MessageContextOverlay.reactionBarKey),
+      );
+      final selectedRect = tester.getRect(
+        find.byKey(MessageContextOverlay.selectedMessageKey),
+      );
+      final menuRect = tester.getRect(
+        find.byKey(MessageContextOverlay.menuKey),
+      );
+
+      expect(reactionRect.bottom, lessThanOrEqualTo(selectedRect.top));
+      expect(selectedRect.bottom, lessThanOrEqualTo(menuRect.top));
+
+      await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(quotedPeerId, 'bob-peer');
+      expect(quotedMessageId, 'bob-msg-1');
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'sent long-press in expanded collapsed card exposes reply action',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final item = ThreadFeedItem(
+        id: 'thread_bob',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        contactPeerId: 'bob-peer',
+        contactUsername: 'Bob',
+        messages: [
+          ThreadMessage(
+            id: 'bob-msg-1',
+            text: 'Incoming from Bob',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+          ),
+          ThreadMessage(
+            id: 'bob-msg-2',
+            text: 'My sent message',
+            time: '12:05',
+            timestamp: DateTime.utc(2026, 3, 1, 10),
+            isIncoming: false,
+            status: 'delivered',
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+      String? quotedMessageId;
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [item],
+          expandedCardId: 'thread_bob',
+          onReactionSelected: (_, _) {},
+          onQuoteReply: (_, messageId) => quotedMessageId = messageId,
+        ),
+      );
+      await tester.pump();
+
+      await tester.longPress(find.text('My sent message'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(
+        find.byKey(MessageContextOverlay.selectedMessageKey),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(MessageContextOverlay.selectedMessageKey),
+          matching: find.text('My sent message'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+
+      await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+      await tester.pump();
+
+      expect(quotedMessageId, 'bob-msg-2');
+    },
+  );
+
+  testWidgets(
+    'feed edit action appears only on the last sent row even when a newer incoming row exists',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      String? editedPeerId;
+      String? editedMessageId;
+      final item = ThreadFeedItem(
+        id: 'thread_bob',
+        timestamp: DateTime.utc(2026, 3, 1, 10, 10),
+        contactPeerId: 'bob-peer',
+        contactUsername: 'Bob',
+        messages: [
+          ThreadMessage(
+            id: 'bob-sent-old',
+            text: 'Older sent message',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 10, 0),
+            isIncoming: false,
+            status: 'delivered',
+          ),
+          ThreadMessage(
+            id: 'bob-sent-last',
+            text: 'Last sent message',
+            time: '12:05',
+            timestamp: DateTime.utc(2026, 3, 1, 10, 5),
+            isIncoming: false,
+            status: 'delivered',
+          ),
+          ThreadMessage(
+            id: 'bob-incoming-newer',
+            text: 'Newer incoming message',
+            time: '12:10',
+            timestamp: DateTime.utc(2026, 3, 1, 10, 10),
+            isIncoming: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [item],
+          expandedCardId: 'thread_bob',
+          onReactionSelected: (_, _) {},
+          onEditMessage: (contactPeerId, messageId) {
+            editedPeerId = contactPeerId;
+            editedMessageId = messageId;
+          },
+        ),
+      );
+      await tester.pump();
+
+      await tester.longPress(find.text('Last sent message'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.editActionKey), findsOneWidget);
+
+      await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+      await tester.pump();
+
+      expect(editedPeerId, 'bob-peer');
+      expect(editedMessageId, 'bob-sent-last');
+
+      await tester.longPress(find.text('Older sent message'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+    },
+  );
+
+  testWidgets('feed hides edit for media-only outgoing rows', (tester) async {
+    setPhoneViewport(tester);
+
+    final item = ThreadFeedItem(
+      id: 'thread_media',
+      timestamp: DateTime.utc(2026, 3, 1, 10, 10),
+      contactPeerId: 'media-peer',
+      contactUsername: 'Media Bob',
+      messages: [
+        ThreadMessage(
+          id: 'media-parent',
+          text: 'Earlier incoming',
+          time: '12:00',
+          timestamp: DateTime.utc(2026, 3, 1, 10, 0),
+          isIncoming: true,
+        ),
+        ThreadMessage(
+          id: 'media-only-last',
+          text: '',
+          time: '12:10',
+          timestamp: DateTime.utc(2026, 3, 1, 10, 10),
+          isIncoming: false,
+          status: 'delivered',
+          media: const [
+            MediaAttachment(
+              id: 'media-1',
+              messageId: 'media-only-last',
+              mime: 'image/jpeg',
+              size: 1,
+              localPath: '/tmp/pic.jpg',
+              mediaType: 'image',
+              downloadStatus: 'done',
+              createdAt: '2026-03-01T10:10:00.000Z',
+            ),
+          ],
+        ),
+      ],
+      conversationState: ConversationState.read,
+    );
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        feedItems: [item],
+        expandedCardId: 'thread_media',
+        onReactionSelected: (_, _) {},
+        onEditMessage: (_, __) {},
+      ),
+    );
+    await tester.pump();
+
+    await tester.longPress(find.byType(MessageBubble).last);
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+  });
+
+  testWidgets('feed delete action routes through the shared overlay callback', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    String? deletedPeerId;
+    String? deletedMessageId;
+    final item = ThreadFeedItem(
+      id: 'thread_delete',
+      timestamp: DateTime.utc(2026, 3, 1, 10),
+      contactPeerId: 'delete-peer',
+      contactUsername: 'Delete Bob',
+      messages: [
+        ThreadMessage(
+          id: 'delete-msg-1',
+          text: 'Delete from feed',
+          time: '12:00',
+          timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+          isIncoming: true,
+          isUnread: true,
+        ),
+      ],
+      unreadCount: 1,
+      conversationState: ConversationState.unread,
+    );
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        feedItems: [item],
+        onReactionSelected: (_, _) {},
+        onDeleteMessage: (contactPeerId, messageId) {
+          deletedPeerId = contactPeerId;
+          deletedMessageId = messageId;
+        },
+      ),
+    );
+    await tester.pump();
+
+    await tester.longPress(find.text('Delete from feed'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.byKey(MessageContextOverlay.deleteActionKey), findsOneWidget);
+
+    await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(deletedPeerId, 'delete-peer');
+    expect(deletedMessageId, 'delete-msg-1');
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+  });
+
+  testWidgets('collapsed feed preview renders edited indicator', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    final item = ThreadFeedItem(
+      id: 'thread_edited',
+      timestamp: DateTime.utc(2026, 3, 1, 10, 5),
+      contactPeerId: 'edited-peer',
+      contactUsername: 'Edited Bob',
+      conversationState: ConversationState.read,
+      messages: [
+        ThreadMessage(
+          id: 'edited-incoming',
+          text: 'Original incoming',
+          time: '12:00',
+          timestamp: DateTime.utc(2026, 3, 1, 10, 0),
+          isIncoming: true,
+        ),
+        ThreadMessage(
+          id: 'edited-outgoing',
+          text: 'Edited outgoing preview',
+          time: '12:05',
+          timestamp: DateTime.utc(2026, 3, 1, 10, 5),
+          isIncoming: false,
+          status: 'delivered',
+          editedAt: '2026-03-01T10:06:00.000Z',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(buildFeedScreen(feedItems: [item]));
+    await tester.pump();
+
+    expect(find.text('Edited outgoing preview'), findsOneWidget);
+    expect(find.text('(edited)'), findsOneWidget);
+  });
+
+  testWidgets('copy action copies exact text and dismisses the overlay', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    String? copiedText;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copiedText =
+            (call.arguments as Map<Object?, Object?>)['text'] as String?;
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    final item = ThreadFeedItem(
+      id: 'thread_bob',
+      timestamp: DateTime.utc(2026, 3, 1, 10),
+      contactPeerId: 'bob-peer',
+      contactUsername: 'Bob',
+      messages: [
+        ThreadMessage(
+          id: 'bob-msg-1',
+          text: 'Copy this exactly',
+          time: '12:00',
+          timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+          isIncoming: true,
+          isUnread: true,
+        ),
+      ],
+      unreadCount: 1,
+      conversationState: ConversationState.unread,
+    );
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        feedItems: [item],
+        onReactionSelected: (_, _) {},
+        onQuoteReply: (_, _) {},
+      ),
+    );
+    await tester.pump();
+
+    await tester.longPress(find.text('Copy this exactly'));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(copiedText, 'Copy this exactly');
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+    expect(find.text('Message copied to clipboard'), findsOneWidget);
+  });
+
+  testWidgets('media-only long-press hides copy action', (tester) async {
+    setPhoneViewport(tester);
+
+    final item = ThreadFeedItem(
+      id: 'thread_bob',
+      timestamp: DateTime.utc(2026, 3, 1, 10),
+      contactPeerId: 'bob-peer',
+      contactUsername: 'Bob',
+      messages: [
+        ThreadMessage(
+          id: 'bob-msg-1',
+          text: '',
+          time: '12:00',
+          timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+          isIncoming: true,
+          isUnread: true,
+          media: [
+            MediaAttachment(
+              id: 'media-1',
+              messageId: 'bob-msg-1',
+              mime: 'image/jpeg',
+              size: 5000,
+              mediaType: 'image',
+              downloadStatus: 'pending',
+              createdAt: '2026-03-01T09:55:00Z',
+            ),
+          ],
+        ),
+      ],
+      unreadCount: 1,
+      conversationState: ConversationState.unread,
+    );
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        feedItems: [item],
+        onReactionSelected: (_, _) {},
+        onQuoteReply: (_, _) {},
+      ),
+    );
+    await tester.pump();
+
+    await tester.longPress(find.byType(MessageBubble));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+    expect(find.byKey(MessageContextOverlay.copyActionKey), findsNothing);
+  });
 }

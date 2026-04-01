@@ -6,7 +6,10 @@ import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart'
+    as delete_message_uc;
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
+import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart'
     as remove_reaction_uc;
@@ -40,6 +43,7 @@ class TestUser {
   final IncomingMessageRouter? router;
   final ReactionListener? reactionListener;
   final FakeReactionRepository? reactionRepo;
+  final MessageDeletionListener? messageDeletionListener;
   AppLifecycleState lifecycleState = AppLifecycleState.resumed;
 
   TestUser._({
@@ -54,6 +58,7 @@ class TestUser {
     this.router,
     this.reactionListener,
     this.reactionRepo,
+    this.messageDeletionListener,
   });
 
   factory TestUser.create({
@@ -64,6 +69,7 @@ class TestUser {
     Bridge? bridge,
     Future<String?> Function()? getOwnMlKemSecretKey,
     bool withReactions = false,
+    bool withMessageDeletion = false,
     bool autoStartListener = false,
   }) {
     final effectiveBridge = bridge ?? PassthroughCryptoBridge();
@@ -75,20 +81,35 @@ class TestUser {
     IncomingMessageRouter? router;
     ReactionListener? reactionListener;
     FakeReactionRepository? reactionRepo;
+    MessageDeletionListener? messageDeletionListener;
     final Stream<ChatMessage> chatStream;
 
-    if (withReactions) {
+    if (withReactions || withMessageDeletion) {
       router = IncomingMessageRouter(p2pService: p2p);
       chatStream = router.chatMessageStream;
-      reactionRepo = FakeReactionRepository();
-      reactionListener = ReactionListener(
-        reactionStream: router.reactionStream,
-        reactionRepo: reactionRepo,
-        contactRepo: contactRepo,
-        bridge: effectiveBridge,
-        getOwnMlKemSecretKey:
-            getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
-      );
+      if (withReactions) {
+        reactionRepo = FakeReactionRepository();
+        reactionListener = ReactionListener(
+          reactionStream: router.reactionStream,
+          reactionRepo: reactionRepo,
+          contactRepo: contactRepo,
+          bridge: effectiveBridge,
+          getOwnMlKemSecretKey:
+              getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
+        );
+      }
+      if (withMessageDeletion) {
+        messageDeletionListener = MessageDeletionListener(
+          deletionStream: router.messageDeletionStream,
+          messageRepo: msgRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          bridge: effectiveBridge,
+          getOwnMlKemSecretKey:
+              getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
+        );
+      }
     } else {
       chatStream = p2p.messageStream;
     }
@@ -115,6 +136,7 @@ class TestUser {
       router: router,
       reactionListener: reactionListener,
       reactionRepo: reactionRepo,
+      messageDeletionListener: messageDeletionListener,
     );
     if (autoStartListener) {
       user.start();
@@ -199,6 +221,20 @@ class TestUser {
     );
   }
 
+  /// Deletes a sent message for everyone.
+  Future<(SendChatMessageResult, ConversationMessage?)>
+  deleteMessageForEveryone(ConversationMessage message) async {
+    return delete_message_uc.deleteMessageForEveryone(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      originalMessage: message,
+      reactionRepo: reactionRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      bridge: bridge,
+      recipientMlKemPublicKey: await _mlKemKeyFor(message.contactPeerId),
+    );
+  }
+
   /// Sends a reaction to a message.
   Future<(send_reaction_uc.SendReactionResult, MessageReaction?)> sendReaction(
     String targetPeerId,
@@ -255,6 +291,7 @@ class TestUser {
     router?.start();
     chatListener.start();
     reactionListener?.start();
+    messageDeletionListener?.start();
   }
 
   void startListener() => chatListener.start();
@@ -312,6 +349,7 @@ class TestUser {
   Future<int> drainOfflineInbox() => p2pService.drainOfflineInboxCount();
 
   void dispose() {
+    messageDeletionListener?.dispose();
     reactionListener?.dispose();
     chatListener.dispose();
     router?.dispose();

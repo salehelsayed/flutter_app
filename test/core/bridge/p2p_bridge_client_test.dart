@@ -469,6 +469,66 @@ void main() {
       expect(result['ok'], isTrue);
       expect(bridge.lastParsedRequest!['cmd'], equals('inbox:retrieve'));
     });
+
+    test('passes timeoutMs when provided', () async {
+      bridge.nextResponse = {'ok': true, 'messages': [], 'hasMore': false};
+
+      await callP2PInboxRetrieve(bridge, timeoutMs: 2500);
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['timeoutMs'], equals(2500));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // callP2PInboxRetrievePending
+  // ---------------------------------------------------------------------------
+  group('callP2PInboxRetrievePending', () {
+    test('sends inbox:retrieve_pending', () async {
+      bridge.nextResponse = {'ok': true, 'messages': [], 'hasMore': false};
+
+      final result = await callP2PInboxRetrievePending(bridge);
+
+      expect(result['ok'], isTrue);
+      expect(
+        bridge.lastParsedRequest!['cmd'],
+        equals('inbox:retrieve_pending'),
+      );
+    });
+
+    test('passes timeoutMs when provided', () async {
+      bridge.nextResponse = {'ok': true, 'messages': [], 'hasMore': false};
+
+      await callP2PInboxRetrievePending(bridge, timeoutMs: 4000);
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['timeoutMs'], equals(4000));
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // callP2PInboxAck
+  // ---------------------------------------------------------------------------
+  group('callP2PInboxAck', () {
+    test('sends inbox:ack with entryIds and optional timeout', () async {
+      bridge.nextResponse = {'ok': true, 'acked': 2};
+
+      final result = await callP2PInboxAck(
+        bridge,
+        entryIds: ['entry-1', 'entry-2'],
+        timeoutMs: 1500,
+      );
+
+      expect(result['ok'], isTrue);
+      expect(result['acked'], equals(2));
+      expect(bridge.lastParsedRequest!['cmd'], equals('inbox:ack'));
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['entryIds'], equals(['entry-1', 'entry-2']));
+      expect(payload['timeoutMs'], equals(1500));
+    });
   });
 
   // ---------------------------------------------------------------------------

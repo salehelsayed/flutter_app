@@ -172,7 +172,14 @@ easeInCubic (lines 7–34).
 | Feed screen content, cards, scrolling | **Unchanged** | No changes to Feed content |
 | Orbit screen content (friends, groups, intros tabs) | **Unchanged** | No changes to Orbit content |
 | Notification deep-link to Orbit | **In scope** | Nav bar should also be visible when arriving via notification |
+| Orbit internal tab/scroll state preserved after returning to Feed and later reopening Orbit | **Out of scope** | Requires a persistent sibling host instead of the current modal push/pop route; defer to Report 30 |
 | Third tab additions | **Out of scope** | Only Feed and Orbit exist today |
+
+**Decomposition safety note (2026-03-30):** `TC-27-C05` is not part of the
+execution closure bar for Report `27` under the current modal-route
+architecture. Report `27` closes on persistent-nav parity and truthful shell
+state; preserving Orbit view state across Feed return and later re-entry is a
+separate sibling-shell concern tracked by Report `30`.
 
 ---
 

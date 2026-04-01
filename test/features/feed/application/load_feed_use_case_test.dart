@@ -73,7 +73,8 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
-      String contactPeerId) async {
+    String contactPeerId,
+  ) async {
     return messagesByContact[contactPeerId] ?? [];
   }
 
@@ -82,7 +83,8 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async {
+    String contactPeerId,
+  ) async {
     return null;
   }
 
@@ -114,6 +116,9 @@ class FakeMessageRepository implements MessageRepository {
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 
   @override
+  Future<int> deleteMessage(String id) async => 0;
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -129,7 +134,9 @@ class FakeMessageRepository implements MessageRepository {
   }) async => [];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
@@ -212,54 +219,57 @@ void main() {
       expect((result[1] as ConnectionFeedItem).contactUsername, 'Alice');
     });
 
-    test('groups sent and received messages into ThreadFeedItems by contact', () async {
-      final contacts = [
-        _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
-      ];
+    test(
+      'groups sent and received messages into ThreadFeedItems by contact',
+      () async {
+        final contacts = [
+          _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
+        ];
 
-      final messages = {
-        'peer-A': [
-          _makeMessage(
-            id: 'msg-1',
-            contactPeerId: 'peer-A',
-            senderPeerId: 'peer-A',
-            text: 'Hello from Alice',
-            timestamp: '2026-02-09T12:00:00.000Z',
-            isIncoming: true,
-          ),
-          _makeMessage(
-            id: 'msg-2',
-            contactPeerId: 'peer-A',
-            senderPeerId: 'peer-A',
-            text: 'Second message',
-            timestamp: '2026-02-09T12:05:00.000Z',
-            isIncoming: true,
-          ),
-          _makeMessage(
-            id: 'msg-3',
-            contactPeerId: 'peer-A',
-            senderPeerId: 'my-peer',
-            text: 'My reply',
-            timestamp: '2026-02-09T12:01:00.000Z',
-            isIncoming: false,
-          ),
-        ],
-      };
+        final messages = {
+          'peer-A': [
+            _makeMessage(
+              id: 'msg-1',
+              contactPeerId: 'peer-A',
+              senderPeerId: 'peer-A',
+              text: 'Hello from Alice',
+              timestamp: '2026-02-09T12:00:00.000Z',
+              isIncoming: true,
+            ),
+            _makeMessage(
+              id: 'msg-2',
+              contactPeerId: 'peer-A',
+              senderPeerId: 'peer-A',
+              text: 'Second message',
+              timestamp: '2026-02-09T12:05:00.000Z',
+              isIncoming: true,
+            ),
+            _makeMessage(
+              id: 'msg-3',
+              contactPeerId: 'peer-A',
+              senderPeerId: 'my-peer',
+              text: 'My reply',
+              timestamp: '2026-02-09T12:01:00.000Z',
+              isIncoming: false,
+            ),
+          ],
+        };
 
-      final result = await loadFeed(
-        contactRepo: FakeContactRepository(contacts: contacts),
-        messageRepo: FakeMessageRepository(messagesByContact: messages),
-      );
+        final result = await loadFeed(
+          contactRepo: FakeContactRepository(contacts: contacts),
+          messageRepo: FakeMessageRepository(messagesByContact: messages),
+        );
 
-      final threadItems = result.whereType<ThreadFeedItem>().toList();
-      expect(threadItems.length, 1);
-      // All 3 messages (sent + received) grouped into one thread
-      expect(threadItems[0].messages.length, 3);
-      expect(threadItems[0].messages[0].text, 'Hello from Alice');
-      expect(threadItems[0].messages[1].text, 'My reply');
-      expect(threadItems[0].messages[2].text, 'Second message');
-      expect(threadItems[0].contactUsername, 'Alice');
-    });
+        final threadItems = result.whereType<ThreadFeedItem>().toList();
+        expect(threadItems.length, 1);
+        // All 3 messages (sent + received) grouped into one thread
+        expect(threadItems[0].messages.length, 3);
+        expect(threadItems[0].messages[0].text, 'Hello from Alice');
+        expect(threadItems[0].messages[1].text, 'My reply');
+        expect(threadItems[0].messages[2].text, 'Second message');
+        expect(threadItems[0].contactUsername, 'Alice');
+      },
+    );
 
     test('same contact with 24hr gap keeps single card', () async {
       final contacts = [
@@ -330,12 +340,10 @@ void main() {
       expect(result.length, 3);
       // Bob connection at 14:00, thread at 12:00, Alice connection at 10:00
       expect(result[0], isA<ConnectionFeedItem>());
-      expect(
-          (result[0] as ConnectionFeedItem).contactUsername, 'Bob');
+      expect((result[0] as ConnectionFeedItem).contactUsername, 'Bob');
       expect(result[1], isA<ThreadFeedItem>());
       expect(result[2], isA<ConnectionFeedItem>());
-      expect(
-          (result[2] as ConnectionFeedItem).contactUsername, 'Alice');
+      expect((result[2] as ConnectionFeedItem).contactUsername, 'Alice');
     });
 
     test('includes blocked contacts with isBlocked flag', () async {
@@ -374,24 +382,28 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final groupMsgRepo = InMemoryGroupMessageRepository();
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g1',
-        name: 'Alpha Group',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/g1',
-        createdAt: DateTime(2026, 2, 1),
-        createdBy: 'admin',
-        myRole: GroupRole.member,
-      ));
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-1',
-        groupId: 'g1',
-        senderPeerId: 'p1',
-        senderUsername: 'User1',
-        text: 'Hello group!',
-        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
-        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Alpha Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          senderUsername: 'User1',
+          text: 'Hello group!',
+          timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+          createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+        ),
+      );
 
       final result = await loadFeed(
         contactRepo: FakeContactRepository(),
@@ -414,23 +426,27 @@ void main() {
         _makeContact('peer-A', 'Alice', '2026-02-09T10:00:00.000Z'),
       ];
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g1',
-        name: 'Group Alpha',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/g1',
-        createdAt: DateTime(2026, 2, 1),
-        createdBy: 'admin',
-        myRole: GroupRole.member,
-      ));
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-1',
-        groupId: 'g1',
-        senderPeerId: 'p1',
-        text: 'Group msg',
-        timestamp: DateTime.utc(2026, 2, 9, 14, 0),
-        createdAt: DateTime.utc(2026, 2, 9, 14, 0),
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Group Alpha',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          text: 'Group msg',
+          timestamp: DateTime.utc(2026, 2, 9, 14, 0),
+          createdAt: DateTime.utc(2026, 2, 9, 14, 0),
+        ),
+      );
 
       final result = await loadFeed(
         contactRepo: FakeContactRepository(contacts: contacts),
@@ -459,42 +475,50 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final groupMsgRepo = InMemoryGroupMessageRepository();
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g1',
-        name: 'Active Group',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/g1',
-        createdAt: DateTime(2026, 2, 1),
-        createdBy: 'admin',
-        myRole: GroupRole.member,
-      ));
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g2',
-        name: 'Archived Group',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/g2',
-        createdAt: DateTime(2026, 2, 1),
-        createdBy: 'admin',
-        myRole: GroupRole.member,
-        isArchived: true,
-        archivedAt: DateTime(2026, 2, 5),
-      ));
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-1',
-        groupId: 'g1',
-        senderPeerId: 'p1',
-        text: 'Active msg',
-        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
-        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
-      ));
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-2',
-        groupId: 'g2',
-        senderPeerId: 'p1',
-        text: 'Archived msg',
-        timestamp: DateTime.utc(2026, 2, 9, 13, 0),
-        createdAt: DateTime.utc(2026, 2, 9, 13, 0),
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Active Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g2',
+          name: 'Archived Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g2',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+          isArchived: true,
+          archivedAt: DateTime(2026, 2, 5),
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          text: 'Active msg',
+          timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+          createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-2',
+          groupId: 'g2',
+          senderPeerId: 'p1',
+          text: 'Archived msg',
+          timestamp: DateTime.utc(2026, 2, 9, 13, 0),
+          createdAt: DateTime.utc(2026, 2, 9, 13, 0),
+        ),
+      );
 
       final result = await loadFeed(
         contactRepo: FakeContactRepository(),
@@ -512,15 +536,17 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final groupMsgRepo = InMemoryGroupMessageRepository();
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g1',
-        name: 'Empty Group',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/g1',
-        createdAt: DateTime(2026, 2, 1),
-        createdBy: 'admin',
-        myRole: GroupRole.member,
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Empty Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
 
       final result = await loadFeed(
         contactRepo: FakeContactRepository(),
@@ -539,34 +565,40 @@ void main() {
       final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
       final mediaFileManager = FakeMediaFileManager();
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g1',
-        name: 'Media Group',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/g1',
-        createdAt: DateTime(2026, 2, 1),
-        createdBy: 'admin',
-        myRole: GroupRole.member,
-      ));
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-1',
-        groupId: 'g1',
-        senderPeerId: 'p1',
-        senderUsername: 'User1',
-        text: 'Photo',
-        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
-        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
-      ));
-      await mediaAttachmentRepo.saveAttachment(MediaAttachment(
-        id: 'att-g1',
-        messageId: 'gm-1',
-        mime: 'image/jpeg',
-        size: 2048,
-        mediaType: 'image',
-        localPath: 'media/groups/img.jpg',
-        downloadStatus: 'done',
-        createdAt: '2026-02-09T12:00:00.000Z',
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Media Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          senderUsername: 'User1',
+          text: 'Photo',
+          timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+          createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+        ),
+      );
+      await mediaAttachmentRepo.saveAttachment(
+        MediaAttachment(
+          id: 'att-g1',
+          messageId: 'gm-1',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: 'media/groups/img.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-02-09T12:00:00.000Z',
+        ),
+      );
 
       final items = await loadGroupFeedItems(
         groupRepo: groupRepo,
@@ -591,34 +623,40 @@ void main() {
       final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
       final mediaFileManager = FakeMediaFileManager();
 
-      await groupRepo.saveGroup(GroupModel(
-        id: 'g1',
-        name: 'Media Group',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/g1',
-        createdAt: DateTime(2026, 2, 1),
-        createdBy: 'admin',
-        myRole: GroupRole.member,
-      ));
-      await groupMsgRepo.saveMessage(GroupMessage(
-        id: 'gm-1',
-        groupId: 'g1',
-        senderPeerId: 'p1',
-        senderUsername: 'User1',
-        text: 'Image message',
-        timestamp: DateTime.utc(2026, 2, 9, 12, 0),
-        createdAt: DateTime.utc(2026, 2, 9, 12, 0),
-      ));
-      await mediaAttachmentRepo.saveAttachment(MediaAttachment(
-        id: 'att-g1',
-        messageId: 'gm-1',
-        mime: 'image/jpeg',
-        size: 2048,
-        mediaType: 'image',
-        localPath: 'media/groups/img.jpg',
-        downloadStatus: 'done',
-        createdAt: '2026-02-09T12:00:00.000Z',
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Media Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          senderUsername: 'User1',
+          text: 'Image message',
+          timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+          createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+        ),
+      );
+      await mediaAttachmentRepo.saveAttachment(
+        MediaAttachment(
+          id: 'att-g1',
+          messageId: 'gm-1',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: 'media/groups/img.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-02-09T12:00:00.000Z',
+        ),
+      );
 
       final result = await loadFeed(
         contactRepo: FakeContactRepository(),

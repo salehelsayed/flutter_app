@@ -10,8 +10,11 @@ The current 1:1 system should be treated as **reliably closed for core messaging
 
 1. sender-side text/media/voice sends persist enough local state before risky network edges,
 2. interruption and retry paths can recover `sending`, failed, incomplete-upload, and unacked states,
-3. offline delivery can fall back to relay inbox and heal automatically when connectivity returns,
-4. receive-side decrypt, dedup, and media-download behavior remains operationally safe,
+3. offline delivery can fall back to relay inbox, fetched inbox rows stage
+   durably before ack/delete, and notification-open recovery can surface them
+   through the shared prepare-before-route contract,
+4. receive-side decrypt, dedup, exact staged-envelope reject handling, and
+   media-download behavior remain operationally safe,
 5. message statuses stay honest delivery statuses, not fake read receipts,
 6. new outgoing and incoming 1:1 rows on Go/libp2p paths keep honest
    transport semantics: actual `direct` vs `relay` from stream truth when the
@@ -55,10 +58,20 @@ Together these give 1:1 a real auto-heal path on resume, online transition, and 
 - Direct send failure can fall back to relay inbox persistence.
 - Inbox-backed delivery is treated as a real success path, not just a best-effort hint.
 - This is one of the main reasons 1:1 currently deserves the "trustworthy" label.
+- Relay-backed inbox recovery now uses staged `retrieve_pending` plus explicit
+  `ack`, with a durable local staging table so fetched inbox rows survive
+  restart/resume until they are committed or exactly rejected.
+- Notification-opened 1:1 routes now prepare inbox catch-up before navigation
+  across terminated remote, warm remote, terminated local, and warm local app
+  entry points instead of letting some app-root handlers route immediately.
 
 ### 4. Receive-path operability
 
 - `handle_incoming_chat_message_use_case.dart` now explicitly classifies decrypt failures instead of silently collapsing them into generic failure.
+- Post-fetch staged chat rejects now preserve exact outcomes such as
+  `missingMlKemSecret`, `duplicate`, `editMissingOriginal`, and other
+  permanent-vs-retryable branches instead of disappearing as unclassified
+  loss.
 - `download_media_use_case.dart` now deduplicates overlapping downloads through an in-flight guard.
 - Incoming media metadata and receive-side download behavior are already part of the normal path, not an unimplemented future system.
 
@@ -99,6 +112,11 @@ Together these give 1:1 a real auto-heal path on resume, online transition, and 
   - it takes effect at the next safe boundary, restores the composer snapshot,
     terminalizes the optimistic row to `failed`, and marks durable pending
     attachments `upload_failed`
+  - the late-boundary Report `35` seam is now reclosed inside that same
+    contract: if cancel is accepted before an upload future later resolves or
+    before the composer leaves upload mode, the sender still gets the cancel
+    outcome and that same attempt does not fall through into the final
+    `sendChatMessage(...)` / recipient-delivery path
 - Failed outgoing 1:1 media rows now expose message-scoped retry/delete
   controls:
   - retry acts on the same failed row instead of creating a duplicate
@@ -179,8 +197,9 @@ Those may be useful product features, but their absence does not mean 1:1 messag
 - Session 36 kept proof retention in the Dart orchestrator instead of changing
   the `testpeer` collector lifecycle or widening into shared Flutter / Go 1:1
   transport code.
-- Session 47 kept cancel as next-safe-boundary terminalization rather than
-  inventing mid-stream transport aborts or a new `cancelled` status model.
+- Sessions 47 and Report 35 keep cancel as next-safe-boundary terminalization
+  rather than inventing mid-stream transport aborts or a new `cancelled`
+  status model.
 - Session 47 kept failed-media recovery scoped to media rows: failed text-only
   rows do not gain generic retry/delete affordances.
 - Session 47 kept delete cleanup bounded to the targeted failed row and
@@ -212,6 +231,7 @@ Reopen this area only if one of these happens:
    `100 MB` sanity cap,
 9. active relay upload protection regresses in the 1:1 conversation surface
    (aggregate progress, leave guard, wake-lock lifetime, next-safe-boundary
+   cancel, late upload-failure override, final-send suppression after accepted
    cancel, targeted failed-media retry/delete, or bounded owned-file cleanup),
    or the repo starts overclaiming true background upload behavior,
 10. a named gate or direct regression proves an escaped bug in the shared 1:1 path,
@@ -219,7 +239,10 @@ Reopen this area only if one of these happens:
    acceptance in `A1` / `A4` / `A2` / `A5` / `D4` / `A7`, no-address self-heal
    recovery in `A8` / `A8b` / `C3`, content-based `B8` / `G6`
    synchronization, or retained receiver-proof verification for `E8`,
-   `RECV-A1`, `RECV-A4`, or `RECV-A6` in the direct standalone command.
+   `RECV-A1`, `RECV-A4`, or `RECV-A6` in the direct standalone command,
+12. notification-opened 1:1 routes can again navigate before staged inbox
+   recovery or exact post-fetch disposition handling makes the pending message
+   visible or diagnosable.
 
 Do **not** reopen 1:1 reliability just because a missing product feature was noticed.
 
@@ -235,6 +258,16 @@ When touching shared 1:1 reliability code:
 4. run `./scripts/run_test_gates.sh feed` if the feed can still enter the changed 1:1 send path,
 5. run `./scripts/run_test_gates.sh baseline` when Flutter production code changes,
 6. run `./scripts/run_test_gates.sh transport` only when bootstrap, resume, reconnect, inbox-drain, or transport fallback wiring changes.
+
+For shared 1:1 inbox-recovery / notification-open trust seams, the direct
+proof should keep covering:
+
+- staged relay fetch -> durable local record -> later `ack` ordering
+- restart/resume replay of staged inbox rows that were fetched earlier but not
+  yet committed
+- exact staged-envelope reject outcomes for retryable vs permanent drops
+- prepare-before-route sequencing on terminated remote, warm remote,
+  terminated local, and warm local notification-open entry points
 
 For 1:1 transport-label work, the direct proof should keep covering:
 
@@ -259,6 +292,10 @@ For 1:1 transport-label work, the direct proof should keep covering:
   the 1:1 conversation surface
 - next-safe-boundary cancel restoring the composer snapshot while
   terminalizing the same row to `failed` plus attachment `upload_failed`
+- accepted video-plus-caption cancel still suppressing the later
+  `sendChatMessage(...)` path for that same attempt
+- cancel requested before an upload future later resolves as failure still
+  surfacing `Upload cancelled.` instead of the ordinary upload-failure path
 - failed outgoing media rows exposing same-row retry/delete controls without
   widening the contract to text-only failures
 - delete cleanup staying bounded to the targeted row and app-owned

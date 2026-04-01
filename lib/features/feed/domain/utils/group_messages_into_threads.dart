@@ -15,8 +15,9 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
   Map<String, bool> contactBlocked = const {},
 }) {
   // Filter out system messages (e.g. "Connected through X") from feed threads
-  final filteredMessages =
-      allMessages.where((m) => m.transport != 'system').toList();
+  final filteredMessages = allMessages
+      .where((m) => m.transport != 'system')
+      .toList();
   if (filteredMessages.isEmpty) return [];
 
   // Group all messages by contact
@@ -35,11 +36,13 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
     final username = contactUsernames[peerId] ?? 'Unknown';
 
     // Derive conversation state from ALL messages for this contact
-    final hasUnreadIncoming =
-        msgs.any((m) => m.isIncoming && m.readAt == null);
-    final hasSentMessages = msgs.any((m) => !m.isIncoming);
-    final unreadIncomingCount =
-        msgs.where((m) => m.isIncoming && m.readAt == null).length;
+    final hasUnreadIncoming = msgs.any(
+      (m) => !m.isDeleted && m.isIncoming && m.readAt == null,
+    );
+    final hasSentMessages = msgs.any((m) => !m.isIncoming && !m.isDeleted);
+    final unreadIncomingCount = msgs
+        .where((m) => !m.isDeleted && m.isIncoming && m.readAt == null)
+        .length;
 
     final ConversationState state;
     if (hasUnreadIncoming && hasSentMessages) {
@@ -55,26 +58,31 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
     // Find last replied timestamp
     DateTime? lastRepliedAt;
     if (hasSentMessages) {
-      final sentMessages = msgs.where((m) => !m.isIncoming).toList();
+      final sentMessages = msgs
+          .where((m) => !m.isIncoming && !m.isDeleted)
+          .toList();
       sentMessages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
       lastRepliedAt = DateTime.tryParse(sentMessages.last.timestamp);
     }
 
-    final latestTs =
-        DateTime.tryParse(msgs.last.timestamp) ?? DateTime.now();
+    final latestTs = DateTime.tryParse(msgs.last.timestamp) ?? DateTime.now();
 
     final threadMessages = msgs
-        .map((m) => ThreadMessage(
-              id: m.id,
-              text: m.text,
-              time: formatMessageTime(m.timestamp),
-              timestamp: DateTime.tryParse(m.timestamp) ?? DateTime.now(),
-              isUnread: m.isIncoming && m.readAt == null,
-              isIncoming: m.isIncoming,
-              status: m.isIncoming ? null : m.status,
-              quotedMessageId: m.quotedMessageId,
-              media: m.media,
-            ))
+        .map(
+          (m) => ThreadMessage(
+            id: m.id,
+            text: m.text,
+            time: formatMessageTime(m.timestamp),
+            timestamp: DateTime.tryParse(m.timestamp) ?? DateTime.now(),
+            isUnread: !m.isDeleted && m.isIncoming && m.readAt == null,
+            isIncoming: m.isIncoming,
+            isDeleted: m.isDeleted,
+            status: m.isIncoming ? null : m.status,
+            editedAt: m.editedAt,
+            quotedMessageId: m.quotedMessageId,
+            media: m.media,
+          ),
+        )
         .toList();
 
     final item = ThreadFeedItem(
@@ -83,7 +91,8 @@ List<ThreadFeedItem> groupMessagesIntoThreads({
       contactPeerId: peerId,
       contactUsername: username,
       unreadCount: unreadIncomingCount,
-      isUnreadCard: state == ConversationState.unread ||
+      isUnreadCard:
+          state == ConversationState.unread ||
           state == ConversationState.active,
       conversationState: state,
       lastRepliedAt: lastRepliedAt,

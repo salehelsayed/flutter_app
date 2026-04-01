@@ -20,7 +20,9 @@ class MessageBubble extends StatelessWidget {
   final String time;
   final bool isUnread;
   final bool isIncoming;
+  final bool isDeleted;
   final String? status;
+  final bool isEdited;
   final String? senderLabel;
   final String? senderPeerId;
   final String? quotedText;
@@ -38,7 +40,9 @@ class MessageBubble extends StatelessWidget {
     required this.time,
     this.isUnread = false,
     this.isIncoming = true,
+    this.isDeleted = false,
     this.status,
+    this.isEdited = false,
     this.senderLabel,
     this.senderPeerId,
     this.quotedText,
@@ -51,11 +55,14 @@ class MessageBubble extends StatelessWidget {
     this.onReactionTap,
   });
 
-  List<MediaAttachment> get _imageVideoMedia => media
-      .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
-      .toList();
-  List<MediaAttachment> get _audioMedia =>
-      media.where((a) => a.mediaType == 'audio').toList();
+  List<MediaAttachment> get _imageVideoMedia => isDeleted
+      ? const <MediaAttachment>[]
+      : media
+            .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
+            .toList();
+  List<MediaAttachment> get _audioMedia => isDeleted
+      ? const <MediaAttachment>[]
+      : media.where((a) => a.mediaType == 'audio').toList();
 
   @override
   Widget build(BuildContext context) {
@@ -212,11 +219,17 @@ class MessageBubble extends StatelessWidget {
           : const Color.fromRGBO(255, 255, 255, 0.80),
       height: 1.5,
     );
-    final hasBody = text.isNotEmpty;
+    final deletedText = isDeleted
+        ? AppLocalizations.of(context)?.conversation_message_deleted ??
+              'This message was deleted'
+        : null;
+    final displayText = isDeleted ? deletedText! : text;
+    final hasBody = displayText.isNotEmpty;
     final hasName = name.isNotEmpty;
-    final hasStatus = !isIncoming && status != null;
+    final hasStatus = !isDeleted && !isIncoming && status != null;
 
-    final hasReactions = reactions.isNotEmpty && ownPeerId != null;
+    final hasReactions =
+        !isDeleted && reactions.isNotEmpty && ownPeerId != null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -231,11 +244,20 @@ class MessageBubble extends StatelessWidget {
           ),
         if (hasName && hasBody) const SizedBox(height: 2),
         if (hasBody)
-          LinkableText(
-            text: text,
-            textDirection: detectTextDirection(text),
-            style: bodyStyle,
-          ),
+          isDeleted
+              ? Text(
+                  displayText,
+                  textDirection: detectTextDirection(displayText),
+                  style: bodyStyle.copyWith(
+                    fontStyle: FontStyle.italic,
+                    color: const Color.fromRGBO(255, 255, 255, 0.60),
+                  ),
+                )
+              : LinkableText(
+                  text: displayText,
+                  textDirection: detectTextDirection(displayText),
+                  style: bodyStyle,
+                ),
         if (hasName || hasBody) const SizedBox(height: 8),
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -257,6 +279,17 @@ class MessageBubble extends StatelessWidget {
                 color: Color.fromRGBO(255, 255, 255, 0.35),
               ),
             ),
+            if (isEdited && !isDeleted) ...[
+              const SizedBox(width: 6),
+              Text(
+                AppLocalizations.of(context)!.conversation_edited_indicator,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w400,
+                  color: Color.fromRGBO(255, 255, 255, 0.35),
+                ),
+              ),
+            ],
             if (hasStatus) ...[
               const SizedBox(width: 4),
               Semantics(
@@ -356,8 +389,9 @@ class MessageBubble extends StatelessWidget {
 
   static IconData _statusIcon(String status) {
     // Legacy compatibility: old rows may still have queued status.
-    if (status == 'delivered' || status == 'queued')
+    if (status == 'delivered' || status == 'queued') {
       return Icons.done_all_rounded;
+    }
     if (status == 'failed') return Icons.error_outline_rounded;
     if (status == 'pending') return Icons.schedule_rounded;
     return Icons.done_rounded; // 'sent', 'sending'

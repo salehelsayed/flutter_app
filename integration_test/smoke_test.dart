@@ -85,8 +85,7 @@ void main() {
     print('========================================\n');
 
     final secureKeyStore = _FakeSecureKeyStore();
-    final dbName =
-        'smoke_test_${DateTime.now().millisecondsSinceEpoch}.db';
+    final dbName = 'smoke_test_${DateTime.now().millisecondsSinceEpoch}.db';
     final postRepository = InMemoryPostRepository();
     final postsPrivacySettingsRepository =
         InMemoryPostsPrivacySettingsRepository();
@@ -176,6 +175,7 @@ void main() {
           dbCountTotalUnreadExcludingArchived(db),
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
+      dbDeleteMessage: (id) => dbDeleteMessage(db, id),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
           dbLoadMessagesPage(
             db,
@@ -229,6 +229,8 @@ void main() {
           dbDeleteMediaForMessage(db, messageId),
       dbDeleteMediaForContact: (contactPeerId) =>
           dbDeleteMediaForContact(db, contactPeerId),
+      dbMarkUploadPendingAttachmentsFailedForMessage: (messageId) =>
+          dbMarkUploadPendingAttachmentsFailedForMessage(db, messageId),
       dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
       dbLoadUploadPendingAttachments: ({int limit = 50}) =>
           dbLoadUploadPendingAttachments(db, limit: limit),
