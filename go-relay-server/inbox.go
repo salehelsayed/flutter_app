@@ -14,6 +14,8 @@ import (
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/messaging"
 	"google.golang.org/api/option"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -311,10 +313,18 @@ func extractMessageId(message string) string {
 // --- Inbox store ---
 
 type inboxMessage struct {
+	ID        string                 `json:"id,omitempty"`
 	From      string                 `json:"from"`
 	Message   string                 `json:"message"`
 	Timestamp int64                  `json:"timestamp"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+func ensureInboxMessageID(entry inboxMessage) inboxMessage {
+	if entry.ID == "" {
+		entry.ID = uuid.New().String()
+	}
+	return entry
 }
 
 // InboxStore wraps an InboxBackend and a PushService.
@@ -340,6 +350,7 @@ func NewInboxStoreWithBackend(backend InboxBackend, push *PushService) *InboxSto
 }
 
 func (is *InboxStore) Store(toPeerId string, entry inboxMessage) bool {
+	entry = ensureInboxMessageID(entry)
 	stored := is.backend.Store(toPeerId, entry)
 	if !stored {
 		// Duplicate — do not fire push notification.
@@ -391,6 +402,28 @@ func (is *InboxStore) RetrieveWithMeta(peerId string, limit int) ([]inboxMessage
 	}
 
 	return messages, hasMore
+}
+
+// RetrievePendingWithMeta retrieves messages without deleting them and returns
+// pagination metadata.
+func (is *InboxStore) RetrievePendingWithMeta(peerId string, limit int) ([]inboxMessage, bool) {
+	return is.backend.RetrievePending(peerId, limit)
+}
+
+// Ack deletes only the inbox entries whose stable relay entry IDs match the
+// provided list.
+func (is *InboxStore) Ack(peerId string, entryIDs []string) (int, error) {
+	removed, err := is.backend.Ack(peerId, entryIDs)
+	if err != nil {
+		return 0, err
+	}
+
+	if removed > 0 {
+		log.Printf("[INBOX] Acked %d message(s) for %s",
+			removed, peerId[:min(20, len(peerId))])
+	}
+
+	return removed, nil
 }
 
 func (is *InboxStore) Count(peerId string) int {
@@ -587,6 +620,7 @@ type inboxRequest struct {
 	Message  string                 `json:"message,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 	Limit    int                    `json:"limit,omitempty"`
+	EntryIds []string               `json:"entryIds,omitempty"`
 	Token    string                 `json:"token,omitempty"`
 	Platform string                 `json:"platform,omitempty"`
 	// Group inbox fields.
@@ -603,6 +637,7 @@ type inboxResponse struct {
 	Error         string              `json:"error,omitempty"`
 	Messages      []inboxMessage      `json:"messages,omitempty"`
 	HasMore       bool                `json:"hasMore,omitempty"`
+	Acked         int                 `json:"acked,omitempty"`
 	GroupMessages []groupInboxMessage `json:"groupMessages,omitempty"`
 	NextCursor    string              `json:"nextCursor,omitempty"`
 }
@@ -671,6 +706,30 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			resp = inboxResponse{Status: "OK", Messages: messages, HasMore: hasMore}
 		} else {
 			resp = inboxResponse{Status: "NO_MESSAGES"}
+		}
+
+	case "retrieve_pending":
+		limit := req.Limit
+		if limit <= 0 {
+			limit = 50
+		}
+		messages, hasMore := inbox.RetrievePendingWithMeta(remotePeer, limit)
+		if len(messages) > 0 {
+			resp = inboxResponse{Status: "OK", Messages: messages, HasMore: hasMore}
+		} else {
+			resp = inboxResponse{Status: "NO_MESSAGES"}
+		}
+
+	case "ack":
+		if len(req.EntryIds) == 0 {
+			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: entryIds"}
+		} else {
+			acked, err := inbox.Ack(remotePeer, req.EntryIds)
+			if err != nil {
+				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
+			} else {
+				resp = inboxResponse{Status: "OK", Acked: acked}
+			}
 		}
 
 	case "register_token":

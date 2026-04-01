@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'p2p_service.dart';
 import '../bridge/bridge.dart';
 import '../bridge/p2p_bridge_client.dart';
+import '../inbox/inbox_staging_entry.dart';
+import '../inbox/inbox_staging_repository.dart';
 import '../local_discovery/local_discovery_service.dart';
 import '../local_discovery/local_p2p_service.dart';
 import '../utils/key_conversion.dart';
@@ -17,11 +19,25 @@ import '../../features/p2p/domain/models/send_message_result.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../../features/push/domain/push_token_store.dart';
 
+enum RecoveredInboxChatDisposition { committed, retryable, rejected }
+
+typedef ReplayRecoveredInboxChatMessage =
+    Future<
+      ({
+        RecoveredInboxChatDisposition disposition,
+        String reasonCode,
+        String? reasonDetail,
+      })
+    >
+    Function(ChatMessage message);
+
 /// Implementation of P2PService backed by the Go native bridge.
 class P2PServiceImpl implements P2PService {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
+  final InboxStagingRepository? _inboxStagingRepository;
+  final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxChatMessage;
   StreamSubscription<LocalChatMessage>? _localMessageSub;
 
   final _stateController = StreamController<NodeState>.broadcast();
@@ -67,9 +83,13 @@ class P2PServiceImpl implements P2PService {
     required Bridge bridge,
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
+    InboxStagingRepository? inboxStagingRepository,
+    ReplayRecoveredInboxChatMessage? replayRecoveredInboxChatMessage,
   }) : _bridge = bridge,
        _localP2P = localP2PService,
-       _pushTokenStore = pushTokenStore {
+       _pushTokenStore = pushTokenStore,
+       _inboxStagingRepository = inboxStagingRepository,
+       _replayRecoveredInboxChatMessage = replayRecoveredInboxChatMessage {
     // Register event handlers on the bridge
     _bridge.onMessageReceived = (msg) {
       final transport =
@@ -311,6 +331,292 @@ class P2PServiceImpl implements P2PService {
   /// Prevents infinite loops if the server keeps returning hasMore.
   static const int maxInboxPages = 10;
 
+  static const int maxRecoverableInboxReplayEntries = 500;
+
+  String _normalizeInboxTimestamp(dynamic ts) {
+    if (ts is int) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        ts,
+        isUtc: true,
+      ).toIso8601String();
+    }
+    if (ts is String && ts.isNotEmpty) {
+      return ts;
+    }
+    return DateTime.now().toUtc().toIso8601String();
+  }
+
+  String? _messageTypeFromEnvelope(String envelope) {
+    try {
+      final decoded = jsonDecode(envelope) as Map<String, dynamic>;
+      return decoded['type']?.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  InboxStagingEntry? _stagingEntryFromRawInboxMessage(
+    Map<String, dynamic> raw,
+    String ownerPeerId,
+  ) {
+    final entryId = raw['id']?.toString();
+    final from = raw['from']?.toString();
+    final envelope = raw['message']?.toString();
+    if (entryId == null ||
+        entryId.isEmpty ||
+        from == null ||
+        from.isEmpty ||
+        envelope == null ||
+        envelope.isEmpty) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_STAGE_SKIP_MALFORMED',
+        details: {
+          'hasEntryId': entryId != null && entryId.isNotEmpty,
+          'hasFrom': from != null && from.isNotEmpty,
+          'hasEnvelope': envelope != null && envelope.isNotEmpty,
+        },
+      );
+      return null;
+    }
+
+    return InboxStagingEntry(
+      entryId: entryId,
+      ownerPeerId: ownerPeerId,
+      senderPeerId: from,
+      messageType: _messageTypeFromEnvelope(envelope),
+      relayTimestamp: _normalizeInboxTimestamp(raw['timestamp']),
+      envelope: envelope,
+      stagedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
+  Future<int> _replayStagedInboxEntries({List<String>? entryIds}) async {
+    final repo = _inboxStagingRepository;
+    if (repo == null) return 0;
+
+    final entries = entryIds == null
+        ? await repo.getRecoverableEntries(
+            limit: maxRecoverableInboxReplayEntries,
+          )
+        : await repo.getRecoverableEntriesByIds(entryIds);
+    var replayed = 0;
+
+    for (final entry in entries) {
+      final message = entry.toChatMessage();
+      try {
+        final replayRecoveredInboxChatMessage =
+            _replayRecoveredInboxChatMessage;
+        if (entry.messageType == 'chat_message' &&
+            replayRecoveredInboxChatMessage != null) {
+          final outcome = await replayRecoveredInboxChatMessage(message);
+          switch (outcome.disposition) {
+            case RecoveredInboxChatDisposition.committed:
+              await repo.deleteEntry(entry.entryId);
+              replayed++;
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'P2P_SERVICE_INBOX_STAGED_CHAT_COMMITTED',
+                details: {
+                  'entryId': entry.entryId.length > 8
+                      ? entry.entryId.substring(0, 8)
+                      : entry.entryId,
+                  'reasonCode': outcome.reasonCode,
+                },
+              );
+              break;
+            case RecoveredInboxChatDisposition.retryable:
+              await repo.markRetryable(
+                entry.entryId,
+                reasonCode: outcome.reasonCode,
+                reasonDetail: outcome.reasonDetail,
+              );
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'P2P_SERVICE_INBOX_STAGED_CHAT_RETRYABLE',
+                details: {
+                  'entryId': entry.entryId.length > 8
+                      ? entry.entryId.substring(0, 8)
+                      : entry.entryId,
+                  'reasonCode': outcome.reasonCode,
+                },
+              );
+              break;
+            case RecoveredInboxChatDisposition.rejected:
+              await repo.markRejected(
+                entry.entryId,
+                reasonCode: outcome.reasonCode,
+                reasonDetail: outcome.reasonDetail,
+              );
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'P2P_SERVICE_INBOX_STAGED_CHAT_REJECTED',
+                details: {
+                  'entryId': entry.entryId.length > 8
+                      ? entry.entryId.substring(0, 8)
+                      : entry.entryId,
+                  'reasonCode': outcome.reasonCode,
+                },
+              );
+              break;
+          }
+          continue;
+        }
+
+        _handleMessageReceived(message);
+        await repo.deleteEntry(entry.entryId);
+        replayed++;
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_STAGED_FORWARD_COMPLETE',
+          details: {
+            'entryId': entry.entryId.length > 8
+                ? entry.entryId.substring(0, 8)
+                : entry.entryId,
+            'messageType': entry.messageType,
+          },
+        );
+      } catch (e) {
+        await repo.markRetryable(
+          entry.entryId,
+          reasonCode: 'processing_error',
+          reasonDetail: e.toString(),
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_STAGED_REPLAY_EXCEPTION',
+          details: {
+            'entryId': entry.entryId.length > 8
+                ? entry.entryId.substring(0, 8)
+                : entry.entryId,
+            'error': e.toString(),
+          },
+        );
+      }
+    }
+
+    return replayed;
+  }
+
+  Future<({int replayed, int staged, bool hasMore})> _retrievePendingInboxPage({
+    required String toPeerId,
+    int? timeoutMs,
+  }) async {
+    final repo = _inboxStagingRepository;
+    if (repo == null) {
+      return (replayed: 0, staged: 0, hasMore: false);
+    }
+
+    Future<({int replayed, int staged, bool hasMore})> fallbackToLegacyRetrieve({
+      required String reasonCode,
+      String? reasonDetail,
+      Map<String, Object?> extraDetails = const {},
+    }) async {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_RETRIEVE_PENDING_FALLBACK',
+        details: {
+          'reasonCode': reasonCode,
+          ...?reasonDetail == null
+              ? null
+              : {'reasonDetail': reasonDetail},
+          ...extraDetails,
+        },
+      );
+
+      final fallback = await _retrieveInboxPage(
+        toPeerId: toPeerId,
+        timeoutMs: timeoutMs,
+      );
+      return (
+        replayed: fallback.emitted,
+        staged: 0,
+        hasMore: fallback.hasMore,
+      );
+    }
+
+    Map<String, dynamic> response;
+    try {
+      response = await callP2PInboxRetrievePending(
+        _bridge,
+        timeoutMs: timeoutMs,
+      );
+    } catch (e) {
+      return fallbackToLegacyRetrieve(
+        reasonCode: 'retrieve_pending_exception',
+        reasonDetail: e.toString(),
+      );
+    }
+
+    if (response['ok'] != true) {
+      return fallbackToLegacyRetrieve(
+        reasonCode: 'retrieve_pending_error',
+        reasonDetail: response['errorMessage']?.toString(),
+      );
+    }
+
+    final rawMessages =
+        (response['messages'] as List<dynamic>?)
+            ?.cast<Map<String, dynamic>>() ??
+        const <Map<String, dynamic>>[];
+    if (rawMessages.isEmpty) {
+      return (replayed: 0, staged: 0, hasMore: false);
+    }
+
+    final entries = rawMessages
+        .map((raw) => _stagingEntryFromRawInboxMessage(raw, toPeerId))
+        .whereType<InboxStagingEntry>()
+        .toList();
+    if (entries.length != rawMessages.length) {
+      return fallbackToLegacyRetrieve(
+        reasonCode: 'retrieve_pending_unstageable_messages',
+        extraDetails: {
+          'rawCount': rawMessages.length,
+          'stagedCount': entries.length,
+        },
+      );
+    }
+
+    final ackableEntryIds = await repo.stageEntries(entries);
+    if (ackableEntryIds.isNotEmpty) {
+      try {
+        final ackResponse = await callP2PInboxAck(
+          _bridge,
+          entryIds: ackableEntryIds,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: ackResponse['ok'] == true
+              ? 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_SUCCESS'
+              : 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_ERROR',
+          details: {
+            'requested': ackableEntryIds.length,
+            'acked': ackResponse['acked'],
+            if (ackResponse['ok'] != true)
+              'errorMessage': ackResponse['errorMessage'],
+          },
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_EXCEPTION',
+          details: {'requested': ackableEntryIds.length, 'error': e.toString()},
+        );
+      }
+    }
+
+    final replayed = ackableEntryIds.isEmpty
+        ? 0
+        : await _replayStagedInboxEntries(entryIds: ackableEntryIds);
+
+    return (
+      replayed: replayed,
+      staged: ackableEntryIds.length,
+      hasMore: response['hasMore'] == true,
+    );
+  }
+
   int _emitInboxMessages(List<dynamic> rawMessages, String toPeerId) {
     var emitted = 0;
 
@@ -414,6 +720,11 @@ class P2PServiceImpl implements P2PService {
   /// Retrieves the first page on the foreground budget, then continues in the
   /// background when the relay reports remaining backlog.
   Future<void> _drainOfflineInbox() async {
+    if (_inboxStagingRepository != null) {
+      await _drainOfflineInboxDurably();
+      return;
+    }
+
     try {
       final toPeerId = _currentState.peerId ?? '';
       final firstPage = await _retrieveInboxPage(
@@ -445,6 +756,101 @@ class P2PServiceImpl implements P2PService {
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_DRAIN_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _continueDrainingOfflineInboxDurably({
+    required String toPeerId,
+    required int totalReplayed,
+    required int totalStaged,
+  }) async {
+    var replayed = totalReplayed;
+    var staged = totalStaged;
+
+    try {
+      for (var page = 1; page < maxInboxPages; page++) {
+        final result = await _retrievePendingInboxPage(toPeerId: toPeerId);
+        replayed += result.replayed;
+        staged += result.staged;
+
+        if (result.staged == 0) {
+          break;
+        }
+
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_PAGE',
+          details: {'page': page + 1, 'staged': staged, 'replayed': replayed},
+        );
+
+        if (!result.hasMore) {
+          break;
+        }
+      }
+
+      if (staged > 0 || replayed > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_BACKGROUND_COMPLETE',
+          details: {'staged': staged, 'replayed': replayed},
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
+  Future<void> _drainOfflineInboxDurably() async {
+    try {
+      final toPeerId = _currentState.peerId ?? '';
+      final replayedExisting = await _replayStagedInboxEntries();
+      final firstPage = await _retrievePendingInboxPage(
+        toPeerId: toPeerId,
+        timeoutMs: foregroundInboxTimeout.inMilliseconds,
+      );
+
+      final totalReplayed = replayedExisting + firstPage.replayed;
+      final totalStaged = firstPage.staged;
+
+      if (firstPage.hasMore && totalStaged > 0) {
+        unawaited(
+          _continueDrainingOfflineInboxDurably(
+            toPeerId: toPeerId,
+            totalReplayed: totalReplayed,
+            totalStaged: totalStaged,
+          ),
+        );
+      }
+
+      if (replayedExisting > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_STAGED_REPLAY_RECOVERED',
+          details: {'count': replayedExisting},
+        );
+      }
+
+      if (totalReplayed > 0 || totalStaged > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_SUCCESS',
+          details: {
+            'staged': totalStaged,
+            'replayed': totalReplayed,
+            'note': 'relay entries were staged locally before ack',
+          },
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_EXCEPTION',
         details: {'error': e.toString()},
       );
     }
