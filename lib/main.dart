@@ -58,7 +58,11 @@ import 'package:flutter_app/core/database/migrations/038_posts_repost_media_cryp
 import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/040_posts_repost_visual_metrics.dart';
 import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
+import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
+import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
+import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_follow_on_outbox_db_helpers.dart';
@@ -89,6 +93,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/message_deletion_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
@@ -115,6 +120,7 @@ import 'package:flutter_app/features/contact_request/application/key_exchange_re
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_repository_impl.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
@@ -126,8 +132,8 @@ import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
-import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
@@ -135,10 +141,12 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show ValueListenable, ValueNotifier, kDebugMode, kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -146,8 +154,10 @@ import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
     as push_registration;
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
@@ -209,7 +219,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 42,
+    version: 45,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -253,6 +263,9 @@ void main() async {
       await runPostsPassAvatarSnapshotsMigration(db);
       await runPostsRepostVisualMetricsMigration(db);
       await runGroupMessageReliabilityColumnsMigration(db);
+      await runMessagesEditedAtMigration(db);
+      await runMessagesDeletedStateMigration(db);
+      await runInboxStagingEntriesMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -376,6 +389,15 @@ void main() async {
       if (oldVersion < 41) {
         await runGroupMessageReliabilityColumnsMigration(db);
       }
+      if (oldVersion < 43) {
+        await runMessagesEditedAtMigration(db);
+      }
+      if (oldVersion < 44) {
+        await runMessagesDeletedStateMigration(db);
+      }
+      if (oldVersion < 45) {
+        await runInboxStagingEntriesMigration(db);
+      }
     },
   );
 
@@ -482,6 +504,35 @@ void main() async {
               id,
               fromStatus: fromStatus,
               toStatus: toStatus,
+            ),
+  );
+
+  final inboxStagingRepository = InboxStagingRepositoryImpl(
+    dbInsertInboxStagingEntry: (row) => dbInsertInboxStagingEntry(db, row),
+    dbLoadRecoverableInboxStagingEntries: ({limit = 50, entryIds}) =>
+        dbLoadRecoverableInboxStagingEntries(
+          db,
+          limit: limit,
+          entryIds: entryIds,
+        ),
+    dbLoadInboxStagingEntry: (entryId) => dbLoadInboxStagingEntry(db, entryId),
+    dbDeleteInboxStagingEntry: (entryId) =>
+        dbDeleteInboxStagingEntry(db, entryId),
+    dbMarkInboxStagingEntryRetryable:
+        (entryId, {required reasonCode, reasonDetail}) =>
+            dbMarkInboxStagingEntryRetryable(
+              db,
+              entryId,
+              reasonCode: reasonCode,
+              reasonDetail: reasonDetail,
+            ),
+    dbMarkInboxStagingEntryRejected:
+        (entryId, {required reasonCode, reasonDetail}) =>
+            dbMarkInboxStagingEntryRejected(
+              db,
+              entryId,
+              reasonCode: reasonCode,
+              reasonDetail: reasonDetail,
             ),
   );
 
@@ -757,12 +808,73 @@ void main() async {
     discovery: localDiscovery,
     wsServer: localWsServer,
   );
+  late final ChatMessageListener chatMessageListener;
 
   // Create P2P service (uses the same bridge + local P2P)
   final p2pService = P2PServiceImpl(
     bridge: bridge,
     localP2PService: localP2PService,
     pushTokenStore: pushTokenStore,
+    inboxStagingRepository: inboxStagingRepository,
+    replayRecoveredInboxChatMessage: (message) async {
+      final outcome = await chatMessageListener.processIncomingMessage(message);
+      switch (outcome.state) {
+        case ChatMessageProcessState.stored:
+          return (
+            disposition: RecoveredInboxChatDisposition.committed,
+            reasonCode: 'stored',
+            reasonDetail: null,
+          );
+        case ChatMessageProcessState.missingMlKemSecret:
+          return (
+            disposition: RecoveredInboxChatDisposition.retryable,
+            reasonCode: 'missing_mlkem_secret',
+            reasonDetail: outcome.reasonDetail,
+          );
+        case ChatMessageProcessState.error:
+          return (
+            disposition: RecoveredInboxChatDisposition.retryable,
+            reasonCode: 'listener_error',
+            reasonDetail: outcome.reasonDetail,
+          );
+        case ChatMessageProcessState.blockedSender:
+          return (
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: 'blocked_sender',
+            reasonDetail: null,
+          );
+        case ChatMessageProcessState.notChatMessage:
+          return (
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: 'not_chat_message',
+            reasonDetail: null,
+          );
+        case ChatMessageProcessState.decryptionFailed:
+          return (
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: 'decryption_failed',
+            reasonDetail: null,
+          );
+        case ChatMessageProcessState.unknownSender:
+          return (
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: 'unknown_sender',
+            reasonDetail: null,
+          );
+        case ChatMessageProcessState.duplicate:
+          return (
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: 'duplicate',
+            reasonDetail: null,
+          );
+        case ChatMessageProcessState.editMissingOriginal:
+          return (
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: 'edit_missing_original',
+            reasonDetail: null,
+          );
+      }
+    },
   );
   nearbyLocationService = NearbyLocationServiceImpl(
     settingsRepository: postsPrivacySettingsRepository,
@@ -824,7 +936,7 @@ void main() async {
   final pendingPostTargetStore = PendingPostTargetStore();
 
   // Create chat message listener
-  final chatMessageListener = ChatMessageListener(
+  chatMessageListener = ChatMessageListener(
     chatMessageStream: messageRouter.chatMessageStream,
     messageRepo: messageRepository,
     contactRepo: contactRepository,
@@ -910,6 +1022,20 @@ void main() async {
     reactionStream: messageRouter.reactionStream,
     reactionRepo: reactionRepository,
     contactRepo: contactRepository,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemSecretKey;
+    },
+  );
+
+  final messageDeletionListener = MessageDeletionListener(
+    deletionStream: messageRouter.messageDeletionStream,
+    messageRepo: messageRepository,
+    contactRepo: contactRepository,
+    reactionRepo: reactionRepository,
+    mediaAttachmentRepo: mediaAttachmentRepository,
+    mediaFileManager: mediaFileManager,
     bridge: bridge,
     getOwnMlKemSecretKey: () async {
       final identity = await repository.loadIdentity();
@@ -1099,6 +1225,7 @@ void main() async {
   postPassListener.start();
   postPinListener.start();
   reactionListener.start();
+  messageDeletionListener.start();
   profileUpdateListener.start();
   groupMessageListener.start(
     groupMessageStreamController.stream,
@@ -1157,6 +1284,7 @@ void main() async {
       postPassListener: postPassListener,
       postPinListener: postPinListener,
       reactionListener: reactionListener,
+      messageDeletionListener: messageDeletionListener,
       profileUpdateListener: profileUpdateListener,
       messageRouter: messageRouter,
       pendingMessageRetrier: pendingMessageRetrier,
@@ -1191,6 +1319,34 @@ void main() async {
   StartupTiming.instance.mark('run_app_called');
 }
 
+Future<void> openIntroNotificationOrbitRoute({
+  required NavigatorState navigator,
+  required AppShellController appShellController,
+  required MessageRepository messageRepository,
+  required Widget Function(ValueListenable<int> feedUnreadCountListenable)
+  builder,
+}) async {
+  final returnTab = appShellController.activeTab;
+  final unreadCount = await messageRepository
+      .getTotalUnreadCountExcludingArchived();
+  final feedUnreadCountNotifier = ValueNotifier<int>(unreadCount);
+
+  if (appShellController.activeTab != AppShellTab.orbit) {
+    appShellController.switchTo(AppShellTab.orbit);
+  }
+
+  try {
+    await navigator.push(
+      buildOrbitSlideUpRoute(builder: (_) => builder(feedUnreadCountNotifier)),
+    );
+  } finally {
+    if (appShellController.activeTab == AppShellTab.orbit) {
+      appShellController.switchTo(returnTab);
+    }
+    feedUnreadCountNotifier.dispose();
+  }
+}
+
 class MyApp extends StatefulWidget {
   final IdentityRepositoryImpl repository;
   final ContactRepositoryImpl contactRepository;
@@ -1210,6 +1366,7 @@ class MyApp extends StatefulWidget {
   final PostPassListener postPassListener;
   final PostPinListener postPinListener;
   final ReactionListener reactionListener;
+  final MessageDeletionListener messageDeletionListener;
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
@@ -1262,6 +1419,7 @@ class MyApp extends StatefulWidget {
     required this.postPassListener,
     required this.postPinListener,
     required this.reactionListener,
+    required this.messageDeletionListener,
     required this.profileUpdateListener,
     required this.messageRouter,
     required this.pendingMessageRetrier,
@@ -1368,8 +1526,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _handleInitialLocalNotificationLaunch() async {
     try {
-      await routeInitialLocalNotificationOpen(
+      await routeAppRootInitialLocalNotificationOpen(
         consumeInitialPayload: widget.notificationService.consumeInitialPayload,
+        onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
     } catch (e) {
@@ -1383,8 +1542,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _onNotificationTap(String payload) async {
     try {
-      await routeNotificationPayload(
+      await routeAppRootLocalNotificationTap(
         payload: payload,
+        onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
     } catch (e) {
@@ -1419,39 +1579,41 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.intros:
-        navigator.push(
-          buildOrbitSlideUpRoute(
-            builder: (_) => OrbitWired(
-              identityRepo: widget.repository,
-              contactRepo: widget.contactRepository,
-              contactRequestRepo: widget.contactRequestRepository,
-              contactRequestListener: widget.contactRequestListener,
-              messageRepo: widget.messageRepository,
-              postRepository: widget.postRepository,
-              mediaAttachmentRepo: widget.mediaAttachmentRepository,
-              chatMessageListener: widget.chatMessageListener,
-              bridge: widget.bridge,
-              p2pService: widget.p2pService,
-              mediaFileManager: widget.mediaFileManager,
-              secureKeyStore: widget.secureKeyStore,
-              imageProcessor: widget.imageProcessor,
-              conversationTracker: widget.conversationTracker,
-              audioRecorderService: widget.audioRecorderService,
-              reactionRepository: widget.reactionRepository,
-              reactionListener: widget.reactionListener,
-              groupRepository: widget.groupRepository,
-              groupMessageRepository: widget.groupMessageRepository,
-              groupMessageListener: widget.groupMessageListener,
-              groupInviteListener: widget.groupInviteListener,
-              groupConversationTracker: widget.groupConversationTracker,
-              introductionRepository: widget.introductionRepository,
-              introductionListener: widget.introductionListener,
-              appShellController: widget.appShellController,
-              pendingPostTargetStore: widget.pendingPostTargetStore,
-              postsPrivacySettingsRepository:
-                  widget.postsPrivacySettingsRepository,
-              initialFilterTab: 'intros',
-            ),
+        await openIntroNotificationOrbitRoute(
+          navigator: navigator,
+          appShellController: widget.appShellController,
+          messageRepository: widget.messageRepository,
+          builder: (feedUnreadCountListenable) => OrbitWired(
+            identityRepo: widget.repository,
+            contactRepo: widget.contactRepository,
+            contactRequestRepo: widget.contactRequestRepository,
+            contactRequestListener: widget.contactRequestListener,
+            messageRepo: widget.messageRepository,
+            postRepository: widget.postRepository,
+            mediaAttachmentRepo: widget.mediaAttachmentRepository,
+            chatMessageListener: widget.chatMessageListener,
+            bridge: widget.bridge,
+            p2pService: widget.p2pService,
+            mediaFileManager: widget.mediaFileManager,
+            secureKeyStore: widget.secureKeyStore,
+            imageProcessor: widget.imageProcessor,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
+            reactionRepository: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
+            groupRepository: widget.groupRepository,
+            groupMessageRepository: widget.groupMessageRepository,
+            groupMessageListener: widget.groupMessageListener,
+            groupInviteListener: widget.groupInviteListener,
+            groupConversationTracker: widget.groupConversationTracker,
+            introductionRepository: widget.introductionRepository,
+            introductionListener: widget.introductionListener,
+            appShellController: widget.appShellController,
+            feedUnreadCountListenable: feedUnreadCountListenable,
+            pendingPostTargetStore: widget.pendingPostTargetStore,
+            postsPrivacySettingsRepository:
+                widget.postsPrivacySettingsRepository,
+            initialFilterTab: 'intros',
           ),
         );
         return;
@@ -1541,6 +1703,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     await _handleNotificationRouteTarget(routeTarget);
   }
 
+  Future<void> _prepareNotificationRouteTarget(
+    NotificationRouteTarget routeTarget,
+  ) async {
+    await prepareNotificationRouteTarget(
+      routeTarget: routeTarget,
+      drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+      bridge: widget.bridge,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      mediaAttachmentRepository: widget.mediaAttachmentRepository,
+      reactionRepository: widget.reactionRepository,
+    );
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -1557,6 +1733,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.groupMessageListener.dispose();
     widget.profileUpdateListener.dispose();
     widget.reactionListener.dispose();
+    widget.messageDeletionListener.dispose();
     widget.postListener.dispose();
     widget.postCommentListener.dispose();
     widget.postReactionListener.dispose();
@@ -1743,8 +1920,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           },
         );
         unawaited(
-          routeRemoteNotificationOpen(
+          routeAppRootRemoteNotificationOpen(
             data: message.data,
+            onBeforeRouteTarget: _prepareNotificationRouteTarget,
             onRouteTarget: _handleNotificationRouteTarget,
             onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
           ),

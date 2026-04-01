@@ -78,7 +78,9 @@ class ThreadMessage {
   final DateTime timestamp;
   final bool isUnread;
   final bool isIncoming;
+  final bool isDeleted;
   final String? status;
+  final String? editedAt;
   final String? quotedMessageId;
   final List<MediaAttachment> media;
   final String? senderUsername;
@@ -91,12 +93,16 @@ class ThreadMessage {
     required this.timestamp,
     this.isUnread = false,
     this.isIncoming = true,
+    this.isDeleted = false,
     this.status,
+    this.editedAt,
     this.quotedMessageId,
     this.media = const [],
     this.senderUsername,
     this.senderPeerId,
   });
+
+  bool get isEdited => editedAt != null;
 }
 
 /// Abstract base for thread-based feed items rendered as feed cards.
@@ -140,11 +146,12 @@ abstract class CardThreadFeedItem extends FeedItem {
   }
 
   /// Whether the thread contains any sent (outgoing) message.
-  bool get hasReply => messages.any((m) => !m.isIncoming);
+  bool get hasReply => messages.any((m) => !m.isIncoming && !m.isDeleted);
 
   /// All unread incoming messages in chronological order.
-  List<ThreadMessage> get unreadMessages =>
-      messages.where((m) => m.isUnread && m.isIncoming).toList();
+  List<ThreadMessage> get unreadMessages => messages
+      .where((m) => m.isUnread && m.isIncoming && !m.isDeleted)
+      .toList();
 
   /// First [maxPreview] unread messages for open-mode card.
   List<ThreadMessage> get previewMessages {
@@ -164,7 +171,7 @@ abstract class CardThreadFeedItem extends FeedItem {
   /// Most recent outgoing message, or null if none.
   ThreadMessage? get lastSentMessage {
     for (var i = messages.length - 1; i >= 0; i--) {
-      if (!messages[i].isIncoming) return messages[i];
+      if (!messages[i].isIncoming && !messages[i].isDeleted) return messages[i];
     }
     return null;
   }

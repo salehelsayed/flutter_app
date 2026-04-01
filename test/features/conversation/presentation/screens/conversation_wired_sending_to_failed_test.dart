@@ -15,7 +15,6 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/services/fake_p2p_service.dart';
@@ -73,9 +72,7 @@ class _FakeMessageRepository
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async =>
-      store.values
-          .where((m) => m.contactPeerId == contactPeerId)
-          .toList()
+      store.values.where((m) => m.contactPeerId == contactPeerId).toList()
         ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
   @override
@@ -109,6 +106,9 @@ class _FakeMessageRepository
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 
   @override
+  Future<int> deleteMessage(String id) async => 0;
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -132,14 +132,15 @@ class _FakeMessageRepository
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
-  }) async =>
-      [];
+  }) async => [];
 
   @override
   Future<ConversationMessage?> getMessage(String id) async => store[id];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
@@ -209,15 +210,15 @@ final _contact = ContactModel(
 );
 
 ConversationMessage _makeSendingMessage() => ConversationMessage(
-      id: 'msg-sending-001',
-      contactPeerId: _contactPeerId,
-      senderPeerId: 'me',
-      text: 'Hello Bob',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      status: 'sending',
-      isIncoming: false,
-      createdAt: '2026-01-01T00:00:00.000Z',
-    );
+  id: 'msg-sending-001',
+  contactPeerId: _contactPeerId,
+  senderPeerId: 'me',
+  text: 'Hello Bob',
+  timestamp: '2026-01-01T00:00:00.000Z',
+  status: 'sending',
+  isIncoming: false,
+  createdAt: '2026-01-01T00:00:00.000Z',
+);
 
 Widget _buildTestWidget({
   required _FakeMessageRepository messageRepo,
@@ -298,7 +299,8 @@ void main() {
         expect(
           find.byIcon(Icons.done_rounded),
           findsOneWidget,
-          reason: 'Before the status change, the card must show sending checkmark',
+          reason:
+              'Before the status change, the card must show sending checkmark',
         );
         expect(
           find.byIcon(Icons.error_outline_rounded),
@@ -320,8 +322,7 @@ void main() {
         expect(
           find.byIcon(Icons.error_outline_rounded),
           findsOneWidget,
-          reason:
-              'The failed status must render error_outline_rounded',
+          reason: 'The failed status must render error_outline_rounded',
         );
         expect(
           find.byIcon(Icons.done_rounded),

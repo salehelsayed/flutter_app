@@ -85,6 +85,8 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             // Inbox
             "inboxStore" -> runOnBackground({ GoMknoon.inboxStore(args ?: "") }, result)
             "inboxRetrieve" -> runOnBackground({ GoMknoon.inboxRetrieveWithParams(args ?: "") }, result)
+            "inboxRetrievePending" -> runOnBackground({ GoMknoon.inboxRetrievePendingWithParams(args ?: "") }, result)
+            "inboxAck" -> runOnBackground({ GoMknoon.inboxAck(args ?: "") }, result)
             "inboxRegisterToken" -> runOnBackground({ GoMknoon.inboxRegisterToken(args ?: "") }, result)
 
             // Media

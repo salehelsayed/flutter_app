@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -63,7 +66,8 @@ Widget _buildSubject({
   required InMemoryContactRepository contactRepo,
   required InMemoryIntroductionRepository introRepo,
   required IdentityRepository identityRepo,
-  required FakeP2PService p2pService,
+  required P2PService p2pService,
+  ValueChanged<List<IntroductionModel>>? onIntroductionsSent,
 }) {
   return MaterialApp(
     locale: const Locale('en'),
@@ -80,11 +84,49 @@ Widget _buildSubject({
           p2pService: p2pService,
           bridge: PassthroughCryptoBridge(),
           identityRepo: identityRepo,
-          onIntroductionsSent: (_) {},
+          onIntroductionsSent: onIntroductionsSent ?? (_) {},
         ),
       ),
     ),
   );
+}
+
+class _ControlledP2PService extends FakeP2PService {
+  _ControlledP2PService({required super.peerId, required super.network});
+
+  bool Function(String targetPeerId, String message)? blockMatcher;
+  final List<Completer<void>> _blockedSendCompleters = [];
+  int blockedSendCount = 0;
+
+  @override
+  Future<bool> sendMessage(String targetPeerId, String message) async {
+    final shouldBlock = blockMatcher?.call(targetPeerId, message) ?? false;
+    if (shouldBlock) {
+      final completer = Completer<void>();
+      _blockedSendCompleters.add(completer);
+      blockedSendCount++;
+      await completer.future;
+    }
+
+    return super.sendMessage(targetPeerId, message);
+  }
+
+  Future<void> waitForBlockedSendCount(int count) {
+    return _waitForCondition(() => blockedSendCount >= count);
+  }
+
+  void releaseBlockedSendAt(int index) {
+    final completer = _blockedSendCompleters[index];
+    if (!completer.isCompleted) {
+      completer.complete();
+    }
+  }
+
+  void releaseAllBlockedSends() {
+    for (var index = 0; index < _blockedSendCompleters.length; index++) {
+      releaseBlockedSendAt(index);
+    }
+  }
 }
 
 void main() {
@@ -140,4 +182,100 @@ void main() {
       expect(find.text('Lina'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'shows truthful progress and disables send while introductions are in flight',
+    (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      final introRepo = InMemoryIntroductionRepository();
+      final identityRepo = _FakeIdentityRepository(_identity());
+      final network = FakeP2PNetwork();
+      final p2pService = _ControlledP2PService(
+        peerId: 'peer-A',
+        network: network,
+      );
+      addTearDown(p2pService.dispose);
+
+      final recipientB = _contact('peer-B', 'Lina');
+      final friendC = _contact('peer-C', 'Sarah');
+      final friendD = _contact('peer-D', 'Dana');
+
+      contactRepo.addTestContact(recipientB);
+      contactRepo.addTestContact(friendC);
+      contactRepo.addTestContact(friendD);
+      FakeP2PService(peerId: recipientB.peerId, network: network);
+      FakeP2PService(peerId: friendC.peerId, network: network);
+      FakeP2PService(peerId: friendD.peerId, network: network);
+
+      p2pService.blockMatcher = (targetPeerId, _) => targetPeerId != 'peer-B';
+
+      var sentCount = 0;
+      await tester.pumpWidget(
+        _buildSubject(
+          recipient: recipientB,
+          contactRepo: contactRepo,
+          introRepo: introRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          onIntroductionsSent: (introductions) {
+            sentCount = introductions.length;
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Sarah'));
+      await tester.pump();
+      await tester.tap(find.text('Dana'));
+      await tester.pump();
+      await tester.tap(find.byType(ElevatedButton));
+      await tester.pump();
+
+      await p2pService.waitForBlockedSendCount(2);
+      await tester.pump();
+
+      expect(find.text('Sending 0 of 2'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      final sendingButton = tester.widget<ElevatedButton>(
+        find.byType(ElevatedButton),
+      );
+      expect(sendingButton.onPressed, isNull);
+
+      p2pService.releaseBlockedSendAt(0);
+      await _pumpUntilText(tester, 'Sending 1 of 2');
+
+      p2pService.releaseAllBlockedSends();
+      await tester.pumpAndSettle();
+
+      expect(sentCount, 2);
+      expect(find.text('Sending 1 of 2'), findsNothing);
+    },
+  );
+}
+
+Future<void> _waitForCondition(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for test condition');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+Future<void> _pumpUntilText(
+  WidgetTester tester,
+  String text, {
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (find.text(text).evaluate().isEmpty) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for "$text"');
+    }
+    await tester.pump(const Duration(milliseconds: 10));
+  }
 }

@@ -8,6 +8,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 // Fast local run:
 //   flutter test integration_test/identity_progress_performance_test.dart -d macos
@@ -45,7 +46,12 @@ const _fakeMlKemResponse = {
   'secretKey': 'mlkemSecretKeyBase64',
 };
 
-Widget _wrap(Widget child) => MaterialApp(home: child);
+Widget _wrap(Widget child) => MaterialApp(
+  locale: const Locale('en'),
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
+  home: child,
+);
 
 Future<void> _pumpPastAnimations(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 1300));
@@ -104,6 +110,7 @@ void main() {
         final firstFrameCompleter = Completer<void>();
         final events = <String>[];
         final collector = _FrameTimingCollector();
+        final l10n = await AppLocalizations.delegate.load(const Locale('en'));
 
         await tester.pumpWidget(
           _wrap(
@@ -136,7 +143,9 @@ void main() {
 
         collector.start();
 
-        await tester.tap(find.text("I'm new here"));
+        final newHereFinder = find.text(l10n.onboarding_new_here);
+        expect(newHereFinder, findsOneWidget);
+        await tester.tap(newHereFinder);
         expect(
           events,
           isNot(contains('generate-start')),

@@ -82,8 +82,7 @@ class _FakeP2PService implements P2PService {
     String peerId,
     String message, {
     int? timeoutMs,
-  }) async =>
-      const SendMessageResult(sent: true, reply: 'received: ok');
+  }) async => const SendMessageResult(sent: true, reply: 'received: ok');
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async =>
       null;
@@ -92,8 +91,7 @@ class _FakeP2PService implements P2PService {
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
-  }) async =>
-      true;
+  }) async => true;
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async => true;
   @override
@@ -118,8 +116,7 @@ class _FakeP2PService implements P2PService {
     String message,
     String fromPeerId, {
     int? timeoutMs,
-  }) async =>
-      false;
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -130,8 +127,7 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
-  }) async =>
-      false;
+  }) async => false;
   @override
   String? get lastRecoveryMethod => null;
   @override
@@ -191,6 +187,9 @@ class _FakeMessageRepo
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 
   @override
+  Future<int> deleteMessage(String id) async => 0;
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -245,15 +244,24 @@ void main() {
       );
 
       expect(result, SendChatMessageResult.success);
-      expect(bridge.callLog, contains('message.encrypt'),
-          reason:
-              'The test should exercise the bridge-backed send path, not a no-bridge shortcut');
-      expect(bridge.callLog, isNot(contains('bg:begin')),
-          reason:
-              'Background task acquisition must stay in presentation-layer callers');
-      expect(bridge.callLog, isNot(contains('bg:end')),
-          reason:
-              'Background task release must stay in presentation-layer callers');
+      expect(
+        bridge.callLog,
+        contains('message.encrypt'),
+        reason:
+            'The test should exercise the bridge-backed send path, not a no-bridge shortcut',
+      );
+      expect(
+        bridge.callLog,
+        isNot(contains('bg:begin')),
+        reason:
+            'Background task acquisition must stay in presentation-layer callers',
+      );
+      expect(
+        bridge.callLog,
+        isNot(contains('bg:end')),
+        reason:
+            'Background task release must stay in presentation-layer callers',
+      );
     });
   });
 }

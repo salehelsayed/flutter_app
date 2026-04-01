@@ -476,6 +476,84 @@ Future<Map<String, dynamic>> callP2PInboxRetrieve(
   return response;
 }
 
+/// Calls the bridge to retrieve messages from the offline inbox without
+/// deleting them from the relay.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [timeoutMs]: Optional retrieval timeout in milliseconds
+///
+/// Returns: `{ "ok": true, "messages": [...], "hasMore": true/false }`
+Future<Map<String, dynamic>> callP2PInboxRetrievePending(
+  Bridge bridge, {
+  int? timeoutMs,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_RETRIEVE_PENDING_REQUEST',
+    details: {if (timeoutMs != null) 'timeoutMs': timeoutMs},
+  );
+
+  final request = {
+    'cmd': 'inbox:retrieve_pending',
+    'payload': <String, dynamic>{if (timeoutMs != null) 'timeoutMs': timeoutMs},
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_RETRIEVE_PENDING_RESPONSE',
+    details: {'ok': response['ok'], 'hasMore': response['hasMore']},
+  );
+
+  return response;
+}
+
+/// Calls the bridge to acknowledge relay inbox entries after the client has
+/// durably staged them locally.
+///
+/// Parameters:
+///   - [bridge]: The Bridge instance
+///   - [entryIds]: Stable relay inbox entry IDs to delete
+///   - [timeoutMs]: Optional ack timeout in milliseconds
+///
+/// Returns: `{ "ok": true, "acked": N }`
+Future<Map<String, dynamic>> callP2PInboxAck(
+  Bridge bridge, {
+  required List<String> entryIds,
+  int? timeoutMs,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_ACK_REQUEST',
+    details: {
+      'entryCount': entryIds.length,
+      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+    },
+  );
+
+  final request = {
+    'cmd': 'inbox:ack',
+    'payload': <String, dynamic>{
+      'entryIds': entryIds,
+      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+    },
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_INBOX_ACK_RESPONSE',
+    details: {'ok': response['ok'], 'acked': response['acked']},
+  );
+
+  return response;
+}
+
 // --- Media ---
 
 /// Calls the bridge to upload a media blob to the relay.

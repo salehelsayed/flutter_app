@@ -108,6 +108,8 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) b
 	b.inner.mu.Lock()
 	defer b.inner.mu.Unlock()
 
+	entry = ensureInboxMessageID(entry)
+
 	// Extract messageId for dedup.
 	msgId := extractMessageId(entry.Message)
 	if msgId != "" {
@@ -140,6 +142,14 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) b
 
 func (b *memoryInboxBackendLimited) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {
 	return b.inner.Retrieve(peerId, limit)
+}
+
+func (b *memoryInboxBackendLimited) RetrievePending(peerId string, limit int) ([]inboxMessage, bool) {
+	return b.inner.RetrievePending(peerId, limit)
+}
+
+func (b *memoryInboxBackendLimited) Ack(peerId string, entryIDs []string) (int, error) {
+	return b.inner.Ack(peerId, entryIDs)
 }
 
 func (b *memoryInboxBackendLimited) Count(peerId string) int {

@@ -9,12 +9,14 @@ class FeedNavigationBar extends StatelessWidget {
   final String activeTab;
   final void Function(String) onSwitchView;
   final int feedBadgeCount;
+  final int orbitBadgeCount;
 
   const FeedNavigationBar({
     super.key,
     required this.activeTab,
     required this.onSwitchView,
     this.feedBadgeCount = 0,
+    this.orbitBadgeCount = 0,
   });
 
   @override
@@ -44,28 +46,31 @@ class FeedNavigationBar extends StatelessWidget {
               ),
             ],
           ),
-          child: Builder(builder: (context) {
-            final l10n = AppLocalizations.of(context)!;
-            return Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                NavBarButton(
-                  label: l10n.nav_feed,
-                  svgAsset: 'assets/icons/nav_feed.svg',
-                  isActive: activeTab == 'feed',
-                  onTap: () => onSwitchView('feed'),
-                  badgeCount: feedBadgeCount,
-                ),
-                const SizedBox(width: NavBarTheme.buttonSpacing),
-                NavBarButton(
-                  label: l10n.nav_orbit,
-                  svgAsset: 'assets/icons/nav_orbit.svg',
-                  isActive: activeTab == 'orbit',
-                  onTap: () => onSwitchView('orbit'),
-                ),
-              ],
-            );
-          }),
+          child: Builder(
+            builder: (context) {
+              final l10n = AppLocalizations.of(context)!;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  NavBarButton(
+                    label: l10n.nav_feed,
+                    svgAsset: 'assets/icons/nav_feed.svg',
+                    isActive: activeTab == 'feed',
+                    onTap: () => onSwitchView('feed'),
+                    badgeCount: feedBadgeCount,
+                  ),
+                  const SizedBox(width: NavBarTheme.buttonSpacing),
+                  NavBarButton(
+                    label: l10n.nav_orbit,
+                    svgAsset: 'assets/icons/nav_orbit.svg',
+                    isActive: activeTab == 'orbit',
+                    onTap: () => onSwitchView('orbit'),
+                    badgeCount: orbitBadgeCount,
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );

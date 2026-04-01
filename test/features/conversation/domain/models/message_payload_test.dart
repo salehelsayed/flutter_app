@@ -39,6 +39,30 @@ void main() {
         expect(payload['senderPeerId'], '12D3KooWSender123');
         expect(payload['senderUsername'], 'Alice');
         expect(payload['timestamp'], '2026-02-09T15:30:00.000Z');
+        expect(payload.containsKey('action'), isFalse);
+        expect(payload.containsKey('editedAt'), isFalse);
+      });
+
+      test('round-trips edit metadata when present', () {
+        const editPayload = MessagePayload(
+          id: 'msg-edit-001',
+          text: 'Updated text',
+          senderPeerId: '12D3KooWSender123',
+          senderUsername: 'Alice',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          action: MessagePayload.actionEdit,
+          editedAt: '2026-02-09T16:00:00.000Z',
+        );
+
+        final jsonString = editPayload.toJson();
+        final restored = MessagePayload.fromJson(jsonString);
+        final parsed = jsonDecode(jsonString) as Map<String, dynamic>;
+
+        expect(restored, isNotNull);
+        expect(restored!.action, MessagePayload.actionEdit);
+        expect(restored.editedAt, '2026-02-09T16:00:00.000Z');
+        expect(parsed['payload']['action'], MessagePayload.actionEdit);
+        expect(parsed['payload']['editedAt'], '2026-02-09T16:00:00.000Z');
       });
     });
 
@@ -232,6 +256,7 @@ void main() {
         expect(parsed.senderPeerId, testPayload.senderPeerId);
         expect(parsed.senderUsername, testPayload.senderUsername);
         expect(parsed.timestamp, testPayload.timestamp);
+        expect(parsed.action, MessagePayload.actionSend);
       });
 
       test('returns null for missing fields', () {
@@ -257,6 +282,24 @@ void main() {
         expect(inner['senderPeerId'], testPayload.senderPeerId);
         expect(inner['senderUsername'], testPayload.senderUsername);
         expect(inner['timestamp'], testPayload.timestamp);
+        expect(inner.containsKey('action'), isFalse);
+      });
+
+      test('includes edit metadata for edit payloads', () {
+        const editPayload = MessagePayload(
+          id: 'msg-edit-002',
+          text: 'Inner edit',
+          senderPeerId: '12D3KooWSender123',
+          senderUsername: 'Alice',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          action: MessagePayload.actionEdit,
+          editedAt: '2026-02-09T16:30:00.000Z',
+        );
+
+        final inner =
+            jsonDecode(editPayload.toInnerJson()) as Map<String, dynamic>;
+        expect(inner['action'], MessagePayload.actionEdit);
+        expect(inner['editedAt'], '2026-02-09T16:30:00.000Z');
       });
     });
 

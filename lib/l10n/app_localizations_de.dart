@@ -394,6 +394,51 @@ class AppLocalizationsDe extends AppLocalizations {
   String get conversation_reply => 'Antworten...';
 
   @override
+  String get conversation_context_reply => 'Antworten';
+
+  @override
+  String get conversation_context_edit => 'Bearbeiten';
+
+  @override
+  String get conversation_context_copy => 'Kopieren';
+
+  @override
+  String get conversation_context_delete => 'Löschen';
+
+  @override
+  String get conversation_context_copied =>
+      'Nachricht in die Zwischenablage kopiert';
+
+  @override
+  String get conversation_editing_message => 'Nachricht bearbeiten';
+
+  @override
+  String get conversation_cancel_edit => 'Abbrechen';
+
+  @override
+  String get conversation_edited_indicator => '(bearbeitet)';
+
+  @override
+  String get conversation_delete_message_prompt =>
+      'Für wen möchtest du diese Nachricht löschen?';
+
+  @override
+  String get conversation_delete_for_me => 'Für mich löschen';
+
+  @override
+  String get conversation_delete_for_everyone => 'Für alle löschen';
+
+  @override
+  String get conversation_delete_cancel => 'Abbrechen';
+
+  @override
+  String get conversation_message_deleted => 'Diese Nachricht wurde gelöscht';
+
+  @override
+  String get conversation_delete_failed =>
+      'Diese Nachricht konnte nicht vollständig gelöscht werden.';
+
+  @override
   String get conversation_continue => 'Weiter...';
 
   @override
@@ -445,6 +490,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get picker_introduce => 'Vorstellen';
+
+  @override
+  String picker_sending_progress(int completed, int total) {
+    return 'Sende $completed von $total';
+  }
 
   @override
   String get picker_search_contacts => 'Kontakte suchen...';

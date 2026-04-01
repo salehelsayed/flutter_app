@@ -91,6 +91,8 @@ class _FakeMessageRepository implements MessageRepository {
   @override
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
   @override
+  Future<int> deleteMessage(String id) async => 0;
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -115,7 +117,9 @@ class _FakeMessageRepository implements MessageRepository {
     required Duration olderThan,
   }) async => [];
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}

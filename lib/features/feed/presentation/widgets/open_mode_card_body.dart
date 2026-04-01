@@ -27,6 +27,8 @@ class OpenModeCardBody extends StatelessWidget {
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
+  final bool isEditingMessage;
+  final VoidCallback? onCancelEdit;
   final String? activeQuoteText;
   final VoidCallback? onClearQuote;
   final VoidCallback? onAttach;
@@ -34,7 +36,8 @@ class OpenModeCardBody extends StatelessWidget {
   final ValueListenable<List<MessageReaction>>? Function(String messageId)?
   reactionListenableForMessage;
   final String? ownPeerId;
-  final void Function(String messageId)? onMessageLongPress;
+  final void Function(ThreadMessage message, BuildContext bubbleContext)?
+  onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
 
   const OpenModeCardBody({
@@ -50,6 +53,8 @@ class OpenModeCardBody extends StatelessWidget {
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onInputFocusChanged,
+    this.isEditingMessage = false,
+    this.onCancelEdit,
     this.activeQuoteText,
     this.onClearQuote,
     this.onAttach,
@@ -171,6 +176,8 @@ class OpenModeCardBody extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (isEditingMessage && onCancelEdit != null)
+            _FeedEditModeBanner(onCancel: onCancelEdit!),
           if (activeQuoteText != null)
             QuotePreviewBar(text: activeQuoteText!, onDismiss: onClearQuote),
           InlineReplyInput(
@@ -204,6 +211,53 @@ class OpenModeCardBody extends StatelessWidget {
           fontSize: 13,
           color: Color.fromRGBO(255, 255, 255, 0.45),
         ),
+      ),
+    );
+  }
+}
+
+class _FeedEditModeBanner extends StatelessWidget {
+  final VoidCallback onCancel;
+
+  const _FeedEditModeBanner({required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      key: const ValueKey('feed-edit-mode-banner'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(29, 185, 84, 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color.fromRGBO(29, 185, 84, 0.22)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              l10n.conversation_editing_message,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color.fromRGBO(255, 255, 255, 0.86),
+              ),
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('feed-cancel-edit-action'),
+            onPressed: onCancel,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color.fromRGBO(255, 255, 255, 0.72),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: Text(l10n.conversation_cancel_edit),
+          ),
+        ],
       ),
     );
   }

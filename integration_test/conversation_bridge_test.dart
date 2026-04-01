@@ -46,6 +46,9 @@ import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart'
 import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
 import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
+import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
+import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -88,7 +91,7 @@ void main() {
     final db = await openEncryptedDatabase(
       secureKeyStore: secureKeyStore,
       dbName: dbName,
-      version: 25,
+      version: 44,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
@@ -114,6 +117,9 @@ void main() {
         await runIntroductionRecipientKeysMigration(db);
         await runContactIntroducedByPeerIdMigration(db);
         await runIntroductionAlreadyConnectedMigration(db);
+        await runGroupQuotedMessageIdMigration(db);
+        await runMessagesEditedAtMigration(db);
+        await runMessagesDeletedStateMigration(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -139,6 +145,9 @@ void main() {
         if (oldVersion < 23) await runIntroductionRecipientKeysMigration(db);
         if (oldVersion < 24) await runContactIntroducedByPeerIdMigration(db);
         if (oldVersion < 25) await runIntroductionAlreadyConnectedMigration(db);
+        if (oldVersion < 26) await runGroupQuotedMessageIdMigration(db);
+        if (oldVersion < 43) await runMessagesEditedAtMigration(db);
+        if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
       },
     );
     print('[TEST] Database initialized');
@@ -182,6 +191,7 @@ void main() {
           dbCountTotalUnreadExcludingArchived(db),
       dbDeleteMessagesForContact: (contactPeerId) =>
           dbDeleteMessagesForContact(db, contactPeerId),
+      dbDeleteMessage: (id) => dbDeleteMessage(db, id),
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
           dbLoadMessagesPage(
             db,
@@ -245,23 +255,38 @@ void main() {
     final privateKey = identity['privateKey'] as String;
     print('[TEST] Identity generated: ${peerId.substring(0, 20)}...');
 
-    // 4. Add a fake contact (the target peer — won't be reachable)
-    const targetPeerId = '12D3KooWFakeTargetPeerForBridgeTest001';
+    // 4. Add a valid but unreachable contact.
+    final targetGenResponse = await bridge.send(
+      jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
+    );
+    final targetGenResult =
+        jsonDecode(targetGenResponse) as Map<String, dynamic>;
+    expect(
+      targetGenResult['ok'],
+      true,
+      reason: 'second identity.generate should succeed',
+    );
+    final targetIdentity = targetGenResult['identity'] as Map<String, dynamic>;
+    final targetPeerId = targetIdentity['peerId'] as String;
     await contactRepo.addContact(
       ContactModel(
         peerId: targetPeerId,
-        publicKey: 'pk-fake-target',
+        publicKey: targetIdentity['publicKey'] as String,
         rendezvous: '/dns4/relay/tcp/443/p2p/relay',
         username: 'FakeTarget',
         signature: 'sig-fake-target',
         scannedAt: DateTime.now().toUtc().toIso8601String(),
       ),
     );
-    print('[TEST] Fake contact added');
+    print(
+      '[TEST] Valid unreachable contact added: ${targetPeerId.substring(0, 20)}...',
+    );
 
     // 5. Start real P2P node
     print('[TEST] Starting P2P node...');
-    final started = await p2pService.startNode(privateKey, peerId);
+    // This test isolates the send path. Avoid background warm tasks started by
+    // startNode(), which can overlap with the immediate send attempt.
+    final started = await p2pService.startNodeCore(privateKey, peerId);
     if (!started) {
       p2pService.dispose();
       bridge.dispose();

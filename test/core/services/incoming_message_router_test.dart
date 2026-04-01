@@ -256,6 +256,16 @@ void main() {
       expect(msg.content, contains('"type":"message_reaction"'));
     });
 
+    test('routes message_deletion to messageDeletionStream', () async {
+      final received = router.messageDeletionStream.first;
+
+      p2pService.inject(_makeMessage('message_deletion'));
+
+      final msg = await received.timeout(const Duration(seconds: 1));
+      expect(msg.from, 'peer-a');
+      expect(msg.content, contains('"type":"message_deletion"'));
+    });
+
     // --- Cycle 3.1: group_invite routing ---
     test('routes group_invite messages to groupInviteStream', () async {
       final chatMessages = <ChatMessage>[];

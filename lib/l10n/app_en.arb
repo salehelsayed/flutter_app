@@ -172,6 +172,20 @@
   },
   "conversation_delete_chat": "Delete chat?",
   "conversation_reply": "Reply...",
+  "conversation_context_reply": "Reply",
+  "conversation_context_edit": "Edit",
+  "conversation_context_copy": "Copy",
+  "conversation_context_delete": "Delete",
+  "conversation_context_copied": "Message copied to clipboard",
+  "conversation_editing_message": "Editing message",
+  "conversation_cancel_edit": "Cancel",
+  "conversation_edited_indicator": "(edited)",
+  "conversation_delete_message_prompt": "Who would you like to delete this message for?",
+  "conversation_delete_for_me": "Delete for Me",
+  "conversation_delete_for_everyone": "Delete for Everyone",
+  "conversation_delete_cancel": "Cancel",
+  "conversation_message_deleted": "This message was deleted",
+  "conversation_delete_failed": "Couldn't finish deleting this message.",
   "conversation_continue": "Continue...",
   "comment_hint": "Write a comment...",
   "group_create_title": "Create Group",
@@ -208,6 +222,17 @@
     }
   },
   "picker_introduce": "Introduce",
+  "picker_sending_progress": "Sending {completed} of {total}",
+  "@picker_sending_progress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "picker_search_contacts": "Search contacts...",
   "picker_search_all": "Search contacts & groups",
   "settings_title": "Settings",

@@ -138,6 +138,40 @@ void main() {
       expect(find.byIcon(Icons.check_rounded), findsNothing);
     });
 
+    testWidgets('deleted latest preview renders the deleted placeholder', (
+      tester,
+    ) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_deleted',
+        timestamp: DateTime(2026, 2, 9, 15, 5),
+        contactPeerId: 'peer1',
+        contactUsername: 'Alice',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: 'Earlier visible message',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+          ),
+          ThreadMessage(
+            id: 'm2',
+            text: '',
+            time: '3:05 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 5),
+            isIncoming: false,
+            isDeleted: true,
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: thread)));
+
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(find.text('Earlier visible message'), findsNothing);
+    });
+
     testWidgets('session reply shows reply text with Just now', (tester) async {
       final thread = ThreadFeedItem(
         id: 'thread_1',

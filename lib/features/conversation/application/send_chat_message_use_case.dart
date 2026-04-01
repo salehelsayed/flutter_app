@@ -62,8 +62,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   required String text,
   required String senderPeerId,
   required String senderUsername,
+  String action = MessagePayload.actionSend,
+  String? editedAt,
   String? messageId,
   String? timestamp,
+  String? createdAt,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
@@ -113,6 +116,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.invalidMessage, null);
   }
 
+  if (action == MessagePayload.actionEdit &&
+      (messageId == null || timestamp == null || createdAt == null)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_INVALID',
+      details: {'reason': 'edit_requires_existing_message_contract'},
+    );
+    emitSendTiming(outcome: 'invalid_message');
+    return (SendChatMessageResult.invalidMessage, null);
+  }
+
   // 2. Check P2P node
   if (!p2pService.currentState.isStarted) {
     emitFlowEvent(
@@ -128,6 +142,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final resolvedMessageId = messageId ?? _uuid.v4();
   final resolvedTimestamp =
       timestamp ?? DateTime.now().toUtc().toIso8601String();
+  final resolvedEditedAt = action == MessagePayload.actionEdit
+      ? (editedAt ?? DateTime.now().toUtc().toIso8601String())
+      : null;
   final normalizedAttachments = mediaAttachments
       ?.map(
         (attachment) => attachment.copyWith(
@@ -145,6 +162,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
+    action: action,
+    editedAt: resolvedEditedAt,
     quotedMessageId: quotedMessageId,
     media: normalizedAttachments
         ?.map((attachment) => attachment.toJson())
@@ -242,18 +261,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           targetPeerId: targetPeerId,
           jsonString: jsonString,
           acknowledged: sendResult.acknowledged,
-          via: _resolveGoSendTransport(
-            p2pService,
-            targetPeerId,
-            sendResult,
-            preserveLocalPeerLabel: true,
-          ),
-          resolvedMessageId: resolvedMessageId,
-          textPreview: textPreview,
-          text: sanitizedText,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          attachments: normalizedAttachments,
-          sendStopwatch: sendStopwatch,
+        via: _resolveGoSendTransport(
+          p2pService,
+          targetPeerId,
+          sendResult,
+          preserveLocalPeerLabel: true,
+        ),
+        resolvedMessageId: resolvedMessageId,
+        textPreview: textPreview,
+        text: sanitizedText,
+        createdAt: createdAt,
+        editedAt: resolvedEditedAt,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        attachments: normalizedAttachments,
+        sendStopwatch: sendStopwatch,
           emitTimingEvent: emitTimingEvent,
         );
       }
@@ -364,6 +385,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       resolvedMessageId: resolvedMessageId,
       textPreview: textPreview,
       text: sanitizedText,
+      createdAt: createdAt,
+      editedAt: resolvedEditedAt,
       mediaAttachmentRepo: mediaAttachmentRepo,
       attachments: normalizedAttachments,
       sendStopwatch: sendStopwatch,
@@ -391,6 +414,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         resolvedMessageId: resolvedMessageId,
         textPreview: textPreview,
         text: sanitizedText,
+        createdAt: createdAt,
+        editedAt: resolvedEditedAt,
         mediaAttachmentRepo: mediaAttachmentRepo,
         attachments: normalizedAttachments,
         sendStopwatch: sendStopwatch,
@@ -417,6 +442,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         contactPeerId: targetPeerId,
         isIncoming: false,
         status: 'delivered',
+        createdAt: createdAt,
+        editedAt: resolvedEditedAt,
         transport: 'inbox',
       );
       await messageRepo.saveMessage(deliveredMessage);
@@ -462,6 +489,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     contactPeerId: targetPeerId,
     isIncoming: false,
     status: 'failed',
+    createdAt: createdAt,
+    editedAt: resolvedEditedAt,
     wireEnvelope: jsonString,
   );
   await messageRepo.saveMessage(failedMessage);
@@ -495,6 +524,41 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   return (
     _resultForFailureReason(failureReason),
     failedMessage.copyWith(media: normalizedAttachments ?? const []),
+  );
+}
+
+Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required ConversationMessage originalMessage,
+  required String updatedText,
+  required String senderUsername,
+  Bridge? bridge,
+  String? recipientMlKemPublicKey,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  bool emitTimingEvent = true,
+}) {
+  if (originalMessage.isIncoming) {
+    return Future.value((SendChatMessageResult.invalidMessage, null));
+  }
+
+  return sendChatMessage(
+    p2pService: p2pService,
+    messageRepo: messageRepo,
+    targetPeerId: originalMessage.contactPeerId,
+    text: updatedText,
+    senderPeerId: originalMessage.senderPeerId,
+    senderUsername: senderUsername,
+    action: MessagePayload.actionEdit,
+    messageId: originalMessage.id,
+    timestamp: originalMessage.timestamp,
+    createdAt: originalMessage.createdAt,
+    quotedMessageId: originalMessage.quotedMessageId,
+    mediaAttachments: originalMessage.media,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    bridge: bridge,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
+    emitTimingEvent: emitTimingEvent,
   );
 }
 
@@ -787,6 +851,8 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required String resolvedMessageId,
   required String textPreview,
   required String text,
+  required String? createdAt,
+  required String? editedAt,
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required List<MediaAttachment>? attachments,
   required Stopwatch sendStopwatch,
@@ -798,6 +864,8 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
     targetPeerId: targetPeerId,
     jsonString: jsonString,
     acknowledged: acknowledged,
+    createdAt: createdAt,
+    editedAt: editedAt,
     via: via,
   );
   await messageRepo.saveMessage(message);
@@ -854,6 +922,8 @@ Future<ConversationMessage> _persistOutgoingSendResult({
   required String targetPeerId,
   required String jsonString,
   required bool acknowledged,
+  required String? createdAt,
+  required String? editedAt,
   required String via,
 }) async {
   if (acknowledged) {
@@ -861,6 +931,8 @@ Future<ConversationMessage> _persistOutgoingSendResult({
       contactPeerId: targetPeerId,
       isIncoming: false,
       status: 'delivered',
+      createdAt: createdAt,
+      editedAt: editedAt,
       transport: via,
     );
   }
@@ -880,6 +952,8 @@ Future<ConversationMessage> _persistOutgoingSendResult({
         contactPeerId: targetPeerId,
         isIncoming: false,
         status: 'delivered',
+        createdAt: createdAt,
+        editedAt: editedAt,
         transport: 'inbox',
       );
     }
@@ -900,6 +974,8 @@ Future<ConversationMessage> _persistOutgoingSendResult({
     contactPeerId: targetPeerId,
     isIncoming: false,
     status: 'sent',
+    createdAt: createdAt,
+    editedAt: editedAt,
     transport: via,
     wireEnvelope: jsonString,
   );

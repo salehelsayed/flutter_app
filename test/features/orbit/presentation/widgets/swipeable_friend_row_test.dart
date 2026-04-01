@@ -51,55 +51,82 @@ void main() {
       expect(find.text('Friend Content'), findsOneWidget);
     });
 
-    testWidgets('reveals Block, Delete, Archive on swipe left (active, not blocked)', (tester) async {
-      bool blockCalled = false;
-      bool deleteCalled = false;
-      bool archiveCalled = false;
+    testWidgets(
+      'reveals Block, Delete, Archive on swipe left (active, not blocked)',
+      (tester) async {
+        bool blockCalled = false;
+        bool deleteCalled = false;
+        bool archiveCalled = false;
 
-      await tester.pumpWidget(buildSwipeableRow(
-        onBlock: () => blockCalled = true,
-        onDelete: () => deleteCalled = true,
-        onArchive: () => archiveCalled = true,
-      ));
+        await tester.pumpWidget(
+          buildSwipeableRow(
+            onBlock: () => blockCalled = true,
+            onDelete: () => deleteCalled = true,
+            onArchive: () => archiveCalled = true,
+          ),
+        );
 
-      // Perform a left swipe
+        // Perform a left swipe
+        final center = tester.getCenter(find.text('Friend Content'));
+        await tester.dragFrom(center, const Offset(-250, 0));
+        await tester.pumpAndSettle();
+
+        // Action buttons should be revealed
+        expect(find.byIcon(Icons.block), findsOneWidget);
+        expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+        expect(find.byIcon(Icons.archive_outlined), findsOneWidget);
+        expect(find.text('Block'), findsOneWidget);
+        expect(find.text('Delete'), findsOneWidget);
+        expect(find.text('Archive'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'reveals Unblock, Delete, Archive on swipe left (active, blocked)',
+      (tester) async {
+        await tester.pumpWidget(
+          buildSwipeableRow(
+            isBlocked: true,
+            onUnblock: () {},
+            onDelete: () {},
+            onArchive: () {},
+          ),
+        );
+
+        // Perform a left swipe
+        final center = tester.getCenter(find.text('Friend Content'));
+        await tester.dragFrom(center, const Offset(-250, 0));
+        await tester.pumpAndSettle();
+
+        // Unblock button (instead of Block)
+        expect(find.byIcon(Icons.replay), findsOneWidget);
+        expect(find.text('Unblock'), findsOneWidget);
+        expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+        expect(find.byIcon(Icons.archive_outlined), findsOneWidget);
+      },
+    );
+
+    testWidgets('reveals only Delete when delete is the only action', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildSwipeableRow(onDelete: () {}));
+
       final center = tester.getCenter(find.text('Friend Content'));
-      await tester.dragFrom(center, const Offset(-250, 0));
+      await tester.dragFrom(center, const Offset(-140, 0));
       await tester.pumpAndSettle();
 
-      // Action buttons should be revealed
-      expect(find.byIcon(Icons.block), findsOneWidget);
-      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
-      expect(find.byIcon(Icons.archive_outlined), findsOneWidget);
-      expect(find.text('Block'), findsOneWidget);
       expect(find.text('Delete'), findsOneWidget);
-      expect(find.text('Archive'), findsOneWidget);
-    });
-
-    testWidgets('reveals Unblock, Delete, Archive on swipe left (active, blocked)', (tester) async {
-      await tester.pumpWidget(buildSwipeableRow(
-        isBlocked: true,
-        onUnblock: () {},
-      ));
-
-      // Perform a left swipe
-      final center = tester.getCenter(find.text('Friend Content'));
-      await tester.dragFrom(center, const Offset(-250, 0));
-      await tester.pumpAndSettle();
-
-      // Unblock button (instead of Block)
-      expect(find.byIcon(Icons.replay), findsOneWidget);
-      expect(find.text('Unblock'), findsOneWidget);
-      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
-      expect(find.byIcon(Icons.archive_outlined), findsOneWidget);
+      expect(find.text('Archive'), findsNothing);
+      expect(find.text('Block'), findsNothing);
+      expect(find.text('Unblock'), findsNothing);
     });
 
     testWidgets('fires onBlock callback', (tester) async {
       bool blockCalled = false;
 
-      await tester.pumpWidget(buildSwipeableRow(
-        onBlock: () => blockCalled = true,
-      ));
+      await tester.pumpWidget(
+        buildSwipeableRow(onBlock: () => blockCalled = true),
+      );
 
       final center = tester.getCenter(find.text('Friend Content'));
       await tester.dragFrom(center, const Offset(-250, 0));
@@ -113,9 +140,9 @@ void main() {
     testWidgets('fires onDelete callback', (tester) async {
       bool deleteCalled = false;
 
-      await tester.pumpWidget(buildSwipeableRow(
-        onDelete: () => deleteCalled = true,
-      ));
+      await tester.pumpWidget(
+        buildSwipeableRow(onDelete: () => deleteCalled = true),
+      );
 
       final center = tester.getCenter(find.text('Friend Content'));
       await tester.dragFrom(center, const Offset(-250, 0));
@@ -129,10 +156,12 @@ void main() {
     testWidgets('reveals Unarchive on swipe left (archived)', (tester) async {
       bool unarchiveCalled = false;
 
-      await tester.pumpWidget(buildSwipeableRow(
-        isArchived: true,
-        onUnarchive: () => unarchiveCalled = true,
-      ));
+      await tester.pumpWidget(
+        buildSwipeableRow(
+          isArchived: true,
+          onUnarchive: () => unarchiveCalled = true,
+        ),
+      );
 
       // Perform a left swipe
       final center = tester.getCenter(find.text('Friend Content'));
@@ -158,6 +187,26 @@ void main() {
 
       // Action buttons should not be visible
       expect(find.byIcon(Icons.block), findsNothing);
+      expect(openRowNotifier.value, isNull);
+    });
+
+    testWidgets('right swipe closes an open row and clears the notifier', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildSwipeableRow(onArchive: () {}));
+
+      final center = tester.getCenter(find.text('Friend Content'));
+      await tester.dragFrom(center, const Offset(-250, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Archive'), findsOneWidget);
+      expect(openRowNotifier.value, const ValueKey('test-row'));
+
+      await tester.dragFrom(center, const Offset(220, 0));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Archive'), findsNothing);
+      expect(openRowNotifier.value, isNull);
     });
   });
 }

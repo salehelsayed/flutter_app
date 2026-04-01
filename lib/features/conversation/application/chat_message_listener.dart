@@ -20,6 +20,32 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
+enum ChatMessageProcessState {
+  stored,
+  blockedSender,
+  notChatMessage,
+  missingMlKemSecret,
+  decryptionFailed,
+  unknownSender,
+  duplicate,
+  editMissingOriginal,
+  error,
+}
+
+class ChatMessageProcessOutcome {
+  final ChatMessageProcessState state;
+  final ConversationMessage? conversationMessage;
+  final ContactModel? updatedContact;
+  final String? reasonDetail;
+
+  const ChatMessageProcessOutcome({
+    required this.state,
+    this.conversationMessage,
+    this.updatedContact,
+    this.reasonDetail,
+  });
+}
+
 /// Listener service that monitors P2P messages for chat messages.
 ///
 /// Subscribes to a typed chat message stream (from IncomingMessageRouter),
@@ -200,6 +226,12 @@ class ChatMessageListener {
   }
 
   Future<void> _onMessage(ChatMessage message) async {
+    await processIncomingMessage(message);
+  }
+
+  Future<ChatMessageProcessOutcome> processIncomingMessage(
+    ChatMessage message,
+  ) async {
     try {
       // Check if sender is blocked — reject message entirely (don't persist)
       final senderPeerId = message.from;
@@ -214,7 +246,9 @@ class ChatMessageListener {
                 : senderPeerId,
           },
         );
-        return; // Message never persisted, never broadcast
+        return const ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.blockedSender,
+        );
       }
 
       // Opportunistically download avatar if missing
@@ -244,6 +278,13 @@ class ChatMessageListener {
         _contactUpdatedController.add(updatedContact);
       }
 
+      if (result == HandleChatMessageResult.missingMlKemSecret) {
+        return ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.missingMlKemSecret,
+          updatedContact: updatedContact,
+        );
+      }
+
       if (result == HandleChatMessageResult.decryptionFailed) {
         emitFlowEvent(
           layer: 'FL',
@@ -254,7 +295,38 @@ class ChatMessageListener {
                 : senderPeerId,
           },
         );
-        return;
+        return ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.decryptionFailed,
+          updatedContact: updatedContact,
+        );
+      }
+
+      if (result == HandleChatMessageResult.unknownSender) {
+        return ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.unknownSender,
+          updatedContact: updatedContact,
+        );
+      }
+
+      if (result == HandleChatMessageResult.duplicate) {
+        return ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.duplicate,
+          updatedContact: updatedContact,
+        );
+      }
+
+      if (result == HandleChatMessageResult.editMissingOriginal) {
+        return ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.editMissingOriginal,
+          updatedContact: updatedContact,
+        );
+      }
+
+      if (result == HandleChatMessageResult.notChatMessage) {
+        return ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.notChatMessage,
+          updatedContact: updatedContact,
+        );
       }
 
       if (result == HandleChatMessageResult.chatMessage &&
@@ -276,7 +348,11 @@ class ChatMessageListener {
                   : conversationMessage.senderPeerId,
             },
           );
-          return;
+          return ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.stored,
+            conversationMessage: conversationMessage,
+            updatedContact: updatedContact,
+          );
         }
 
         emitFlowEvent(
@@ -321,12 +397,28 @@ class ChatMessageListener {
             mediaFileManager != null) {
           _autoDownloadMedia(conversationMessage);
         }
+
+        return ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.stored,
+          conversationMessage: conversationMessage,
+          updatedContact: updatedContact,
+        );
       }
+
+      return ChatMessageProcessOutcome(
+        state: ChatMessageProcessState.error,
+        updatedContact: updatedContact,
+        reasonDetail: 'missing conversation message for chatMessage result',
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_LISTENER_ERROR',
         details: {'error': e.toString()},
+      );
+      return ChatMessageProcessOutcome(
+        state: ChatMessageProcessState.error,
+        reasonDetail: e.toString(),
       );
     }
   }

@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' show TextDirection;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,21 +11,27 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_display.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/introduction_connection_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -36,6 +40,8 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
@@ -156,6 +162,7 @@ void main() {
   /// [contactRequestListener] and [chatMessageListener] can be overridden
   /// for tests that need controllable streams.
   Widget buildFeedWired({
+    FakeIdentityRepository? identityRepository,
     ContactRequestListener? contactRequestListener,
     ChatMessageListener? chatMessageListener,
     FakeReactionRepository? reactionRepository,
@@ -164,9 +171,13 @@ void main() {
     MessageRepository? messageRepository,
     MediaAttachmentRepository? mediaAttachmentRepository,
     MediaFileManager? mediaFileManagerOverride,
+    EditChatMessageFn? editChatMessageFn,
+    DeleteMessageForMeFn? deleteForMeFn,
+    DeleteMessageForEveryoneFn? deleteForEveryoneFn,
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
     GroupMessageListener? groupMessageListener,
+    InMemoryIntroductionRepository? introductionRepository,
     IntroductionListener? introductionListener,
     List<NavigatorObserver>? navigatorObservers,
   }) {
@@ -197,7 +208,7 @@ void main() {
       supportedLocales: AppLocalizations.supportedLocales,
       navigatorObservers: navigatorObservers ?? const <NavigatorObserver>[],
       home: FeedWired(
-        repository: identityRepo,
+        repository: identityRepository ?? identityRepo,
         contactRepository: effectiveContactRepo,
         contactRequestRepository: contactRequestRepo,
         contactRequestListener: crListener,
@@ -216,10 +227,15 @@ void main() {
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
+        introductionRepository: introductionRepository,
         introductionListener: introductionListener,
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+        editChatMessageFn: editChatMessageFn ?? editChatMessage,
+        deleteMessageForMeFn: deleteForMeFn ?? deleteMessageForMe,
+        deleteMessageForEveryoneFn:
+            deleteForEveryoneFn ?? deleteMessageForEveryone,
       ),
     );
   }
@@ -228,6 +244,91 @@ void main() {
     for (var i = 0; i < count; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+  }
+
+  NavBarButton navButton(WidgetTester tester, String label, {Finder? scope}) {
+    final finder = scope == null
+        ? find.byType(NavBarButton)
+        : find.descendant(of: scope, matching: find.byType(NavBarButton));
+    return tester
+        .widgetList<NavBarButton>(finder)
+        .singleWhere((button) => button.label == label);
+  }
+
+  void setPhoneViewport(WidgetTester tester) {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
+
+  Finder feedOrbitSwipeHost() =>
+      find.byKey(const ValueKey<String>('feed-orbit-swipe-host'));
+
+  Finder feedOrbitNavLabel() => find.descendant(
+    of: find.byType(FeedScreen),
+    matching: find.text('Orbit'),
+  );
+
+  Finder orbitFeedNavLabel() =>
+      find.descendant(of: find.byType(OrbitWired), matching: find.text('Feed'));
+
+  Finder orbitSearchField() => find.descendant(
+    of: find.byType(OrbitWired),
+    matching: find.byType(TextField),
+  );
+
+  Finder orbitScopedText(String text) =>
+      find.descendant(of: find.byType(OrbitWired), matching: find.text(text));
+
+  Future<void> emitInlineOrbitExit(
+    WidgetTester tester,
+    FeedRouteChanges changes,
+  ) async {
+    final feedWired = tester.widget<FeedWired>(find.byType(FeedWired));
+    final orbit = tester.widget<OrbitWired>(find.byType(OrbitWired));
+    feedWired.appShellController.switchTo('feed');
+    orbit.onEmbeddedExit?.call(changes);
+    await pumpFeedFrames(tester, count: 8);
+  }
+
+  void suppressFeedNavErrors() {
+    final originalOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final message = details.exceptionAsString();
+      if (details.toString().contains('overflowed') ||
+          message.contains('Unable to load asset') ||
+          message.contains('SvgPicture') ||
+          message.contains('ImageFilter')) {
+        return;
+      }
+      originalOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = originalOnError);
+  }
+
+  IntroductionModel pendingIntroduction({
+    required String id,
+    required String ownPeerId,
+    required String otherPeerId,
+    required String createdAt,
+    IntroductionStatus recipientStatus = IntroductionStatus.pending,
+    IntroductionStatus introducedStatus = IntroductionStatus.pending,
+    IntroductionOverallStatus status = IntroductionOverallStatus.pending,
+  }) {
+    return IntroductionModel(
+      id: id,
+      introducerId: 'introducer-peer-id',
+      recipientId: ownPeerId,
+      introducedId: otherPeerId,
+      recipientStatus: recipientStatus,
+      introducedStatus: introducedStatus,
+      status: status,
+      createdAt: createdAt,
+      introducerUsername: 'Eve',
+      recipientUsername: testIdentity.username,
+      introducedUsername: 'Dora',
+    );
   }
 
   group('FeedWired', () {
@@ -465,6 +566,530 @@ void main() {
       // The FeedNavigationBar renders NavBarButton with label 'Orbit'
       expect(find.text('Orbit'), findsOneWidget);
       expect(find.text('Feed'), findsOneWidget);
+    });
+
+    testWidgets(
+      'orbit tab switch keeps the shared nav visible inside the inline host',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          final message = details.exceptionAsString();
+          if (details.toString().contains('overflowed') ||
+              message.contains('Unable to load asset') ||
+              message.contains('SvgPicture') ||
+              message.contains('ImageFilter')) {
+            return;
+          }
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester, count: 10);
+
+        final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(navigator.canPop(), isFalse);
+        expect(
+          find.descendant(
+            of: find.byType(OrbitWired),
+            matching: find.byType(FeedNavigationBar),
+          ),
+          findsOneWidget,
+        );
+
+        final orbitButtons = tester
+            .widgetList<NavBarButton>(
+              find.descendant(
+                of: find.byType(OrbitWired),
+                matching: find.byType(NavBarButton),
+              ),
+            )
+            .toList();
+        expect(orbitButtons, hasLength(2));
+        expect(orbitButtons[0].isActive, isFalse);
+        expect(orbitButtons[1].isActive, isTrue);
+      },
+    );
+
+    testWidgets(
+      'loads the Orbit badge from non-expired pending introductions on first load',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-fresh',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'fresh-peer-id',
+            createdAt: '2026-03-20T12:00:00.000Z',
+          ),
+        );
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-expired',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'expired-peer-id',
+            createdAt: '2026-02-01T12:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(introductionRepository: introRepo),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+        final expiredIntro = await introRepo.getIntroduction('intro-expired');
+        expect(expiredIntro?.status, IntroductionOverallStatus.expired);
+      },
+    );
+
+    testWidgets(
+      'refreshes the Orbit badge on intro receipt and remote status changes',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = InMemoryIntroductionRepository();
+        final fakeIntroListener = _FakeIntroductionListener(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            introductionRepository: introRepo,
+            introductionListener: fakeIntroListener,
+          ),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(
+          navButton(tester, 'Orbit', scope: find.byType(FeedScreen)).badgeCount,
+          0,
+        );
+
+        final intro = pendingIntroduction(
+          id: 'intro-live',
+          ownPeerId: testIdentity.peerId,
+          otherPeerId: 'live-peer-id',
+          createdAt: '2026-03-25T12:00:00.000Z',
+        );
+        await introRepo.saveIntroduction(intro);
+        fakeIntroListener.emitIntroReceived(intro);
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+
+        final passedIntro = intro.copyWith(
+          recipientStatus: IntroductionStatus.passed,
+          status: IntroductionOverallStatus.passed,
+        );
+        await introRepo.updateRecipientStatus(
+          intro.id,
+          IntroductionStatus.passed,
+        );
+        await introRepo.updateOverallStatus(
+          intro.id,
+          IntroductionOverallStatus.passed,
+        );
+        fakeIntroListener.emitIntroStatusChanged(passedIntro);
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(
+          navButton(tester, 'Orbit', scope: find.byType(FeedScreen)).badgeCount,
+          0,
+        );
+      },
+    );
+
+    testWidgets(
+      'inline orbit return refreshes the Orbit badge after local intro actions',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = InMemoryIntroductionRepository();
+        final intro = pendingIntroduction(
+          id: 'intro-route-return',
+          ownPeerId: testIdentity.peerId,
+          otherPeerId: 'route-peer-id',
+          createdAt: '2026-03-25T12:00:00.000Z',
+        );
+        await introRepo.saveIntroduction(intro);
+
+        await tester.pumpWidget(
+          buildFeedWired(introductionRepository: introRepo),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester, count: 10);
+
+        await introRepo.updateRecipientStatus(
+          intro.id,
+          IntroductionStatus.passed,
+        );
+        await introRepo.updateOverallStatus(
+          intro.id,
+          IntroductionOverallStatus.passed,
+        );
+        await emitInlineOrbitExit(
+          tester,
+          const FeedRouteChanges(refreshPendingIntroductions: true),
+        );
+
+        expect(
+          navButton(tester, 'Orbit', scope: find.byType(FeedScreen)).badgeCount,
+          0,
+        );
+      },
+    );
+
+    testWidgets('feed scroll position survives an inline orbit round trip', (
+      tester,
+    ) async {
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+
+      final contacts = List.generate(
+        40,
+        (index) => testContact.copyWith(
+          peerId: 'scroll-peer-$index',
+          publicKey: 'scroll-pk-$index',
+          username: 'Scroll User $index',
+          signature: 'scroll-sig-$index',
+          scannedAt:
+              '2026-02-01T09:${index.toString().padLeft(2, '0')}:00.000Z',
+        ),
+      );
+      contactRepo.seed(contacts);
+      for (final contact in contacts) {
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'scroll-msg-${contact.peerId}',
+            contactPeerId: contact.peerId,
+            text: 'Message for ${contact.username}',
+            senderPeerId: contact.peerId,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+      }
+
+      double feedScrollOffset() {
+        final scrollableFinder = find.descendant(
+          of: find.byKey(const PageStorageKey<String>('feed-scroll')),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Scrollable &&
+                widget.axisDirection == AxisDirection.down,
+          ),
+        );
+        expect(scrollableFinder, findsOneWidget);
+        return tester.state<ScrollableState>(scrollableFinder).position.pixels;
+      }
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 10);
+      expect(feedScrollOffset(), 0);
+
+      await tester.drag(
+        find.byKey(const PageStorageKey<String>('feed-scroll')),
+        const Offset(0, -1600),
+      );
+      await pumpFeedFrames(tester, count: 10);
+
+      final scrolledOffset = feedScrollOffset();
+      expect(scrolledOffset, greaterThan(0));
+
+      await tester.tap(feedOrbitNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+      await tester.tap(orbitFeedNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+
+      expect(feedScrollOffset(), closeTo(scrolledOffset, 1));
+    });
+
+    testWidgets('orbit search state survives an inline host tab round trip', (
+      tester,
+    ) async {
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+
+      final otherContact = testContact.copyWith(
+        peerId: 'contact-peer-id-2',
+        publicKey: 'contact-pk-2',
+        username: 'Cara',
+        signature: 'sig-2',
+        scannedAt: '2026-02-01T09:30:00.000Z',
+      );
+      contactRepo.seed([testContact, otherContact]);
+
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-orbit-search-1',
+          contactPeerId: testContact.peerId,
+          text: 'Bob orbit message',
+          senderPeerId: testContact.peerId,
+          timestamp: '2026-02-01T10:00:00.000Z',
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: '2026-02-01T10:00:00.000Z',
+        ),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'msg-orbit-search-2',
+          contactPeerId: otherContact.peerId,
+          text: 'Cara orbit message',
+          senderPeerId: otherContact.peerId,
+          timestamp: '2026-02-01T10:05:00.000Z',
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: '2026-02-01T10:05:00.000Z',
+        ),
+      );
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 10);
+
+      await tester.tap(feedOrbitNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+
+      await tester.tap(find.byType(OrbitSearchTrigger));
+      await pumpFeedFrames(tester, count: 4);
+      await tester.enterText(orbitSearchField(), 'Bo');
+      await pumpFeedFrames(tester, count: 4);
+
+      expect(orbitScopedText('Bob'), findsWidgets);
+      expect(orbitScopedText('Cara'), findsNothing);
+
+      await tester.tap(orbitFeedNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+      await tester.tap(feedOrbitNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+
+      expect(orbitScopedText('Bob'), findsWidgets);
+      expect(orbitScopedText('Cara'), findsNothing);
+      final searchField = tester.widget<TextField>(orbitSearchField());
+      expect(searchField.controller!.text, 'Bo');
+    });
+
+    testWidgets(
+      'feed left swipe follows the finger and snaps back before threshold',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        final feedScrollFinder = find.byKey(
+          const PageStorageKey<String>('feed-scroll'),
+        );
+        final hostFinder = feedOrbitSwipeHost();
+        final initialDx = tester.getTopLeft(feedScrollFinder).dx;
+
+        final gesture = await tester.startGesture(tester.getCenter(hostFinder));
+        await gesture.moveBy(const Offset(-70, 0));
+        await tester.pump();
+
+        final draggedDx = tester.getTopLeft(feedScrollFinder).dx;
+        expect(draggedDx, lessThan(initialDx));
+
+        await gesture.up();
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(appShellController.activeTab, 'feed');
+        expect(tester.getTopLeft(feedScrollFinder).dx, closeTo(initialDx, 1));
+      },
+    );
+
+    testWidgets('feed left swipe completes into orbit by threshold', (
+      tester,
+    ) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+
+      await tester.drag(feedOrbitSwipeHost(), const Offset(-170, 0));
+      await pumpFeedFrames(tester, count: 8);
+
+      expect(appShellController.activeTab, 'orbit');
+      expect(find.byType(OrbitWired), findsOneWidget);
+    });
+
+    testWidgets(
+      'feed left fling completes into orbit below distance threshold',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        await tester.fling(feedOrbitSwipeHost(), const Offset(-90, 0), 2400);
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(appShellController.activeTab, 'orbit');
+        expect(find.byType(OrbitWired), findsOneWidget);
+      },
+    );
+
+    testWidgets('feed swipe-away clears inline reply focus', (tester) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'focus-msg-1',
+          contactPeerId: testContact.peerId,
+          text: 'Focus me before orbit',
+          senderPeerId: testContact.peerId,
+          timestamp: '2026-03-30T10:00:00.000Z',
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: '2026-03-30T10:00:00.000Z',
+        ),
+      );
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+
+      await tester.tap(find.byType(TextField).first);
+      await tester.pump();
+
+      final editableBefore = tester.widget<EditableText>(
+        find.byType(EditableText).first,
+      );
+      expect(editableBefore.focusNode.hasFocus, isTrue);
+
+      await tester.drag(feedOrbitSwipeHost(), const Offset(-170, 0));
+      await pumpFeedFrames(tester, count: 8);
+
+      final editableAfter = tester.widget<EditableText>(
+        find.byType(EditableText).first,
+      );
+      expect(appShellController.activeTab, 'orbit');
+      expect(editableAfter.focusNode.hasFocus, isFalse);
+    });
+
+    testWidgets(
+      'feed quote swipe keeps ownership over right-swipe message gestures',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'quote-gesture-msg-1',
+            contactPeerId: testContact.peerId,
+            text: 'Quote gesture stays local',
+            senderPeerId: testContact.peerId,
+            timestamp: '2026-03-30T10:05:00.000Z',
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: '2026-03-30T10:05:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        await tester.drag(
+          find.byType(SwipeToQuoteBubble).first,
+          const Offset(60, 0),
+        );
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(appShellController.activeTab, 'feed');
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(find.text('Quote gesture stays local'), findsWidgets);
+      },
+    );
+
+    testWidgets('orbit right swipe completes back to feed', (tester) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+
+      await tester.tap(find.text('Orbit'));
+      await pumpFeedFrames(tester, count: 10);
+
+      await tester.drag(feedOrbitSwipeHost(), const Offset(170, 0));
+      await pumpFeedFrames(tester, count: 8);
+
+      expect(appShellController.activeTab, 'feed');
+      expect(find.byType(OrbitWired), findsOneWidget);
+    });
+
+    testWidgets('orbit row-area left swipe does not trigger screen return', (
+      tester,
+    ) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'orbit-row-msg-1',
+          contactPeerId: testContact.peerId,
+          text: 'Orbit row message',
+          senderPeerId: testContact.peerId,
+          timestamp: '2026-03-30T10:10:00.000Z',
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: '2026-03-30T10:10:00.000Z',
+        ),
+      );
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+
+      await tester.tap(find.text('Orbit'));
+      await pumpFeedFrames(tester, count: 10);
+
+      final orbitBobFinder = orbitScopedText('Bob').first;
+      await tester.ensureVisible(orbitBobFinder);
+      await tester.pump();
+      await tester.drag(orbitBobFinder, const Offset(-230, 0));
+      await pumpFeedFrames(tester, count: 6);
+
+      expect(appShellController.activeTab, 'orbit');
+      expect(find.byType(OrbitWired), findsOneWidget);
     });
 
     testWidgets('collapse from open-mode card does not expand collapsed card', (
@@ -1963,7 +2588,6 @@ void main() {
         final spyContactRepo = _SpyContactRepository()
           ..seed([testContact, otherContact]);
         final spyMessageRepo = _SpyMessageRepository();
-        final observer = _RecordingNavigatorObserver();
 
         await spyMessageRepo.saveMessage(
           ConversationMessage(
@@ -1994,7 +2618,6 @@ void main() {
           buildFeedWired(
             contactRepository: spyContactRepo,
             messageRepository: spyMessageRepo,
-            navigatorObservers: [observer],
           ),
         );
         await pumpFeedFrames(tester);
@@ -2008,11 +2631,10 @@ void main() {
         await spyContactRepo.addContact(
           testContact.copyWith(username: 'Bobby'),
         );
-        observer.lastPushedRoute!.navigator!.pop(
+        await emitInlineOrbitExit(
+          tester,
           const FeedRouteChanges(changedContactPeerIds: {'contact-peer-id'}),
         );
-
-        await pumpFeedFrames(tester, count: 8);
 
         expect(find.textContaining('Bobby'), findsWidgets);
         expect(spyContactRepo.getActiveContactsCallCount, 0);
@@ -2057,7 +2679,6 @@ void main() {
         final spyContactRepo = _SpyContactRepository()
           ..seed([testContact, otherContact]);
         final spyMessageRepo = _SpyMessageRepository();
-        final observer = _RecordingNavigatorObserver();
 
         await spyMessageRepo.saveMessage(
           ConversationMessage(
@@ -2088,7 +2709,6 @@ void main() {
           buildFeedWired(
             contactRepository: spyContactRepo,
             messageRepository: spyMessageRepo,
-            navigatorObservers: [observer],
           ),
         );
         await pumpFeedFrames(tester);
@@ -2105,11 +2725,10 @@ void main() {
         await spyContactRepo.addContact(
           otherContact.copyWith(username: 'Beatrice'),
         );
-        observer.lastPushedRoute!.navigator!.pop(
+        await emitInlineOrbitExit(
+          tester,
           const FeedRouteChanges(reloadAllContacts: true),
         );
-
-        await pumpFeedFrames(tester, count: 8);
 
         expect(find.textContaining('Bobby'), findsWidgets);
         expect(find.textContaining('Beatrice'), findsWidgets);
@@ -2279,6 +2898,106 @@ void main() {
     });
 
     testWidgets(
+      'long-press reply shows preview, focuses composer, and persists quotedMessageId on send',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        final originalTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .toUtc()
+            .toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'quoted-msg-long-press',
+            contactPeerId: 'contact-peer-id',
+            text: 'Long-press quote target',
+            senderPeerId: 'contact-peer-id',
+            timestamp: originalTimestamp,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: originalTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        await tester.longPress(find.text('Long-press quote target'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.selectedMessageKey),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(MessageContextOverlay.selectedMessageKey),
+            matching: find.text('Long-press quote target'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(QuotePreviewBar),
+            matching: find.text('Long-press quote target'),
+          ),
+          findsOneWidget,
+        );
+
+        final editable = tester.widget<EditableText>(
+          find.descendant(
+            of: find.byType(InlineReplyInput),
+            matching: find.byType(EditableText),
+          ),
+        );
+        expect(editable.focusNode.hasFocus, isTrue);
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Quoted from long press',
+        );
+        await tester.pump();
+
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await tester.pump(const Duration(milliseconds: 200));
+
+        final sentMessages = await messageRepo.getMessagesForContact(
+          'contact-peer-id',
+        );
+        final sentReply = sentMessages
+            .where((message) => message.text == 'Quoted from long press')
+            .first;
+
+        expect(sentReply.quotedMessageId, 'quoted-msg-long-press');
+      },
+    );
+
+    testWidgets(
       'swipe-to-reply shows preview and persists quotedMessageId on send',
       (tester) async {
         final originalOnError = FlutterError.onError;
@@ -2351,6 +3070,456 @@ void main() {
             .first;
 
         expect(sentReply.quotedMessageId, 'quoted-msg-1');
+      },
+    );
+
+    testWidgets(
+      'long-press reply on sent feed message focuses composer and persists quotedMessageId on send',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        final incomingTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .toUtc()
+            .toIso8601String();
+        final outgoingTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 1))
+            .toUtc()
+            .toIso8601String();
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'incoming-msg-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Incoming first',
+            senderPeerId: 'contact-peer-id',
+            timestamp: incomingTimestamp,
+            isIncoming: true,
+            status: 'read',
+            readAt: incomingTimestamp,
+            createdAt: incomingTimestamp,
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'outgoing-msg-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'My sent message',
+            senderPeerId: testIdentity.peerId,
+            timestamp: outgoingTimestamp,
+            isIncoming: false,
+            status: 'delivered',
+            createdAt: outgoingTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester);
+
+        final sentMessageFinder = find.text('My sent message');
+        await tester.ensureVisible(sentMessageFinder);
+        await tester.pump();
+        await tester.longPress(sentMessageFinder);
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(MessageContextOverlay.selectedMessageKey),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(MessageContextOverlay.selectedMessageKey),
+            matching: find.text('My sent message'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.text('Replying to'), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byType(QuotePreviewBar),
+            matching: find.text('My sent message'),
+          ),
+          findsOneWidget,
+        );
+
+        final editable = tester.widget<EditableText>(
+          find.byType(EditableText).first,
+        );
+        expect(editable.focusNode.hasFocus, isTrue);
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Reply from long press',
+        );
+        await tester.pump();
+
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await tester.pump(const Duration(milliseconds: 200));
+
+        final sentMessages = await messageRepo.getMessagesForContact(
+          'contact-peer-id',
+        );
+        final sentReply = sentMessages
+            .where((message) => message.text == 'Reply from long press')
+            .first;
+
+        expect(sentReply.quotedMessageId, 'outgoing-msg-1');
+      },
+    );
+
+    testWidgets(
+      'long-press edit prefills the feed composer and cancel exits edit mode',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        final incomingTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .toUtc()
+            .toIso8601String();
+        final outgoingTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 1))
+            .toUtc()
+            .toIso8601String();
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'incoming-edit-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Incoming first',
+            senderPeerId: 'contact-peer-id',
+            timestamp: incomingTimestamp,
+            isIncoming: true,
+            status: 'read',
+            readAt: incomingTimestamp,
+            createdAt: incomingTimestamp,
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'outgoing-edit-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Editable sent message',
+            senderPeerId: testIdentity.peerId,
+            timestamp: outgoingTimestamp,
+            isIncoming: false,
+            status: 'delivered',
+            createdAt: outgoingTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester);
+
+        await tester.longPress(find.text('Editable sent message'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(const ValueKey('feed-edit-mode-banner')),
+          findsOneWidget,
+        );
+        expect(find.text('Editing message'), findsOneWidget);
+
+        final editableBefore = tester.widget<EditableText>(
+          find.byType(EditableText).first,
+        );
+        expect(editableBefore.controller.text, 'Editable sent message');
+        expect(editableBefore.focusNode.hasFocus, isTrue);
+
+        final cancelEditFinder = find.byKey(
+          const ValueKey('feed-cancel-edit-action'),
+        );
+        await tester.ensureVisible(cancelEditFinder);
+        await tester.pump();
+        await tester.tap(cancelEditFinder);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(const ValueKey('feed-edit-mode-banner')),
+          findsNothing,
+        );
+
+        final editableAfter = tester.widget<EditableText>(
+          find.byType(EditableText).first,
+        );
+        expect(editableAfter.controller.text, isEmpty);
+      },
+    );
+
+    testWidgets('identical feed edit submit is a no-op', (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+
+      final incomingTimestamp = DateTime.now()
+          .subtract(const Duration(minutes: 5))
+          .toUtc()
+          .toIso8601String();
+      final outgoingTimestamp = DateTime.now()
+          .subtract(const Duration(minutes: 1))
+          .toUtc()
+          .toIso8601String();
+      var editCalled = false;
+
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'incoming-noop-1',
+          contactPeerId: 'contact-peer-id',
+          text: 'Incoming first',
+          senderPeerId: 'contact-peer-id',
+          timestamp: incomingTimestamp,
+          isIncoming: true,
+          status: 'read',
+          readAt: incomingTimestamp,
+          createdAt: incomingTimestamp,
+        ),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'outgoing-noop-1',
+          contactPeerId: 'contact-peer-id',
+          text: 'No-op edit text',
+          senderPeerId: testIdentity.peerId,
+          timestamp: outgoingTimestamp,
+          isIncoming: false,
+          status: 'delivered',
+          createdAt: outgoingTimestamp,
+        ),
+      );
+
+      await tester.pumpWidget(
+        buildFeedWired(
+          editChatMessageFn:
+              ({
+                required p2pService,
+                required messageRepo,
+                required originalMessage,
+                required updatedText,
+                required senderUsername,
+                bridge,
+                recipientMlKemPublicKey,
+                mediaAttachmentRepo,
+                emitTimingEvent = true,
+              }) async {
+                editCalled = true;
+                return (SendChatMessageResult.success, originalMessage);
+              },
+        ),
+      );
+      await pumpFeedFrames(tester);
+
+      await tester.tap(find.text('Tap to expand'));
+      await pumpFeedFrames(tester);
+
+      await tester.longPress(find.text('No-op edit text'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+      await tester.ensureVisible(sendButton);
+      await tester.pump();
+      await tester.tap(sendButton);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(editCalled, isFalse);
+      expect(find.byKey(const ValueKey('feed-edit-mode-banner')), findsNothing);
+      final messages = await messageRepo.getMessagesForContact(
+        'contact-peer-id',
+      );
+      expect(messages.where((message) => !message.isIncoming).length, 1);
+      expect(
+        messages
+            .where((message) => message.id == 'outgoing-noop-1')
+            .single
+            .text,
+        'No-op edit text',
+      );
+    });
+
+    testWidgets(
+      'changed feed edit submit updates the same row and does not create a session reply',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final incomingTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .toUtc()
+            .toIso8601String();
+        final outgoingTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 1))
+            .toUtc()
+            .toIso8601String();
+        const editedAt = '2026-03-31T10:06:00.000Z';
+        String? editedMessageId;
+        String? editedText;
+
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'incoming-edit-success-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Incoming first',
+            senderPeerId: 'contact-peer-id',
+            timestamp: incomingTimestamp,
+            isIncoming: true,
+            status: 'read',
+            readAt: incomingTimestamp,
+            createdAt: incomingTimestamp,
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'outgoing-edit-success-1',
+            contactPeerId: 'contact-peer-id',
+            text: 'Original feed text',
+            senderPeerId: testIdentity.peerId,
+            timestamp: outgoingTimestamp,
+            isIncoming: false,
+            status: 'delivered',
+            createdAt: outgoingTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            editChatMessageFn:
+                ({
+                  required p2pService,
+                  required messageRepo,
+                  required originalMessage,
+                  required updatedText,
+                  required senderUsername,
+                  bridge,
+                  recipientMlKemPublicKey,
+                  mediaAttachmentRepo,
+                  emitTimingEvent = true,
+                }) async {
+                  editedMessageId = originalMessage.id;
+                  editedText = updatedText;
+                  final updated = originalMessage.copyWith(
+                    text: updatedText,
+                    editedAt: editedAt,
+                  );
+                  await messageRepo.saveMessage(updated);
+                  return (SendChatMessageResult.success, updated);
+                },
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester);
+
+        await tester.longPress(find.text('Original feed text'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        await tester.enterText(
+          find.byType(TextField).first,
+          'Updated feed text',
+        );
+        await tester.pump();
+
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(editedMessageId, 'outgoing-edit-success-1');
+        expect(editedText, 'Updated feed text');
+        expect(find.text('Updated feed text'), findsOneWidget);
+        expect(find.text('(edited)'), findsWidgets);
+
+        final updatedMessage = await messageRepo.getMessage(
+          'outgoing-edit-success-1',
+        );
+        expect(updatedMessage?.text, 'Updated feed text');
+        expect(updatedMessage?.editedAt, editedAt);
+        final messages = await messageRepo.getMessagesForContact(
+          'contact-peer-id',
+        );
+        expect(messages.where((message) => !message.isIncoming).length, 1);
       },
     );
 
@@ -2728,7 +3897,6 @@ void main() {
         findsOneWidget,
         reason: 'Error snackbar should appear on send failure',
       );
-      expect(find.textContaining('You replied'), findsNothing);
       expect(find.text('Replying to'), findsOneWidget);
       expect(find.text('Hey from Bob'), findsWidgets);
       expect(
@@ -3407,14 +4575,72 @@ void main() {
 
         expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
 
-        await messageRepo.updateMessageStatus(
-          failedReply.id,
-          'delivered',
-        );
+        await messageRepo.updateMessageStatus(failedReply.id, 'delivered');
         await pumpFeedFrames(tester, count: 2);
 
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
         expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'failed outgoing repository edit refresh updates the open feed card without reload',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final parent = ConversationMessage(
+          id: 'parent-edit-failed',
+          contactPeerId: testContact.peerId,
+          text: 'Retry parent',
+          senderPeerId: testContact.peerId,
+          timestamp: '2026-02-01T10:00:00.000Z',
+          isIncoming: true,
+          status: 'read',
+          readAt: '2026-02-01T10:05:00.000Z',
+          createdAt: '2026-02-01T10:00:00.000Z',
+        );
+        final failedReply = ConversationMessage(
+          id: 'failed-edit-refresh',
+          contactPeerId: testContact.peerId,
+          text: 'Failed original text',
+          senderPeerId: testIdentity.peerId,
+          timestamp: '2026-02-01T10:06:00.000Z',
+          isIncoming: false,
+          status: 'failed',
+          quotedMessageId: 'parent-edit-failed',
+          createdAt: '2026-02-01T10:06:00.000Z',
+        );
+        await messageRepo.saveMessage(parent);
+        await messageRepo.saveMessage(failedReply);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(find.text('Failed original text'), findsOneWidget);
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+
+        await messageRepo.saveMessage(
+          failedReply.copyWith(
+            text: 'Failed edited text',
+            editedAt: '2026-02-01T10:07:00.000Z',
+          ),
+        );
+        await pumpFeedFrames(tester, count: 2);
+
+        expect(find.text('Failed edited text'), findsOneWidget);
+        expect(find.text('(edited)'), findsWidgets);
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
       },
     );
 
@@ -3565,6 +4791,272 @@ void main() {
         );
         expect(pushed.group.type, GroupType.announcement);
         expect(pushed.group.myRole, GroupRole.admin);
+      },
+    );
+
+    testWidgets(
+      'feed delete-for-me removes the thread row and keeps the contact card',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final timestamp = DateTime.now().toUtc().toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-for-me-msg',
+            contactPeerId: 'contact-peer-id',
+            text: 'Delete for me only',
+            senderPeerId: 'contact-peer-id',
+            timestamp: timestamp,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: timestamp,
+          ),
+        );
+
+        var deleteForMeCalled = false;
+        await tester.pumpWidget(
+          buildFeedWired(
+            deleteForMeFn:
+                ({
+                  required message,
+                  required messageRepo,
+                  reactionRepo,
+                  mediaAttachmentRepo,
+                  mediaFileManager,
+                }) async {
+                  deleteForMeCalled = true;
+                  return deleteMessageForMe(
+                    message: message,
+                    messageRepo: messageRepo,
+                    reactionRepo: reactionRepo,
+                    mediaAttachmentRepo: mediaAttachmentRepo,
+                    mediaFileManager: mediaFileManager,
+                  );
+                },
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.longPress(find.text('Delete for me only'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(MessageContextOverlay.deleteActionKey),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(FeedWired.deleteSheetKey), findsOneWidget);
+
+        final deleteForMeInkWell = tester.widget<InkWell>(
+          find.descendant(
+            of: find.byKey(FeedWired.deleteForMeKey),
+            matching: find.byType(InkWell),
+          ),
+        );
+        deleteForMeInkWell.onTap?.call();
+        await tester.pump();
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(deleteForMeCalled, isTrue);
+        expect(find.text('Delete for me only'), findsNothing);
+        expect(find.textContaining('Bob'), findsWidgets);
+        expect(
+          await messageRepo.getMessagesForContact('contact-peer-id'),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'feed delete-for-everyone refreshes to the next latest visible message',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final olderTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .toUtc()
+            .toIso8601String();
+        final latestTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 1))
+            .toUtc()
+            .toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-fallback-earlier',
+            contactPeerId: 'contact-peer-id',
+            text: 'Earlier visible message',
+            senderPeerId: 'contact-peer-id',
+            timestamp: olderTimestamp,
+            isIncoming: true,
+            status: 'read',
+            readAt: olderTimestamp,
+            createdAt: olderTimestamp,
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-fallback-latest',
+            contactPeerId: 'contact-peer-id',
+            text: 'Delete latest for everyone',
+            senderPeerId: testIdentity.peerId,
+            timestamp: latestTimestamp,
+            isIncoming: false,
+            status: 'delivered',
+            createdAt: latestTimestamp,
+          ),
+        );
+
+        var deleteForEveryoneCalled = false;
+        await tester.pumpWidget(
+          buildFeedWired(
+            deleteForEveryoneFn:
+                ({
+                  required p2pService,
+                  required messageRepo,
+                  required originalMessage,
+                  reactionRepo,
+                  mediaAttachmentRepo,
+                  mediaFileManager,
+                  bridge,
+                  recipientMlKemPublicKey,
+                  emitTimingEvent = true,
+                }) async {
+                  deleteForEveryoneCalled = true;
+                  final tombstone = buildDeletedMessageTombstone(
+                    originalMessage: originalMessage,
+                    deletedAt: DateTime.now().toUtc().toIso8601String(),
+                    deletedByPeerId: originalMessage.senderPeerId,
+                    hiddenLocally: true,
+                    status: 'delivered',
+                  );
+                  await messageRepo.saveMessage(tombstone);
+                  return (SendChatMessageResult.success, tombstone);
+                },
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.text('Delete latest for everyone'), findsOneWidget);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester, count: 4);
+
+        await tester.longPress(find.text('Delete latest for everyone'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(FeedWired.deleteForEveryoneKey), findsOneWidget);
+
+        final deleteForEveryoneInkWell = tester.widget<InkWell>(
+          find.descendant(
+            of: find.byKey(FeedWired.deleteForEveryoneKey),
+            matching: find.byType(InkWell),
+          ),
+        );
+        deleteForEveryoneInkWell.onTap?.call();
+        await tester.pump();
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(deleteForEveryoneCalled, isTrue);
+        expect(find.text('Delete latest for everyone'), findsNothing);
+
+        await tester.tap(find.text('Collapse'));
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(find.text('Earlier visible message'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'incoming deleted messages refresh the feed card to the deleted placeholder',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final originalTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 2))
+            .toUtc()
+            .toIso8601String();
+        final originalMessage = ConversationMessage(
+          id: 'incoming-delete-refresh',
+          contactPeerId: 'contact-peer-id',
+          text: 'Incoming will be deleted',
+          senderPeerId: 'contact-peer-id',
+          timestamp: originalTimestamp,
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: originalTimestamp,
+        );
+        await messageRepo.saveMessage(originalMessage);
+
+        await tester.pumpWidget(
+          buildFeedWired(chatMessageListener: fakeChatListener),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.text('Incoming will be deleted'), findsOneWidget);
+
+        final deletedMessage = originalMessage.copyWith(
+          text: '',
+          deletedAt: DateTime.now().toUtc().toIso8601String(),
+          deletedByPeerId: originalMessage.senderPeerId,
+          media: const [],
+        );
+        await messageRepo.saveMessage(deletedMessage);
+        fakeChatListener.emitIncomingMessage(deletedMessage);
+
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(find.text('Incoming will be deleted'), findsNothing);
+        expect(find.text('This message was deleted'), findsOneWidget);
       },
     );
   });

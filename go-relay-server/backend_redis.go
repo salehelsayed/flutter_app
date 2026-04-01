@@ -261,6 +261,7 @@ func (b *redisInboxBackend) allPattern() string {
 
 func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 	ctx := context.Background()
+	entry = ensureInboxMessageID(entry)
 	payload, err := json.Marshal(entry)
 	if err != nil {
 		log.Printf("[REDIS][INBOX] encode failed: %v", err)
@@ -302,7 +303,7 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 			return err
 		}
 
-		validRaw, validMessages := filterInboxEntries(rawEntries, cutoff)
+		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
 		if len(validRaw) == 0 {
 			result = nil
 			hasMore = false
@@ -321,6 +322,105 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 	}
 
 	return result, hasMore
+}
+
+func (b *redisInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMessage, bool) {
+	if limit <= 0 {
+		return nil, false
+	}
+
+	key := b.key(peerId)
+	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+
+	var (
+		result  []inboxMessage
+		hasMore bool
+	)
+
+	err := withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
+		rawEntries, err := tx.LRange(context.Background(), key, 0, -1).Result()
+		if err == redis.Nil {
+			result = nil
+			hasMore = false
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
+		if len(validRaw) == 0 {
+			result = nil
+			hasMore = false
+			return redisReplaceList(tx, key, nil)
+		}
+
+		pageSize := minInt(limit, len(validMessages))
+		result = append([]inboxMessage(nil), validMessages[:pageSize]...)
+		hasMore = len(validMessages) > pageSize
+		return redisReplaceList(tx, key, validRaw)
+	})
+	if err != nil {
+		log.Printf("[REDIS][INBOX] retrieve pending failed: %v", err)
+		return nil, false
+	}
+
+	return result, hasMore
+}
+
+func (b *redisInboxBackend) Ack(peerId string, entryIDs []string) (int, error) {
+	if len(entryIDs) == 0 {
+		return 0, nil
+	}
+
+	targets := make(map[string]struct{}, len(entryIDs))
+	for _, entryID := range entryIDs {
+		if entryID == "" {
+			continue
+		}
+		targets[entryID] = struct{}{}
+	}
+	if len(targets) == 0 {
+		return 0, nil
+	}
+
+	key := b.key(peerId)
+	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	removed := 0
+
+	err := withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
+		rawEntries, err := tx.LRange(context.Background(), key, 0, -1).Result()
+		if err == redis.Nil {
+			removed = 0
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
+		if len(validRaw) == 0 {
+			removed = 0
+			return redisReplaceList(tx, key, nil)
+		}
+
+		remainingRaw := make([]string, 0, len(validRaw))
+		removed = 0
+		for i, message := range validMessages {
+			if _, ok := targets[message.ID]; ok {
+				removed++
+				continue
+			}
+			remainingRaw = append(remainingRaw, validRaw[i])
+		}
+		return redisReplaceList(tx, key, remainingRaw)
+	})
+	if err != nil {
+		log.Printf("[REDIS][INBOX] ack failed: %v", err)
+		return 0, err
+	}
+
+	return removed, nil
 }
 
 func (b *redisInboxBackend) Count(peerId string) int {
@@ -380,6 +480,34 @@ func filterInboxEntries(rawEntries []string, cutoff int64) ([]string, []inboxMes
 			continue
 		}
 		validRaw = append(validRaw, raw)
+		validMessages = append(validMessages, message)
+	}
+
+	return validRaw, validMessages
+}
+
+func normalizeInboxEntries(rawEntries []string, cutoff int64) ([]string, []inboxMessage) {
+	validRaw := make([]string, 0, len(rawEntries))
+	validMessages := make([]inboxMessage, 0, len(rawEntries))
+
+	for _, raw := range rawEntries {
+		var message inboxMessage
+		if err := json.Unmarshal([]byte(raw), &message); err != nil {
+			log.Printf("[REDIS][INBOX] decode failed: %v", err)
+			continue
+		}
+		if message.Timestamp <= cutoff {
+			continue
+		}
+
+		message = ensureInboxMessageID(message)
+		payload, err := json.Marshal(message)
+		if err != nil {
+			log.Printf("[REDIS][INBOX] encode normalized message failed: %v", err)
+			continue
+		}
+
+		validRaw = append(validRaw, string(payload))
 		validMessages = append(validMessages, message)
 	}
 

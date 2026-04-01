@@ -11,6 +11,15 @@ type InboxBackend interface {
 	// Returns the messages and whether more messages remain (hasMore).
 	Retrieve(peerId string, limit int) (messages []inboxMessage, hasMore bool)
 
+	// RetrievePending returns up to limit messages for a peer in FIFO order
+	// without deleting them from the store.
+	// Returns the messages and whether more messages remain (hasMore).
+	RetrievePending(peerId string, limit int) (messages []inboxMessage, hasMore bool)
+
+	// Ack removes only the inbox entries whose stable relay entry IDs match
+	// the provided entryIds slice. Returns the number of removed entries.
+	Ack(peerId string, entryIds []string) (removed int, err error)
+
 	// Count returns the number of pending messages for a peer.
 	Count(peerId string) int
 

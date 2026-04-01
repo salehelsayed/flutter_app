@@ -2,6 +2,8 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 
+const _visibleMessageFilter = 'hidden_at IS NULL';
+
 /// Inserts a message into the database.
 Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
   final id = row['id'] as String? ?? '';
@@ -62,7 +64,7 @@ Future<List<Map<String, Object?>>> dbLoadMessagesPage(
     if (beforeTimestamp != null) {
       results = await db.query(
         'messages',
-        where: 'contact_peer_id = ? AND timestamp < ?',
+        where: 'contact_peer_id = ? AND $_visibleMessageFilter AND timestamp < ?',
         whereArgs: [contactPeerId, beforeTimestamp],
         orderBy: 'timestamp DESC',
         limit: limit,
@@ -70,7 +72,7 @@ Future<List<Map<String, Object?>>> dbLoadMessagesPage(
     } else {
       results = await db.query(
         'messages',
-        where: 'contact_peer_id = ?',
+        where: 'contact_peer_id = ? AND $_visibleMessageFilter',
         whereArgs: [contactPeerId],
         orderBy: 'timestamp DESC',
         limit: limit,
@@ -112,7 +114,7 @@ Future<List<Map<String, Object?>>> dbLoadMessagesForContact(
   try {
     final results = await db.query(
       'messages',
-      where: 'contact_peer_id = ?',
+      where: 'contact_peer_id = ? AND $_visibleMessageFilter',
       whereArgs: [contactPeerId],
       orderBy: 'timestamp ASC',
     );
@@ -152,7 +154,7 @@ Future<Map<String, Object?>?> dbLoadLatestMessageForContact(
   try {
     final results = await db.query(
       'messages',
-      where: 'contact_peer_id = ?',
+      where: 'contact_peer_id = ? AND $_visibleMessageFilter',
       whereArgs: [contactPeerId],
       orderBy: 'timestamp DESC',
       limit: 1,
@@ -207,8 +209,12 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
       latest.status AS latest_status,
       latest.is_incoming AS latest_is_incoming,
       latest.created_at AS latest_created_at,
+      latest.edited_at AS latest_edited_at,
       latest.read_at AS latest_read_at,
       latest.quoted_message_id AS latest_quoted_message_id,
+      latest.deleted_at AS latest_deleted_at,
+      latest.deleted_by_peer_id AS latest_deleted_by_peer_id,
+      latest.hidden_at AS latest_hidden_at,
       latest.transport AS latest_transport,
       latest.wire_envelope AS latest_wire_envelope
     FROM (
@@ -223,6 +229,7 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
         ) AS unread_count
       FROM messages
       WHERE contact_peer_id IN ($placeholders)
+        AND $_visibleMessageFilter
       GROUP BY contact_peer_id
     ) summary
     LEFT JOIN messages latest
@@ -230,6 +237,7 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
         SELECT inner_latest.id
         FROM messages inner_latest
         WHERE inner_latest.contact_peer_id = summary.contact_peer_id
+          AND inner_latest.hidden_at IS NULL
         ORDER BY inner_latest.timestamp DESC,
                  inner_latest.created_at DESC,
                  inner_latest.id DESC
@@ -298,7 +306,8 @@ Future<int> dbCountMessagesForContact(Database db, String contactPeerId) async {
 
   try {
     final result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM messages WHERE contact_peer_id = ?',
+      'SELECT COUNT(*) as count FROM messages '
+      'WHERE contact_peer_id = ? AND $_visibleMessageFilter',
       [contactPeerId],
     );
     final count = Sqflite.firstIntValue(result) ?? 0;
@@ -335,7 +344,9 @@ Future<int> dbMarkConversationAsRead(Database db, String contactPeerId) async {
   try {
     final now = DateTime.now().toUtc().toIso8601String();
     final count = await db.rawUpdate(
-      'UPDATE messages SET read_at = ? WHERE contact_peer_id = ? AND is_incoming = 1 AND read_at IS NULL',
+      'UPDATE messages SET read_at = ? '
+      'WHERE contact_peer_id = ? AND is_incoming = 1 '
+      'AND read_at IS NULL AND $_visibleMessageFilter',
       [now, contactPeerId],
     );
 
@@ -370,7 +381,9 @@ Future<int> dbCountUnreadForContact(Database db, String contactPeerId) async {
 
   try {
     final result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM messages WHERE contact_peer_id = ? AND is_incoming = 1 AND read_at IS NULL',
+      'SELECT COUNT(*) as count FROM messages '
+      'WHERE contact_peer_id = ? AND is_incoming = 1 '
+      'AND read_at IS NULL AND $_visibleMessageFilter',
       [contactPeerId],
     );
     final count = Sqflite.firstIntValue(result) ?? 0;
@@ -402,7 +415,8 @@ Future<int> dbCountTotalUnread(Database db) async {
 
   try {
     final result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM messages WHERE is_incoming = 1 AND read_at IS NULL',
+      'SELECT COUNT(*) as count FROM messages '
+      'WHERE is_incoming = 1 AND read_at IS NULL AND $_visibleMessageFilter',
     );
     final count = Sqflite.firstIntValue(result) ?? 0;
 
@@ -435,7 +449,8 @@ Future<int> dbCountTotalUnreadExcludingArchived(Database db) async {
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM messages m '
       'JOIN contacts c ON m.contact_peer_id = c.peer_id '
-      'WHERE m.is_incoming = 1 AND m.read_at IS NULL AND c.is_archived = 0 AND c.is_blocked = 0',
+      'WHERE m.is_incoming = 1 AND m.read_at IS NULL '
+      'AND m.hidden_at IS NULL AND c.is_archived = 0 AND c.is_blocked = 0',
     );
     final count = Sqflite.firstIntValue(result) ?? 0;
 

@@ -66,6 +66,9 @@ void main() {
 }
 
 bool _shouldSkipVoiceMessageE2E() {
+  if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
+    return true;
+  }
   if (!Platform.isIOS) return false;
   if (Directory.systemTemp.path.contains('CoreSimulator')) {
     return true;

@@ -18,7 +18,11 @@ void main() {
       },
       dbLoadMessagesForContact: (contactPeerId) async {
         return store.values
-            .where((row) => row['contact_peer_id'] == contactPeerId)
+            .where(
+              (row) =>
+                  row['contact_peer_id'] == contactPeerId &&
+                  row['hidden_at'] == null,
+            )
             .toList()
           ..sort(
             (a, b) =>
@@ -28,7 +32,11 @@ void main() {
       dbLoadLatestMessageForContact: (contactPeerId) async {
         final rows =
             store.values
-                .where((row) => row['contact_peer_id'] == contactPeerId)
+                .where(
+                  (row) =>
+                      row['contact_peer_id'] == contactPeerId &&
+                      row['hidden_at'] == null,
+                )
                 .toList()
               ..sort(
                 (a, b) => (b['timestamp'] as String).compareTo(
@@ -50,7 +58,11 @@ void main() {
       },
       dbCountMessagesForContact: (contactPeerId) async {
         return store.values
-            .where((row) => row['contact_peer_id'] == contactPeerId)
+            .where(
+              (row) =>
+                  row['contact_peer_id'] == contactPeerId &&
+                  row['hidden_at'] == null,
+            )
             .length;
       },
       dbMarkConversationAsRead: (contactPeerId) async {
@@ -58,6 +70,7 @@ void main() {
         final now = DateTime.now().toUtc().toIso8601String();
         for (final row in store.values) {
           if (row['contact_peer_id'] == contactPeerId &&
+              row['hidden_at'] == null &&
               row['is_incoming'] == 1 &&
               row['read_at'] == null) {
             row['read_at'] = now;
@@ -71,6 +84,7 @@ void main() {
             .where(
               (row) =>
                   row['contact_peer_id'] == contactPeerId &&
+                  row['hidden_at'] == null &&
                   row['is_incoming'] == 1 &&
                   row['read_at'] == null,
             )
@@ -78,12 +92,22 @@ void main() {
       },
       dbCountTotalUnread: () async {
         return store.values
-            .where((row) => row['is_incoming'] == 1 && row['read_at'] == null)
+            .where(
+              (row) =>
+                  row['hidden_at'] == null &&
+                  row['is_incoming'] == 1 &&
+                  row['read_at'] == null,
+            )
             .length;
       },
       dbCountTotalUnreadExcludingArchived: () async {
         return store.values
-            .where((row) => row['is_incoming'] == 1 && row['read_at'] == null)
+            .where(
+              (row) =>
+                  row['hidden_at'] == null &&
+                  row['is_incoming'] == 1 &&
+                  row['read_at'] == null,
+            )
             .length;
       },
       dbDeleteMessagesForContact: (contactPeerId) async {
@@ -101,7 +125,11 @@ void main() {
       },
       dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) async {
         var rows = store.values
-            .where((row) => row['contact_peer_id'] == contactPeerId)
+            .where(
+              (row) =>
+                  row['contact_peer_id'] == contactPeerId &&
+                  row['hidden_at'] == null,
+            )
             .toList();
         if (beforeTimestamp != null) {
           rows = rows
@@ -153,7 +181,11 @@ void main() {
         for (final contactPeerId in contactPeerIds) {
           final rows =
               store.values
-                  .where((row) => row['contact_peer_id'] == contactPeerId)
+                  .where(
+                    (row) =>
+                        row['contact_peer_id'] == contactPeerId &&
+                        row['hidden_at'] == null,
+                  )
                   .toList()
                 ..sort((a, b) {
                   final timestampOrder = (b['timestamp'] as String).compareTo(
@@ -181,8 +213,12 @@ void main() {
             'latest_status': latest?['status'],
             'latest_is_incoming': latest?['is_incoming'],
             'latest_created_at': latest?['created_at'],
+            'latest_edited_at': latest?['edited_at'],
             'latest_read_at': latest?['read_at'],
             'latest_quoted_message_id': latest?['quoted_message_id'],
+            'latest_deleted_at': latest?['deleted_at'],
+            'latest_deleted_by_peer_id': latest?['deleted_by_peer_id'],
+            'latest_hidden_at': latest?['hidden_at'],
             'latest_transport': latest?['transport'],
             'latest_wire_envelope': latest?['wire_envelope'],
           });
@@ -216,8 +252,12 @@ void main() {
     String status = 'sent',
     bool isIncoming = false,
     String createdAt = '2026-02-09T10:00:01.000Z',
+    String? editedAt,
     String? readAt,
     String? quotedMessageId,
+    String? deletedAt,
+    String? deletedByPeerId,
+    String? hiddenAt,
     String? transport,
     String? wireEnvelope,
   }) {
@@ -230,8 +270,12 @@ void main() {
       status: status,
       isIncoming: isIncoming,
       createdAt: createdAt,
+      editedAt: editedAt,
       readAt: readAt,
       quotedMessageId: quotedMessageId,
+      deletedAt: deletedAt,
+      deletedByPeerId: deletedByPeerId,
+      hiddenAt: hiddenAt,
       transport: transport,
       wireEnvelope: wireEnvelope,
     );
@@ -249,8 +293,12 @@ void main() {
     expect(actual.status, expected.status);
     expect(actual.isIncoming, expected.isIncoming);
     expect(actual.createdAt, expected.createdAt);
+    expect(actual.editedAt, expected.editedAt);
     expect(actual.readAt, expected.readAt);
     expect(actual.quotedMessageId, expected.quotedMessageId);
+    expect(actual.deletedAt, expected.deletedAt);
+    expect(actual.deletedByPeerId, expected.deletedByPeerId);
+    expect(actual.hiddenAt, expected.hiddenAt);
     expect(actual.transport, expected.transport);
     expect(actual.wireEnvelope, expected.wireEnvelope);
   }
@@ -262,6 +310,15 @@ void main() {
 
       expect(store.containsKey('msg-1'), true);
       expect(store['msg-1']!['text'], 'Hello');
+    });
+
+    test('saveMessage persists editedAt metadata', () async {
+      final msg = makeMessage(editedAt: '2026-02-09T10:05:00.000Z');
+      await repo.saveMessage(msg);
+
+      final loaded = await repo.getMessage(msg.id);
+      expect(loaded, isNotNull);
+      expect(loaded!.editedAt, '2026-02-09T10:05:00.000Z');
     });
 
     test('getMessagesForContact returns empty list when no messages', () async {
@@ -321,6 +378,29 @@ void main() {
       expect(latest, isNull);
     });
 
+    test('getMessagesForContact excludes hidden tombstone rows', () async {
+      await repo.saveMessage(
+        makeMessage(id: 'msg-visible', timestamp: '2026-02-09T10:00:00.000Z'),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-hidden',
+          timestamp: '2026-02-09T11:00:00.000Z',
+          deletedAt: '2026-02-09T11:30:00.000Z',
+          deletedByPeerId: 'sender-peer',
+          hiddenAt: '2026-02-09T11:30:00.000Z',
+        ),
+      );
+
+      final messages = await repo.getMessagesForContact('contact-peer');
+      expect(messages.map((message) => message.id), ['msg-visible']);
+
+      final hidden = await repo.getMessage('msg-hidden');
+      expect(hidden, isNotNull);
+      expect(hidden!.isHidden, isTrue);
+      expect(hidden.isDeleted, isTrue);
+    });
+
     test(
       'getConversationThreadSummaries returns counts and latest rows',
       () async {
@@ -353,6 +433,30 @@ void main() {
         expect(summaries['peer-A']!.latestMessage!.id, 'msg-2');
         expect(summaries['peer-B']!.messageCount, 0);
         expect(summaries['peer-B']!.latestMessage, isNull);
+      },
+    );
+
+    test(
+      'getConversationThreadSummaries maps deleted metadata on latest row',
+      () async {
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-deleted',
+            contactPeerId: 'peer-A',
+            text: '',
+            timestamp: '2026-02-09T11:00:00.000Z',
+            deletedAt: '2026-02-09T11:05:00.000Z',
+            deletedByPeerId: 'peer-A',
+          ),
+        );
+
+        final summaries = await repo.getConversationThreadSummaries(['peer-A']);
+        final latest = summaries['peer-A']!.latestMessage;
+
+        expect(latest, isNotNull);
+        expect(latest!.isDeleted, isTrue);
+        expect(latest.deletedAt, '2026-02-09T11:05:00.000Z');
+        expect(latest.deletedByPeerId, 'peer-A');
       },
     );
 

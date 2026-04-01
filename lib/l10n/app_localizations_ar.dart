@@ -382,6 +382,48 @@ class AppLocalizationsAr extends AppLocalizations {
   String get conversation_reply => 'رد...';
 
   @override
+  String get conversation_context_reply => 'رد';
+
+  @override
+  String get conversation_context_edit => 'تعديل';
+
+  @override
+  String get conversation_context_copy => 'نسخ';
+
+  @override
+  String get conversation_context_delete => 'حذف';
+
+  @override
+  String get conversation_context_copied => 'تم نسخ الرسالة إلى الحافظة';
+
+  @override
+  String get conversation_editing_message => 'تعديل الرسالة';
+
+  @override
+  String get conversation_cancel_edit => 'إلغاء';
+
+  @override
+  String get conversation_edited_indicator => '(تم التعديل)';
+
+  @override
+  String get conversation_delete_message_prompt => 'لمن تريد حذف هذه الرسالة؟';
+
+  @override
+  String get conversation_delete_for_me => 'حذف لدي';
+
+  @override
+  String get conversation_delete_for_everyone => 'حذف لدى الجميع';
+
+  @override
+  String get conversation_delete_cancel => 'إلغاء';
+
+  @override
+  String get conversation_message_deleted => 'تم حذف هذه الرسالة';
+
+  @override
+  String get conversation_delete_failed => 'تعذر إكمال حذف هذه الرسالة.';
+
+  @override
   String get conversation_continue => 'متابعة...';
 
   @override
@@ -431,6 +473,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get picker_introduce => 'عرّف';
+
+  @override
+  String picker_sending_progress(int completed, int total) {
+    return 'جارٍ إرسال $completed من $total';
+  }
 
   @override
   String get picker_search_contacts => 'ابحث في جهات الاتصال...';

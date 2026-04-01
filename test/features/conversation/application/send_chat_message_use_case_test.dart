@@ -9,6 +9,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
@@ -271,6 +272,9 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> deleteMessage(String id) async => 0;
 
   @override
   Future<List<ConversationMessage>> getMessagesPage(
@@ -607,6 +611,47 @@ void main() {
         p2pService.lastSentMessage,
         contains('"timestamp":"$fixedTimestamp"'),
       );
+    });
+
+    test('editChatMessage preserves the original row contract', () async {
+      const original = ConversationMessage(
+        id: 'msg-edit-001',
+        contactPeerId: 'target-peer',
+        senderPeerId: 'my-peer',
+        text: 'Original text',
+        timestamp: '2026-02-11T10:00:00.000Z',
+        status: 'delivered',
+        isIncoming: false,
+        createdAt: '2026-02-11T10:00:01.000Z',
+        quotedMessageId: 'quoted-001',
+      );
+
+      final (result, message) = await editChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        originalMessage: original,
+        updatedText: 'Edited text',
+        senderUsername: 'Me',
+      );
+
+      final wireJson = jsonDecode(p2pService.lastSentMessage!)
+          as Map<String, dynamic>;
+      final payload = wireJson['payload'] as Map<String, dynamic>;
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.id, original.id);
+      expect(message.timestamp, original.timestamp);
+      expect(message.createdAt, original.createdAt);
+      expect(message.quotedMessageId, original.quotedMessageId);
+      expect(message.editedAt, isNotNull);
+      expect(messageRepo.saved.first.createdAt, original.createdAt);
+      expect(messageRepo.saved.first.editedAt, isNotNull);
+      expect(payload['id'], original.id);
+      expect(payload['timestamp'], original.timestamp);
+      expect(payload['quotedMessageId'], original.quotedMessageId);
+      expect(payload['action'], MessagePayload.actionEdit);
+      expect(payload['editedAt'], isNotNull);
     });
 
     test('logs CHAT_OUT with delivered status and text preview', () async {

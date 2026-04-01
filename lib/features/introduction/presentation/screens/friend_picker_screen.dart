@@ -12,6 +12,9 @@ class FriendPickerScreen extends StatelessWidget {
   final List<ContactModel> availableFriends;
   final Set<String> selectedPeerIds;
   final String searchQuery;
+  final bool isSending;
+  final int sendCompletedCount;
+  final int sendTotalCount;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onToggleFriend;
   final VoidCallback onSend;
@@ -23,6 +26,9 @@ class FriendPickerScreen extends StatelessWidget {
     required this.availableFriends,
     required this.selectedPeerIds,
     required this.searchQuery,
+    this.isSending = false,
+    this.sendCompletedCount = 0,
+    this.sendTotalCount = 0,
     required this.onSearchChanged,
     required this.onToggleFriend,
     required this.onSend,
@@ -31,6 +37,7 @@ class FriendPickerScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final localizations = AppLocalizations.of(context)!;
     final filtered = availableFriends
         .where(
           (c) => c.username.toLowerCase().contains(searchQuery.toLowerCase()),
@@ -38,6 +45,10 @@ class FriendPickerScreen extends StatelessWidget {
         .toList();
 
     final selectionCount = selectedPeerIds.length;
+    final showProgress = isSending && sendTotalCount > 0;
+    final progressValue = showProgress && sendTotalCount > 0
+        ? sendCompletedCount / sendTotalCount
+        : 0.0;
 
     return Container(
       decoration: const BoxDecoration(
@@ -67,7 +78,7 @@ class FriendPickerScreen extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    AppLocalizations.of(context)!.picker_introduce_to(recipientUsername),
+                    localizations.picker_introduce_to(recipientUsername),
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,
@@ -76,7 +87,7 @@ class FriendPickerScreen extends StatelessWidget {
                   ),
                 ),
                 IconButton(
-                  onPressed: onClose,
+                  onPressed: isSending ? null : onClose,
                   icon: const Icon(
                     Icons.close,
                     size: 20,
@@ -97,10 +108,11 @@ class FriendPickerScreen extends StatelessWidget {
                 border: Border.all(color: const Color(0x1FFFFFFF)),
               ),
               child: TextField(
-                onChanged: onSearchChanged,
+                enabled: !isSending,
+                onChanged: isSending ? null : onSearchChanged,
                 style: const TextStyle(fontSize: 14, color: Color(0xF2FFFFFF)),
                 decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context)!.picker_search,
+                  hintText: localizations.picker_search,
                   hintStyle: TextStyle(
                     fontSize: 14,
                     color: Colors.white.withValues(alpha: 0.3),
@@ -127,8 +139,8 @@ class FriendPickerScreen extends StatelessWidget {
                     padding: const EdgeInsets.all(32),
                     child: Text(
                       searchQuery.isEmpty
-                          ? AppLocalizations.of(context)!.picker_no_friends
-                          : AppLocalizations.of(context)!.picker_no_results(searchQuery),
+                          ? localizations.picker_no_friends
+                          : localizations.picker_no_results(searchQuery),
                       style: TextStyle(
                         fontSize: 14,
                         color: Colors.white.withValues(alpha: 0.4),
@@ -148,6 +160,7 @@ class FriendPickerScreen extends StatelessWidget {
                       return _FriendPickerRow(
                         friend: friend,
                         isSelected: isSelected,
+                        isDisabled: isSending,
                         onTap: () => onToggleFriend(friend.peerId),
                       );
                     },
@@ -165,31 +178,70 @@ class FriendPickerScreen extends StatelessWidget {
             decoration: const BoxDecoration(
               border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
             ),
-            child: SizedBox(
-              width: double.infinity,
-              height: 44,
-              child: ElevatedButton(
-                onPressed: selectionCount > 0 ? onSend : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1DB954),
-                  foregroundColor: Colors.black,
-                  disabledBackgroundColor: const Color(0x331DB954),
-                  disabledForegroundColor: Colors.black.withValues(alpha: 0.4),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showProgress) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          localizations.picker_sending_progress(
+                            sendCompletedCount,
+                            sendTotalCount,
+                          ),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xF2FFFFFF),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: progressValue,
+                      minHeight: 6,
+                      backgroundColor: const Color(0x1FFFFFFF),
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Color(0xFF1DB954),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: ElevatedButton(
+                    onPressed: !isSending && selectionCount > 0 ? onSend : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1DB954),
+                      foregroundColor: Colors.black,
+                      disabledBackgroundColor: const Color(0x331DB954),
+                      disabledForegroundColor: Colors.black.withValues(
+                        alpha: 0.4,
+                      ),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      selectionCount > 0
+                          ? localizations.picker_introduce_count(selectionCount)
+                          : localizations.picker_introduce,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
-                child: Text(
-                  selectionCount > 0
-                      ? AppLocalizations.of(context)!.picker_introduce_count(selectionCount)
-                      : AppLocalizations.of(context)!.picker_introduce,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
+              ],
             ),
           ),
         ],
@@ -202,18 +254,20 @@ class FriendPickerScreen extends StatelessWidget {
 class _FriendPickerRow extends StatelessWidget {
   final ContactModel friend;
   final bool isSelected;
+  final bool isDisabled;
   final VoidCallback onTap;
 
   const _FriendPickerRow({
     required this.friend,
     required this.isSelected,
+    required this.isDisabled,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: isDisabled ? null : onTap,
       behavior: HitTestBehavior.opaque,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),

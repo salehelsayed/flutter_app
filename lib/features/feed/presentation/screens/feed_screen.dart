@@ -2,9 +2,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
@@ -12,9 +14,11 @@ import 'package:flutter_app/features/feed/presentation/widgets/connection_card.d
 import 'package:flutter_app/features/feed/presentation/widgets/introduction_connection_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_header.dart';
+import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/session_divider.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// Pure UI Feed screen.
@@ -22,6 +26,9 @@ import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 /// Displays a fixed header, a responsive feed content area, and a pinned bottom
 /// navigation bar.
 class FeedScreen extends StatelessWidget {
+  static const editModeBannerKey = ValueKey('feed-edit-mode-banner');
+  static const cancelEditKey = ValueKey('feed-cancel-edit-action');
+
   final String username;
   final Uint8List? userAvatarBytes;
   final String? userPeerId;
@@ -36,6 +43,8 @@ class FeedScreen extends StatelessWidget {
   final void Function(String contactPeerId)? onReplyToMessage;
   final int totalUnreadCount;
   final ValueListenable<int>? totalUnreadCountListenable;
+  final int orbitBadgeCount;
+  final ValueListenable<int>? orbitBadgeCountListenable;
   final String? expandedCardId;
   final void Function(String)? onToggleExpand;
   final void Function(String contactPeerId, String text)? onInlineSend;
@@ -44,6 +53,10 @@ class FeedScreen extends StatelessWidget {
   final String? activeFocusPeerId;
   final void Function(String contactPeerId, String text)? onDraftChanged;
   final void Function(String contactPeerId, bool hasFocus)? onInputFocusChanged;
+  final String? editingContactPeerId;
+  final void Function(String contactPeerId, String messageId)? onEditMessage;
+  final void Function(String contactPeerId, String messageId)? onDeleteMessage;
+  final void Function(String contactPeerId)? onCancelEdit;
   final Map<String, String>? activeQuoteMessageIds;
   final void Function(String contactPeerId, String messageId)? onQuoteReply;
   final void Function(String contactPeerId)? onClearQuote;
@@ -76,6 +89,8 @@ class FeedScreen extends StatelessWidget {
     this.onReplyToMessage,
     this.totalUnreadCount = 0,
     this.totalUnreadCountListenable,
+    this.orbitBadgeCount = 0,
+    this.orbitBadgeCountListenable,
     this.expandedCardId,
     this.onToggleExpand,
     this.onInlineSend,
@@ -84,6 +99,10 @@ class FeedScreen extends StatelessWidget {
     this.activeFocusPeerId,
     this.onDraftChanged,
     this.onInputFocusChanged,
+    this.editingContactPeerId,
+    this.onEditMessage,
+    this.onDeleteMessage,
+    this.onCancelEdit,
     this.activeQuoteMessageIds,
     this.onQuoteReply,
     this.onClearQuote,
@@ -227,20 +246,50 @@ class FeedScreen extends StatelessWidget {
 
   Widget _buildNavigationBar() {
     final unreadCountListenable = totalUnreadCountListenable;
-    if (unreadCountListenable == null) {
+    final orbitCountListenable = orbitBadgeCountListenable;
+    if (unreadCountListenable == null && orbitCountListenable == null) {
       return FeedNavigationBar(
         activeTab: activeTab,
         onSwitchView: onSwitchView,
         feedBadgeCount: totalUnreadCount,
+        orbitBadgeCount: orbitBadgeCount,
+      );
+    }
+
+    if (unreadCountListenable == null) {
+      return ValueListenableBuilder<int>(
+        valueListenable: orbitCountListenable!,
+        builder: (context, orbitCount, child) => FeedNavigationBar(
+          activeTab: activeTab,
+          onSwitchView: onSwitchView,
+          feedBadgeCount: totalUnreadCount,
+          orbitBadgeCount: orbitCount,
+        ),
+      );
+    }
+
+    if (orbitCountListenable == null) {
+      return ValueListenableBuilder<int>(
+        valueListenable: unreadCountListenable,
+        builder: (context, unreadCount, child) => FeedNavigationBar(
+          activeTab: activeTab,
+          onSwitchView: onSwitchView,
+          feedBadgeCount: unreadCount,
+          orbitBadgeCount: orbitBadgeCount,
+        ),
       );
     }
 
     return ValueListenableBuilder<int>(
       valueListenable: unreadCountListenable,
-      builder: (context, unreadCount, child) => FeedNavigationBar(
-        activeTab: activeTab,
-        onSwitchView: onSwitchView,
-        feedBadgeCount: unreadCount,
+      builder: (context, unreadCount, child) => ValueListenableBuilder<int>(
+        valueListenable: orbitCountListenable,
+        builder: (context, orbitCount, nestedChild) => FeedNavigationBar(
+          activeTab: activeTab,
+          onSwitchView: onSwitchView,
+          feedBadgeCount: unreadCount,
+          orbitBadgeCount: orbitCount,
+        ),
       ),
     );
   }
@@ -373,31 +422,170 @@ class FeedScreen extends StatelessWidget {
     return null;
   }
 
-  void _showReactionBar(BuildContext context, String messageId) {
+  void _showMessageContextOverlay(
+    BuildContext context,
+    ThreadFeedItem thread,
+    ThreadMessage message,
+    BuildContext bubbleContext,
+  ) {
+    final renderObject = bubbleContext.findRenderObject();
+    Rect anchorRect = Rect.fromCenter(
+      center: MediaQuery.of(context).size.center(Offset.zero),
+      width: 0,
+      height: 0,
+    );
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      anchorRect = topLeft & renderObject.size;
+    }
+
     final allReactions =
-        reactionListenableForMessage?.call(messageId).value ??
-        reactions[messageId] ??
+        reactionListenableForMessage?.call(message.id).value ??
+        reactions[message.id] ??
         const [];
     final ownReaction = userPeerId != null
         ? allReactions.where((r) => r.senderPeerId == userPeerId).firstOrNull
         : null;
+    final hasCopyAction = !message.isDeleted && message.text.trim().isNotEmpty;
+    final hasEditAction = _canEditMessage(thread, message);
+    final hasDeleteAction = _canDeleteMessage(message);
 
     showDialog(
       context: context,
+      useSafeArea: false,
       barrierColor: Colors.transparent,
-      builder: (dialogContext) => ReactionBar(
+      builder: (dialogContext) => MessageContextOverlay(
+        anchorRect: anchorRect,
+        selectedMessage: _buildOverlaySelectedBubble(
+          context,
+          thread,
+          message,
+          allReactions,
+        ),
         currentEmoji: ownReaction?.emoji,
+        showCopyAction: hasCopyAction,
+        showEditAction: hasEditAction,
+        showDeleteAction: hasDeleteAction,
+        onDismiss: () => Navigator.of(dialogContext).pop(),
         onReactionSelected: (emoji) {
           Navigator.of(dialogContext).pop();
-          onReactionSelected?.call(messageId, emoji);
+          onReactionSelected?.call(message.id, emoji);
         },
         onPlusTap: () {
           Navigator.of(dialogContext).pop();
-          _showFullPicker(context, messageId);
+          _showFullPicker(context, message.id);
         },
-        onDismiss: () => Navigator.of(dialogContext).pop(),
+        onReplyTap: () {
+          Navigator.of(dialogContext).pop();
+          onQuoteReply?.call(thread.contactPeerId, message.id);
+        },
+        onEditTap: hasEditAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                onEditMessage?.call(thread.contactPeerId, message.id);
+              }
+            : null,
+        onCopyTap: hasCopyAction
+            ? () async {
+                Navigator.of(dialogContext).pop();
+                await _copyMessageText(context, message.text);
+              }
+            : null,
+        onDeleteTap: hasDeleteAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  onDeleteMessage?.call(thread.contactPeerId, message.id);
+                });
+              }
+            : null,
       ),
     );
+  }
+
+  MessageBubble _buildOverlaySelectedBubble(
+    BuildContext context,
+    ThreadFeedItem thread,
+    ThreadMessage message,
+    List<MessageReaction> reactions,
+  ) {
+    final (quotedText, isQuoteUnavailable) = _resolveQuotedText(
+      thread,
+      message,
+    );
+
+    return MessageBubble(
+      text: message.text,
+      time: message.time,
+      isUnread: message.isUnread,
+      isIncoming: message.isIncoming,
+      isDeleted: message.isDeleted,
+      status: message.status,
+      isEdited: message.isEdited,
+      senderPeerId: message.isIncoming
+          ? (message.senderPeerId ?? thread.contactPeerId)
+          : null,
+      senderLabel: message.isIncoming
+          ? (message.senderUsername ?? thread.contactUsername)
+          : AppLocalizations.of(context)!.feed_you,
+      quotedText: quotedText,
+      isQuoteUnavailable: isQuoteUnavailable,
+      media: message.media,
+      reactions: message.isDeleted ? const [] : reactions,
+      ownPeerId: userPeerId,
+    );
+  }
+
+  (String?, bool) _resolveQuotedText(
+    ThreadFeedItem thread,
+    ThreadMessage message,
+  ) {
+    final quotedMessageId = message.quotedMessageId;
+    if (quotedMessageId == null) {
+      return (null, false);
+    }
+
+    final quoted = thread.messages
+        .where((candidate) => candidate.id == quotedMessageId)
+        .firstOrNull;
+    if (quoted == null || quoted.isDeleted) {
+      return ('Message unavailable', true);
+    }
+    if (quoted.text.isNotEmpty) {
+      return (quoted.text, false);
+    }
+    if (quoted.media.isNotEmpty) {
+      return (mediaPreviewText(quoted.media), false);
+    }
+    return ('Message unavailable', true);
+  }
+
+  bool _canEditMessage(ThreadFeedItem thread, ThreadMessage message) {
+    if (onEditMessage == null) return false;
+    if (message.isDeleted) return false;
+    if (message.isIncoming || message.text.trim().isEmpty) return false;
+    return thread.lastSentMessage?.id == message.id;
+  }
+
+  bool _canDeleteMessage(ThreadMessage message) {
+    if (onDeleteMessage == null) return false;
+    return !message.isDeleted;
+  }
+
+  Future<void> _copyMessageText(BuildContext context, String text) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final copiedLabel = AppLocalizations.of(
+      context,
+    )!.conversation_context_copied;
+    await Clipboard.setData(ClipboardData(text: text));
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(copiedLabel),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   void _showFullPicker(BuildContext context, String messageId) async {
@@ -490,7 +678,8 @@ class FeedScreen extends StatelessWidget {
         reactionListenableForMessage: reactionListenableForMessage,
         ownPeerId: userPeerId,
         onMessageLongPress: onGroupReactionSelected != null
-            ? (msgId) => _showGroupReactionBar(context, item.groupId, msgId)
+            ? (message, _) =>
+                  _showGroupReactionBar(context, item.groupId, message.id)
             : null,
         onReactionTap: onGroupReactionSelected != null
             ? (msgId, emoji) =>
@@ -550,6 +739,11 @@ class FeedScreen extends StatelessWidget {
         onInputFocusChanged: onInputFocusChanged != null
             ? (hasFocus) => onInputFocusChanged!(item.contactPeerId, hasFocus)
             : null,
+        isEditingMessage: editingContactPeerId == item.contactPeerId,
+        onCancelEdit:
+            editingContactPeerId == item.contactPeerId && onCancelEdit != null
+            ? () => onCancelEdit!(item.contactPeerId)
+            : null,
         activeQuoteText: _resolveActiveQuoteText(item, activeQuoteMessageId),
         onQuoteReply: onQuoteReply != null
             ? (msgId) => onQuoteReply!(item.contactPeerId, msgId)
@@ -561,8 +755,17 @@ class FeedScreen extends StatelessWidget {
         reactions: reactions,
         reactionListenableForMessage: reactionListenableForMessage,
         ownPeerId: userPeerId,
-        onMessageLongPress: onReactionSelected != null
-            ? (msgId) => _showReactionBar(context, msgId)
+        onMessageLongPress:
+            onReactionSelected != null ||
+                onQuoteReply != null ||
+                onEditMessage != null ||
+                onDeleteMessage != null
+            ? (message, bubbleContext) => _showMessageContextOverlay(
+                context,
+                item,
+                message,
+                bubbleContext,
+              )
             : null,
         onReactionTap: onReactionSelected != null
             ? (msgId, emoji) => onReactionSelected!(msgId, emoji)
@@ -587,6 +790,7 @@ class FeedScreen extends StatelessWidget {
         .where((message) => message.id == activeQuoteMessageId)
         .firstOrNull;
     if (quoted == null) return 'Message unavailable';
+    if (quoted.isDeleted) return 'Message unavailable';
     if (quoted.text.isNotEmpty) return quoted.text;
     if (quoted.media.isNotEmpty) return mediaPreviewText(quoted.media);
     return 'Message unavailable';

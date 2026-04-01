@@ -14,7 +14,8 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<List<ConversationMessage>> getMessagesForContact(
-      String contactPeerId) async {
+    String contactPeerId,
+  ) async {
     return messagesByContact[contactPeerId] ?? [];
   }
 
@@ -23,7 +24,8 @@ class FakeMessageRepository implements MessageRepository {
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(
-      String contactPeerId) async {
+    String contactPeerId,
+  ) async {
     return null;
   }
 
@@ -55,6 +57,9 @@ class FakeMessageRepository implements MessageRepository {
   Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
 
   @override
+  Future<int> deleteMessage(String id) async => 0;
+
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String contactPeerId, {
     int limit = 50,
@@ -63,7 +68,9 @@ class FakeMessageRepository implements MessageRepository {
     final all = messagesByContact[contactPeerId] ?? [];
     var filtered = all;
     if (beforeTimestamp != null) {
-      filtered = all.where((m) => m.timestamp.compareTo(beforeTimestamp) < 0).toList();
+      filtered = all
+          .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
+          .toList();
     }
     filtered.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final page = filtered.take(limit).toList();
@@ -79,7 +86,9 @@ class FakeMessageRepository implements MessageRepository {
   }) async => [];
 
   @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async => 0;
+  Future<int> recoverStuckSendingMessages({
+    required Duration olderThan,
+  }) async => 0;
 
   @override
   Future<void> updateWireEnvelope(String id, String envelope) async {}
@@ -111,13 +120,15 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
-      String messageId) async {
+    String messageId,
+  ) async {
     return mediaByMessage[messageId] ?? [];
   }
 
   @override
   Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-      List<String> messageIds) async {
+    List<String> messageIds,
+  ) async {
     final result = <String, List<MediaAttachment>>{};
     for (final id in messageIds) {
       final media = mediaByMessage[id];
@@ -139,6 +150,11 @@ class FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async => 0;
 
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
@@ -506,7 +522,10 @@ void main() {
       expect(result.length, 1);
       expect(result[0].media.length, 1);
       // Path should be resolved to absolute
-      expect(result[0].media[0].localPath, '/app/Documents/media/contact-A/blob-001.jpg');
+      expect(
+        result[0].media[0].localPath,
+        '/app/Documents/media/contact-A/blob-001.jpg',
+      );
     });
 
     test('resolves relative paths in loadConversationPage', () async {
@@ -552,7 +571,10 @@ void main() {
       );
 
       expect(result.length, 1);
-      expect(result[0].media[0].localPath, '/app/Documents/media/contact-A/blob-001.jpg');
+      expect(
+        result[0].media[0].localPath,
+        '/app/Documents/media/contact-A/blob-001.jpg',
+      );
     });
 
     test('resolves legacy absolute paths with /media/ segment', () async {
@@ -597,8 +619,10 @@ void main() {
         mediaFileManager: fakeFileManager,
       );
 
-      expect(result[0].media[0].localPath,
-          '/app/Documents/media/contact-A/blob-001.jpg');
+      expect(
+        result[0].media[0].localPath,
+        '/app/Documents/media/contact-A/blob-001.jpg',
+      );
     });
 
     test('does not resolve when mediaFileManager is null', () async {

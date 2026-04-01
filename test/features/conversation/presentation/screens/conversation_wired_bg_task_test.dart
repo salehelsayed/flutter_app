@@ -176,6 +176,8 @@ class _FakeMessageRepository
   @override
   Future<int> deleteMessagesForContact(String pid) async => 0;
   @override
+  Future<int> deleteMessage(String id) async => 0;
+  @override
   Future<List<ConversationMessage>> getMessagesPage(
     String pid, {
     int limit = 50,
@@ -367,6 +369,10 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
   @override
   Future<int> deleteAttachmentsForMessage(String messageId) async => 0;
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId,
+  ) async => 0;
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async => [];
   @override

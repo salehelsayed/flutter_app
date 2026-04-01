@@ -33,7 +33,8 @@ class ThrowAfterNMessageRepo implements MessageRepository {
     _saveCount++;
     if (throwEnabled && _saveCount > throwAfterN) {
       throw Exception(
-          'ThrowAfterNMessageRepo: save #$_saveCount exceeds threshold $throwAfterN');
+        'ThrowAfterNMessageRepo: save #$_saveCount exceeds threshold $throwAfterN',
+      );
     }
     return _inner.saveMessage(message);
   }
@@ -80,22 +81,27 @@ class ThrowAfterNMessageRepo implements MessageRepository {
       _inner.deleteMessagesForContact(cid);
 
   @override
+  Future<int> deleteMessage(String id) => _inner.deleteMessage(id);
+
+  @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() =>
       _inner.getFailedOutgoingMessages();
 
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
-  }) =>
-      _inner.getUnackedOutgoingMessages(olderThan: olderThan);
+  }) => _inner.getUnackedOutgoingMessages(olderThan: olderThan);
 
   @override
   Future<List<ConversationMessage>> getMessagesPage(
     String cid, {
     int limit = 50,
     String? beforeTimestamp,
-  }) =>
-      _inner.getMessagesPage(cid, limit: limit, beforeTimestamp: beforeTimestamp);
+  }) => _inner.getMessagesPage(
+    cid,
+    limit: limit,
+    beforeTimestamp: beforeTimestamp,
+  );
 
   @override
   Future<int> recoverStuckSendingMessages({required Duration olderThan}) =>
@@ -138,7 +144,8 @@ class ThrowOnNthMessageRepo implements MessageRepository {
     _saveCount++;
     if (_saveCount == throwOnN) {
       throw Exception(
-          'ThrowOnNthMessageRepo: transient failure on save #$_saveCount');
+        'ThrowOnNthMessageRepo: transient failure on save #$_saveCount',
+      );
     }
     return _inner.saveMessage(message);
   }
@@ -185,22 +192,27 @@ class ThrowOnNthMessageRepo implements MessageRepository {
       _inner.deleteMessagesForContact(cid);
 
   @override
+  Future<int> deleteMessage(String id) => _inner.deleteMessage(id);
+
+  @override
   Future<List<ConversationMessage>> getFailedOutgoingMessages() =>
       _inner.getFailedOutgoingMessages();
 
   @override
   Future<List<ConversationMessage>> getUnackedOutgoingMessages({
     required Duration olderThan,
-  }) =>
-      _inner.getUnackedOutgoingMessages(olderThan: olderThan);
+  }) => _inner.getUnackedOutgoingMessages(olderThan: olderThan);
 
   @override
   Future<List<ConversationMessage>> getMessagesPage(
     String cid, {
     int limit = 50,
     String? beforeTimestamp,
-  }) =>
-      _inner.getMessagesPage(cid, limit: limit, beforeTimestamp: beforeTimestamp);
+  }) => _inner.getMessagesPage(
+    cid,
+    limit: limit,
+    beforeTimestamp: beforeTimestamp,
+  );
 
   @override
   Future<int> recoverStuckSendingMessages({required Duration olderThan}) =>
@@ -273,118 +285,123 @@ ChatMessage _makeChatMessage(int index) {
 
 void main() {
   group('C4 — partial drain / repo failure resilience', () {
-    test('first N messages persist, remaining throw — listener continues',
-        () async {
-      final repo = ThrowAfterNMessageRepo(throwAfterN: 5);
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(_makeContact(_bobPeerId, _bobUsername));
+    test(
+      'first N messages persist, remaining throw — listener continues',
+      () async {
+        final repo = ThrowAfterNMessageRepo(throwAfterN: 5);
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(_makeContact(_bobPeerId, _bobUsername));
 
-      final network = FakeP2PNetwork();
-      final p2p = FakeP2PService(peerId: _alicePeerId, network: network);
+        final network = FakeP2PNetwork();
+        final p2p = FakeP2PService(peerId: _alicePeerId, network: network);
 
-      final listener = ChatMessageListener(
-        chatMessageStream: p2p.messageStream,
-        messageRepo: repo,
-        contactRepo: contactRepo,
-      );
-      listener.start();
+        final listener = ChatMessageListener(
+          chatMessageStream: p2p.messageStream,
+          messageRepo: repo,
+          contactRepo: contactRepo,
+        );
+        listener.start();
 
-      // Inject 10 messages
-      for (var i = 0; i < 10; i++) {
-        p2p.injectIncomingMessage(_makeChatMessage(i));
-      }
+        // Inject 10 messages
+        for (var i = 0; i < 10; i++) {
+          p2p.injectIncomingMessage(_makeChatMessage(i));
+        }
 
-      // Allow async processing
-      await Future.delayed(const Duration(milliseconds: 200));
+        // Allow async processing
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      // First 5 persisted, remaining 5 threw — listener continued
-      expect(repo.count, 5);
+        // First 5 persisted, remaining 5 threw — listener continued
+        expect(repo.count, 5);
 
-      listener.dispose();
-      p2p.dispose();
-    });
-
-    test('recovery: re-inject failed messages after repo heals, dedup works',
-        () async {
-      final repo = ThrowAfterNMessageRepo(throwAfterN: 5);
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(_makeContact(_bobPeerId, _bobUsername));
-
-      final network = FakeP2PNetwork();
-      final p2p = FakeP2PService(peerId: _alicePeerId, network: network);
-
-      final listener = ChatMessageListener(
-        chatMessageStream: p2p.messageStream,
-        messageRepo: repo,
-        contactRepo: contactRepo,
-      );
-      listener.start();
-
-      // First batch: 10 messages, 5 succeed, 5 throw
-      for (var i = 0; i < 10; i++) {
-        p2p.injectIncomingMessage(_makeChatMessage(i));
-      }
-      await Future.delayed(const Duration(milliseconds: 200));
-      expect(repo.count, 5);
-
-      // Heal the repo
-      repo.throwEnabled = false;
-
-      // Re-inject same 10 messages (same IDs)
-      for (var i = 0; i < 10; i++) {
-        p2p.injectIncomingMessage(_makeChatMessage(i));
-      }
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      // First 5 are deduped (messageExists → true), last 5 are now saved
-      expect(repo.count, 10);
-
-      listener.dispose();
-      p2p.dispose();
-    });
+        listener.dispose();
+        p2p.dispose();
+      },
+    );
 
     test(
-        'inbox drain with partial failure loses messages (documents at-most-once)',
-        () async {
-      final repo = ThrowAfterNMessageRepo(throwAfterN: 5);
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(_makeContact(_bobPeerId, _bobUsername));
+      'recovery: re-inject failed messages after repo heals, dedup works',
+      () async {
+        final repo = ThrowAfterNMessageRepo(throwAfterN: 5);
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(_makeContact(_bobPeerId, _bobUsername));
 
-      final network = FakeP2PNetwork();
-      final aliceP2P = FakeP2PService(peerId: _alicePeerId, network: network);
+        final network = FakeP2PNetwork();
+        final p2p = FakeP2PService(peerId: _alicePeerId, network: network);
 
-      final listener = ChatMessageListener(
-        chatMessageStream: aliceP2P.messageStream,
-        messageRepo: repo,
-        contactRepo: contactRepo,
-      );
-      listener.start();
+        final listener = ChatMessageListener(
+          chatMessageStream: p2p.messageStream,
+          messageRepo: repo,
+          contactRepo: contactRepo,
+        );
+        listener.start();
 
-      // Store 10 messages in Alice's inbox (from Bob)
-      for (var i = 0; i < 10; i++) {
-        network.storeInInbox(_bobPeerId, _alicePeerId, _buildMessageJson(i));
-      }
-      expect(network.inboxCount(_alicePeerId), 10);
+        // First batch: 10 messages, 5 succeed, 5 throw
+        for (var i = 0; i < 10; i++) {
+          p2p.injectIncomingMessage(_makeChatMessage(i));
+        }
+        await Future.delayed(const Duration(milliseconds: 200));
+        expect(repo.count, 5);
 
-      // Drain inbox — retrieves all 10 (deletes from inbox), injects them
-      final drained = await aliceP2P.drainOfflineInboxCount();
-      expect(drained, 10);
+        // Heal the repo
+        repo.throwEnabled = false;
 
-      // Inbox is now empty (at-most-once: retrieve = delete)
-      expect(network.inboxCount(_alicePeerId), 0);
+        // Re-inject same 10 messages (same IDs)
+        for (var i = 0; i < 10; i++) {
+          p2p.injectIncomingMessage(_makeChatMessage(i));
+        }
+        await Future.delayed(const Duration(milliseconds: 200));
 
-      await Future.delayed(const Duration(milliseconds: 200));
+        // First 5 are deduped (messageExists → true), last 5 are now saved
+        expect(repo.count, 10);
 
-      // Only 5 persisted (repo threw on 6-10)
-      expect(repo.count, 5);
+        listener.dispose();
+        p2p.dispose();
+      },
+    );
 
-      // Second drain returns 0 — those 5 messages are permanently lost
-      final secondDrain = await aliceP2P.drainOfflineInboxCount();
-      expect(secondDrain, 0);
+    test(
+      'inbox drain with partial failure loses messages (documents at-most-once)',
+      () async {
+        final repo = ThrowAfterNMessageRepo(throwAfterN: 5);
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(_makeContact(_bobPeerId, _bobUsername));
 
-      listener.dispose();
-      aliceP2P.dispose();
-    });
+        final network = FakeP2PNetwork();
+        final aliceP2P = FakeP2PService(peerId: _alicePeerId, network: network);
+
+        final listener = ChatMessageListener(
+          chatMessageStream: aliceP2P.messageStream,
+          messageRepo: repo,
+          contactRepo: contactRepo,
+        );
+        listener.start();
+
+        // Store 10 messages in Alice's inbox (from Bob)
+        for (var i = 0; i < 10; i++) {
+          network.storeInInbox(_bobPeerId, _alicePeerId, _buildMessageJson(i));
+        }
+        expect(network.inboxCount(_alicePeerId), 10);
+
+        // Drain inbox — retrieves all 10 (deletes from inbox), injects them
+        final drained = await aliceP2P.drainOfflineInboxCount();
+        expect(drained, 10);
+
+        // Inbox is now empty (at-most-once: retrieve = delete)
+        expect(network.inboxCount(_alicePeerId), 0);
+
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        // Only 5 persisted (repo threw on 6-10)
+        expect(repo.count, 5);
+
+        // Second drain returns 0 — those 5 messages are permanently lost
+        final secondDrain = await aliceP2P.drainOfflineInboxCount();
+        expect(secondDrain, 0);
+
+        listener.dispose();
+        aliceP2P.dispose();
+      },
+    );
 
     test('transient failure: only the Nth message lost', () async {
       final repo = ThrowOnNthMessageRepo(throwOnN: 6);

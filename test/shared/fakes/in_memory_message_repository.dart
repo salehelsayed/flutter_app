@@ -29,9 +29,8 @@ class InMemoryMessageRepository
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async {
-    final list =
-        _messages.values.where((m) => m.contactPeerId == contactPeerId).toList()
-          ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final list = _visibleMessagesForContact(contactPeerId).toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return list;
   }
 
@@ -61,9 +60,7 @@ class InMemoryMessageRepository
 
   @override
   Future<int> getMessageCountForContact(String contactPeerId) async {
-    return _messages.values
-        .where((m) => m.contactPeerId == contactPeerId)
-        .length;
+    return _visibleMessagesForContact(contactPeerId).length;
   }
 
   @override
@@ -73,6 +70,7 @@ class InMemoryMessageRepository
     for (final entry in _messages.entries.toList()) {
       final m = entry.value;
       if (m.contactPeerId == contactPeerId &&
+          !m.isHidden &&
           m.isIncoming &&
           m.readAt == null) {
         _messages[entry.key] = m.copyWith(readAt: now);
@@ -88,6 +86,7 @@ class InMemoryMessageRepository
         .where(
           (m) =>
               m.contactPeerId == contactPeerId &&
+              !m.isHidden &&
               m.isIncoming &&
               m.readAt == null,
         )
@@ -95,10 +94,16 @@ class InMemoryMessageRepository
   }
 
   @override
-  Future<int> getTotalUnreadCount() async => 0;
+  Future<int> getTotalUnreadCount() async {
+    return _messages.values
+        .where((m) => !m.isHidden && m.isIncoming && m.readAt == null)
+        .length;
+  }
 
   @override
-  Future<int> getTotalUnreadCountExcludingArchived() async => 0;
+  Future<int> getTotalUnreadCountExcludingArchived() async {
+    return getTotalUnreadCount();
+  }
 
   @override
   Future<int> deleteMessagesForContact(String contactPeerId) async {
@@ -123,9 +128,7 @@ class InMemoryMessageRepository
     int limit = 50,
     String? beforeTimestamp,
   }) async {
-    var messages = _messages.values
-        .where((m) => m.contactPeerId == contactPeerId)
-        .toList();
+    var messages = _visibleMessagesForContact(contactPeerId).toList();
     if (beforeTimestamp != null) {
       messages = messages
           .where((m) => m.timestamp.compareTo(beforeTimestamp) < 0)
@@ -164,11 +167,8 @@ class InMemoryMessageRepository
   Future<ConversationThreadSummary> getConversationThreadSummary(
     String contactPeerId,
   ) async {
-    final messages =
-        _messages.values
-            .where((message) => message.contactPeerId == contactPeerId)
-            .toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final messages = _visibleMessagesForContact(contactPeerId).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return ConversationThreadSummary(
       contactPeerId: contactPeerId,
       messageCount: messages.length,
@@ -185,11 +185,8 @@ class InMemoryMessageRepository
   ) async {
     final summaries = <String, ConversationThreadSummary>{};
     for (final contactPeerId in contactPeerIds.toSet()) {
-      final messages =
-          _messages.values
-              .where((message) => message.contactPeerId == contactPeerId)
-              .toList()
-            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final messages = _visibleMessagesForContact(contactPeerId).toList()
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       summaries[contactPeerId] = ConversationThreadSummary(
         contactPeerId: contactPeerId,
         messageCount: messages.length,
@@ -267,4 +264,12 @@ class InMemoryMessageRepository
   }
 
   int get count => _messages.length;
+
+  Iterable<ConversationMessage> _visibleMessagesForContact(
+    String contactPeerId,
+  ) {
+    return _messages.values.where(
+      (message) => message.contactPeerId == contactPeerId && !message.isHidden,
+    );
+  }
 }

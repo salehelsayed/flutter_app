@@ -22,6 +22,8 @@ class FeedCard extends StatefulWidget {
   final bool shouldRequestFocus;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<bool>? onInputFocusChanged;
+  final bool isEditingMessage;
+  final VoidCallback? onCancelEdit;
   final String? activeQuoteText;
   final ValueChanged<String>? onQuoteReply;
   final VoidCallback? onClearQuote;
@@ -31,7 +33,8 @@ class FeedCard extends StatefulWidget {
   final ValueListenable<List<MessageReaction>>? Function(String messageId)?
   reactionListenableForMessage;
   final String? ownPeerId;
-  final void Function(String messageId)? onMessageLongPress;
+  final void Function(ThreadMessage message, BuildContext bubbleContext)?
+  onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
 
   const FeedCard({
@@ -46,6 +49,8 @@ class FeedCard extends StatefulWidget {
     this.shouldRequestFocus = false,
     this.onDraftChanged,
     this.onInputFocusChanged,
+    this.isEditingMessage = false,
+    this.onCancelEdit,
     this.activeQuoteText,
     this.onQuoteReply,
     this.onClearQuote,
@@ -173,6 +178,8 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
       shouldRequestFocus: widget.shouldRequestFocus,
       onDraftChanged: widget.onDraftChanged,
       onInputFocusChanged: widget.onInputFocusChanged,
+      isEditingMessage: widget.isEditingMessage,
+      onCancelEdit: widget.onCancelEdit,
       activeQuoteText: widget.activeQuoteText,
       onClearQuote: widget.onClearQuote,
       onAttach: widget.onAttach,
@@ -201,6 +208,8 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
       shouldRequestFocus: widget.shouldRequestFocus,
       onDraftChanged: widget.onDraftChanged,
       onInputFocusChanged: widget.onInputFocusChanged,
+      isEditingMessage: widget.isEditingMessage,
+      onCancelEdit: widget.onCancelEdit,
       activeQuoteText: widget.activeQuoteText,
       onClearQuote: widget.onClearQuote,
       onAttach: widget.onAttach,

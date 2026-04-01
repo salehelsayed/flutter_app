@@ -64,6 +64,8 @@ class GoBridgeClient extends Bridge {
     // Inbox
     'inbox:store': _CmdSpec('inboxStore', true),
     'inbox:retrieve': _CmdSpec('inboxRetrieve', true),
+    'inbox:retrieve_pending': _CmdSpec('inboxRetrievePending', true),
+    'inbox:ack': _CmdSpec('inboxAck', true),
     'inbox:register_token': _CmdSpec('inboxRegisterToken', true),
     // Media
     'media:upload': _CmdSpec('mediaUpload', true),

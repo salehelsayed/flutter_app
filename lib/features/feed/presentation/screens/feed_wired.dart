@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -27,6 +29,7 @@ import 'package:flutter_app/features/contact_request/presentation/widgets/contac
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
@@ -65,11 +68,11 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
-import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
@@ -84,12 +87,55 @@ enum _MediaSource { gallery, camera, videoCamera }
 
 const _uuid = Uuid();
 
+typedef EditChatMessageFn =
+    Future<(SendChatMessageResult, ConversationMessage?)> Function({
+      required P2PService p2pService,
+      required MessageRepository messageRepo,
+      required ConversationMessage originalMessage,
+      required String updatedText,
+      required String senderUsername,
+      Bridge? bridge,
+      String? recipientMlKemPublicKey,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      bool emitTimingEvent,
+    });
+
+typedef DeleteMessageForMeFn =
+    Future<int> Function({
+      required ConversationMessage message,
+      required MessageRepository messageRepo,
+      ReactionRepository? reactionRepo,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      MediaFileManager? mediaFileManager,
+    });
+
+typedef DeleteMessageForEveryoneFn =
+    Future<(SendChatMessageResult, ConversationMessage?)> Function({
+      required P2PService p2pService,
+      required MessageRepository messageRepo,
+      required ConversationMessage originalMessage,
+      ReactionRepository? reactionRepo,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      MediaFileManager? mediaFileManager,
+      Bridge? bridge,
+      String? recipientMlKemPublicKey,
+      bool emitTimingEvent,
+    });
+
 /// Wired widget that connects FeedScreen to business logic.
 ///
 /// Follows the same "Wired" pattern as FirstTimeExperienceWired.
 /// Loads identity, builds feed items from the initial contact,
 /// and listens for new incoming contact requests.
 class FeedWired extends StatefulWidget {
+  static const deleteSheetKey = ValueKey('feed-delete-message-sheet');
+  static const deletePromptKey = ValueKey('feed-delete-message-prompt');
+  static const deleteForMeKey = ValueKey('feed-delete-for-me-action');
+  static const deleteForEveryoneKey = ValueKey(
+    'feed-delete-for-everyone-action',
+  );
+  static const deleteCancelKey = ValueKey('feed-delete-cancel-action');
+
   final IdentityRepository repository;
   final ContactRepository contactRepository;
   final ContactRequestRepository contactRequestRepository;
@@ -119,6 +165,9 @@ class FeedWired extends StatefulWidget {
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
+  final EditChatMessageFn editChatMessageFn;
+  final DeleteMessageForMeFn deleteMessageForMeFn;
+  final DeleteMessageForEveryoneFn deleteMessageForEveryoneFn;
 
   const FeedWired({
     super.key,
@@ -151,19 +200,29 @@ class FeedWired extends StatefulWidget {
     required this.postsPrivacySettingsRepository,
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
+    this.editChatMessageFn = editChatMessage,
+    this.deleteMessageForMeFn = deleteMessageForMe,
+    this.deleteMessageForEveryoneFn = deleteMessageForEveryone,
   });
 
   @override
   State<FeedWired> createState() => _FeedWiredState();
 }
 
-class _FeedWiredState extends State<FeedWired> {
+class _FeedWiredState extends State<FeedWired>
+    with SingleTickerProviderStateMixin {
+  static const _hostSwipeSettleDuration = Duration(milliseconds: 240);
+  static const _hostSwipeDecisionThreshold = 12.0;
+  static const _hostSwipeCompletionThreshold = 0.28;
+  static const _hostSwipeVelocityThreshold = 900.0;
+
   String _username = 'Username';
   Uint8List? _avatarBytes;
   String? _peerId;
   IdentityModel? _identity;
   final FeedStore _feedStore = FeedStore();
   final ValueNotifier<int> _totalUnreadCountNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<int> _orbitBadgeCountNotifier = ValueNotifier<int>(0);
   final FeedReactionStore _reactionStore = FeedReactionStore();
   bool _feedLoaded = false;
   String? _expandedCardId;
@@ -171,6 +230,9 @@ class _FeedWiredState extends State<FeedWired> {
   final Map<String, String> _activeQuoteMessageIds = {};
   final SessionReplyTracker _sessionReplies = SessionReplyTracker();
   String? _activeFocusPeerId;
+  String? _editingContactPeerId;
+  String? _editingMessageId;
+  String? _editingOriginalText;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ConversationMessage>? _repoChangeSubscription;
@@ -180,11 +242,21 @@ class _FeedWiredState extends State<FeedWired> {
   StreamSubscription<ReactionChange>? _groupReactionSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
+  int _orbitBadgeLoadRequestId = 0;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
-  bool _orbitRouteOpen = false;
-  String _orbitReturnTab = AppShellTab.feed;
+  bool _hasMountedOrbitHost = false;
+  late final AnimationController _hostSwipeController;
+  VoidCallback? _orbitEmbeddedExitAction;
+  bool _orbitRowActionOpen = false;
+  double _hostViewportWidth = 0;
+  int? _hostSwipePointer;
+  Offset? _hostSwipeStartPosition;
+  String? _hostSwipeStartTab;
+  bool _hostSwipeResolved = false;
+  bool _hostSwipeClaimed = false;
+  VelocityTracker? _hostSwipeVelocityTracker;
 
   List<FeedItem> get _feedItems => _feedStore.items;
   String _groupQuoteKey(String groupId) => 'group:$groupId';
@@ -209,6 +281,182 @@ class _FeedWiredState extends State<FeedWired> {
     if (mounted) setState(() {});
   }
 
+  bool _isEditingContact(String contactPeerId) =>
+      _editingContactPeerId == contactPeerId && _editingMessageId != null;
+
+  void _clearEditState({
+    String? contactPeerId,
+    bool clearDraft = false,
+    bool clearFocus = false,
+  }) {
+    final targetContactPeerId = contactPeerId ?? _editingContactPeerId;
+    if (clearDraft && targetContactPeerId != null) {
+      _draftTexts.remove(targetContactPeerId);
+    }
+    if (clearFocus &&
+        targetContactPeerId != null &&
+        _activeFocusPeerId == targetContactPeerId) {
+      _activeFocusPeerId = null;
+    }
+    _editingContactPeerId = null;
+    _editingMessageId = null;
+    _editingOriginalText = null;
+  }
+
+  Future<void> _onEditMessage(String contactPeerId, String messageId) async {
+    final message = await widget.messageRepository.getMessage(messageId);
+    if (!mounted ||
+        message == null ||
+        message.isIncoming ||
+        message.text.trim().isEmpty) {
+      return;
+    }
+
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    setState(() {
+      _sessionReplies.clear(contactPeerId);
+      _activeQuoteMessageIds.remove(contactPeerId);
+      _editingContactPeerId = contactPeerId;
+      _editingMessageId = message.id;
+      _editingOriginalText = message.text;
+      _draftTexts[contactPeerId] = message.text;
+      _activeFocusPeerId = contactPeerId;
+    });
+  }
+
+  void _onCancelEdit(String contactPeerId) {
+    if (!mounted || !_isEditingContact(contactPeerId)) return;
+    setState(() {
+      _clearEditState(
+        contactPeerId: contactPeerId,
+        clearDraft: true,
+        clearFocus: true,
+      );
+    });
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  Future<void> _onDeleteMessage(String contactPeerId, String messageId) async {
+    if (!mounted) return;
+    final message = await widget.messageRepository.getMessage(messageId);
+    if (message == null || message.isDeleted) return;
+
+    final action = await _showDeleteMessageSheet(
+      canDeleteForEveryone: _canDeleteForEveryone(message),
+    );
+    if (!mounted || action == null || action == _DeleteMessageAction.cancel) {
+      return;
+    }
+
+    setState(() {
+      if (_editingContactPeerId == contactPeerId &&
+          _editingMessageId == messageId) {
+        _clearEditState(
+          contactPeerId: contactPeerId,
+          clearDraft: true,
+          clearFocus: true,
+        );
+      }
+      if (_activeQuoteMessageIds[contactPeerId] == messageId) {
+        _activeQuoteMessageIds.remove(contactPeerId);
+      }
+    });
+    FocusManager.instance.primaryFocus?.unfocus();
+
+    if (action == _DeleteMessageAction.forMe) {
+      final deleted = await widget.deleteMessageForMeFn(
+        message: message,
+        messageRepo: widget.messageRepository,
+        reactionRepo: widget.reactionRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        mediaFileManager: widget.mediaFileManager,
+      );
+      if (deleted > 0) {
+        await _refreshContactFeedItem(contactPeerId);
+      }
+      return;
+    }
+
+    final contact = await widget.contactRepository.getContact(contactPeerId);
+    final (result, updatedMessage) = await widget.deleteMessageForEveryoneFn(
+      p2pService: widget.p2pService,
+      messageRepo: widget.messageRepository,
+      originalMessage: message,
+      reactionRepo: widget.reactionRepository,
+      mediaAttachmentRepo: widget.mediaAttachmentRepository,
+      mediaFileManager: widget.mediaFileManager,
+      bridge: widget.bridge,
+      recipientMlKemPublicKey: contact?.mlKemPublicKey,
+    );
+
+    if (!mounted) return;
+    if (updatedMessage != null) {
+      await _refreshContactFeedItem(contactPeerId);
+      return;
+    }
+    if (result != SendChatMessageResult.success) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.conversation_delete_failed,
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  bool _canDeleteForEveryone(ConversationMessage message) {
+    final ownPeerId = _identity?.peerId;
+    if (ownPeerId == null) return false;
+    if (message.isIncoming || message.isDeleted) return false;
+    if (message.senderPeerId != ownPeerId) return false;
+    return message.status == 'delivered';
+  }
+
+  Future<_DeleteMessageAction?> _showDeleteMessageSheet({
+    required bool canDeleteForEveryone,
+  }) {
+    return showModalBottomSheet<_DeleteMessageAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) =>
+          _DeleteMessageSheet(canDeleteForEveryone: canDeleteForEveryone),
+    );
+  }
+
+  void _syncComposerStateForContact(
+    String contactPeerId,
+    Set<String> visibleMessageIds,
+  ) {
+    var didChange = false;
+
+    if (_editingContactPeerId == contactPeerId &&
+        _editingMessageId != null &&
+        !visibleMessageIds.contains(_editingMessageId)) {
+      _clearEditState(
+        contactPeerId: contactPeerId,
+        clearDraft: true,
+        clearFocus: true,
+      );
+      didChange = true;
+    }
+
+    final activeQuoteId = _activeQuoteMessageIds[contactPeerId];
+    if (activeQuoteId != null && !visibleMessageIds.contains(activeQuoteId)) {
+      _activeQuoteMessageIds.remove(contactPeerId);
+      didChange = true;
+    }
+
+    if (didChange && mounted) {
+      setState(() {});
+    }
+  }
+
   void _markFeedLoaded() {
     if (_feedLoaded || !mounted) return;
     setState(() => _feedLoaded = true);
@@ -217,6 +465,12 @@ class _FeedWiredState extends State<FeedWired> {
   @override
   void initState() {
     super.initState();
+    _hasMountedOrbitHost = _activeTab == AppShellTab.orbit;
+    _hostSwipeController = AnimationController(
+      vsync: this,
+      duration: _hostSwipeSettleDuration,
+      value: _hasMountedOrbitHost ? 1.0 : 0.0,
+    );
     widget.appShellController.addListener(_onShellChanged);
     emitFlowEvent(
       layer: 'FL',
@@ -253,6 +507,7 @@ class _FeedWiredState extends State<FeedWired> {
         _avatarBytes = avatarBytes;
         _peerId = identity.peerId;
       });
+      unawaited(_refreshOrbitBadgeCount());
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -320,6 +575,40 @@ class _FeedWiredState extends State<FeedWired> {
     }
   }
 
+  Future<void> _refreshOrbitBadgeCount() async {
+    final introRepo = widget.introductionRepository;
+    final ownPeerId = _peerId;
+    if (introRepo == null || ownPeerId == null) {
+      if (mounted) {
+        _orbitBadgeCountNotifier.value = 0;
+      }
+      return;
+    }
+
+    final requestId = ++_orbitBadgeLoadRequestId;
+
+    try {
+      await expireOldIntroductions(
+        introRepo: introRepo,
+        peerId: ownPeerId,
+        contactRepo: widget.contactRepository,
+        messageRepo: widget.messageRepository,
+        bridge: widget.bridge,
+      );
+      final count = await introRepo.countPendingIntroductions(ownPeerId);
+      if (!mounted || requestId != _orbitBadgeLoadRequestId) {
+        return;
+      }
+      _orbitBadgeCountNotifier.value = count;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_ORBIT_BADGE_COUNT_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   Future<void> _refreshFeed() async {
     await _loadTotalUnreadCount();
     await _loadFeedFromDatabase();
@@ -368,6 +657,7 @@ class _FeedWiredState extends State<FeedWired> {
       final nextMessageIds = snapshot.threadItem == null
           ? <String>{}
           : snapshot.threadItem!.messages.map((message) => message.id).toSet();
+      _syncComposerStateForContact(contactPeerId, nextMessageIds);
 
       _feedStore.replaceContactSnapshot(
         contactPeerId: contactPeerId,
@@ -534,9 +824,12 @@ class _FeedWiredState extends State<FeedWired> {
       text: message.text,
       time: formatMessageTime(message.timestamp),
       timestamp: timestamp,
-      isUnread: message.isIncoming && message.readAt == null,
+      isUnread:
+          !message.isDeleted && message.isIncoming && message.readAt == null,
       isIncoming: message.isIncoming,
+      isDeleted: message.isDeleted,
       status: message.isIncoming ? null : message.status,
+      editedAt: message.editedAt,
       quotedMessageId: message.quotedMessageId,
       media: message.media,
       senderPeerId: message.senderPeerId,
@@ -578,9 +871,11 @@ class _FeedWiredState extends State<FeedWired> {
     List<ThreadMessage> messages,
   ) {
     final hasUnreadIncoming = messages.any(
-      (message) => message.isIncoming && message.isUnread,
+      (message) => message.isIncoming && message.isUnread && !message.isDeleted,
     );
-    final hasSentMessages = messages.any((message) => !message.isIncoming);
+    final hasSentMessages = messages.any(
+      (message) => !message.isIncoming && !message.isDeleted,
+    );
     if (hasUnreadIncoming && hasSentMessages) {
       return ConversationState.active;
     }
@@ -596,7 +891,7 @@ class _FeedWiredState extends State<FeedWired> {
   DateTime? _lastSentTimestamp(List<ThreadMessage> messages) {
     for (var index = messages.length - 1; index >= 0; index--) {
       final message = messages[index];
-      if (!message.isIncoming) {
+      if (!message.isIncoming && !message.isDeleted) {
         return message.timestamp;
       }
     }
@@ -614,7 +909,9 @@ class _FeedWiredState extends State<FeedWired> {
       contactPeerId: contact.peerId,
       contactUsername: contact.username,
       messages: messages,
-      unreadCount: messages.where((message) => message.isUnread).length,
+      unreadCount: messages
+          .where((message) => message.isUnread && !message.isDeleted)
+          .length,
       isUnreadCard:
           state == ConversationState.unread ||
           state == ConversationState.active,
@@ -647,6 +944,14 @@ class _FeedWiredState extends State<FeedWired> {
     bool refreshUnreadCount = true,
   }) async {
     try {
+      if (message.isHidden) {
+        await _refreshContactFeedItem(
+          message.contactPeerId,
+          refreshUnreadCount: refreshUnreadCount,
+        );
+        return;
+      }
+
       final contact = await widget.contactRepository.getContact(
         message.contactPeerId,
       );
@@ -659,7 +964,9 @@ class _FeedWiredState extends State<FeedWired> {
       }
 
       final displayMessage = message.copyWith(
-        media: await _loadResolvedAttachmentsForMessage(message.id),
+        media: message.isDeleted
+            ? const <MediaAttachment>[]
+            : await _loadResolvedAttachmentsForMessage(message.id),
       );
       final currentThread = _threadForContact(contact.peerId);
       final nextMessages = _mergeThreadMessages(
@@ -676,6 +983,10 @@ class _FeedWiredState extends State<FeedWired> {
         ),
       );
       _markFeedLoaded();
+
+      if (displayMessage.isDeleted) {
+        _reactionStore.clearMessageIds({displayMessage.id});
+      }
 
       if (refreshUnreadCount) {
         await _loadTotalUnreadCount();
@@ -791,6 +1102,10 @@ class _FeedWiredState extends State<FeedWired> {
 
     if (shouldReloadUnreadCount) {
       await _loadTotalUnreadCount();
+    }
+
+    if (changes.refreshPendingIntroductions) {
+      await _refreshOrbitBadgeCount();
     }
   }
 
@@ -913,12 +1228,20 @@ class _FeedWiredState extends State<FeedWired> {
     _repoChangeSubscription = changeSource.messageChanges
         .where(
           (message) =>
-              !message.isIncoming &&
-              _shouldRefreshFromRepositoryChange(message.status),
+              !message.isIncoming && _shouldProcessRepositoryChange(message),
         )
         .listen(
           (message) {
             if (!mounted) return;
+            if (message.isDeleted || message.isHidden) {
+              unawaited(
+                _refreshContactFeedItem(
+                  message.contactPeerId,
+                  refreshUnreadCount: false,
+                ),
+              );
+              return;
+            }
             unawaited(
               _applyIncomingContactMessageToFeed(
                 message,
@@ -936,8 +1259,13 @@ class _FeedWiredState extends State<FeedWired> {
         );
   }
 
+  bool _shouldProcessRepositoryChange(ConversationMessage message) =>
+      message.isDeleted ||
+      message.isHidden ||
+      _shouldRefreshFromRepositoryChange(message.status);
+
   bool _shouldRefreshFromRepositoryChange(String status) =>
-      status == 'sent' || status == 'delivered';
+      status == 'sent' || status == 'delivered' || status == 'failed';
 
   void _onIncomingChatMessage(ConversationMessage message) {
     if (!mounted) return;
@@ -1048,11 +1376,129 @@ class _FeedWiredState extends State<FeedWired> {
     if (identity == null) return;
     final localizations = AppLocalizations.of(context)!;
     final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final sanitizedText = sanitizeMessageText(text);
+    final editingMessageId = _isEditingContact(contactPeerId)
+        ? _editingMessageId
+        : null;
+
+    if (editingMessageId != null) {
+      final editingMessage = await widget.messageRepository.getMessage(
+        editingMessageId,
+      );
+      if (!mounted || editingMessage == null || editingMessage.isIncoming) {
+        if (mounted) {
+          setState(() {
+            _clearEditState(
+              contactPeerId: contactPeerId,
+              clearDraft: true,
+              clearFocus: true,
+            );
+          });
+        }
+        return;
+      }
+
+      final originalText = sanitizeMessageText(
+        _editingOriginalText ?? editingMessage.text,
+      );
+      if (sanitizedText == originalText) {
+        if (!mounted) return;
+        setState(() {
+          _clearEditState(
+            contactPeerId: contactPeerId,
+            clearDraft: true,
+            clearFocus: true,
+          );
+        });
+        return;
+      }
+
+      final contact = await widget.contactRepository.getContact(contactPeerId);
+      if (contact == null || !mounted) {
+        if (mounted) {
+          setState(() {
+            _clearEditState(
+              contactPeerId: contactPeerId,
+              clearDraft: true,
+              clearFocus: true,
+            );
+          });
+        }
+        return;
+      }
+
+      final bgTaskId = await callBgBegin(widget.bridge);
+      try {
+        final (result, message) = await widget.editChatMessageFn(
+          p2pService: widget.p2pService,
+          messageRepo: widget.messageRepository,
+          originalMessage: editingMessage,
+          updatedText: sanitizedText,
+          senderUsername: identity.username,
+          bridge: widget.bridge,
+          recipientMlKemPublicKey: contact.mlKemPublicKey,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        );
+
+        if (!mounted) return;
+
+        setState(() {
+          _clearEditState(
+            contactPeerId: contactPeerId,
+            clearDraft: true,
+            clearFocus: true,
+          );
+        });
+
+        if (message != null) {
+          await _applyIncomingContactMessageToFeed(
+            message,
+            refreshUnreadCount: false,
+          );
+        } else {
+          await _refreshContactFeedItem(
+            contactPeerId,
+            refreshUnreadCount: false,
+          );
+        }
+
+        if (result != SendChatMessageResult.success && message == null) {
+          scaffoldMessenger.showSnackBar(
+            const SnackBar(
+              content: Text('Failed to save edit.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_FL_EDIT_SEND_ERROR',
+          details: {'error': e.toString(), 'contactPeerId': contactPeerId},
+        );
+        if (!mounted) return;
+        setState(() {
+          _clearEditState(
+            contactPeerId: contactPeerId,
+            clearDraft: true,
+            clearFocus: true,
+          );
+        });
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save edit.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } finally {
+        await callBgEnd(widget.bridge, bgTaskId);
+      }
+      return;
+    }
 
     // Optimistic: show session reply immediately before network send.
     final quotedMsgId = _activeQuoteMessageIds[contactPeerId];
     final draftText = text;
-    final sanitizedText = sanitizeMessageText(text);
     _draftTexts.remove(contactPeerId);
     _activeQuoteMessageIds.remove(contactPeerId);
     _sessionReplies.track(contactPeerId, SessionReply.justNow(text));
@@ -1450,22 +1896,39 @@ class _FeedWiredState extends State<FeedWired> {
     final listener = widget.introductionListener;
     if (listener == null) return;
 
-    _introReceivedSubscription = listener.introReceivedStream.listen((_) {});
+    _introReceivedSubscription = listener.introReceivedStream.listen(
+      (_) => unawaited(_refreshOrbitBadgeCount()),
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_INTRO_RECEIVED_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
 
-    _introStatusSubscription = listener.introStatusChangedStream.listen((
-      intro,
-    ) {
-      final ownPeerId = _peerId;
-      if (!mounted || ownPeerId == null) return;
-      if (intro.status != IntroductionOverallStatus.mutualAccepted) return;
+    _introStatusSubscription = listener.introStatusChangedStream.listen(
+      (intro) {
+        unawaited(_refreshOrbitBadgeCount());
+        final ownPeerId = _peerId;
+        if (!mounted || ownPeerId == null) return;
+        if (intro.status != IntroductionOverallStatus.mutualAccepted) return;
 
-      final otherPeerId = intro.recipientId == ownPeerId
-          ? intro.introducedId
-          : intro.recipientId;
-      if (otherPeerId.isEmpty) return;
+        final otherPeerId = intro.recipientId == ownPeerId
+            ? intro.introducedId
+            : intro.recipientId;
+        if (otherPeerId.isEmpty) return;
 
-      unawaited(_refreshContactFeedItem(otherPeerId));
-    });
+        unawaited(_refreshContactFeedItem(otherPeerId));
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_INTRO_STATUS_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
   }
 
   Future<GroupModel> _resolveGroupForThread(
@@ -1974,6 +2437,178 @@ class _FeedWiredState extends State<FeedWired> {
     });
   }
 
+  void _ensureOrbitHostMounted() {
+    if (_hasMountedOrbitHost || !mounted) {
+      return;
+    }
+    setState(() {
+      _hasMountedOrbitHost = true;
+    });
+  }
+
+  void _animateHostTo(double target) {
+    final normalizedTarget = target.clamp(0.0, 1.0);
+    if ((_hostSwipeController.value - normalizedTarget).abs() < 0.0001) {
+      _hostSwipeController.value = normalizedTarget;
+      return;
+    }
+
+    _hostSwipeController.stop();
+    _hostSwipeController.animateTo(
+      normalizedTarget,
+      duration: _hostSwipeSettleDuration,
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _registerOrbitEmbeddedExitAction(VoidCallback? action) {
+    _orbitEmbeddedExitAction = action;
+  }
+
+  void _onOrbitRowActionOpenChanged(bool isOpen) {
+    _orbitRowActionOpen = isOpen;
+  }
+
+  void _resetHostSwipeTracking() {
+    _hostSwipePointer = null;
+    _hostSwipeStartPosition = null;
+    _hostSwipeStartTab = null;
+    _hostSwipeResolved = false;
+    _hostSwipeClaimed = false;
+    _hostSwipeVelocityTracker = null;
+  }
+
+  void _onHostPointerDown(PointerDownEvent event) {
+    if (_hostSwipePointer != null) {
+      return;
+    }
+
+    _hostSwipePointer = event.pointer;
+    _hostSwipeStartPosition = event.position;
+    _hostSwipeStartTab = _activeTab;
+    _hostSwipeResolved = false;
+    _hostSwipeClaimed = false;
+    _hostSwipeVelocityTracker = VelocityTracker.withKind(event.kind)
+      ..addPosition(event.timeStamp, event.position);
+  }
+
+  void _onHostPointerMove(PointerMoveEvent event) {
+    if (event.pointer != _hostSwipePointer || _hostSwipeStartPosition == null) {
+      return;
+    }
+
+    _hostSwipeVelocityTracker?.addPosition(event.timeStamp, event.position);
+    final totalDelta = event.position - _hostSwipeStartPosition!;
+    if (!_hostSwipeResolved) {
+      if (totalDelta.distance < _hostSwipeDecisionThreshold) {
+        return;
+      }
+
+      _hostSwipeResolved = true;
+      if (totalDelta.dx.abs() <= totalDelta.dy.abs()) {
+        return;
+      }
+
+      final startingTab = _hostSwipeStartTab ?? _activeTab;
+      final movingToOrbit =
+          startingTab == AppShellTab.feed && totalDelta.dx < 0;
+      final movingToFeed =
+          startingTab == AppShellTab.orbit && totalDelta.dx > 0;
+      final blockedByOrbitRow =
+          startingTab == AppShellTab.orbit && _orbitRowActionOpen;
+      if ((!movingToOrbit && !movingToFeed) || blockedByOrbitRow) {
+        return;
+      }
+
+      _hostSwipeClaimed = true;
+      if (startingTab == AppShellTab.feed) {
+        _ensureOrbitHostMounted();
+        _clearFeedComposerFocus();
+      }
+    }
+
+    if (!_hostSwipeClaimed || _hostViewportWidth <= 0) {
+      return;
+    }
+
+    final startingTab = _hostSwipeStartTab ?? _activeTab;
+    final traveledDistance = switch (startingTab) {
+      AppShellTab.feed => (-totalDelta.dx).clamp(0.0, _hostViewportWidth),
+      AppShellTab.orbit => totalDelta.dx.clamp(0.0, _hostViewportWidth),
+      _ => 0.0,
+    };
+    final progress = traveledDistance / _hostViewportWidth;
+
+    _hostSwipeController.stop();
+    _hostSwipeController.value = switch (startingTab) {
+      AppShellTab.feed => progress,
+      AppShellTab.orbit => 1.0 - progress,
+      _ => _hostSwipeController.value,
+    };
+  }
+
+  void _finishHostSwipe() {
+    if (!_hostSwipeClaimed) {
+      _resetHostSwipeTracking();
+      return;
+    }
+
+    final velocity =
+        _hostSwipeVelocityTracker?.getVelocity().pixelsPerSecond.dx ?? 0.0;
+    final startingTab = _hostSwipeStartTab ?? _activeTab;
+    final progressTowardTarget = switch (startingTab) {
+      AppShellTab.feed => _hostSwipeController.value,
+      AppShellTab.orbit => 1.0 - _hostSwipeController.value,
+      _ => 0.0,
+    };
+    final shouldComplete =
+        progressTowardTarget >= _hostSwipeCompletionThreshold ||
+        (startingTab == AppShellTab.feed &&
+            velocity <= -_hostSwipeVelocityThreshold) ||
+        (startingTab == AppShellTab.orbit &&
+            velocity >= _hostSwipeVelocityThreshold);
+
+    _resetHostSwipeTracking();
+
+    if (!shouldComplete) {
+      _animateHostTo(startingTab == AppShellTab.orbit ? 1.0 : 0.0);
+      return;
+    }
+
+    if (startingTab == AppShellTab.feed) {
+      widget.appShellController.switchTo(AppShellTab.orbit);
+      return;
+    }
+
+    final orbitExitAction = _orbitEmbeddedExitAction;
+    if (orbitExitAction != null) {
+      orbitExitAction();
+      return;
+    }
+    widget.appShellController.switchTo(AppShellTab.feed);
+  }
+
+  void _onHostPointerUp(PointerUpEvent event) {
+    if (event.pointer != _hostSwipePointer) {
+      return;
+    }
+    _hostSwipeVelocityTracker?.addPosition(event.timeStamp, event.position);
+    _finishHostSwipe();
+  }
+
+  void _onHostPointerCancel(PointerCancelEvent event) {
+    if (event.pointer != _hostSwipePointer) {
+      return;
+    }
+
+    final startingTab = _hostSwipeStartTab ?? _activeTab;
+    final claimed = _hostSwipeClaimed;
+    _resetHostSwipeTracking();
+    if (claimed) {
+      _animateHostTo(startingTab == AppShellTab.orbit ? 1.0 : 0.0);
+    }
+  }
+
   void _onShellChanged() {
     if (!mounted) {
       return;
@@ -1982,66 +2617,56 @@ class _FeedWiredState extends State<FeedWired> {
     if (activeTab != AppShellTab.feed) {
       _clearFeedComposerFocus(notify: false);
     }
-    if (activeTab != AppShellTab.orbit) {
-      _orbitReturnTab = activeTab;
-    }
-    if (activeTab == AppShellTab.orbit && !_orbitRouteOpen) {
-      _openOrbitRoute();
-      return;
-    }
-    setState(() {});
-  }
-
-  void _openOrbitRoute() {
-    _orbitRouteOpen = true;
-
-    Navigator.of(context)
-        .push(
-          buildOrbitSlideUpRoute(
-            builder: (_) => OrbitWired(
-              identityRepo: widget.repository,
-              contactRepo: widget.contactRepository,
-              contactRequestRepo: widget.contactRequestRepository,
-              contactRequestListener: widget.contactRequestListener,
-              messageRepo: widget.messageRepository,
-              postRepository: widget.postRepository,
-              mediaAttachmentRepo: widget.mediaAttachmentRepository,
-              chatMessageListener: widget.chatMessageListener,
-              bridge: widget.bridge,
-              p2pService: widget.p2pService,
-              mediaFileManager: widget.mediaFileManager,
-              secureKeyStore: widget.secureKeyStore,
-              imageProcessor: widget.imageProcessor,
-              conversationTracker: widget.conversationTracker,
-              audioRecorderService: widget.audioRecorderService,
-              reactionRepository: widget.reactionRepository,
-              reactionListener: widget.reactionListener,
-              groupRepository: widget.groupRepository,
-              groupMessageRepository: widget.groupMessageRepository,
-              groupMessageListener: widget.groupMessageListener,
-              groupInviteListener: widget.groupInviteListener,
-              groupConversationTracker: widget.groupConversationTracker,
-              introductionRepository: widget.introductionRepository,
-              introductionListener: widget.introductionListener,
-              appShellController: widget.appShellController,
-              pendingPostTargetStore: widget.pendingPostTargetStore,
-              postsPrivacySettingsRepository:
-                  widget.postsPrivacySettingsRepository,
-            ),
-          ),
-        )
-        .then((result) {
-          _orbitRouteOpen = false;
-          if (widget.appShellController.activeTab == AppShellTab.orbit) {
-            widget.appShellController.switchTo(_orbitReturnTab);
-          }
-          final changes = result is FeedRouteChanges ? result : null;
-          unawaited(_applyRouteChanges(changes));
-        });
+    setState(() {
+      _hasMountedOrbitHost =
+          _hasMountedOrbitHost || activeTab == AppShellTab.orbit;
+    });
+    _animateHostTo(activeTab == AppShellTab.orbit ? 1.0 : 0.0);
   }
 
   void _onSwitchView(String tab) {
     widget.appShellController.switchTo(tab);
+  }
+
+  void _onOrbitEmbeddedExit(FeedRouteChanges? changes) {
+    unawaited(_applyRouteChanges(changes));
+  }
+
+  Widget _buildOrbitHost() {
+    return OrbitWired(
+      identityRepo: widget.repository,
+      contactRepo: widget.contactRepository,
+      contactRequestRepo: widget.contactRequestRepository,
+      contactRequestListener: widget.contactRequestListener,
+      messageRepo: widget.messageRepository,
+      postRepository: widget.postRepository,
+      mediaAttachmentRepo: widget.mediaAttachmentRepository,
+      chatMessageListener: widget.chatMessageListener,
+      bridge: widget.bridge,
+      p2pService: widget.p2pService,
+      mediaFileManager: widget.mediaFileManager,
+      secureKeyStore: widget.secureKeyStore,
+      imageProcessor: widget.imageProcessor,
+      conversationTracker: widget.conversationTracker,
+      audioRecorderService: widget.audioRecorderService,
+      reactionRepository: widget.reactionRepository,
+      reactionListener: widget.reactionListener,
+      groupRepository: widget.groupRepository,
+      groupMessageRepository: widget.groupMessageRepository,
+      groupMessageListener: widget.groupMessageListener,
+      groupInviteListener: widget.groupInviteListener,
+      groupConversationTracker: widget.groupConversationTracker,
+      introductionRepository: widget.introductionRepository,
+      introductionListener: widget.introductionListener,
+      appShellController: widget.appShellController,
+      feedUnreadCountListenable: _totalUnreadCountNotifier,
+      pendingPostTargetStore: widget.pendingPostTargetStore,
+      postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+      initialFilterTab: null,
+      onEmbeddedExit: _onOrbitEmbeddedExit,
+      onEmbeddedExitActionChanged: _registerOrbitEmbeddedExitAction,
+      onRowActionOpenChanged: _onOrbitRowActionOpenChanged,
+    );
   }
 
   Future<void> _onUsernameChanged(String newUsername) async {
@@ -2168,7 +2793,14 @@ class _FeedWiredState extends State<FeedWired> {
 
   void _onQuoteReply(String contactPeerId, String messageId) {
     setState(() {
+      if (!contactPeerId.startsWith('group:') &&
+          _isEditingContact(contactPeerId)) {
+        _clearEditState(contactPeerId: contactPeerId);
+      }
       _activeQuoteMessageIds[contactPeerId] = messageId;
+      _activeFocusPeerId = contactPeerId.startsWith('group:')
+          ? null
+          : contactPeerId;
     });
   }
 
@@ -2190,7 +2822,9 @@ class _FeedWiredState extends State<FeedWired> {
     _groupMessageSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
+    _hostSwipeController.dispose();
     _totalUnreadCountNotifier.dispose();
+    _orbitBadgeCountNotifier.dispose();
     _reactionStore.dispose();
     _feedStore.dispose();
     super.dispose();
@@ -2200,7 +2834,7 @@ class _FeedWiredState extends State<FeedWired> {
   Widget build(BuildContext context) {
     final activeTab = _activeTab;
     final activeFocusPeerId = _visibleActiveFocusPeerId;
-    final body = FeedScreen(
+    final feedBody = FeedScreen(
       username: _username,
       userAvatarBytes: _avatarBytes,
       userPeerId: _peerId,
@@ -2214,6 +2848,7 @@ class _FeedWiredState extends State<FeedWired> {
       onSendMessage: _onSendMessage,
       onReplyToMessage: _onReplyToMessage,
       totalUnreadCountListenable: _totalUnreadCountNotifier,
+      orbitBadgeCountListenable: _orbitBadgeCountNotifier,
       expandedCardId: _expandedCardId,
       onToggleExpand: _onToggleExpand,
       onInlineSend: _onInlineSend,
@@ -2222,6 +2857,10 @@ class _FeedWiredState extends State<FeedWired> {
       activeFocusPeerId: activeFocusPeerId,
       onDraftChanged: _onDraftChanged,
       onInputFocusChanged: _onInputFocusChanged,
+      editingContactPeerId: _editingContactPeerId,
+      onEditMessage: _onEditMessage,
+      onDeleteMessage: _onDeleteMessage,
+      onCancelEdit: _onCancelEdit,
       activeQuoteMessageIds: _activeQuoteMessageIds,
       onQuoteReply: _onQuoteReply,
       onClearQuote: _onClearQuote,
@@ -2235,7 +2874,209 @@ class _FeedWiredState extends State<FeedWired> {
       onGroupAttach: _onGroupAttach,
       onGroupReactionSelected: _onGroupReactionSelected,
     );
+    final orbitBody = _hasMountedOrbitHost
+        ? _buildOrbitHost()
+        : const SizedBox.shrink();
+    final body = LayoutBuilder(
+      builder: (context, constraints) {
+        _hostViewportWidth = constraints.maxWidth;
+
+        return Listener(
+          key: const ValueKey<String>('feed-orbit-swipe-host'),
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _onHostPointerDown,
+          onPointerMove: _onHostPointerMove,
+          onPointerUp: _onHostPointerUp,
+          onPointerCancel: _onHostPointerCancel,
+          child: AnimatedBuilder(
+            animation: _hostSwipeController,
+            builder: (context, child) {
+              final hostProgress = _hostSwipeController.value.clamp(0.0, 1.0);
+              final feedOffset = -hostProgress * constraints.maxWidth;
+              final orbitOffset = (1.0 - hostProgress) * constraints.maxWidth;
+
+              return ClipRect(
+                child: Stack(
+                  children: [
+                    Transform.translate(
+                      offset: Offset(feedOffset, 0),
+                      child: SizedBox(
+                        width: constraints.maxWidth,
+                        height: constraints.maxHeight,
+                        child: feedBody,
+                      ),
+                    ),
+                    if (_hasMountedOrbitHost)
+                      Transform.translate(
+                        offset: Offset(orbitOffset, 0),
+                        child: SizedBox(
+                          width: constraints.maxWidth,
+                          height: constraints.maxHeight,
+                          child: orbitBody,
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
 
     return Scaffold(resizeToAvoidBottomInset: false, body: body);
+  }
+}
+
+enum _DeleteMessageAction { forMe, forEveryone, cancel }
+
+class _DeleteMessageSheet extends StatelessWidget {
+  final bool canDeleteForEveryone;
+
+  const _DeleteMessageSheet({required this.canDeleteForEveryone});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final maxHeight = MediaQuery.of(context).size.height * 0.72;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              key: FeedWired.deleteSheetKey,
+              decoration: BoxDecoration(
+                color: const Color.fromRGBO(18, 20, 28, 0.96),
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(
+                  color: const Color.fromRGBO(255, 255, 255, 0.10),
+                ),
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: const Color.fromRGBO(255, 255, 255, 0.18),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      Text(
+                        l10n.conversation_delete_message_prompt,
+                        key: FeedWired.deletePromptKey,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Color.fromRGBO(255, 255, 255, 0.94),
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      _DeleteSheetAction(
+                        key: FeedWired.deleteForMeKey,
+                        label: l10n.conversation_delete_for_me,
+                        icon: Icons.delete_outline_rounded,
+                        color: const Color(0xFFFF8A80),
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop(_DeleteMessageAction.forMe),
+                      ),
+                      if (canDeleteForEveryone) ...[
+                        const SizedBox(height: 10),
+                        _DeleteSheetAction(
+                          key: FeedWired.deleteForEveryoneKey,
+                          label: l10n.conversation_delete_for_everyone,
+                          icon: Icons.person_remove_alt_1_rounded,
+                          color: const Color(0xFFFFB38A),
+                          onTap: () => Navigator.of(
+                            context,
+                          ).pop(_DeleteMessageAction.forEveryone),
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      _DeleteSheetAction(
+                        key: FeedWired.deleteCancelKey,
+                        label: l10n.conversation_delete_cancel,
+                        icon: Icons.close_rounded,
+                        color: const Color.fromRGBO(255, 255, 255, 0.72),
+                        onTap: () => Navigator.of(
+                          context,
+                        ).pop(_DeleteMessageAction.cancel),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeleteSheetAction extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _DeleteSheetAction({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color.fromRGBO(255, 255, 255, 0.04),
+            border: Border.all(
+              color: const Color.fromRGBO(255, 255, 255, 0.06),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: color,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

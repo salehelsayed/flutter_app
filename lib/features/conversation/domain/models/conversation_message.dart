@@ -30,11 +30,26 @@ class ConversationMessage {
   /// ISO-8601 timestamp when the row was created locally.
   final String createdAt;
 
+  /// ISO-8601 timestamp when the message was last edited. NULL means original.
+  final String? editedAt;
+
   /// ISO-8601 timestamp when the message was read. NULL means unread.
   final String? readAt;
 
   /// The ID of the message being quoted (quote-reply). NULL means no quote.
   final String? quotedMessageId;
+
+  /// ISO-8601 timestamp when the message was deleted. NULL means not deleted.
+  final String? deletedAt;
+
+  /// Peer ID that initiated the deletion. NULL means not deleted.
+  final String? deletedByPeerId;
+
+  /// ISO-8601 timestamp when the row became hidden locally.
+  ///
+  /// This is used for sender-side delete-for-everyone semantics: keep a
+  /// durable retry row locally without surfacing the deleted content.
+  final String? hiddenAt;
 
   /// Transport type: 'wifi', 'local', 'direct', legacy-only 'reuse',
   /// 'relay', 'inbox', or null (unknown/pre-migration).
@@ -56,8 +71,12 @@ class ConversationMessage {
     required this.status,
     required this.isIncoming,
     required this.createdAt,
+    this.editedAt,
     this.readAt,
     this.quotedMessageId,
+    this.deletedAt,
+    this.deletedByPeerId,
+    this.hiddenAt,
     this.transport,
     this.wireEnvelope,
     this.media = const [],
@@ -74,8 +93,12 @@ class ConversationMessage {
       status: map['status'] as String? ?? 'sent',
       isIncoming: (map['is_incoming'] as int? ?? 0) == 1,
       createdAt: map['created_at'] as String,
+      editedAt: map['edited_at'] as String?,
       readAt: map['read_at'] as String?,
       quotedMessageId: map['quoted_message_id'] as String?,
+      deletedAt: map['deleted_at'] as String?,
+      deletedByPeerId: map['deleted_by_peer_id'] as String?,
+      hiddenAt: map['hidden_at'] as String?,
       transport: map['transport'] as String?,
       wireEnvelope: map['wire_envelope'] as String?,
     );
@@ -92,8 +115,12 @@ class ConversationMessage {
       'status': status,
       'is_incoming': isIncoming ? 1 : 0,
       'created_at': createdAt,
+      'edited_at': editedAt,
       'read_at': readAt,
       'quoted_message_id': quotedMessageId,
+      'deleted_at': deletedAt,
+      'deleted_by_peer_id': deletedByPeerId,
+      'hidden_at': hiddenAt,
       'transport': transport,
       'wire_envelope': wireEnvelope,
     };
@@ -112,9 +139,13 @@ class ConversationMessage {
     String? status,
     bool? isIncoming,
     String? createdAt,
-    String? readAt,
-    String? quotedMessageId,
-    String? transport,
+    Object? editedAt = _sentinel,
+    Object? readAt = _sentinel,
+    Object? quotedMessageId = _sentinel,
+    Object? deletedAt = _sentinel,
+    Object? deletedByPeerId = _sentinel,
+    Object? hiddenAt = _sentinel,
+    Object? transport = _sentinel,
     Object? wireEnvelope = _sentinel,
     List<MediaAttachment>? media,
   }) {
@@ -127,15 +158,27 @@ class ConversationMessage {
       status: status ?? this.status,
       isIncoming: isIncoming ?? this.isIncoming,
       createdAt: createdAt ?? this.createdAt,
-      readAt: readAt ?? this.readAt,
-      quotedMessageId: quotedMessageId ?? this.quotedMessageId,
-      transport: transport ?? this.transport,
+      editedAt: editedAt == _sentinel ? this.editedAt : editedAt as String?,
+      readAt: readAt == _sentinel ? this.readAt : readAt as String?,
+      quotedMessageId: quotedMessageId == _sentinel
+          ? this.quotedMessageId
+          : quotedMessageId as String?,
+      deletedAt: deletedAt == _sentinel ? this.deletedAt : deletedAt as String?,
+      deletedByPeerId: deletedByPeerId == _sentinel
+          ? this.deletedByPeerId
+          : deletedByPeerId as String?,
+      hiddenAt: hiddenAt == _sentinel ? this.hiddenAt : hiddenAt as String?,
+      transport: transport == _sentinel ? this.transport : transport as String?,
       wireEnvelope: wireEnvelope == _sentinel
           ? this.wireEnvelope
           : wireEnvelope as String?,
       media: media ?? this.media,
     );
   }
+
+  bool get isDeleted => deletedAt != null;
+
+  bool get isHidden => hiddenAt != null;
 
   @override
   bool operator ==(Object other) {

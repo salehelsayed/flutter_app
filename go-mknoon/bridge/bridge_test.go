@@ -552,6 +552,18 @@ func TestInboxRetrieve_NodeNotInitialized(t *testing.T) {
 	assertNotOk(t, m, "NOT_INITIALIZED")
 }
 
+func TestInboxRetrievePending_NodeNotInitialized(t *testing.T) {
+	result := InboxRetrievePendingWithParams(`{"timeoutMs":250}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestInboxAck_NodeNotInitialized(t *testing.T) {
+	result := InboxAck(`{"entryIds":["entry-1"]}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
 func TestInboxRegisterToken_NodeNotInitialized(t *testing.T) {
 	result := InboxRegisterToken(`{"token": "fake-token", "platform": "ios"}`)
 	m := parseJSON(t, result)
@@ -625,6 +637,27 @@ func TestInboxStore_MissingToPeerId(t *testing.T) {
 func TestInboxRegisterToken_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := InboxRegisterToken("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxRetrievePending_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxRetrievePendingWithParams("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxAck_InvalidJSON(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxAck("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestInboxAck_MissingEntryIds(t *testing.T) {
+	withSingletonNode(t)
+	result := InboxAck(`{}`)
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
@@ -2011,6 +2044,56 @@ func TestInboxRetrieve_HonorsForegroundTimeoutWhenProvided(t *testing.T) {
 		if _, hasMore := m["hasMore"]; !hasMore {
 			t.Error("response missing 'hasMore' field")
 		}
+	}
+}
+
+func TestInboxRetrievePending_HonorsForegroundTimeoutWhenProvided(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	retrieveInput, _ := json.Marshal(map[string]interface{}{
+		"timeoutMs": 300,
+	})
+	result := InboxRetrievePendingWithParams(string(retrieveInput))
+	m := parseJSON(t, result)
+
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("timeoutMs should be parsed without INVALID_INPUT error")
+	}
+
+	if m["ok"] == true {
+		if _, hasMsgs := m["messages"]; !hasMsgs {
+			t.Error("response missing 'messages' field")
+		}
+		if _, hasMore := m["hasMore"]; !hasMore {
+			t.Error("response missing 'hasMore' field")
+		}
+	}
+}
+
+func TestInboxAck_ParsesEntryIdsAndTimeout(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	ackInput, _ := json.Marshal(map[string]interface{}{
+		"entryIds":  []string{"entry-1", "entry-2"},
+		"timeoutMs": 300,
+	})
+	result := InboxAck(string(ackInput))
+	m := parseJSON(t, result)
+
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("entryIds and timeoutMs should be parsed without INVALID_INPUT error")
 	}
 }
 

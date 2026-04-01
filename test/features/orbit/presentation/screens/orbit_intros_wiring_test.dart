@@ -16,11 +16,20 @@ void main() {
   setUp(() {
     network = FakeP2PNetwork();
     userA = IntroTestUser.create(
-        peerId: 'peer-A', username: 'Noor', network: network);
+      peerId: 'peer-A',
+      username: 'Noor',
+      network: network,
+    );
     userB = IntroTestUser.create(
-        peerId: 'peer-B', username: 'Lina', network: network);
+      peerId: 'peer-B',
+      username: 'Lina',
+      network: network,
+    );
     userC = IntroTestUser.create(
-        peerId: 'peer-C', username: 'Sarah', network: network);
+      peerId: 'peer-C',
+      username: 'Sarah',
+      network: network,
+    );
 
     userA.addContact(userB);
     userB.addContact(userA);
@@ -47,14 +56,12 @@ void main() {
       );
       await userB.introRepo.saveIntroduction(intros.first);
 
-      final count =
-          await userB.introRepo.countPendingIntroductions('peer-B');
+      final count = await userB.introRepo.countPendingIntroductions('peer-B');
       expect(count, greaterThan(0));
     });
 
     test('pending count is 0 when no introductions', () async {
-      final count =
-          await userB.introRepo.countPendingIntroductions('peer-B');
+      final count = await userB.introRepo.countPendingIntroductions('peer-B');
       expect(count, 0);
     });
 
@@ -113,16 +120,18 @@ void main() {
       );
       await userB.introRepo.saveIntroduction(intros.first);
 
-      final beforeCount =
-          await userB.introRepo.countPendingIntroductions('peer-B');
+      final beforeCount = await userB.introRepo.countPendingIntroductions(
+        'peer-B',
+      );
       expect(beforeCount, 1);
 
       await userB.acceptIntro(intros.first.id);
 
       // After accept, status changes to pending (one-sided) so still counted
       // But overall is still pending (only one side accepted)
-      final afterCount =
-          await userB.introRepo.countPendingIntroductions('peer-B');
+      final afterCount = await userB.introRepo.countPendingIntroductions(
+        'peer-B',
+      );
       // Single accept doesn't change overall status to non-pending
       expect(afterCount, 1);
     });
@@ -138,9 +147,36 @@ void main() {
       await userB.passIntro(intros.first.id);
 
       // After pass, overall status is "passed" so not in pending
-      final afterCount =
-          await userB.introRepo.countPendingIntroductions('peer-B');
+      final afterCount = await userB.introRepo.countPendingIntroductions(
+        'peer-B',
+      );
       expect(afterCount, 0);
+    });
+
+    test('intro count and grouped data refresh after delete action', () async {
+      final friendC = await userA.contactRepo.getContact('peer-C');
+      final intros = await userA.sendIntroductions(
+        recipientPeerId: 'peer-B',
+        friends: [friendC!],
+      );
+      await userB.introRepo.saveIntroduction(intros.first);
+
+      final beforeCount = await userB.introRepo.countPendingIntroductions(
+        'peer-B',
+      );
+      expect(beforeCount, 1);
+
+      await userB.introRepo.deleteIntroduction(intros.first.id);
+
+      final afterCount = await userB.introRepo.countPendingIntroductions(
+        'peer-B',
+      );
+      final pending = await loadIntroductionsForUser(
+        introRepo: userB.introRepo,
+        peerId: 'peer-B',
+      );
+      expect(afterCount, 0);
+      expect(pending, isEmpty);
     });
 
     test('introReceivedStream triggers data availability', () async {
@@ -155,14 +191,11 @@ void main() {
         friends: [friendC!],
       );
 
-      final intro = await received.future.timeout(
-        const Duration(seconds: 2),
-      );
+      final intro = await received.future.timeout(const Duration(seconds: 2));
       expect(intro.introducerId, 'peer-A');
     });
 
-    test('introStatusChangedStream triggers on accept notification',
-        () async {
+    test('introStatusChangedStream triggers on accept notification', () async {
       final friendC = await userA.contactRepo.getContact('peer-C');
       final intros = await userA.sendIntroductions(
         recipientPeerId: 'peer-B',

@@ -172,6 +172,20 @@
   },
   "conversation_delete_chat": "حذف المحادثة؟",
   "conversation_reply": "رد...",
+  "conversation_context_reply": "رد",
+  "conversation_context_edit": "تعديل",
+  "conversation_context_copy": "نسخ",
+  "conversation_context_delete": "حذف",
+  "conversation_context_copied": "تم نسخ الرسالة إلى الحافظة",
+  "conversation_editing_message": "تعديل الرسالة",
+  "conversation_cancel_edit": "إلغاء",
+  "conversation_edited_indicator": "(تم التعديل)",
+  "conversation_delete_message_prompt": "لمن تريد حذف هذه الرسالة؟",
+  "conversation_delete_for_me": "حذف لدي",
+  "conversation_delete_for_everyone": "حذف لدى الجميع",
+  "conversation_delete_cancel": "إلغاء",
+  "conversation_message_deleted": "تم حذف هذه الرسالة",
+  "conversation_delete_failed": "تعذر إكمال حذف هذه الرسالة.",
   "conversation_continue": "متابعة...",
   "comment_hint": "اكتب تعليقًا...",
   "group_create_title": "إنشاء مجموعة",
@@ -208,6 +222,17 @@
     }
   },
   "picker_introduce": "عرّف",
+  "picker_sending_progress": "جارٍ إرسال {completed} من {total}",
+  "@picker_sending_progress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "picker_search_contacts": "ابحث في جهات الاتصال...",
   "picker_search_all": "ابحث في جهات الاتصال والمجموعات",
   "settings_title": "الإعدادات",

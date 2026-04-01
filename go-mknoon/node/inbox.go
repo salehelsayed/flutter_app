@@ -13,25 +13,29 @@ import (
 
 // InboxMessage represents a message stored in the offline inbox.
 type InboxMessage struct {
+	ID        string `json:"id,omitempty"`
 	From      string `json:"from"`
 	Message   string `json:"message"`
 	Timestamp int64  `json:"timestamp"`
 }
 
 type inboxRequest struct {
-	Action   string `json:"action"`
-	To       string `json:"to,omitempty"`
-	From     string `json:"from,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Limit    int    `json:"limit,omitempty"`
-	Token    string `json:"token,omitempty"`
-	Platform string `json:"platform,omitempty"`
+	Action   string   `json:"action"`
+	To       string   `json:"to,omitempty"`
+	From     string   `json:"from,omitempty"`
+	Message  string   `json:"message,omitempty"`
+	Limit    int      `json:"limit,omitempty"`
+	EntryIds []string `json:"entryIds,omitempty"`
+	Token    string   `json:"token,omitempty"`
+	Platform string   `json:"platform,omitempty"`
 }
 
 type inboxResponse struct {
 	Status   string         `json:"status"`
 	Error    string         `json:"error,omitempty"`
 	Messages []InboxMessage `json:"messages,omitempty"`
+	HasMore  bool           `json:"hasMore,omitempty"`
+	Acked    int            `json:"acked,omitempty"`
 }
 
 // InboxStore stores a message in the offline inbox for a peer.
@@ -245,12 +249,159 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 			return nil, fmt.Errorf("inbox retrieve failed: %s", resp.Error)
 		}
 
-		// HasMore is true when we received exactly our limit (server may have more).
-		hasMore := len(resp.Messages) >= 50
-
-		log.Printf("[INBOX] Retrieved %d messages (hasMore=%v, timeout=%v)", len(resp.Messages), hasMore, timeout)
+		log.Printf("[INBOX] Retrieved %d messages (hasMore=%v, timeout=%v)", len(resp.Messages), resp.HasMore, timeout)
 		streamOK = true
-		return &InboxRetrieveResult{Messages: resp.Messages, HasMore: hasMore}, nil
+		return &InboxRetrieveResult{Messages: resp.Messages, HasMore: resp.HasMore}, nil
+	})
+}
+
+// InboxRetrievePendingResult holds the paginated result from
+// InboxRetrievePendingWithTimeout.
+type InboxRetrievePendingResult struct {
+	Messages []InboxMessage
+	HasMore  bool
+}
+
+// InboxRetrievePendingWithTimeout retrieves pending inbox messages without
+// deleting them from the relay. If timeoutMs <= 0, the default InboxTimeout is
+// used.
+func (n *Node) InboxRetrievePendingWithTimeout(timeoutMs int) (*InboxRetrievePendingResult, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return nil, fmt.Errorf("node not started")
+	}
+
+	timeout := InboxTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	rs := n.buildRelaySelector(nil)
+
+	return ForEachWithResult(rs, func(relay RelayInfo) (*InboxRetrievePendingResult, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
+
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return nil, fmt.Errorf("connect to relay: %w", err)
+		}
+
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return nil, fmt.Errorf("open inbox stream: %w", err)
+		}
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
+
+		req := inboxRequest{
+			Action: "retrieve_pending",
+			Limit:  50,
+		}
+
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
+
+		if err := writeFrame(s, reqBytes); err != nil {
+			return nil, fmt.Errorf("write request: %w", err)
+		}
+
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return nil, fmt.Errorf("unmarshal response: %w", err)
+		}
+
+		if resp.Status == "NO_MESSAGES" {
+			streamOK = true
+			return &InboxRetrievePendingResult{Messages: nil, HasMore: false}, nil
+		}
+
+		if resp.Status != "OK" {
+			return nil, fmt.Errorf("inbox retrieve pending failed: %s", resp.Error)
+		}
+
+		log.Printf("[INBOX] Retrieved pending %d messages (hasMore=%v, timeout=%v)",
+			len(resp.Messages), resp.HasMore, timeout)
+		streamOK = true
+		return &InboxRetrievePendingResult{Messages: resp.Messages, HasMore: resp.HasMore}, nil
+	})
+}
+
+// InboxAck deletes only the relay inbox entries whose stable entry IDs match
+// the provided slice. If timeoutMs <= 0, the default InboxTimeout is used.
+func (n *Node) InboxAck(entryIDs []string, timeoutMs int) (int, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return 0, fmt.Errorf("node not started")
+	}
+
+	timeout := InboxTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	rs := n.buildRelaySelector(nil)
+
+	return ForEachWithResult(rs, func(relay RelayInfo) (int, error) {
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		defer cancel()
+
+		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			return 0, fmt.Errorf("connect to relay: %w", err)
+		}
+
+		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		if err != nil {
+			return 0, fmt.Errorf("open inbox stream: %w", err)
+		}
+		streamOK := false
+		defer finishStream(s, &streamOK)
+		setStreamDeadline(s, timeout)
+
+		req := inboxRequest{
+			Action:   "ack",
+			EntryIds: entryIDs,
+		}
+
+		reqBytes, err := json.Marshal(req)
+		if err != nil {
+			return 0, fmt.Errorf("marshal request: %w", err)
+		}
+
+		if err := writeFrame(s, reqBytes); err != nil {
+			return 0, fmt.Errorf("write request: %w", err)
+		}
+
+		respBytes, err := readFrame(s)
+		if err != nil {
+			return 0, fmt.Errorf("read response: %w", err)
+		}
+
+		var resp inboxResponse
+		if err := json.Unmarshal(respBytes, &resp); err != nil {
+			return 0, fmt.Errorf("unmarshal response: %w", err)
+		}
+
+		if resp.Status != "OK" {
+			return 0, fmt.Errorf("inbox ack failed: %s", resp.Error)
+		}
+
+		log.Printf("[INBOX] Acked %d messages (timeout=%v)", resp.Acked, timeout)
+		streamOK = true
+		return resp.Acked, nil
 	})
 }
 

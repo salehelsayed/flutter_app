@@ -3,19 +3,22 @@ class FeedRouteChanges {
   final Set<String> changedGroupIds;
   final bool reloadAllContacts;
   final bool reloadAllGroups;
+  final bool refreshPendingIntroductions;
 
   const FeedRouteChanges({
     this.changedContactPeerIds = const <String>{},
     this.changedGroupIds = const <String>{},
     this.reloadAllContacts = false,
     this.reloadAllGroups = false,
+    this.refreshPendingIntroductions = false,
   });
 
   bool get hasChanges =>
       changedContactPeerIds.isNotEmpty ||
       changedGroupIds.isNotEmpty ||
       reloadAllContacts ||
-      reloadAllGroups;
+      reloadAllGroups ||
+      refreshPendingIntroductions;
 
   FeedRouteChanges merge(FeedRouteChanges? other) {
     if (other == null) return this;
@@ -28,6 +31,8 @@ class FeedRouteChanges {
       changedGroupIds: {...changedGroupIds, ...other.changedGroupIds},
       reloadAllContacts: reloadAllContacts || other.reloadAllContacts,
       reloadAllGroups: reloadAllGroups || other.reloadAllGroups,
+      refreshPendingIntroductions:
+          refreshPendingIntroductions || other.refreshPendingIntroductions,
     );
   }
 }

@@ -1,6 +1,6 @@
 # Roadmap Closure Audit
 
-Generated: 2026-03-29
+Generated: 2026-03-30
 
 ---
 
@@ -8,9 +8,9 @@ Generated: 2026-03-29
 
 Reconcile the `Test-Flight-Improv/` docs with the fact that execution now
 extends through Sessions `1` through `29`, later narrow session artifacts exist
-in Sessions `30`, `31`, `32`, `34`, `35`, `36`, `37`, and `44` through `47`,
-and the folder now has explicit messaging-closure reference docs for future
-maintenance.
+in Sessions `30`, `31`, `32`, `34`, `35`, `36`, `37`, `44` through `47`, and
+`54` through `56`, and the folder now has explicit messaging-closure reference
+docs plus report-scoped closure-owner artifacts for future maintenance.
 
 This file is not another backlog. It is the closure pass that explains how the folder should be read after the roadmap work is complete.
 
@@ -30,10 +30,15 @@ This file is not another backlog. It is the closure pass that explains how the f
 - `session-36-plan.md`
 - `session-37-plan.md`
 - `24-cancel-media-upload-session-breakdown.md`
+- `27-persistent-nav-bar-orbit-session-breakdown.md`
 - `session-44-plan.md`
 - `session-45-plan.md`
 - `session-46-plan.md`
 - `session-47-plan.md`
+- `27-persistent-nav-bar-orbit-session-54-plan.md`
+- `27-persistent-nav-bar-orbit-session-55-plan.md`
+- `28-orbit-intro-badge-session-breakdown.md`
+- `28-orbit-intro-badge-session-56-plan.md`
 - `18-group-discussion-reliability-audit.md`
 - `13-announcement-use-case-audit.md`
 - `10-network-measurement-strategy.md`
@@ -52,8 +57,9 @@ This file is not another backlog. It is the closure pass that explains how the f
 `00-INDEX.md` still described the work as if the quick-win list were pending.
 It also needed to reflect that the folder now contains session-plan artifacts
 through `session-29-plan.md` plus later narrow Session `30`, `31`, `32`, `34`,
-`35`, `36`, `37`, and the Report `24` closure artifacts through Session `47`,
-not just the two main roadmaps through Session `23`.
+`35`, `36`, `37`, the Report `24` closure artifacts through Session `47`, and
+the Report `27` closure artifacts through Session `55`, not just the two main
+roadmaps through Session `23`.
 
 ### 2. The report set is still useful, but now mostly as rationale
 
@@ -79,6 +85,8 @@ At this point the folder has:
 - later narrow session artifacts in Sessions `30`, `31`, `32`, `34`, `35`,
   `36`, and `37`,
 - the Report `24` breakdown plus Sessions `44` through `47`,
+- the Report `27` breakdown plus Sessions `54` and `55`,
+- the Report `28` breakdown plus Session `56`,
 - gate-definition artifacts,
 - the Session `12` CI handoff artifact,
 - and the residual group/announcement/measurement closure work from Sessions `24` through `29`.
@@ -141,6 +149,27 @@ That means the right next state is:
   closure references, the breakdown artifact, the index, and this closure
   audit, not only in the session plans.
 
+### 9. Report 27 is now historical closure work, not a live backlog
+
+- `27-persistent-nav-bar-orbit-session-breakdown.md` is the stable execution /
+  closure-owner artifact for the persistent-nav rollout.
+- `27-persistent-nav-bar-orbit-session-54-plan.md` is a historical
+  already-covered session artifact for the Feed-originated Orbit seam; it does
+  not reopen work unless a real regression appears.
+- `27-persistent-nav-bar-orbit-session-55-plan.md` is the historical execution
+  contract for the intro-notification Orbit parity and closure refresh session.
+- Their maintenance-time meaning belongs in the refreshed breakdown artifact,
+  `00-INDEX.md`, and this closure audit, not only in the plan files.
+
+### 10. Report 28 is now historical closure work, not a live backlog
+
+- `28-orbit-intro-badge-session-breakdown.md` is the stable execution /
+  closure-owner artifact for the shared Orbit intro badge rollout.
+- `28-orbit-intro-badge-session-56-plan.md` is the historical execution
+  contract for the shared Orbit intro badge and freshness-wiring session.
+- Their maintenance-time meaning belongs in the refreshed breakdown artifact,
+  `00-INDEX.md`, and this closure audit, not only in the plan file.
+
 ---
 
 ## Current Reading Order
@@ -176,16 +205,37 @@ That means the right next state is:
     `session-44-plan.md` through `session-47-plan.md` only as the historical
     execution/closure trail for Report `24`; rely on the stable closure
     references and the breakdown for maintenance-time meaning.
-13. Use `18-group-discussion-reliability-audit.md`,
+13. Use `27-persistent-nav-bar-orbit-session-breakdown.md` plus
+    `27-persistent-nav-bar-orbit-session-54-plan.md` and
+    `27-persistent-nav-bar-orbit-session-55-plan.md` only as the historical
+    execution/closure trail for Report `27`; rely on the breakdown and the
+    refreshed folder closure docs for maintenance-time meaning.
+14. Use `28-orbit-intro-badge-session-breakdown.md` plus
+    `28-orbit-intro-badge-session-56-plan.md` only as the historical
+    execution/closure trail for Report `28`; rely on the breakdown and the
+    refreshed folder closure docs for maintenance-time meaning.
+15. Use `29-batch-parallel-intro-sending-session-breakdown.md` plus
+    `29-batch-parallel-intro-sending-session-58-plan.md` and
+    `29-batch-parallel-intro-sending-session-59-plan.md` only as the
+    historical execution/closure trail for Report `29`; rely on the
+    breakdown and the refreshed folder closure docs for maintenance-time
+    meaning.
+16. Use `30-swipe-nav-feed-orbit-session-breakdown.md` plus
+    `30-swipe-nav-feed-orbit-session-59-plan.md` and
+    `30-swipe-nav-feed-orbit-session-60-plan.md` only as the historical
+    execution/closure trail for Report `30`; rely on the breakdown and the
+    direct Feed/Orbit gesture suites plus `baseline` for maintenance-time
+    meaning.
+17. Use `18-group-discussion-reliability-audit.md`,
     `13-announcement-use-case-audit.md`, and
     `10-network-measurement-strategy.md` in their updated post-execution form
     as the current rationale for those areas.
-14. Use `19-1to1-message-reliability-closure-reference.md`,
+18. Use `19-1to1-message-reliability-closure-reference.md`,
     `20-group-discussion-reliability-closure-reference.md`, and
     `21-announcement-reliability-closure-reference.md` as the maintenance-time
     stop references for messaging reliability.
-15. Use `test-gate-definitions.md` as the canonical gate-definition reference.
-16. Use `ci-gate-handoff.md` only when the real external CI / release owner
+19. Use `test-gate-definitions.md` as the canonical gate-definition reference.
+20. Use `ci-gate-handoff.md` only when the real external CI / release owner
     path still needs follow-up.
 
 ---
@@ -226,7 +276,13 @@ the narrow intro-to-Orbit / intro-to-Feed stale follow-up seam, Sessions `34`
 and `36` closed the reviewed standalone CLI-backed transport and post-verify
 proof seams, Session `37` closed the narrow 1:1 failed-send recovery coverage
 seam, Sessions `44` through `47` closed the Report `24` cancelable-upload
-rollout and refreshed the stable messaging closure refs, and Session `30`
+rollout and refreshed the stable messaging closure refs, Sessions `54` and
+`55` closed the Report `27` persistent-nav rollout and refreshed the folder
+closure docs, Session `56` closed the Report `28` shared Orbit intro badge
+truth and freshness-wiring seam and refreshed the folder closure docs, Sessions
+`58` and `59` closed the Report `29` ordered intro-batching and truthful
+picker-progress seam, the doc-scoped Sessions `59` and `60` closed the Report
+`30` shared-host plus horizontal-swipe Feed/Orbit seam, and Session `30`
 remains only a plan artifact until fresh repo evidence justifies execution.
 Future work should reopen only real residual gaps, not restart a broad cleanup
 program.

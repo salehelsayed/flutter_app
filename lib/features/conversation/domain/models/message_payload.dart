@@ -13,11 +13,16 @@ import 'conversation_message.dart';
 /// }
 /// ```
 class MessagePayload {
+  static const actionSend = 'send';
+  static const actionEdit = 'edit';
+
   final String id;
   final String text;
   final String senderPeerId;
   final String senderUsername;
   final String timestamp;
+  final String action;
+  final String? editedAt;
   final String? quotedMessageId;
   final List<Map<String, dynamic>>? media;
 
@@ -27,9 +32,13 @@ class MessagePayload {
     required this.senderPeerId,
     required this.senderUsername,
     required this.timestamp,
+    this.action = actionSend,
+    this.editedAt,
     this.quotedMessageId,
     this.media,
   });
+
+  bool get isEdit => action == actionEdit;
 
   /// Parses a JSON string into a MessagePayload, or returns null if invalid.
   ///
@@ -57,6 +66,8 @@ class MessagePayload {
         return null;
       }
 
+      final action = payload['action'] as String? ?? actionSend;
+      final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
 
       final rawMedia = payload['media'] as List<dynamic>?;
@@ -70,6 +81,8 @@ class MessagePayload {
         senderPeerId: senderPeerId,
         senderUsername: senderUsername,
         timestamp: timestamp,
+        action: action,
+        editedAt: editedAt,
         quotedMessageId: quotedMessageId,
         media: media,
       );
@@ -86,6 +99,8 @@ class MessagePayload {
       'senderPeerId': senderPeerId,
       'senderUsername': senderUsername,
       'timestamp': timestamp,
+      if (action != actionSend) 'action': action,
+      if (editedAt != null) 'editedAt': editedAt,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,
     };
@@ -162,6 +177,8 @@ class MessagePayload {
         return null;
       }
 
+      final action = payload['action'] as String? ?? actionSend;
+      final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
 
       final rawMedia = payload['media'] as List<dynamic>?;
@@ -175,6 +192,8 @@ class MessagePayload {
         senderPeerId: senderPeerId,
         senderUsername: senderUsername,
         timestamp: timestamp,
+        action: action,
+        editedAt: editedAt,
         quotedMessageId: quotedMessageId,
         media: media,
       );
@@ -193,6 +212,8 @@ class MessagePayload {
       'senderPeerId': senderPeerId,
       'senderUsername': senderUsername,
       'timestamp': timestamp,
+      if (action != actionSend) 'action': action,
+      if (editedAt != null) 'editedAt': editedAt,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,
     });
@@ -207,6 +228,8 @@ class MessagePayload {
     required String contactPeerId,
     required bool isIncoming,
     String status = 'sent',
+    String? createdAt,
+    String? editedAt,
     String? transport,
     String? wireEnvelope,
   }) {
@@ -218,7 +241,8 @@ class MessagePayload {
       timestamp: timestamp,
       status: status,
       isIncoming: isIncoming,
-      createdAt: DateTime.now().toUtc().toIso8601String(),
+      createdAt: createdAt ?? DateTime.now().toUtc().toIso8601String(),
+      editedAt: editedAt ?? this.editedAt,
       quotedMessageId: quotedMessageId,
       transport: transport,
       wireEnvelope: wireEnvelope,
