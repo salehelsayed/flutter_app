@@ -7,6 +7,8 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
+
 // ---------------------------------------------------------------------------
 // Fake Bridge
 // ---------------------------------------------------------------------------
@@ -56,7 +58,10 @@ class _FakeBridge extends Bridge {
       case 'node:status':
         return jsonEncode(statusResponse);
       case 'inbox:retrieve':
+      case 'inbox:retrieve_pending':
         return jsonEncode(inboxResponse);
+      case 'inbox:ack':
+        return jsonEncode({'ok': true, 'acked': 0});
       default:
         return jsonEncode({'ok': true});
     }
@@ -73,7 +78,10 @@ void main() {
 
   setUp(() {
     fakeBridge = _FakeBridge();
-    service = P2PServiceImpl(bridge: fakeBridge);
+    service = P2PServiceImpl(
+      bridge: fakeBridge,
+      inboxStagingRepository: InMemoryInboxStagingRepository(),
+    );
   });
 
   tearDown(() {

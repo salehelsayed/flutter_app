@@ -48,6 +48,8 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
+import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+
 // ---------------------------------------------------------------------------
 // Test-only SecureKeyStore (in-memory)
 // ---------------------------------------------------------------------------
@@ -295,7 +297,10 @@ Future<_SmokeTestStack> _setupStack() async {
   await bridge.initialize();
   print('[SMOKE] Bridge initialized');
 
-  final p2pService = P2PServiceImpl(bridge: bridge);
+  final p2pService = P2PServiceImpl(
+    bridge: bridge,
+    inboxStagingRepository: InMemoryInboxStagingRepository(),
+  );
 
   try {
     // Generate identity.

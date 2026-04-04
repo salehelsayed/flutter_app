@@ -32,24 +32,27 @@ void main() {
     );
   }
 
-  void seedIntro(String id, {
+  void seedIntro(
+    String id, {
     IntroductionStatus recipientStatus = IntroductionStatus.pending,
     IntroductionStatus introducedStatus = IntroductionStatus.pending,
     IntroductionOverallStatus overallStatus = IntroductionOverallStatus.pending,
   }) {
-    introRepo.saveIntroduction(IntroductionModel(
-      id: id,
-      introducerId: 'peer-A',
-      recipientId: 'peer-B',
-      introducedId: 'peer-C',
-      introducerUsername: 'Alice',
-      recipientUsername: 'Bob',
-      introducedUsername: 'Charlie',
-      createdAt: now,
-      recipientStatus: recipientStatus,
-      introducedStatus: introducedStatus,
-      status: overallStatus,
-    ));
+    introRepo.saveIntroduction(
+      IntroductionModel(
+        id: id,
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        createdAt: now,
+        recipientStatus: recipientStatus,
+        introducedStatus: introducedStatus,
+        status: overallStatus,
+      ),
+    );
   }
 
   setUp(() {
@@ -178,43 +181,45 @@ void main() {
       expect(model!.status, IntroductionOverallStatus.mutualAccepted);
     });
 
-    test('concurrent acceptance: only one status update (idempotency)',
-        () async {
-      seedIntro('i1');
+    test(
+      'concurrent acceptance: only one status update (idempotency)',
+      () async {
+        seedIntro('i1');
 
-      // Both accept nearly simultaneously
-      final resultB = await acceptIntroduction(
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        introductionId: 'i1',
-        ownPeerId: 'peer-B',
-        ownUsername: 'Bob',
-      );
-
-      // Simulate C's accept arriving
-      final (_, modelC) = await handleIncomingIntroduction(
-        payload: IntroductionPayload(
-          action: 'accept',
+        // Both accept nearly simultaneously
+        final resultB = await acceptIntroduction(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
           introductionId: 'i1',
-          responderId: 'peer-C',
-          responderUsername: 'Charlie',
-          timestamp: now,
-        ),
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        ownPeerId: 'peer-B',
-      );
+          ownPeerId: 'peer-B',
+          ownUsername: 'Bob',
+        );
 
-      // Final state is mutualAccepted
-      expect(modelC!.status, IntroductionOverallStatus.mutualAccepted);
-      expect(modelC.recipientStatus, IntroductionStatus.accepted);
-      expect(modelC.introducedStatus, IntroductionStatus.accepted);
+        // Simulate C's accept arriving
+        final (_, modelC) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'accept',
+            introductionId: 'i1',
+            responderId: 'peer-C',
+            responderUsername: 'Charlie',
+            timestamp: now,
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+        );
 
-      // B's intermediate state was pending (only one side)
-      expect(resultB!.recipientStatus, IntroductionStatus.accepted);
-    });
+        // Final state is mutualAccepted
+        expect(modelC!.status, IntroductionOverallStatus.mutualAccepted);
+        expect(modelC.recipientStatus, IntroductionStatus.accepted);
+        expect(modelC.introducedStatus, IntroductionStatus.accepted);
+
+        // B's intermediate state was pending (only one side)
+        expect(resultB!.recipientStatus, IntroductionStatus.accepted);
+      },
+    );
 
     test('accept sends notification to introducer', () async {
       seedIntro('i1');
@@ -230,8 +235,9 @@ void main() {
         ownUsername: 'Bob',
       );
 
-      // Should send to introducer (peer-A) and other party (peer-C)
-      expect(network.deliverCallCount, 2);
+      // With no online recipients, both notifications should fall back to inbox.
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 2);
     });
 
     test('accept sends notification to other party', () async {
@@ -255,8 +261,10 @@ void main() {
         ownUsername: 'Bob',
       );
 
-      // Both introducer and other party received messages
-      expect(network.deliverCallCount, 2);
+      // Introducer is offline so their notification lands in inbox, while the
+      // other party is online and receives the live update.
+      expect(network.deliverCallCount, 1);
+      expect(network.storeInInboxCallCount, 1);
 
       p2pC.dispose();
     });
@@ -281,8 +289,7 @@ void main() {
       expect(status, IntroductionOverallStatus.pending);
     });
 
-    test('deriveStatus with one passed returns passed regardless of other',
-        () {
+    test('deriveStatus with one passed returns passed regardless of other', () {
       final status1 = IntroductionModel.deriveStatus(
         recipientStatus: IntroductionStatus.accepted,
         introducedStatus: IntroductionStatus.passed,
@@ -298,65 +305,69 @@ void main() {
       expect(status2, IntroductionOverallStatus.passed);
     });
 
-    test('multiple intros: only matching pair reaches mutualAccepted',
-        () async {
-      // B↔C intro
-      seedIntro('i1');
-      // B↔D intro
-      await introRepo.saveIntroduction(IntroductionModel(
-        id: 'i2',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-D',
-        introducerUsername: 'Alice',
-        recipientUsername: 'Bob',
-        introducedUsername: 'Dana',
-        createdAt: now,
-      ));
-      contactRepo.addTestContact(_makeContact('peer-D', 'Dana'));
+    test(
+      'multiple intros: only matching pair reaches mutualAccepted',
+      () async {
+        // B↔C intro
+        seedIntro('i1');
+        // B↔D intro
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'i2',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-D',
+            introducerUsername: 'Alice',
+            recipientUsername: 'Bob',
+            introducedUsername: 'Dana',
+            createdAt: now,
+          ),
+        );
+        contactRepo.addTestContact(_makeContact('peer-D', 'Dana'));
 
-      // B accepts both
-      await acceptIntroduction(
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        introductionId: 'i1',
-        ownPeerId: 'peer-B',
-        ownUsername: 'Bob',
-      );
-      await acceptIntroduction(
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-        introductionId: 'i2',
-        ownPeerId: 'peer-B',
-        ownUsername: 'Bob',
-      );
-
-      // Only C accepts back (via handleIncoming)
-      await handleIncomingIntroduction(
-        payload: IntroductionPayload(
-          action: 'accept',
+        // B accepts both
+        await acceptIntroduction(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
           introductionId: 'i1',
-          responderId: 'peer-C',
-          responderUsername: 'Charlie',
-          timestamp: now,
-        ),
-        introRepo: introRepo,
-        contactRepo: contactRepo,
-        ownPeerId: 'peer-B',
-      );
+          ownPeerId: 'peer-B',
+          ownUsername: 'Bob',
+        );
+        await acceptIntroduction(
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          introductionId: 'i2',
+          ownPeerId: 'peer-B',
+          ownUsername: 'Bob',
+        );
 
-      // i1 should be mutualAccepted, i2 should still be pending
-      final intro1 = await introRepo.getIntroduction('i1');
-      final intro2 = await introRepo.getIntroduction('i2');
-      expect(intro1!.status, IntroductionOverallStatus.mutualAccepted);
-      expect(intro2!.status, IntroductionOverallStatus.pending);
-    });
+        // Only C accepts back (via handleIncoming)
+        await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'accept',
+            introductionId: 'i1',
+            responderId: 'peer-C',
+            responderUsername: 'Charlie',
+            timestamp: now,
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+        );
 
-    test('handleIncoming returns error for non-existent intro', () async {
+        // i1 should be mutualAccepted, i2 should still be pending
+        final intro1 = await introRepo.getIntroduction('i1');
+        final intro2 = await introRepo.getIntroduction('i2');
+        expect(intro1!.status, IntroductionOverallStatus.mutualAccepted);
+        expect(intro2!.status, IntroductionOverallStatus.pending);
+      },
+    );
+
+    test('handleIncoming defers response for non-existent intro', () async {
       final (result, model) = await handleIncomingIntroduction(
         payload: IntroductionPayload(
           action: 'accept',
@@ -369,8 +380,12 @@ void main() {
         ownPeerId: 'peer-B',
       );
 
-      expect(result, HandleIntroductionResult.error);
+      expect(result, HandleIntroductionResult.deferred);
       expect(model, isNull);
+      expect(
+        await introRepo.loadPendingResponses('non-existent'),
+        hasLength(1),
+      );
     });
 
     test('pass use case sets overall status to passed', () async {
@@ -404,7 +419,8 @@ void main() {
         ownUsername: 'Bob',
       );
 
-      expect(network.deliverCallCount, 2);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 2);
     });
 
     test('accept after pass still results in passed', () async {

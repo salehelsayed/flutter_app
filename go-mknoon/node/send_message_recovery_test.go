@@ -165,6 +165,60 @@ func TestSendMessage_RetriesNoAddressesOpenErrorAfterSelfHeal(t *testing.T) {
 	}
 }
 
+func TestSendMessage_ReturnsUnackedWhenReceiverDoesNotConfirmDirectChat(t *testing.T) {
+	nodeA := NewNode()
+	_, err := nodeA.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("nodeA Start: %v", err)
+	}
+	defer nodeA.Stop()
+
+	receiverEvents := &testEventCollector{}
+	nodeB := New(receiverEvents)
+	stateB, err := nodeB.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("nodeB Start: %v", err)
+	}
+	defer nodeB.Stop()
+	nodeB.directConfirmTimeoutOverride = 50 * time.Millisecond
+
+	var nodeBAddrStrs []string
+	for _, addr := range nodeB.Host().Addrs() {
+		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
+	}
+
+	if err := nodeA.DialPeer(stateB.PeerId, nodeBAddrStrs); err != nil {
+		t.Fatalf("DialPeer: %v", err)
+	}
+
+	envelope := `{"type":"chat_message","version":"1","payload":{"id":"msg-no-confirm","text":"phase5 no confirm","senderPeerId":"sender-peer","senderUsername":"Alice","timestamp":"2026-04-03T00:00:00Z"}}`
+
+	reply, acked, err := nodeA.SendMessage(stateB.PeerId, envelope, 500)
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	if acked {
+		t.Fatal("expected SendMessage to stay unacked when receiver never confirms")
+	}
+	if reply != "" {
+		t.Fatalf("expected empty reply on unacked send, got %q", reply)
+	}
+
+	data := waitForCollectedEvent(t, receiverEvents, "message:received", time.Second)
+	nonce, _ := data["confirmNonce"].(string)
+	if nonce == "" {
+		t.Fatal("expected deferred direct ACK path to emit a confirmNonce")
+	}
+}
+
 func TestSendMessage_DoesNotSelfHealNonRetryableOpenErrors(t *testing.T) {
 	nodeA := NewNode()
 	_, err := nodeA.Start(NodeConfig{

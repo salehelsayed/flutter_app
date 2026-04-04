@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../../core/services/p2p_service.dart';
@@ -16,11 +18,21 @@ enum ConnectionHealth {
 }
 
 /// Derives [ConnectionHealth] from a [NodeState].
+///
+/// Considers both [relayState] and [circuitAddresses] — if either indicates
+/// the relay is healthy, the node is online.  This avoids "Connecting" flashes
+/// during the brief window where one signal arrives before the other.
 ConnectionHealth healthFromState(NodeState state) {
   if (!state.isStarted) return ConnectionHealth.offline;
-  if (state.circuitAddresses.isNotEmpty) return ConnectionHealth.online;
+  if (state.relayState == 'online' || state.circuitAddresses.isNotEmpty) {
+    return ConnectionHealth.online;
+  }
   return ConnectionHealth.degraded;
 }
+
+/// How long we stay "Online" before visually downgrading to "Connecting".
+/// Absorbs transient relay churn (address rotation, reconnect cycles).
+const _downgradeDelay = Duration(seconds: 3);
 
 /// A compact indicator showing the P2P connection status.
 ///
@@ -28,7 +40,10 @@ ConnectionHealth healthFromState(NodeState state) {
 /// - "Online" (green) — node started with circuit relay
 /// - "Connecting" (amber) — node started but no relay yet
 /// - "Offline" (grey) — node not started
-class ConnectionStatusIndicator extends StatelessWidget {
+///
+/// Downgrades from Online → Connecting are delayed by [_downgradeDelay]
+/// so that brief relay reconnections are invisible to the user.
+class ConnectionStatusIndicator extends StatefulWidget {
   final P2PService p2pService;
 
   const ConnectionStatusIndicator({
@@ -37,78 +52,152 @@ class ConnectionStatusIndicator extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<NodeState>(
-      stream: p2pService.stateStream,
-      initialData: p2pService.currentState,
-      builder: (context, snapshot) {
-        final state = snapshot.data ?? NodeState.stopped;
-        final health = healthFromState(state);
-        final connectionCount = state.connections.length;
+  State<ConnectionStatusIndicator> createState() =>
+      _ConnectionStatusIndicatorState();
+}
 
-        final Color baseColor;
-        final Color textColor;
-        final String label;
+class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
+  late ConnectionHealth _displayedHealth;
+  late int _connectionCount;
+  StreamSubscription<NodeState>? _sub;
+  Timer? _downgradeTimer;
 
-        switch (health) {
-          case ConnectionHealth.online:
-            baseColor = Colors.green;
-            textColor = Colors.green[300]!;
-            label = 'Online';
-          case ConnectionHealth.degraded:
-            baseColor = Colors.amber;
-            textColor = Colors.amber[300]!;
-            label = 'Connecting';
-          case ConnectionHealth.offline:
-            baseColor = Colors.grey;
-            textColor = Colors.grey[400]!;
-            label = 'Offline';
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.p2pService.currentState;
+    _displayedHealth = healthFromState(initial);
+    _connectionCount = initial.connections.length;
+
+    _sub = widget.p2pService.stateStream.listen(_onState);
+  }
+
+  void _onState(NodeState state) {
+    final incoming = healthFromState(state);
+    final count = state.connections.length;
+
+    if (incoming == _displayedHealth) {
+      // Health unchanged — just update connection count if needed.
+      _downgradeTimer?.cancel();
+      _downgradeTimer = null;
+      if (count != _connectionCount) {
+        setState(() => _connectionCount = count);
+      }
+      return;
+    }
+
+    // Upgrade (to online): apply immediately.
+    if (incoming == ConnectionHealth.online) {
+      _downgradeTimer?.cancel();
+      _downgradeTimer = null;
+      setState(() {
+        _displayedHealth = incoming;
+        _connectionCount = count;
+      });
+      return;
+    }
+
+    // Downgrade from online → degraded: delay so transient relay churn
+    // is invisible.  If we're already degraded/offline, apply immediately.
+    if (_displayedHealth == ConnectionHealth.online &&
+        incoming == ConnectionHealth.degraded) {
+      _downgradeTimer ??= Timer(_downgradeDelay, () {
+        _downgradeTimer = null;
+        if (mounted) {
+          setState(() {
+            _displayedHealth = incoming;
+            _connectionCount = count;
+          });
         }
+      });
+      return;
+    }
 
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: baseColor.withValues(alpha: 0.2),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: baseColor.withValues(alpha: 0.4),
-              width: 1,
+    // All other transitions (e.g. degraded → offline, online → offline):
+    // apply immediately.
+    _downgradeTimer?.cancel();
+    _downgradeTimer = null;
+    setState(() {
+      _displayedHealth = incoming;
+      _connectionCount = count;
+    });
+  }
+
+  @override
+  void dispose() {
+    _downgradeTimer?.cancel();
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final health = _displayedHealth;
+    final connectionCount = _connectionCount;
+
+    final Color baseColor;
+    final Color textColor;
+    final String label;
+
+    switch (health) {
+      case ConnectionHealth.online:
+        baseColor = Colors.green;
+        textColor = Colors.green[300]!;
+        label = 'Online';
+      case ConnectionHealth.degraded:
+        baseColor = Colors.amber;
+        textColor = Colors.amber[300]!;
+        label = 'Connecting';
+      case ConnectionHealth.offline:
+        baseColor = Colors.grey;
+        textColor = Colors.grey[400]!;
+        label = 'Offline';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: baseColor.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: baseColor.withValues(alpha: 0.4),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: baseColor,
+              shape: BoxShape.circle,
             ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: baseColor,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (kDebugMode && health == ConnectionHealth.online && connectionCount > 0) ...[
-                const SizedBox(width: 4),
-                Text(
-                  '($connectionCount)',
-                  style: TextStyle(
-                    color: Colors.green[300]?.withValues(alpha: 0.7),
-                    fontSize: 11,
-                  ),
-                ),
-              ],
-            ],
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
           ),
-        );
-      },
+          if (kDebugMode &&
+              health == ConnectionHealth.online &&
+              connectionCount > 0) ...[
+            const SizedBox(width: 4),
+            Text(
+              '($connectionCount)',
+              style: TextStyle(
+                color: Colors.green[300]?.withValues(alpha: 0.7),
+                fontSize: 11,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

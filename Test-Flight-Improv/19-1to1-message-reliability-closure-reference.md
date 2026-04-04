@@ -11,15 +11,21 @@ The current 1:1 system should be treated as **reliably closed for core messaging
 1. sender-side text/media/voice sends persist enough local state before risky network edges,
 2. interruption and retry paths can recover `sending`, failed, incomplete-upload, and unacked states,
 3. offline delivery can fall back to relay inbox, fetched inbox rows stage
-   durably before ack/delete, and notification-open recovery can surface them
-   through the shared prepare-before-route contract,
+   durably before ack/delete, automatic warm-start/resume/drain paths stay on
+   the staged `retrieve_pending` contract instead of falling back to
+   destructive `inbox:retrieve`, and notification-open recovery can surface
+   them through the shared prepare-before-route contract,
 4. receive-side decrypt, dedup, exact staged-envelope reject handling, and
    media-download behavior remain operationally safe,
 5. message statuses stay honest delivery statuses, not fake read receipts,
 6. new outgoing and incoming 1:1 rows on Go/libp2p paths keep honest
    transport semantics: actual `direct` vs `relay` from stream truth when the
    bridge provides it, explicit `wifi`, `local`, and `inbox` semantics stay
-   unchanged, and legacy `reuse` remains an explicit old-row fallback only.
+   unchanged, and legacy `reuse` remains an explicit old-row fallback only,
+7. direct incoming Go/libp2p 1:1 chat ACKs are emitted only after Flutter
+   reaches a receiver-side terminal disposition for that message nonce, while
+   no-confirm or retryable receive outcomes stay unacked so sender-side inbox
+   fallback or retry can remain truthful.
 
 This is the closure bar for correctness and trust. It is **not** a promise that every product feature a modern chat app could have is implemented.
 
@@ -61,6 +67,13 @@ Together these give 1:1 a real auto-heal path on resume, online transition, and 
 - Relay-backed inbox recovery now uses staged `retrieve_pending` plus explicit
   `ack`, with a durable local staging table so fetched inbox rows survive
   restart/resume until they are committed or exactly rejected.
+- Automatic warm start, resume, and explicit `drainOfflineInbox()` now stay on
+  the durable stage-then-ack path; `retrieve_pending` exception or `ok != true`
+  returns safe no-progress instead of switching to destructive
+  `inbox:retrieve`.
+- Mixed valid-plus-malformed pending pages now still stage and replay valid
+  entries while skipped malformed rows emit explicit telemetry instead of
+  dropping the whole page back to destructive retrieve.
 - Notification-opened 1:1 routes now prepare inbox catch-up before navigation
   across terminated remote, warm remote, terminated local, and warm local app
   entry points instead of letting some app-root handlers route immediately.
@@ -72,12 +85,23 @@ Together these give 1:1 a real auto-heal path on resume, online transition, and 
   `missingMlKemSecret`, `duplicate`, `editMissingOriginal`, and other
   permanent-vs-retryable branches instead of disappearing as unclassified
   loss.
+- Direct incoming Go-backed 1:1 `chat_message` envelopes now carry a
+  confirmation nonce through the bridge, and `chat_message_listener.dart`
+  resolves that nonce exactly once from the receiver-side terminal branch.
+- Stored, duplicate, and accepted-drop branches such as `blockedSender` can
+  confirm the nonce and allow a direct ACK; retryable or unresolved branches
+  such as `missingMlKemSecret`, `decryptionFailed`, `unknownSender`,
+  `editMissingOriginal`, listener loss, or timeout do not confirm, so the
+  sender stays unacked instead of seeing false direct delivery.
 - `download_media_use_case.dart` now deduplicates overlapping downloads through an in-flight guard.
 - Incoming media metadata and receive-side download behavior are already part of the normal path, not an unimplemented future system.
 
 ### 5. Honest status and transport semantics
 
 - `delivered` means transport ACK or inbox-backed delivery, not "the other user read it."
+- On Go/libp2p direct 1:1 chat sends, a raw frame read is no longer enough to
+  count as transport ACK. `delivered` now requires either receiver-side nonce
+  confirmation for the direct path or the existing inbox-backed delivery path.
 - `markConversationRead` remains local unread-state management, not a sender-visible read-receipt protocol.
 - New outgoing Go/libp2p 1:1 sends now persist actual stream-truth `direct`
   vs `relay`, including the already-connected fast path, direct discover/send,
@@ -189,6 +213,12 @@ Those may be useful product features, but their absence does not mean 1:1 messag
 - `P2PServiceImpl._inferTransportForPeer` remains where it is as a compatibility
   fallback for older untagged bridge payloads; Sessions 31 and 32 did not
   broaden into transport-API cleanup.
+- Non-chat direct messages remain on the accepted lighter confirmation model;
+  the deferred direct-ack contract in Report `46` is intentionally scoped to
+  incoming 1:1 `chat_message` envelopes.
+- Report `48` intentionally removed only the automatic inbox-drain fallback
+  path; the public `retrieveInbox()` API remains out of scope until a separate
+  caller/cleanup decision justifies changing it.
 - No DB migration backfills old rows already stored as `transport: 'reuse'`.
 - Sessions 34 and 36 did not make the named transport gate invoke the
   standalone CLI orchestrator automatically. The direct
@@ -218,7 +248,9 @@ Reopen this area only if one of these happens:
 
 1. a new or changed send surface bypasses the durable pre-persist contract,
 2. text/media/voice can be lost or stranded after pause, crash, lock, resume, or temporary network failure,
-3. offline inbox fallback stops behaving like a real delivery path,
+3. offline inbox fallback stops behaving like a real delivery path, or
+   automatic inbox drain regresses from durable `retrieve_pending` back to
+   destructive `inbox:retrieve`,
 4. shared retry/recovery sequencing regresses,
 5. decrypt failure handling or media-download dedup regresses,
 6. new outgoing or incoming 1:1 rows on shared Go/libp2p paths regress back to
@@ -243,6 +275,10 @@ Reopen this area only if one of these happens:
 12. notification-opened 1:1 routes can again navigate before staged inbox
    recovery or exact post-fetch disposition handling makes the pending message
    visible or diagnosable.
+13. direct Go/libp2p 1:1 chat ACK can again happen before the receiver reaches
+    a terminal nonce-confirmed disposition, or an unacked direct send stops
+    truthfully handing off to inbox-backed delivery when that fallback is
+    available.
 
 Do **not** reopen 1:1 reliability just because a missing product feature was noticed.
 
@@ -258,6 +294,9 @@ When touching shared 1:1 reliability code:
 4. run `./scripts/run_test_gates.sh feed` if the feed can still enter the changed 1:1 send path,
 5. run `./scripts/run_test_gates.sh baseline` when Flutter production code changes,
 6. run `./scripts/run_test_gates.sh transport` only when bootstrap, resume, reconnect, inbox-drain, or transport fallback wiring changes.
+7. when the shared direct-ack seam changes, include one sender-side no-confirm
+   proof plus one sender inbox-handoff proof so the repo does not regress back
+   to false direct `delivered`.
 
 For shared 1:1 inbox-recovery / notification-open trust seams, the direct
 proof should keep covering:
@@ -265,6 +304,11 @@ proof should keep covering:
 - staged relay fetch -> durable local record -> later `ack` ordering
 - restart/resume replay of staged inbox rows that were fetched earlier but not
   yet committed
+- automatic warm start, resume, and explicit `drainOfflineInbox()` staying on
+  `retrieve_pending` -> stage -> `ack` without any automatic
+  `inbox:retrieve` fallback on exception or `ok != true`
+- mixed valid-plus-malformed `retrieve_pending` pages still staging/replaying
+  valid rows while skipped malformed rows are logged and not acked
 - exact staged-envelope reject outcomes for retryable vs permanent drops
 - prepare-before-route sequencing on terminated remote, warm remote,
   terminated local, and warm local notification-open entry points
@@ -328,7 +372,7 @@ Use `Test-Flight-Improv/test-gate-definitions.md` as the execution source of tru
 The current repo already supports **trustworthy 1:1 text/media/voice messaging**. Future work should preserve:
 
 - durable pre-persist send behavior,
-- inbox-backed fallback,
+- durable inbox-backed fallback and automatic drain,
 - automatic retry/recovery,
 - receive-path operability,
 - honest status and transport semantics for new rows,

@@ -1,9 +1,9 @@
-import 'dart:io' show Platform;
-
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 
@@ -48,9 +48,17 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     details: {
       'messageId': message.messageId,
       'dataKeys': message.data.keys.toList(),
-      'note': 'local notification shown if routable; inbox drain on next resume',
+      'note':
+          'local notification shown if routable; inbox drain on next resume',
     },
   );
+
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  );
+  if (routeTarget != null) {
+    await recentRemoteNotificationGate.markPayload(routeTarget.toPayload());
+  }
 
   if (!shouldShowBackgroundPushFallbackNotification(message)) {
     return;

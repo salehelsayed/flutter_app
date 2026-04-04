@@ -1,5 +1,6 @@
 enum NotificationRouteTargetKind {
   conversation,
+  contactRequest,
   group,
   intros,
   post,
@@ -24,6 +25,9 @@ class NotificationRouteTarget {
   const NotificationRouteTarget.conversation(String peerId)
     : this._(kind: NotificationRouteTargetKind.conversation, peerId: peerId);
 
+  const NotificationRouteTarget.contactRequest(String peerId)
+    : this._(kind: NotificationRouteTargetKind.contactRequest, peerId: peerId);
+
   const NotificationRouteTarget.group(String groupId)
     : this._(kind: NotificationRouteTargetKind.group, groupId: groupId);
 
@@ -45,6 +49,8 @@ class NotificationRouteTarget {
   String toPayload() {
     return switch (kind) {
       NotificationRouteTargetKind.conversation => peerId ?? '',
+      NotificationRouteTargetKind.contactRequest =>
+        'contact_request:${peerId ?? ''}',
       NotificationRouteTargetKind.group => 'group:${groupId ?? ''}',
       NotificationRouteTargetKind.intros => 'intros',
       NotificationRouteTargetKind.post => 'post:${postId ?? ''}',
@@ -60,6 +66,12 @@ class NotificationRouteTarget {
     }
     if (payload == 'intros') {
       return const NotificationRouteTarget.intros();
+    }
+    if (payload.startsWith('contact_request:')) {
+      final peerId = payload.substring('contact_request:'.length).trim();
+      return peerId.isEmpty
+          ? null
+          : NotificationRouteTarget.contactRequest(peerId);
     }
     if (payload.startsWith('group:')) {
       final groupId = payload.substring('group:'.length).trim();
@@ -95,11 +107,22 @@ class NotificationRouteTarget {
     switch (type) {
       case 'new_message':
         // The relay sends "sender_id"; older relay versions sent "from".
-        final peerId = _trimToNull(data['sender_id']?.toString())
-            ?? _trimToNull(data['from']?.toString());
+        final peerId =
+            _trimToNull(data['sender_id']?.toString()) ??
+            _trimToNull(data['from']?.toString());
         return peerId == null
             ? null
             : NotificationRouteTarget.conversation(peerId);
+      case 'contact_request':
+        final peerId =
+            _trimToNull(data['sender_id']?.toString()) ??
+            _trimToNull(data['peer_id']?.toString()) ??
+            _trimToNull(data['peerId']?.toString()) ??
+            _trimToNull(data['from']?.toString()) ??
+            _trimToNull(data['ns']?.toString());
+        return peerId == null
+            ? null
+            : NotificationRouteTarget.contactRequest(peerId);
       case 'group_message':
         final groupId = _trimToNull(data['groupId']?.toString());
         return groupId == null ? null : NotificationRouteTarget.group(groupId);

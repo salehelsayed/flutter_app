@@ -6,6 +6,7 @@ class ChatMessage {
   final String timestamp;
   final bool isIncoming;
   final String? transport;
+  final String? confirmNonce;
 
   const ChatMessage({
     required this.from,
@@ -14,6 +15,7 @@ class ChatMessage {
     required this.timestamp,
     required this.isIncoming,
     this.transport,
+    this.confirmNonce,
   });
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
@@ -37,6 +39,7 @@ class ChatMessage {
       timestamp: timestamp,
       isIncoming: json['isIncoming'] as bool? ?? true,
       transport: json['transport']?.toString(),
+      confirmNonce: json['confirmNonce']?.toString(),
     );
   }
 
@@ -47,6 +50,7 @@ class ChatMessage {
       'content': content,
       'timestamp': timestamp,
       'isIncoming': isIncoming,
+      if (confirmNonce != null) 'confirmNonce': confirmNonce,
     };
   }
 
@@ -57,6 +61,7 @@ class ChatMessage {
     String? timestamp,
     bool? isIncoming,
     String? transport,
+    String? confirmNonce,
   }) {
     return ChatMessage(
       from: from ?? this.from,
@@ -65,6 +70,7 @@ class ChatMessage {
       timestamp: timestamp ?? this.timestamp,
       isIncoming: isIncoming ?? this.isIncoming,
       transport: transport ?? this.transport,
+      confirmNonce: confirmNonce ?? this.confirmNonce,
     );
   }
 

@@ -853,6 +853,33 @@ void main() {
         v2Listener.dispose();
       },
     );
+
+    test(
+      'suppresses requestStream emission when presentation is delegated',
+      () async {
+        final suppressedListener = ContactRequestListener(
+          contactRequestStream: streamController.stream,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnPeerId: () => _testOwnPeerId,
+          shouldSuppressPresentationForPeerId: (peerId) =>
+              peerId == _testPeerId,
+        );
+        suppressedListener.start();
+
+        final requests = <ContactRequestModel>[];
+        suppressedListener.requestStream.listen(requests.add);
+
+        streamController.add(_makeContactRequestMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(requests, isEmpty);
+        expect(requestRepo.lastAdded?.peerId, _testPeerId);
+
+        suppressedListener.dispose();
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

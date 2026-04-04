@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart'
+    as group_react;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -26,8 +30,10 @@ class GroupTestUser {
   final InMemoryGroupMessageRepository msgRepo;
   final InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   final GroupMessageListener groupMessageListener;
+  final ReactionRepository? reactionRepo;
   final FakeGroupPubSubNetwork _network;
   final StreamController<Map<String, dynamic>> _incomingController;
+  final StreamController<Map<String, dynamic>> _incomingReactionController;
 
   GroupTestUser._({
     required this.peerId,
@@ -39,22 +45,27 @@ class GroupTestUser {
     required this.msgRepo,
     required this.mediaAttachmentRepo,
     required this.groupMessageListener,
+    required this.reactionRepo,
     required FakeGroupPubSubNetwork network,
     required StreamController<Map<String, dynamic>> incomingController,
+    required StreamController<Map<String, dynamic>> incomingReactionController,
   }) : _network = network,
-       _incomingController = incomingController;
+       _incomingController = incomingController,
+       _incomingReactionController = incomingReactionController;
 
   factory GroupTestUser.create({
     required String peerId,
     required String username,
     required FakeGroupPubSubNetwork network,
     FakeBridge? bridge,
+    ReactionRepository? reactionRepo,
   }) {
     final effectiveBridge = bridge ?? FakeBridge();
     final groupRepo = InMemoryGroupRepository();
     final msgRepo = InMemoryGroupMessageRepository();
     final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     final controller = network.registerPeer(peerId);
+    final reactionController = network.registerReactionPeer(peerId);
 
     final listener = GroupMessageListener(
       groupRepo: groupRepo,
@@ -62,6 +73,7 @@ class GroupTestUser {
       bridge: effectiveBridge,
       getSelfPeerId: () async => peerId,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      reactionRepo: reactionRepo,
     );
 
     return GroupTestUser._(
@@ -74,8 +86,10 @@ class GroupTestUser {
       msgRepo: msgRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
       groupMessageListener: listener,
+      reactionRepo: reactionRepo,
       network: network,
       incomingController: controller,
+      incomingReactionController: reactionController,
     );
   }
 
@@ -83,7 +97,10 @@ class GroupTestUser {
 
   /// Starts the listener (subscribes to the incoming stream from FakeGroupPubSubNetwork).
   void start() {
-    groupMessageListener.start(_incomingController.stream);
+    groupMessageListener.start(
+      _incomingController.stream,
+      incomingGroupReactions: _incomingReactionController.stream,
+    );
   }
 
   /// Creates a group: saves to local repo, subscribes on network, returns the group.
@@ -277,6 +294,72 @@ class GroupTestUser {
         bridge.responses.remove('group:publish');
       } else {
         bridge.responses['group:publish'] = previousPublishResponse;
+      }
+    }
+  }
+
+  /// Sends through the real bridge-backed reaction use case and mirrors
+  /// successful live publish delivery into the fake pubsub reaction stream.
+  Future<(group_react.SendGroupReactionResult, MessageReaction?)>
+  sendGroupReactionViaBridge({
+    required String groupId,
+    required String messageId,
+    required String emoji,
+  }) async {
+    final repo = reactionRepo;
+    if (repo == null) {
+      throw StateError('sendGroupReactionViaBridge requires a reactionRepo');
+    }
+
+    final previousPublishResponse = bridge.responses['group:publishReaction'];
+    bridge.responses['group:publishReaction'] = {'ok': true};
+    try {
+      final (result, reaction) = await group_react.sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: repo,
+        groupId: groupId,
+        messageId: messageId,
+        emoji: emoji,
+        senderPeerId: peerId,
+        senderPublicKey: publicKey,
+        senderPrivateKey: privateKey,
+      );
+
+      if (result == group_react.SendGroupReactionResult.success &&
+          reaction != null) {
+        final publishRaw = bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publishReaction',
+        );
+        final publishPayload =
+            (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+
+        await _network.publishReaction(groupId, peerId, {
+          'groupId': groupId,
+          'senderId': peerId,
+          'reaction':
+              publishPayload['reactionPayload'] as String? ??
+              jsonEncode({
+                'id': reaction.id,
+                'messageId': reaction.messageId,
+                'emoji': reaction.emoji,
+                'action': 'add',
+                'senderPeerId': reaction.senderPeerId,
+                'timestamp': reaction.timestamp,
+              }),
+        });
+      }
+
+      return (result, reaction);
+    } finally {
+      if (previousPublishResponse == null) {
+        bridge.responses.remove('group:publishReaction');
+      } else {
+        bridge.responses['group:publishReaction'] = previousPublishResponse;
       }
     }
   }

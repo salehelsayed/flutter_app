@@ -61,6 +61,7 @@ class GoBridgeClient extends Bridge {
     'peer:disconnect': _CmdSpec('disconnectPeer', true),
     // Messaging
     'message:send': _CmdSpec('sendMessage', true),
+    'message:confirm': _CmdSpec('confirmDirectMessage', true),
     // Inbox
     'inbox:store': _CmdSpec('inboxStore', true),
     'inbox:retrieve': _CmdSpec('inboxRetrieve', true),

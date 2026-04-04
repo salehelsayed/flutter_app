@@ -15,6 +15,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -708,6 +709,236 @@ void main() {
       await bobSub.cancel();
       await aliceSub.cancel();
     });
+
+    test(
+      'Rapid five-round burst preserves delivered state and full order for both users',
+      () async {
+        final aliceIncoming = <ConversationMessage>[];
+        final bobIncoming = <ConversationMessage>[];
+
+        final aliceSub = alice.chatListener.incomingMessageStream.listen(
+          aliceIncoming.add,
+        );
+        final bobSub = bob.chatListener.incomingMessageStream.listen(
+          bobIncoming.add,
+        );
+
+        for (var round = 1; round <= 5; round++) {
+          final aliceText = 'Alice burst $round';
+          final bobText = 'Bob burst $round';
+
+          final (aliceResult, aliceSent) = await alice.sendMessage(
+            bob.peerId,
+            aliceText,
+          );
+          expect(aliceResult, SendChatMessageResult.success);
+          expect(aliceSent, isNotNull);
+          expect(aliceSent!.status, 'delivered');
+
+          final (bobResult, bobSent) = await bob.sendMessage(
+            alice.peerId,
+            bobText,
+          );
+          expect(bobResult, SendChatMessageResult.success);
+          expect(bobSent, isNotNull);
+          expect(bobSent!.status, 'delivered');
+        }
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(
+          bobIncoming.map((message) => message.text).toList(),
+          List<String>.generate(5, (index) => 'Alice burst ${index + 1}'),
+        );
+        expect(
+          aliceIncoming.map((message) => message.text).toList(),
+          List<String>.generate(5, (index) => 'Bob burst ${index + 1}'),
+        );
+
+        final aliceConversation = await alice.loadConversation(bob.peerId);
+        final bobConversation = await bob.loadConversation(alice.peerId);
+
+        expect(aliceConversation, hasLength(10));
+        expect(bobConversation, hasLength(10));
+        expect(
+          aliceConversation.every((message) => message.status == 'delivered'),
+          isTrue,
+        );
+        expect(
+          bobConversation.every((message) => message.status == 'delivered'),
+          isTrue,
+        );
+
+        for (var round = 0; round < 5; round++) {
+          final baseIndex = round * 2;
+          expect(aliceConversation[baseIndex].text, 'Alice burst ${round + 1}');
+          expect(aliceConversation[baseIndex].isIncoming, isFalse);
+          expect(
+            aliceConversation[baseIndex + 1].text,
+            'Bob burst ${round + 1}',
+          );
+          expect(aliceConversation[baseIndex + 1].isIncoming, isTrue);
+
+          expect(bobConversation[baseIndex].text, 'Alice burst ${round + 1}');
+          expect(bobConversation[baseIndex].isIncoming, isTrue);
+          expect(bobConversation[baseIndex + 1].text, 'Bob burst ${round + 1}');
+          expect(bobConversation[baseIndex + 1].isIncoming, isFalse);
+        }
+
+        await aliceSub.cancel();
+        await bobSub.cancel();
+      },
+    );
+
+    test(
+      'Interleaved multi-contact messages stay isolated across rapid conversation loads',
+      () async {
+        final cara = TestUser.create(
+          peerId: '12D3KooWCaraPeerIdxx00000000003',
+          username: 'Cara',
+          network: network,
+        );
+        addTearDown(cara.dispose);
+        cara.start();
+        alice.addContact(cara);
+        cara.addContact(alice);
+
+        final aliceIncoming = <ConversationMessage>[];
+        final aliceSub = alice.chatListener.incomingMessageStream.listen(
+          aliceIncoming.add,
+        );
+
+        await bob.sendMessage(alice.peerId, 'Bob 1');
+        await cara.sendMessage(alice.peerId, 'Cara 1');
+        await bob.sendMessage(alice.peerId, 'Bob 2');
+        await cara.sendMessage(alice.peerId, 'Cara 2');
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final bobConversation = await alice.loadConversation(bob.peerId);
+        final caraConversation = await alice.loadConversation(cara.peerId);
+        final bobConversationReloaded = await alice.loadConversation(
+          bob.peerId,
+        );
+
+        expect(
+          aliceIncoming.map((message) => message.contactPeerId).toList(),
+          <String>[bob.peerId, cara.peerId, bob.peerId, cara.peerId],
+        );
+        expect(
+          bobConversation.map((message) => message.text).toList(),
+          <String>['Bob 1', 'Bob 2'],
+        );
+        expect(
+          caraConversation.map((message) => message.text).toList(),
+          <String>['Cara 1', 'Cara 2'],
+        );
+        expect(
+          bobConversationReloaded.map((message) => message.text).toList(),
+          <String>['Bob 1', 'Bob 2'],
+        );
+        expect(
+          bobConversation.every(
+            (message) => message.contactPeerId == bob.peerId,
+          ),
+          isTrue,
+        );
+        expect(
+          caraConversation.every(
+            (message) => message.contactPeerId == cara.peerId,
+          ),
+          isTrue,
+        );
+
+        await aliceSub.cancel();
+      },
+    );
+
+    test(
+      'deleting a contact before queued inbox replay drops the incoming race cleanly',
+      () async {
+        bob.setOnline(false);
+
+        final (result, _) = await alice.sendMessage(
+          bob.peerId,
+          'Queued before delete',
+        );
+        expect(result, SendChatMessageResult.success);
+
+        await deleteContactAndMessages(
+          contactRepo: bob.contactRepo,
+          messageRepo: bob.messageRepo,
+          peerId: alice.peerId,
+        );
+
+        expect(await bob.contactRepo.getContact(alice.peerId), isNull);
+        expect(await bob.loadConversation(alice.peerId), isEmpty);
+
+        bob.setOnline(true);
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 1);
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(await bob.contactRepo.getContact(alice.peerId), isNull);
+        expect(await bob.loadConversation(alice.peerId), isEmpty);
+        expect(bob.messageRepo.count, 0);
+      },
+    );
+
+    test(
+      'deleting and re-adding a contact restarts the conversation from a clean slate',
+      () async {
+        final bobReceived = bob.chatListener.incomingMessageStream.first;
+
+        final (firstResult, _) = await alice.sendMessage(
+          bob.peerId,
+          'Before delete',
+        );
+        expect(firstResult, SendChatMessageResult.success);
+        await bobReceived.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () =>
+              throw StateError('Bob never received the pre-delete message'),
+        );
+
+        expect(
+          (await bob.loadConversation(
+            alice.peerId,
+          )).map((message) => message.text).toList(),
+          <String>['Before delete'],
+        );
+
+        await deleteContactAndMessages(
+          contactRepo: bob.contactRepo,
+          messageRepo: bob.messageRepo,
+          peerId: alice.peerId,
+        );
+
+        expect(await bob.contactRepo.getContact(alice.peerId), isNull);
+        expect(await bob.loadConversation(alice.peerId), isEmpty);
+
+        bob.addContact(alice);
+
+        final secondReceived = bob.chatListener.incomingMessageStream.first;
+        final (secondResult, _) = await alice.sendMessage(
+          bob.peerId,
+          'After re-add',
+        );
+        expect(secondResult, SendChatMessageResult.success);
+        await secondReceived.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () =>
+              throw StateError('Bob never received the post-readd message'),
+        );
+
+        final conversationAfterReadd = await bob.loadConversation(alice.peerId);
+        expect(
+          conversationAfterReadd.map((message) => message.text).toList(),
+          <String>['After re-add'],
+        );
+      },
+    );
 
     test('Messages from unknown senders are rejected', () async {
       // Create a stranger who is NOT in Bob's contacts

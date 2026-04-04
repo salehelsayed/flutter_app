@@ -11,8 +11,8 @@ import 'package:flutter_app/features/introduction/presentation/screens/friend_pi
 
 /// Stateful wrapper that manages selection state for FriendPickerScreen.
 ///
-/// Loads available friends on init, filters out the recipient, blocked, and
-/// already-introduced contacts, then delegates rendering to [FriendPickerScreen].
+/// Loads available friends on init, filters out the recipient and blocked
+/// contacts, then delegates rendering to [FriendPickerScreen].
 class FriendPickerWired extends StatefulWidget {
   final ContactModel recipient;
   final ContactRepository contactRepo;
@@ -55,26 +55,9 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
   Future<void> _loadFriends() async {
     final contacts = await widget.contactRepo.getActiveContacts();
 
-    // Get already-introduced peer IDs for this recipient
-    final identity = await widget.identityRepo.loadIdentity();
-    final alreadyIntroduced = <String>{};
-    if (identity != null) {
-      final existingIntros = await widget.introRepo
-          .getIntroductionsByIntroducer(identity.peerId);
-      for (final intro in existingIntros) {
-        if (intro.recipientId == widget.recipient.peerId) {
-          alreadyIntroduced.add(intro.introducedId);
-        }
-        if (intro.introducedId == widget.recipient.peerId) {
-          alreadyIntroduced.add(intro.recipientId);
-        }
-      }
-    }
-
     final filtered = contacts.where((c) {
       if (c.peerId == widget.recipient.peerId) return false;
       if (c.isBlocked) return false;
-      if (alreadyIntroduced.contains(c.peerId)) return false;
       return true;
     }).toList();
 

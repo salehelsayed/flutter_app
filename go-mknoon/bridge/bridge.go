@@ -799,6 +799,42 @@ func SendMessage(paramsJSON string) (result string) {
 	})
 }
 
+// ConfirmDirectMessage resolves a pending deferred direct-ack nonce.
+// Input JSON: { "nonce": "...", "ok": true|false }
+// Returns JSON: { "ok": true }
+func ConfirmDirectMessage(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params struct {
+		Nonce string `json:"nonce"`
+		Ok    bool   `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+	if params.Nonce == "" {
+		return errJSON("INVALID_INPUT", "missing nonce")
+	}
+
+	n.ResolveDirectConfirm(params.Nonce, params.Ok)
+
+	return okJSON(map[string]interface{}{
+		"ok": true,
+	})
+}
+
 // --- Inbox ---
 
 // InboxStore stores a message in the offline inbox.

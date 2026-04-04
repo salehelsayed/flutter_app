@@ -24,6 +24,8 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
   try {
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.conversation:
+      case NotificationRouteTargetKind.contactRequest:
+      case NotificationRouteTargetKind.intros:
         await drainOfflineInbox();
         break;
       case NotificationRouteTargetKind.group:
@@ -35,7 +37,6 @@ Future<PrepareNotificationOpenResult> prepareNotificationOpen({
         }
         await drainGroupOfflineInboxForGroup(groupId);
         break;
-      case NotificationRouteTargetKind.intros:
       case NotificationRouteTargetKind.post:
       case NotificationRouteTargetKind.postComment:
         break;

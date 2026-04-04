@@ -4,6 +4,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -162,7 +163,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     originalMessage: originalMessage,
     deletedAt: deletedAt,
     deletedByPeerId: originalMessage.senderPeerId,
-    hiddenLocally: true,
+    hiddenLocally: false,
     status: 'sending',
     transport: originalMessage.transport,
     wireEnvelope: jsonString,
@@ -319,10 +320,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       jsonString,
     );
     if (storedInInbox) {
-      final deliveredTombstone = pendingTombstone.copyWith(
-        status: 'delivered',
-        transport: 'inbox',
-        wireEnvelope: null,
+      final deliveredTombstone = normalizeOutgoingDeleteTombstoneVisibility(
+        pendingTombstone.copyWith(
+          status: 'delivered',
+          transport: 'inbox',
+          wireEnvelope: null,
+        ),
       );
       await messageRepo.saveMessage(deliveredTombstone);
       emitFlowEvent(
@@ -344,9 +347,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     );
   }
 
-  final failedTombstone = pendingTombstone.copyWith(
-    status: 'failed',
-    wireEnvelope: jsonString,
+  final failedTombstone = normalizeOutgoingDeleteTombstoneVisibility(
+    pendingTombstone.copyWith(status: 'failed', wireEnvelope: jsonString),
   );
   await messageRepo.saveMessage(failedTombstone);
   emitFlowEvent(
@@ -530,10 +532,12 @@ Future<ConversationMessage> _persistOutgoingDeleteResult({
   required String via,
 }) async {
   if (acknowledged) {
-    return tombstone.copyWith(
-      status: 'delivered',
-      transport: via,
-      wireEnvelope: null,
+    return normalizeOutgoingDeleteTombstoneVisibility(
+      tombstone.copyWith(
+        status: 'delivered',
+        transport: via,
+        wireEnvelope: null,
+      ),
     );
   }
 
@@ -543,20 +547,24 @@ Future<ConversationMessage> _persistOutgoingDeleteResult({
       jsonString,
     );
     if (storedInInbox) {
-      return tombstone.copyWith(
-        status: 'delivered',
-        transport: 'inbox',
-        wireEnvelope: null,
+      return normalizeOutgoingDeleteTombstoneVisibility(
+        tombstone.copyWith(
+          status: 'delivered',
+          transport: 'inbox',
+          wireEnvelope: null,
+        ),
       );
     }
   } catch (_) {
     // Fall through to the durable sent state.
   }
 
-  return tombstone.copyWith(
-    status: 'sent',
-    transport: via,
-    wireEnvelope: jsonString,
+  return normalizeOutgoingDeleteTombstoneVisibility(
+    tombstone.copyWith(
+      status: 'sent',
+      transport: via,
+      wireEnvelope: jsonString,
+    ),
   );
 }
 

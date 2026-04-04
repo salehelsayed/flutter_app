@@ -72,6 +72,20 @@ void main() {
         expect(find.text('Hello, this is a test message.'), findsOneWidget);
       });
 
+      testWidgets('renders a long message body without throwing', (tester) async {
+        final longText = List<String>.filled(
+          24,
+          'Long message content 0123456789',
+        ).join(' ');
+
+        await tester.pumpWidget(
+          buildTestWidget(isIncoming: true, text: longText),
+        );
+
+        expect(find.text(longText), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+
       testWidgets('shows time', (tester) async {
         await tester.pumpWidget(buildTestWidget(isIncoming: true));
         expect(find.text('3:30 PM'), findsOneWidget);

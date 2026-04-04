@@ -3,6 +3,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/handle_mutual_acceptance_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
@@ -44,10 +45,14 @@ Future<IntroductionModel?> acceptIntroduction({
 
   if (isRecipient) {
     await introRepo.updateRecipientStatus(
-        introductionId, IntroductionStatus.accepted);
+      introductionId,
+      IntroductionStatus.accepted,
+    );
   } else {
     await introRepo.updateIntroducedStatus(
-        introductionId, IntroductionStatus.accepted);
+      introductionId,
+      IntroductionStatus.accepted,
+    );
   }
 
   // Derive new overall status
@@ -72,6 +77,7 @@ Future<IntroductionModel?> acceptIntroduction({
 
   // Send to introducer
   await _sendPayloadToContact(
+    introRepo: introRepo,
     p2pService: p2pService,
     bridge: bridge,
     contactRepo: contactRepo,
@@ -82,12 +88,12 @@ Future<IntroductionModel?> acceptIntroduction({
 
   // Send to other party — pass ML-KEM key from intro record since
   // the other party isn't a contact yet (contact lookup would miss them).
-  final otherPeerId =
-      isRecipient ? intro.introducedId : intro.recipientId;
+  final otherPeerId = isRecipient ? intro.introducedId : intro.recipientId;
   final otherMlKemKey = isRecipient
       ? intro.introducedMlKemPublicKey
       : intro.recipientMlKemPublicKey;
   await _sendPayloadToContact(
+    introRepo: introRepo,
     p2pService: p2pService,
     bridge: bridge,
     contactRepo: contactRepo,
@@ -135,6 +141,7 @@ Future<IntroductionModel?> acceptIntroduction({
 /// send fails (e.g. the other party in an introduction isn't a contact
 /// yet, so we have no direct address for them).
 Future<void> _sendPayloadToContact({
+  required IntroductionRepository introRepo,
   required P2PService p2pService,
   required Bridge bridge,
   required ContactRepository contactRepo,
@@ -150,41 +157,13 @@ Future<void> _sendPayloadToContact({
     effectiveMlKemKey = contact?.mlKemPublicKey;
   }
 
-  if (effectiveMlKemKey != null) {
-    final encrypted = await callEncryptMessage(
-      bridge: bridge,
-      recipientMlKemPublicKey: effectiveMlKemKey,
-      plaintext: payload.toInnerJson(),
-    );
-    if (encrypted['ok'] == true) {
-      final envelope = IntroductionPayload.buildEncryptedEnvelope(
-        senderPeerId: ownPeerId,
-        kem: encrypted['kem'] as String,
-        ciphertext: encrypted['ciphertext'] as String,
-        nonce: encrypted['nonce'] as String,
-      );
-      final sent = await p2pService.sendMessage(targetPeerId, envelope);
-      if (sent) return;
-
-      // Direct send failed — fall back to relay inbox
-      emitFlowEvent(
-        layer: 'UC',
-        event: 'INTRO_ACCEPT_DIRECT_SEND_FAILED_TRYING_INBOX',
-        details: {'targetPeerId': targetPeerId},
-      );
-      await p2pService.storeInInbox(targetPeerId, envelope);
-      return;
-    }
-  }
-
-  // Fall back to v1 plaintext
-  final sent = await p2pService.sendMessage(targetPeerId, payload.toJson());
-  if (!sent) {
-    emitFlowEvent(
-      layer: 'UC',
-      event: 'INTRO_ACCEPT_DIRECT_SEND_FAILED_TRYING_INBOX',
-      details: {'targetPeerId': targetPeerId},
-    );
-    await p2pService.storeInInbox(targetPeerId, payload.toJson());
-  }
+  await deliverIntroductionPayloadReliably(
+    introRepo: introRepo,
+    p2pService: p2pService,
+    bridge: bridge,
+    senderPeerId: ownPeerId,
+    targetPeerId: targetPeerId,
+    targetMlKemPublicKey: effectiveMlKemKey,
+    payload: payload,
+  );
 }

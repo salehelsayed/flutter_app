@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -63,6 +65,8 @@ class ChatMessageListener {
   final ActiveConversationTracker? conversationTracker;
   final AppLifecycleState Function()? getAppLifecycleState;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
+  final RecentRemoteNotificationGate? remoteNotificationGate;
+  final Duration backgroundNotificationDuplicateGuardDelay;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _messageController = StreamController<ConversationMessage>.broadcast();
@@ -80,6 +84,8 @@ class ChatMessageListener {
     this.conversationTracker,
     this.getAppLifecycleState,
     this.downloadProfilePictureFn,
+    this.remoteNotificationGate,
+    this.backgroundNotificationDuplicateGuardDelay = const Duration(seconds: 2),
   });
 
   /// Stream of new incoming chat messages for the UI to listen to.
@@ -229,9 +235,53 @@ class ChatMessageListener {
     await processIncomingMessage(message);
   }
 
+  bool? _confirmationValueForState(ChatMessageProcessState state) {
+    switch (state) {
+      case ChatMessageProcessState.stored:
+      case ChatMessageProcessState.blockedSender:
+      case ChatMessageProcessState.duplicate:
+        return true;
+      case ChatMessageProcessState.notChatMessage:
+      case ChatMessageProcessState.missingMlKemSecret:
+      case ChatMessageProcessState.decryptionFailed:
+      case ChatMessageProcessState.unknownSender:
+      case ChatMessageProcessState.editMissingOriginal:
+      case ChatMessageProcessState.error:
+        return false;
+    }
+  }
+
+  Future<void> _maybeConfirmDirectNonce(
+    ChatMessage message,
+    ChatMessageProcessState state,
+  ) async {
+    final nonce = message.confirmNonce;
+    final value = _confirmationValueForState(state);
+    if (bridge == null || nonce == null || nonce.isEmpty || value == null) {
+      return;
+    }
+
+    try {
+      await callP2PConfirmDirectMessage(bridge!, nonce: nonce, ok: value);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_LISTENER_CONFIRM_NONCE_ERROR',
+        details: {'nonce': nonce, 'error': e.toString(), 'ok': value},
+      );
+    }
+  }
+
   Future<ChatMessageProcessOutcome> processIncomingMessage(
     ChatMessage message,
   ) async {
+    Future<ChatMessageProcessOutcome> finish(
+      ChatMessageProcessOutcome outcome,
+    ) async {
+      await _maybeConfirmDirectNonce(message, outcome.state);
+      return outcome;
+    }
+
     try {
       // Check if sender is blocked — reject message entirely (don't persist)
       final senderPeerId = message.from;
@@ -246,8 +296,10 @@ class ChatMessageListener {
                 : senderPeerId,
           },
         );
-        return const ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.blockedSender,
+        return finish(
+          const ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.blockedSender,
+          ),
         );
       }
 
@@ -279,9 +331,11 @@ class ChatMessageListener {
       }
 
       if (result == HandleChatMessageResult.missingMlKemSecret) {
-        return ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.missingMlKemSecret,
-          updatedContact: updatedContact,
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.missingMlKemSecret,
+            updatedContact: updatedContact,
+          ),
         );
       }
 
@@ -295,37 +349,47 @@ class ChatMessageListener {
                 : senderPeerId,
           },
         );
-        return ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.decryptionFailed,
-          updatedContact: updatedContact,
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.decryptionFailed,
+            updatedContact: updatedContact,
+          ),
         );
       }
 
       if (result == HandleChatMessageResult.unknownSender) {
-        return ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.unknownSender,
-          updatedContact: updatedContact,
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.unknownSender,
+            updatedContact: updatedContact,
+          ),
         );
       }
 
       if (result == HandleChatMessageResult.duplicate) {
-        return ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.duplicate,
-          updatedContact: updatedContact,
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.duplicate,
+            updatedContact: updatedContact,
+          ),
         );
       }
 
       if (result == HandleChatMessageResult.editMissingOriginal) {
-        return ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.editMissingOriginal,
-          updatedContact: updatedContact,
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.editMissingOriginal,
+            updatedContact: updatedContact,
+          ),
         );
       }
 
       if (result == HandleChatMessageResult.notChatMessage) {
-        return ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.notChatMessage,
-          updatedContact: updatedContact,
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.notChatMessage,
+            updatedContact: updatedContact,
+          ),
         );
       }
 
@@ -348,10 +412,12 @@ class ChatMessageListener {
                   : conversationMessage.senderPeerId,
             },
           );
-          return ChatMessageProcessOutcome(
-            state: ChatMessageProcessState.stored,
-            conversationMessage: conversationMessage,
-            updatedContact: updatedContact,
+          return finish(
+            ChatMessageProcessOutcome(
+              state: ChatMessageProcessState.stored,
+              conversationMessage: conversationMessage,
+              updatedContact: updatedContact,
+            ),
           );
         }
 
@@ -388,6 +454,11 @@ class ChatMessageListener {
               conversationMessage.text,
               conversationMessage.media,
             ),
+            consumeRecentRemoteNotificationAnnouncement:
+                (remoteNotificationGate ?? recentRemoteNotificationGate)
+                    .consumeIfRecentPayload,
+            backgroundDuplicateGuardDelay:
+                backgroundNotificationDuplicateGuardDelay,
           );
         }
 
@@ -398,17 +469,21 @@ class ChatMessageListener {
           _autoDownloadMedia(conversationMessage);
         }
 
-        return ChatMessageProcessOutcome(
-          state: ChatMessageProcessState.stored,
-          conversationMessage: conversationMessage,
-          updatedContact: updatedContact,
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.stored,
+            conversationMessage: conversationMessage,
+            updatedContact: updatedContact,
+          ),
         );
       }
 
-      return ChatMessageProcessOutcome(
-        state: ChatMessageProcessState.error,
-        updatedContact: updatedContact,
-        reasonDetail: 'missing conversation message for chatMessage result',
+      return finish(
+        ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.error,
+          updatedContact: updatedContact,
+          reasonDetail: 'missing conversation message for chatMessage result',
+        ),
       );
     } catch (e) {
       emitFlowEvent(
@@ -416,9 +491,11 @@ class ChatMessageListener {
         event: 'CHAT_LISTENER_ERROR',
         details: {'error': e.toString()},
       );
-      return ChatMessageProcessOutcome(
-        state: ChatMessageProcessState.error,
-        reasonDetail: e.toString(),
+      return finish(
+        ChatMessageProcessOutcome(
+          state: ChatMessageProcessState.error,
+          reasonDetail: e.toString(),
+        ),
       );
     }
   }

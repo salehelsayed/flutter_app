@@ -223,6 +223,8 @@ class _FeedWiredState extends State<FeedWired>
   final FeedStore _feedStore = FeedStore();
   final ValueNotifier<int> _totalUnreadCountNotifier = ValueNotifier<int>(0);
   final ValueNotifier<int> _orbitBadgeCountNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<FeedRouteChanges?> _mountedOrbitRouteChangesNotifier =
+      ValueNotifier<FeedRouteChanges?>(null);
   final FeedReactionStore _reactionStore = FeedReactionStore();
   bool _feedLoaded = false;
   String? _expandedCardId;
@@ -230,6 +232,8 @@ class _FeedWiredState extends State<FeedWired>
   final Map<String, String> _activeQuoteMessageIds = {};
   final SessionReplyTracker _sessionReplies = SessionReplyTracker();
   String? _activeFocusPeerId;
+  String? _pendingViewportFollowContactPeerId;
+  int _viewportFollowRequestId = 0;
   String? _editingContactPeerId;
   String? _editingMessageId;
   String? _editingOriginalText;
@@ -1566,17 +1570,14 @@ class _FeedWiredState extends State<FeedWired>
           messageRepo: widget.messageRepository,
           contactPeerId: contactPeerId,
         );
-        if (message != null) {
-          await _applyIncomingContactMessageToFeed(
-            message,
-            refreshUnreadCount: false,
-          );
-        } else {
-          await _refreshContactFeedItem(
-            contactPeerId,
-            refreshUnreadCount: false,
-          );
+        await _refreshContactFeedItem(contactPeerId, refreshUnreadCount: false);
+        if (mounted) {
+          setState(() {
+            _pendingViewportFollowContactPeerId = contactPeerId;
+            _viewportFollowRequestId++;
+          });
         }
+        _notifyMountedOrbitContactChange(contactPeerId);
         await _loadTotalUnreadCount();
       } else {
         if (message == null) {
@@ -2632,6 +2633,13 @@ class _FeedWiredState extends State<FeedWired>
     unawaited(_applyRouteChanges(changes));
   }
 
+  void _notifyMountedOrbitContactChange(String contactPeerId) {
+    if (!_hasMountedOrbitHost) return;
+    _mountedOrbitRouteChangesNotifier.value = FeedRouteChanges(
+      changedContactPeerIds: {contactPeerId},
+    );
+  }
+
   Widget _buildOrbitHost() {
     return OrbitWired(
       identityRepo: widget.repository,
@@ -2662,6 +2670,7 @@ class _FeedWiredState extends State<FeedWired>
       feedUnreadCountListenable: _totalUnreadCountNotifier,
       pendingPostTargetStore: widget.pendingPostTargetStore,
       postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+      externalRouteChangesListenable: _mountedOrbitRouteChangesNotifier,
       initialFilterTab: null,
       onEmbeddedExit: _onOrbitEmbeddedExit,
       onEmbeddedExitActionChanged: _registerOrbitEmbeddedExitAction,
@@ -2738,6 +2747,7 @@ class _FeedWiredState extends State<FeedWired>
         ).then((_) {
           if (mounted) {
             unawaited(_refreshContactFeedItem(cardItem.contactPeerId));
+            _notifyMountedOrbitContactChange(cardItem.contactPeerId);
           }
         });
       } else if (cardItem is GroupThreadFeedItem) {
@@ -2825,6 +2835,7 @@ class _FeedWiredState extends State<FeedWired>
     _hostSwipeController.dispose();
     _totalUnreadCountNotifier.dispose();
     _orbitBadgeCountNotifier.dispose();
+    _mountedOrbitRouteChangesNotifier.dispose();
     _reactionStore.dispose();
     _feedStore.dispose();
     super.dispose();
@@ -2855,6 +2866,8 @@ class _FeedWiredState extends State<FeedWired>
       onViewFullConversation: _onViewFullConversation,
       draftTexts: _draftTexts,
       activeFocusPeerId: activeFocusPeerId,
+      pendingViewportFollowContactPeerId: _pendingViewportFollowContactPeerId,
+      viewportFollowRequestId: _viewportFollowRequestId,
       onDraftChanged: _onDraftChanged,
       onInputFocusChanged: _onInputFocusChanged,
       editingContactPeerId: _editingContactPeerId,

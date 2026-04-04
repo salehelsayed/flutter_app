@@ -38,6 +38,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? recoverStuckSendingGroupMessagesFn;
   final Future<int> Function()? retryIncompleteGroupUploadsFn;
   final Future<int> Function()? retryFailedGroupMessagesFn;
+  final Future<int> Function()? retryPendingIntroductionDeliveriesFn;
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
@@ -69,6 +70,7 @@ class PendingMessageRetrier {
     this.recoverStuckSendingGroupMessagesFn,
     this.retryIncompleteGroupUploadsFn,
     this.retryFailedGroupMessagesFn,
+    this.retryPendingIntroductionDeliveriesFn,
     this.retryFailedGroupInboxStoresFn,
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
@@ -243,7 +245,8 @@ class PendingMessageRetrier {
       //   7. 1:1 retry incomplete uploads
       //   8. 1:1 retry failed messages
       //   9. 1:1 retry unacked messages
-      //  10. group retry failed inbox stores
+      //  10. intro retry pending deliveries
+      //  11. group retry failed inbox stores
 
       if (groupRecoveryEnabled) {
         if (rejoinGroupTopicsFn != null) {
@@ -368,6 +371,25 @@ class PendingMessageRetrier {
           event: 'PENDING_RETRIER_UNACKED_RETRIED',
           details: {'count': unackedCount},
         );
+      }
+
+      if (retryPendingIntroductionDeliveriesFn != null) {
+        try {
+          final count = await retryPendingIntroductionDeliveriesFn!();
+          if (count > 0) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_INTRO_OUTBOX_RETRIED',
+              details: {'count': count},
+            );
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_INTRO_OUTBOX_ERROR',
+            details: {'error': e.toString()},
+          );
+        }
       }
 
       if (groupRecoveryEnabled && retryFailedGroupInboxStoresFn != null) {

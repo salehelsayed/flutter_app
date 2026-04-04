@@ -503,23 +503,26 @@ void main() {
       expect(find.byType(IntroBanner), findsNothing);
     });
 
-    testWidgets('picker excludes already-introduced friends', (tester) async {
-      await introRepo.saveIntroduction(
-        _makeIntro(
-          introducerId: 'peer-A',
-          recipientId: 'peer-B',
-          introducedId: 'peer-C',
-        ),
-      );
+    testWidgets(
+      'picker keeps already-introduced friends available for re-send',
+      (tester) async {
+        await introRepo.saveIntroduction(
+          _makeIntro(
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+          ),
+        );
 
-      await pumpWired(tester);
+        await pumpWired(tester);
 
-      await tester.tap(find.text('Make introductions'));
-      await pumpSheet(tester);
+        await tester.tap(find.text('Make introductions'));
+        await pumpSheet(tester);
 
-      expect(find.byType(FriendPickerScreen), findsOneWidget);
-      expect(find.text('Sarah'), findsNothing);
-      expect(find.textContaining('No friends available'), findsOneWidget);
-    });
+        expect(find.byType(FriendPickerScreen), findsOneWidget);
+        expect(find.text('Sarah'), findsOneWidget);
+        expect(find.textContaining('No friends available'), findsNothing);
+      },
+    );
   });
 }

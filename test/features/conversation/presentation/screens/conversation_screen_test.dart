@@ -15,6 +15,8 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 
 void main() {
   Widget buildTestWidget({
@@ -44,6 +46,7 @@ void main() {
     bool allowEditAction = true,
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
+    ConversationMediaViewerBuilder? mediaViewerBuilder,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -81,6 +84,7 @@ void main() {
           allowEditAction: allowEditAction,
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
+          mediaViewerBuilder: mediaViewerBuilder,
         ),
       ),
     );
@@ -97,6 +101,7 @@ void main() {
     String? deletedAt,
     String? deletedByPeerId,
     String? hiddenAt,
+    String? transport,
   }) {
     return ConversationMessage(
       id: id,
@@ -114,6 +119,7 @@ void main() {
       deletedAt: deletedAt,
       deletedByPeerId: deletedByPeerId,
       hiddenAt: hiddenAt,
+      transport: transport,
     );
   }
 
@@ -128,6 +134,23 @@ void main() {
       size: 42,
       mediaType: 'image',
       localPath: localPath,
+      downloadStatus: 'done',
+      createdAt: '2026-02-09T15:30:00.000Z',
+    );
+  }
+
+  MediaAttachment makeVideoAttachment({
+    String id = 'vid-1',
+    String localPath = '/tmp/vid-1.mp4',
+  }) {
+    return MediaAttachment(
+      id: id,
+      messageId: '',
+      mime: 'video/mp4',
+      size: 4200,
+      mediaType: 'video',
+      localPath: localPath,
+      durationMs: 15000,
       downloadStatus: 'done',
       createdAt: '2026-02-09T15:30:00.000Z',
     );
@@ -188,6 +211,53 @@ void main() {
         findsNothing,
       );
     });
+
+    testWidgets(
+      'renders intro system rows through IntroSystemMessage in order',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'msg-before',
+                text: 'Before intro',
+                timestamp: '2026-02-09T15:30:00.000Z',
+              ),
+              makeMessage(
+                id: 'msg-system',
+                isIncoming: false,
+                text: 'Connected through Noor',
+                timestamp: '2026-02-09T15:31:00.000Z',
+                transport: 'system',
+              ),
+              makeMessage(
+                id: 'msg-after',
+                isIncoming: false,
+                text: 'After intro',
+                timestamp: '2026-02-09T15:32:00.000Z',
+              ),
+            ],
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.byType(IntroSystemMessage), findsOneWidget);
+        expect(find.text('Connected through Noor'), findsOneWidget);
+        expect(find.byType(LetterCard), findsNWidgets(2));
+
+        final beforeY = tester
+            .getTopLeft(find.byKey(const ValueKey('msg-msg-before')))
+            .dy;
+        final systemY = tester
+            .getTopLeft(find.byKey(const ValueKey('msg-msg-system')))
+            .dy;
+        final afterY = tester
+            .getTopLeft(find.byKey(const ValueKey('msg-msg-after')))
+            .dy;
+        expect(beforeY, lessThan(systemY));
+        expect(systemY, lessThan(afterY));
+      },
+    );
 
     testWidgets('compose area always visible', (tester) async {
       await tester.pumpWidget(buildTestWidget(messages: []));
@@ -1003,5 +1073,115 @@ void main() {
       await tester.tap(find.byIcon(Icons.add_rounded));
       expect(attachCalled, true);
     });
+
+    testWidgets(
+      'tapping a received image opens the viewer with the image path',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'image-msg',
+                media: [makeImageAttachment(localPath: '/tmp/open-me.jpg')],
+              ),
+            ],
+            initialLoadDone: true,
+            mediaViewerBuilder:
+                ({
+                  required localPath,
+                  required allPaths,
+                  required initialIndex,
+                }) {
+                  return Scaffold(
+                    body: Column(
+                      children: [
+                        Text('viewer-path:$localPath'),
+                        Text('viewer-index:$initialIndex'),
+                        Text('viewer-all:${allPaths.join(",")}'),
+                      ],
+                    ),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.byType(MediaGridCell).first);
+        await tester.pumpAndSettle();
+
+        expect(find.text('viewer-path:/tmp/open-me.jpg'), findsOneWidget);
+        expect(find.text('viewer-index:0'), findsOneWidget);
+        expect(find.text('viewer-all:/tmp/open-me.jpg'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'tapping a later visual attachment preserves the visual-only index order',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'multi-visual-msg',
+                media: [
+                  makeImageAttachment(
+                    id: 'img-1',
+                    localPath: '/tmp/visual-1.jpg',
+                  ),
+                  MediaAttachment(
+                    id: 'aud-1',
+                    messageId: '',
+                    mime: 'audio/mp4',
+                    size: 1024,
+                    mediaType: 'audio',
+                    localPath: '/tmp/ignore-audio.m4a',
+                    downloadStatus: 'done',
+                    createdAt: '2026-02-09T15:30:00.000Z',
+                  ),
+                  makeVideoAttachment(
+                    id: 'vid-1',
+                    localPath: '/tmp/visual-2.mp4',
+                  ),
+                  makeImageAttachment(
+                    id: 'img-2',
+                    localPath: '/tmp/visual-3.jpg',
+                  ),
+                ],
+              ),
+            ],
+            initialLoadDone: true,
+            mediaViewerBuilder:
+                ({
+                  required localPath,
+                  required allPaths,
+                  required initialIndex,
+                }) {
+                  return Scaffold(
+                    body: Column(
+                      children: [
+                        Text('viewer-path:$localPath'),
+                        Text('viewer-index:$initialIndex'),
+                        Text('viewer-all:${allPaths.join(",")}'),
+                      ],
+                    ),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.byType(MediaGridCell).at(2));
+        await tester.pumpAndSettle();
+
+        expect(find.text('viewer-path:/tmp/visual-3.jpg'), findsOneWidget);
+        expect(find.text('viewer-index:2'), findsOneWidget);
+        expect(
+          find.text(
+            'viewer-all:/tmp/visual-1.jpg,/tmp/visual-2.mp4,/tmp/visual-3.jpg',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
   });
 }

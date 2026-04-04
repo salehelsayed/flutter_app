@@ -70,8 +70,13 @@ class OpenModeCardBody extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Friend indicator header
-        _buildHeader(),
+        // Header matches collapsed-card behavior: avatar opens the full
+        // conversation, while the name/timestamp area collapses the unread card.
+        GestureDetector(
+          onTap: onCollapse,
+          behavior: HitTestBehavior.opaque,
+          child: _buildHeader(),
+        ),
         // Scrollable unread messages
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),

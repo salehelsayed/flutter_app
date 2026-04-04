@@ -5,10 +5,18 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/introduction/application/handle_mutual_acceptance_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
+import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 
 /// Result of processing an incoming introduction message.
-enum HandleIntroductionResult { success, alreadyExists, blocked, error }
+enum HandleIntroductionResult {
+  success,
+  alreadyExists,
+  deferred,
+  blocked,
+  rejected,
+  error,
+}
 
 /// Processes an incoming introduction payload and persists the result.
 ///
@@ -16,7 +24,7 @@ enum HandleIntroductionResult { success, alreadyExists, blocked, error }
 /// For 'accept'/'pass' actions: updates the appropriate party's status
 /// and derives the new overall status.
 Future<(HandleIntroductionResult, IntroductionModel?)>
-    handleIncomingIntroduction({
+handleIncomingIntroduction({
   required IntroductionPayload payload,
   required IntroductionRepository introRepo,
   required ContactRepository contactRepo,
@@ -40,6 +48,8 @@ Future<(HandleIntroductionResult, IntroductionModel?)>
         introRepo: introRepo,
         contactRepo: contactRepo,
         ownPeerId: ownPeerId,
+        messageRepo: messageRepo,
+        bridge: bridge,
       );
     } else if (payload.action == 'accept' || payload.action == 'pass') {
       return await _handleResponse(
@@ -57,7 +67,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)>
       event: 'HANDLE_INCOMING_INTRO_UNKNOWN_ACTION',
       details: {'action': payload.action},
     );
-    return (HandleIntroductionResult.error, null);
+    return (HandleIntroductionResult.rejected, null);
   } catch (e) {
     emitFlowEvent(
       layer: 'UC',
@@ -76,16 +86,49 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
   required IntroductionRepository introRepo,
   required ContactRepository contactRepo,
   required String ownPeerId,
+  MessageRepository? messageRepo,
+  Bridge? bridge,
 }) async {
   // Check if introduction already exists
   final existing = await introRepo.getIntroduction(payload.introductionId);
   if (existing != null) {
+    await _replayPendingResponses(
+      introductionId: payload.introductionId,
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      ownPeerId: ownPeerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
+    );
+    final latest = await introRepo.getIntroduction(payload.introductionId);
     emitFlowEvent(
       layer: 'UC',
       event: 'HANDLE_INCOMING_INTRO_ALREADY_EXISTS',
       details: {'introductionId': payload.introductionId},
     );
-    return (HandleIntroductionResult.alreadyExists, existing);
+    return (HandleIntroductionResult.alreadyExists, latest ?? existing);
+  }
+
+  final existingPairIntroductions = await _loadExistingPairIntroductions(
+    introRepo: introRepo,
+    payload: payload,
+  );
+  final latestPairIntroduction = _latestIntroduction(existingPairIntroductions);
+  if (latestPairIntroduction != null &&
+      !_isIncomingIntroductionNewerThan(
+        existingIntroduction: latestPairIntroduction,
+        incomingCreatedAt: payload.timestamp,
+      )) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'HANDLE_INCOMING_INTRO_ALREADY_EXISTS',
+      details: {'introductionId': latestPairIntroduction.id},
+    );
+    return (HandleIntroductionResult.alreadyExists, latestPairIntroduction);
+  }
+
+  for (final intro in existingPairIntroductions) {
+    await introRepo.deleteIntroduction(intro.id);
   }
 
   final model = IntroductionModel(
@@ -117,8 +160,6 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
       IntroductionOverallStatus.alreadyConnected,
     );
 
-    final updated = await introRepo.getIntroduction(model.id);
-
     emitFlowEvent(
       layer: 'UC',
       event: 'HANDLE_INCOMING_INTRO_ALREADY_CONNECTED',
@@ -127,9 +168,18 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
         'otherPeerId': otherPeerId,
       },
     );
-
-    return (HandleIntroductionResult.success, updated ?? model);
   }
+
+  await _replayPendingResponses(
+    introductionId: payload.introductionId,
+    introRepo: introRepo,
+    contactRepo: contactRepo,
+    ownPeerId: ownPeerId,
+    messageRepo: messageRepo,
+    bridge: bridge,
+  );
+
+  final finalIntro = await introRepo.getIntroduction(model.id);
 
   emitFlowEvent(
     layer: 'UC',
@@ -140,7 +190,84 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleSend({
     },
   );
 
-  return (HandleIntroductionResult.success, model);
+  return (HandleIntroductionResult.success, finalIntro ?? model);
+}
+
+Future<List<IntroductionModel>> _loadExistingPairIntroductions({
+  required IntroductionRepository introRepo,
+  required IntroductionPayload payload,
+}) async {
+  final recipientId = payload.recipientId ?? '';
+  final introducedId = payload.introducedId ?? '';
+  final introducerId = payload.introducerId ?? '';
+  if (recipientId.isEmpty || introducedId.isEmpty || introducerId.isEmpty) {
+    return const <IntroductionModel>[];
+  }
+
+  final byRecipient = await introRepo.getIntroductionsByRecipient(recipientId);
+  final byRecipientCounterpart = await introRepo.getIntroductionsByRecipient(
+    introducedId,
+  );
+  final byIntroduced = await introRepo.getIntroductionsByIntroduced(
+    introducedId,
+  );
+  final byIntroducedCounterpart = await introRepo.getIntroductionsByIntroduced(
+    recipientId,
+  );
+  final matchesById = <String, IntroductionModel>{};
+
+  for (final intro in [
+    ...byRecipient,
+    ...byRecipientCounterpart,
+    ...byIntroduced,
+    ...byIntroducedCounterpart,
+  ]) {
+    if (intro.introducerId != introducerId) continue;
+    if (!_isSameIntroductionPair(
+      introRecipientId: intro.recipientId,
+      introIntroducedId: intro.introducedId,
+      recipientId: recipientId,
+      introducedId: introducedId,
+    )) {
+      continue;
+    }
+    matchesById[intro.id] = intro;
+  }
+
+  return matchesById.values.toList(growable: false);
+}
+
+IntroductionModel? _latestIntroduction(List<IntroductionModel> introductions) {
+  if (introductions.isEmpty) return null;
+
+  final sorted = [...introductions]
+    ..sort(
+      (a, b) =>
+          DateTime.parse(a.createdAt).compareTo(DateTime.parse(b.createdAt)),
+    );
+  return sorted.last;
+}
+
+bool _isIncomingIntroductionNewerThan({
+  required IntroductionModel existingIntroduction,
+  required String incomingCreatedAt,
+}) {
+  return DateTime.parse(
+    incomingCreatedAt,
+  ).isAfter(DateTime.parse(existingIntroduction.createdAt));
+}
+
+bool _isSameIntroductionPair({
+  required String introRecipientId,
+  required String introIntroducedId,
+  required String recipientId,
+  required String introducedId,
+}) {
+  final sameDirection =
+      introRecipientId == recipientId && introIntroducedId == introducedId;
+  final reversedDirection =
+      introRecipientId == introducedId && introIntroducedId == recipientId;
+  return sameDirection || reversedDirection;
 }
 
 Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
@@ -151,16 +278,54 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
   MessageRepository? messageRepo,
   Bridge? bridge,
 }) async {
-  final existing = await introRepo.getIntroduction(payload.introductionId);
-  if (existing == null) {
+  final responderId = payload.responderId ?? '';
+  if (responderId.isEmpty) {
     emitFlowEvent(
       layer: 'UC',
-      event: 'HANDLE_INCOMING_INTRO_NOT_FOUND',
+      event: 'HANDLE_INCOMING_INTRO_MISSING_RESPONDER',
       details: {'introductionId': payload.introductionId},
     );
-    return (HandleIntroductionResult.error, null);
+    return (HandleIntroductionResult.rejected, null);
   }
 
+  final existing = await introRepo.getIntroduction(payload.introductionId);
+  if (existing == null) {
+    await introRepo.savePendingResponse(
+      PendingIntroductionResponse.fromPayload(payload),
+    );
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'HANDLE_INCOMING_INTRO_RESPONSE_DEFERRED',
+      details: {
+        'introductionId': payload.introductionId,
+        'responderId': responderId,
+        'action': payload.action,
+      },
+    );
+    return (HandleIntroductionResult.deferred, null);
+  }
+
+  return _applyResponseToExistingIntroduction(
+    payload: payload,
+    existing: existing,
+    introRepo: introRepo,
+    contactRepo: contactRepo,
+    ownPeerId: ownPeerId,
+    messageRepo: messageRepo,
+    bridge: bridge,
+  );
+}
+
+Future<(HandleIntroductionResult, IntroductionModel?)>
+_applyResponseToExistingIntroduction({
+  required IntroductionPayload payload,
+  required IntroductionModel existing,
+  required IntroductionRepository introRepo,
+  required ContactRepository contactRepo,
+  required String ownPeerId,
+  MessageRepository? messageRepo,
+  Bridge? bridge,
+}) async {
   // Determine if the responder is the recipient or the introduced party
   final responderId = payload.responderId ?? '';
   final isRecipient = responderId == existing.recipientId;
@@ -175,7 +340,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
         'responderId': responderId,
       },
     );
-    return (HandleIntroductionResult.error, null);
+    return (HandleIntroductionResult.rejected, null);
   }
 
   final status = payload.action == 'accept'
@@ -189,8 +354,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
   }
 
   // Re-fetch to get updated individual statuses
-  final updatedIntro =
-      await introRepo.getIntroduction(payload.introductionId);
+  final updatedIntro = await introRepo.getIntroduction(payload.introductionId);
   if (updatedIntro == null) {
     return (HandleIntroductionResult.error, null);
   }
@@ -204,8 +368,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
   await introRepo.updateOverallStatus(payload.introductionId, newOverall);
 
   if (newOverall == IntroductionOverallStatus.mutualAccepted) {
-    final latestIntro =
-        await introRepo.getIntroduction(payload.introductionId);
+    final latestIntro = await introRepo.getIntroduction(payload.introductionId);
     if (latestIntro != null) {
       await handleMutualAcceptance(
         introduction: latestIntro,
@@ -217,8 +380,7 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
     }
   }
 
-  final finalIntro =
-      await introRepo.getIntroduction(payload.introductionId);
+  final finalIntro = await introRepo.getIntroduction(payload.introductionId);
 
   emitFlowEvent(
     layer: 'UC',
@@ -232,4 +394,65 @@ Future<(HandleIntroductionResult, IntroductionModel?)> _handleResponse({
   );
 
   return (HandleIntroductionResult.success, finalIntro);
+}
+
+Future<void> _replayPendingResponses({
+  required String introductionId,
+  required IntroductionRepository introRepo,
+  required ContactRepository contactRepo,
+  required String ownPeerId,
+  MessageRepository? messageRepo,
+  Bridge? bridge,
+}) async {
+  final pendingResponses = await introRepo.loadPendingResponses(introductionId);
+  if (pendingResponses.isEmpty) {
+    return;
+  }
+
+  emitFlowEvent(
+    layer: 'UC',
+    event: 'HANDLE_INCOMING_INTRO_REPLAY_PENDING_RESPONSES_START',
+    details: {
+      'introductionId': introductionId,
+      'count': pendingResponses.length,
+    },
+  );
+
+  for (final pending in pendingResponses) {
+    final existing = await introRepo.getIntroduction(introductionId);
+    if (existing == null) {
+      throw StateError(
+        'Introduction $introductionId disappeared before deferred replay.',
+      );
+    }
+
+    final (result, _) = await _applyResponseToExistingIntroduction(
+      payload: pending.toPayload(),
+      existing: existing,
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      ownPeerId: ownPeerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
+    );
+
+    if (result == HandleIntroductionResult.success ||
+        result == HandleIntroductionResult.rejected) {
+      await introRepo.deletePendingResponse(pending.responseKey);
+      continue;
+    }
+
+    throw StateError(
+      'Deferred intro response replay failed for $introductionId with result $result.',
+    );
+  }
+
+  emitFlowEvent(
+    layer: 'UC',
+    event: 'HANDLE_INCOMING_INTRO_REPLAY_PENDING_RESPONSES_SUCCESS',
+    details: {
+      'introductionId': introductionId,
+      'count': pendingResponses.length,
+    },
+  );
 }

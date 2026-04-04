@@ -99,6 +99,55 @@ void main() {
     );
 
     test(
+      'background contact-request push opens only after inbox preparation',
+      () async {
+        await routeRemoteNotificationOpen(
+          data: const <String, dynamic>{
+            'type': 'contact_request',
+            'sender_id': 'peer-request-123',
+          },
+          onBeforeRouteTarget: harness.prepare,
+          onRouteTarget: harness.handleRouteTarget,
+          onMissingRouteTarget: harness.handleMissingRouteTarget,
+        );
+
+        expect(harness.events, <String>[
+          'prepare:contact_request:peer-request-123',
+          'drain:conversation',
+          'route:contact_request:peer-request-123',
+        ]);
+        expect(harness.routedTargets, hasLength(1));
+        expect(
+          harness.routedTargets.single.kind,
+          NotificationRouteTargetKind.contactRequest,
+        );
+        expect(harness.routedTargets.single.peerId, 'peer-request-123');
+        expect(harness.missingRouteTargetCalls, 0);
+      },
+    );
+
+    test('intros push opens only after inbox preparation', () async {
+      await routeRemoteNotificationOpen(
+        data: const <String, dynamic>{'type': 'intros'},
+        onBeforeRouteTarget: harness.prepare,
+        onRouteTarget: harness.handleRouteTarget,
+        onMissingRouteTarget: harness.handleMissingRouteTarget,
+      );
+
+      expect(harness.events, <String>[
+        'prepare:intros',
+        'drain:conversation',
+        'route:intros',
+      ]);
+      expect(harness.routedTargets, hasLength(1));
+      expect(
+        harness.routedTargets.single.kind,
+        NotificationRouteTargetKind.intros,
+      );
+      expect(harness.missingRouteTargetCalls, 0);
+    });
+
+    test(
       'terminated group push opens group only after targeted group catch-up',
       () async {
         await routeInitialRemoteNotificationOpen(
@@ -124,6 +173,36 @@ void main() {
           NotificationRouteTargetKind.group,
         );
         expect(harness.routedTargets.single.groupId, 'group-123');
+        expect(harness.missingRouteTargetCalls, 0);
+      },
+    );
+
+    test(
+      'terminated contact-request push opens only after inbox preparation',
+      () async {
+        await routeInitialRemoteNotificationOpen(
+          getInitialMessage: () async => const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'contact_request',
+              'sender_id': 'peer-request-123',
+            },
+          ),
+          onBeforeRouteTarget: harness.prepare,
+          onRouteTarget: harness.handleRouteTarget,
+          onMissingRouteTarget: harness.handleMissingRouteTarget,
+        );
+
+        expect(harness.events, <String>[
+          'prepare:contact_request:peer-request-123',
+          'drain:conversation',
+          'route:contact_request:peer-request-123',
+        ]);
+        expect(harness.routedTargets, hasLength(1));
+        expect(
+          harness.routedTargets.single.kind,
+          NotificationRouteTargetKind.contactRequest,
+        );
+        expect(harness.routedTargets.single.peerId, 'peer-request-123');
         expect(harness.missingRouteTargetCalls, 0);
       },
     );

@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
@@ -23,6 +26,7 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
+    debugResetRecentRemoteNotificationGate();
   });
 
   group('firebaseMessagingBackgroundHandler', () {
@@ -92,5 +96,29 @@ void main() {
 
       await firebaseMessagingBackgroundHandler(message);
     });
+
+    test(
+      'records a recent remote notification target even when FCM already carries a visible notification',
+      () async {
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/background-handler-visible-push-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        debugSetRecentRemoteNotificationGate(gate);
+        addTearDown(gate.clear);
+
+        const message = RemoteMessage(
+          notification: RemoteNotification(title: 'Alice', body: 'Hey!'),
+          data: {'type': 'new_message', 'sender_id': '12D3KooWVisiblePeer'},
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(
+          await gate.consumeIfRecentPayload('12D3KooWVisiblePeer'),
+          isTrue,
+        );
+      },
+    );
   });
 }

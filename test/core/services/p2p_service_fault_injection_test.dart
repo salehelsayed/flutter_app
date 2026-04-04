@@ -15,6 +15,7 @@ import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_
 import '../../shared/fakes/chaos_p2p_network.dart';
 import '../../shared/fakes/fake_p2p_network.dart';
 import '../../shared/fakes/fake_p2p_service_integration.dart';
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../../shared/fakes/lifecycle_bridge.dart';
 import '../../shared/fakes/test_user.dart';
 
@@ -622,7 +623,10 @@ void main() {
 
     setUp(() {
       bridge = LifecycleBridge();
-      service = P2PServiceImpl(bridge: bridge);
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+      );
     });
 
     tearDown(() {
@@ -717,7 +721,10 @@ void main() {
       service.dispose();
 
       // Create a fresh service to verify no crash on re-creation
-      final newService = P2PServiceImpl(bridge: bridge);
+      final newService = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+      );
       expect(newService.currentState.isStarted, isFalse);
       newService.dispose();
     });
@@ -857,7 +864,10 @@ void main() {
 
     setUp(() {
       bridge = LifecycleBridge();
-      service = P2PServiceImpl(bridge: bridge);
+      service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+      );
     });
 
     tearDown(() {

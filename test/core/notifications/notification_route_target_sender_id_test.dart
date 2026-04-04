@@ -46,5 +46,16 @@ void main() {
       });
       expect(target!.peerId, '12D3KooWFallback');
     });
+
+    test('contact_request also resolves peerId from sender_id', () {
+      final target = NotificationRouteTarget.fromRemoteMessageData({
+        'type': 'contact_request',
+        'sender_id': '12D3KooWRequestPeer',
+      });
+
+      expect(target, isNotNull);
+      expect(target!.kind, NotificationRouteTargetKind.contactRequest);
+      expect(target.peerId, '12D3KooWRequestPeer');
+    });
   });
 }

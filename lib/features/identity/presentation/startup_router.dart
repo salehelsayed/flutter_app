@@ -18,6 +18,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -147,6 +148,9 @@ class StartupRouter extends StatefulWidget {
   final ContactPresenceSnapshotRepository? contactPresenceSnapshotRepository;
   final NearbyLocationService? nearbyLocationService;
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
+  final ContactRequestPresentationGate? contactRequestPresentationGate;
+  final GetInitialRemoteMessageFn? getInitialRemoteMessage;
+  final bool Function()? shouldHandleInitialPushOpen;
   final Future<void> Function(NotificationRouteTarget routeTarget)?
   onNotificationRouteTarget;
 
@@ -183,6 +187,9 @@ class StartupRouter extends StatefulWidget {
     this.contactPresenceSnapshotRepository,
     this.nearbyLocationService,
     this.pushRegistrationCoordinator,
+    this.contactRequestPresentationGate,
+    this.getInitialRemoteMessage,
+    this.shouldHandleInitialPushOpen,
     this.onNotificationRouteTarget,
   });
 
@@ -477,15 +484,27 @@ class _StartupRouterState extends State<StartupRouter> {
   }
 
   Future<void> _handleInitialPushOpen() async {
-    if (kIsWeb || Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
-      return;
-    }
+    final shouldHandleInitialPushOpen = widget.shouldHandleInitialPushOpen;
+    if (shouldHandleInitialPushOpen != null) {
+      if (!shouldHandleInitialPushOpen()) {
+        return;
+      }
+    } else {
+      if (kIsWeb ||
+          Platform.isLinux ||
+          Platform.isWindows ||
+          Platform.isMacOS) {
+        return;
+      }
 
-    if (Firebase.apps.isEmpty) return;
+      if (Firebase.apps.isEmpty) return;
+    }
 
     try {
       await handleInitialRemoteMessage(
-        getInitialMessage: FirebaseMessaging.instance.getInitialMessage,
+        getInitialMessage:
+            widget.getInitialRemoteMessage ??
+            FirebaseMessaging.instance.getInitialMessage,
         onMessageOpened: (message) async {
           emitFlowEvent(
             layer: 'FL',
@@ -495,16 +514,22 @@ class _StartupRouterState extends State<StartupRouter> {
               'dataKeys': message.data.keys.toList(),
             },
           );
-          await routeRemoteNotificationOpen(
-            data: message.data,
-            onBeforeRouteTarget: _prepareNotificationRouteTarget,
-            onRouteTarget: (routeTarget) async {
-              if (widget.onNotificationRouteTarget == null) {
-                return;
-              }
-              await widget.onNotificationRouteTarget!(routeTarget);
-            },
-            onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+          final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+            message.data,
+          );
+          await _withContactRequestPresentationSuppressed(
+            routeTarget: routeTarget,
+            action: () => routeRemoteNotificationOpen(
+              data: message.data,
+              onBeforeRouteTarget: _prepareNotificationRouteTarget,
+              onRouteTarget: (resolvedRouteTarget) async {
+                if (widget.onNotificationRouteTarget == null) {
+                  return;
+                }
+                await widget.onNotificationRouteTarget!(resolvedRouteTarget);
+              },
+              onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+            ),
           );
         },
       );
@@ -514,6 +539,27 @@ class _StartupRouterState extends State<StartupRouter> {
         event: 'PUSH_INITIAL_MESSAGE_ERROR',
         details: {'error': e.toString()},
       );
+    }
+  }
+
+  Future<void> _withContactRequestPresentationSuppressed({
+    required NotificationRouteTarget? routeTarget,
+    required Future<void> Function() action,
+  }) async {
+    final gate = widget.contactRequestPresentationGate;
+    final peerId =
+        routeTarget?.kind == NotificationRouteTargetKind.contactRequest
+        ? routeTarget?.peerId
+        : null;
+    if (gate != null && peerId != null) {
+      gate.suppress(peerId);
+    }
+    try {
+      await action();
+    } finally {
+      if (gate != null && peerId != null) {
+        gate.release(peerId);
+      }
     }
   }
 

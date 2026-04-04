@@ -26,6 +26,9 @@ func TestFeatureFlags_DefaultsRemainBackwardCompatible(t *testing.T) {
 	if !flags.EnableResumeGroupRecovery {
 		t.Fatal("EnableResumeGroupRecovery should default to true")
 	}
+	if !flags.EnableDeferredDirectAck {
+		t.Fatal("EnableDeferredDirectAck should default to true")
+	}
 }
 
 func TestStartNode_DisablesMultiRelayRoutingWhenFlagFalse(t *testing.T) {
@@ -44,6 +47,7 @@ func TestStartNode_DisablesMultiRelayRoutingWhenFlagFalse(t *testing.T) {
 			EnableReservationAwareHealth: true,
 			EnableInPlaceRelayRecovery:   true,
 			EnableResumeGroupRecovery:    true,
+			EnableDeferredDirectAck:      true,
 		},
 	}
 
@@ -93,6 +97,7 @@ func TestReconnectRelays_DisablesInPlaceRecoveryWhenFlagFalse(t *testing.T) {
 			EnableReservationAwareHealth: true,
 			EnableInPlaceRelayRecovery:   false,
 			EnableResumeGroupRecovery:    true,
+			EnableDeferredDirectAck:      true,
 		},
 	}
 

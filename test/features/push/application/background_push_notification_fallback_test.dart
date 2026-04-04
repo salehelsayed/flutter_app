@@ -115,6 +115,24 @@ void main() {
       expect(fallback.payload, 'intros');
     });
 
+    test('shows fallback for contact_request type', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'contact_request',
+          'sender_id': '12D3KooWRequestPeer',
+          'title': 'New Contact Request',
+          'body': 'Alice wants to connect',
+        },
+      );
+
+      expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'New Contact Request');
+      expect(fallback.body, 'Alice wants to connect');
+      expect(fallback.payload, 'contact_request:12D3KooWRequestPeer');
+    });
+
     test('shows fallback for unknown type with payload data key', () {
       const message = RemoteMessage(
         data: {'type': 'custom', 'payload': 'some-payload-data'},

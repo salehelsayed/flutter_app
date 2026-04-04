@@ -111,7 +111,7 @@ void main() {
   // ═══════════════════════════════════════════════════════════════════
   group('Area 2: Unknown responderId', () {
     test(
-      'responderId matching neither party → error, no state mutation',
+      'responderId matching neither party → rejected, no state mutation',
       () async {
         final introId = await createStandardIntro();
 
@@ -128,7 +128,7 @@ void main() {
           ownPeerId: bob.peerId,
         );
 
-        expect(result, HandleIntroductionResult.error);
+        expect(result, HandleIntroductionResult.rejected);
 
         // Verify no state mutation
         final intro = await bob.introRepo.getIntroduction(introId);
@@ -483,7 +483,7 @@ void main() {
       expect(filtered.first.peerId, 'peer-bob');
     });
 
-    test('already-introduced contacts excluded from friend list', () async {
+    test('already-introduced contacts stay available for re-send', () async {
       final contactRepo = InMemoryContactRepository();
       final introRepo = InMemoryIntroductionRepository();
       final recipientPeerId = 'peer-bob';
@@ -521,30 +521,16 @@ void main() {
         ),
       );
 
-      // Replicate picker logic
-      final existingIntros = await introRepo.getIntroductionsByIntroducer(
-        introducerPeerId,
-      );
-      final alreadyIntroduced = <String>{};
-      for (final intro in existingIntros) {
-        if (intro.recipientId == recipientPeerId) {
-          alreadyIntroduced.add(intro.introducedId);
-        }
-        if (intro.introducedId == recipientPeerId) {
-          alreadyIntroduced.add(intro.recipientId);
-        }
-      }
-
       final contacts = await contactRepo.getActiveContacts();
       final filtered = contacts.where((c) {
         if (c.peerId == recipientPeerId) return false;
         if (c.isBlocked) return false;
-        if (alreadyIntroduced.contains(c.peerId)) return false;
         return true;
       }).toList();
 
-      expect(filtered.length, 1);
-      expect(filtered.first.peerId, 'peer-dave');
+      expect(filtered.length, 2);
+      expect(filtered.map((contact) => contact.peerId), contains('peer-carol'));
+      expect(filtered.map((contact) => contact.peerId), contains('peer-dave'));
     });
   });
 

@@ -50,6 +50,11 @@ const _uuid = Uuid();
 ///    and probes the relay only when discoverability is stale
 /// 7. Persists final status via messageRepo.saveMessage()
 ///
+/// A live send that writes to the peer but does not receive an ACK is kept as
+/// truthful local `sent` state with the wire envelope retained for later retry.
+/// Immediate inbox fallback is reserved for paths that never achieved a live
+/// send at all.
+///
 /// The wireEnvelope persist at step 5 ensures that if the app crashes during
 /// the transport race (step 6), Section 1's PendingMessageRetrier can replay
 /// the message without re-serializing or re-encrypting.
@@ -261,20 +266,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           targetPeerId: targetPeerId,
           jsonString: jsonString,
           acknowledged: sendResult.acknowledged,
-        via: _resolveGoSendTransport(
-          p2pService,
-          targetPeerId,
-          sendResult,
-          preserveLocalPeerLabel: true,
-        ),
-        resolvedMessageId: resolvedMessageId,
-        textPreview: textPreview,
-        text: sanitizedText,
-        createdAt: createdAt,
-        editedAt: resolvedEditedAt,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        attachments: normalizedAttachments,
-        sendStopwatch: sendStopwatch,
+          via: _resolveGoSendTransport(
+            p2pService,
+            targetPeerId,
+            sendResult,
+            preserveLocalPeerLabel: true,
+          ),
+          resolvedMessageId: resolvedMessageId,
+          textPreview: textPreview,
+          text: sanitizedText,
+          createdAt: createdAt,
+          editedAt: resolvedEditedAt,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          attachments: normalizedAttachments,
+          sendStopwatch: sendStopwatch,
           emitTimingEvent: emitTimingEvent,
         );
       }
@@ -859,7 +864,6 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required bool emitTimingEvent,
 }) async {
   final message = await _persistOutgoingSendResult(
-    p2pService: p2pService,
     payload: payload,
     targetPeerId: targetPeerId,
     jsonString: jsonString,
@@ -917,7 +921,6 @@ SendChatMessageResult _resultForFailureReason(String? reason) {
 }
 
 Future<ConversationMessage> _persistOutgoingSendResult({
-  required P2PService p2pService,
   required MessagePayload payload,
   required String targetPeerId,
   required String jsonString,
@@ -934,34 +937,6 @@ Future<ConversationMessage> _persistOutgoingSendResult({
       createdAt: createdAt,
       editedAt: editedAt,
       transport: via,
-    );
-  }
-
-  try {
-    final storedInInbox = await p2pService.storeInInbox(
-      targetPeerId,
-      jsonString,
-    );
-    if (storedInInbox) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_SEND_UNACKED_INBOX_HANDOFF',
-        details: {'via': via},
-      );
-      return payload.toConversationMessage(
-        contactPeerId: targetPeerId,
-        isIncoming: false,
-        status: 'delivered',
-        createdAt: createdAt,
-        editedAt: editedAt,
-        transport: 'inbox',
-      );
-    }
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_UNACKED_INBOX_ERROR',
-      details: {'via': via, 'error': e.toString()},
     );
   }
 

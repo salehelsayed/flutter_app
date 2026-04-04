@@ -1,4 +1,4 @@
-/// Integration test: Full DB migration chain (v1 -> v26).
+/// Integration test: Full DB migration chain.
 ///
 /// Verifies:
 /// 1a. Fresh install creates all tables with correct schema
@@ -8,6 +8,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
@@ -38,7 +42,14 @@ import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
+import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
+import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
+import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 
@@ -98,6 +109,157 @@ void main() {
     await runMessagesEditedAtMigration(db);
     await runMessagesDeletedStateMigration(db);
     await runInboxStagingEntriesMigration(db);
+    await runPendingIntroductionResponsesMigration(db);
+    await runIntroductionOutboxMigration(db);
+  }
+
+  Future<void> runUpgradePathFromV1(
+    Database db, {
+    required FakeSecureKeyStore keyStore,
+  }) async {
+    await runMessagesTableMigration(db);
+    await runMlKemKeysMigration(db);
+    await runNullifySecretColumnsMigration(db);
+    await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);
+    await runSecretNullChecksMigration(db);
+    await runReadAtColumnMigration(db);
+    await runArchiveColumnsMigration(db);
+    await runBlockColumnsMigration(db);
+    await runQuotedMessageIdMigration(db);
+    await runMediaAttachmentsMigration(db);
+    await runMediaAttachmentReliabilityColumnsMigration(db);
+    await runAvatarVersionMigration(db);
+    await runTransportColumnMigration(db);
+    await runWaveformColumnMigration(db);
+    await runWireEnvelopeMigration(db);
+    await runMessageStatusCleanupMigration(db);
+    await runMessageReactionsMigration(db);
+    await runGroupsTablesMigration(db);
+    await runGroupMessagesTablesMigration(db);
+    await runIntroductionsTableMigration(db);
+    await runIntroBannerColumnsMigration(db);
+    await runContactIntroducedByMigration(db);
+    await runIntroductionKeysMigration(db);
+    await runIntroductionRecipientKeysMigration(db);
+    await runContactIntroducedByPeerIdMigration(db);
+    await runIntroductionAlreadyConnectedMigration(db);
+    await runGroupQuotedMessageIdMigration(db);
+    await runMessagesEditedAtMigration(db);
+    await runMessagesDeletedStateMigration(db);
+    await runInboxStagingEntriesMigration(db);
+    await runPendingIntroductionResponsesMigration(db);
+    await runIntroductionOutboxMigration(db);
+  }
+
+  MessageRepositoryImpl buildMessageRepository(Database db) {
+    return MessageRepositoryImpl(
+      dbInsertMessage: (row) => dbInsertMessage(db, row),
+      dbLoadMessagesForContact: (contactPeerId) =>
+          dbLoadMessagesForContact(db, contactPeerId),
+      dbLoadLatestMessageForContact: (contactPeerId) =>
+          dbLoadLatestMessageForContact(db, contactPeerId),
+      dbUpdateMessageStatus: (id, status) =>
+          dbUpdateMessageStatus(db, id, status),
+      dbLoadMessage: (id) => dbLoadMessage(db, id),
+      dbCountMessagesForContact: (contactPeerId) =>
+          dbCountMessagesForContact(db, contactPeerId),
+      dbMarkConversationAsRead: (contactPeerId) =>
+          dbMarkConversationAsRead(db, contactPeerId),
+      dbCountUnreadForContact: (contactPeerId) =>
+          dbCountUnreadForContact(db, contactPeerId),
+      dbCountTotalUnread: () => dbCountTotalUnread(db),
+      dbCountTotalUnreadExcludingArchived: () =>
+          dbCountTotalUnreadExcludingArchived(db),
+      dbDeleteMessagesForContact: (contactPeerId) =>
+          dbDeleteMessagesForContact(db, contactPeerId),
+      dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+      dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
+          dbLoadMessagesPage(
+            db,
+            contactPeerId,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
+      dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+      dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 100}) =>
+          dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+      dbLoadConversationThreadSummaries: (contactPeerIds) =>
+          dbLoadConversationThreadSummaries(db, contactPeerIds),
+      dbRecoverStuckSendingMessages: ({required olderThan, limit = 100}) =>
+          dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
+      dbUpdateWireEnvelope: (id, wireEnvelope) =>
+          dbUpdateWireEnvelope(db, id, wireEnvelope),
+      dbLoadStuckSendingOutgoingMessages: ({required olderThan, limit = 100}) =>
+          dbLoadStuckSendingOutgoingMessages(
+            db,
+            olderThan: olderThan,
+            limit: limit,
+          ),
+      dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
+    );
+  }
+
+  IntroductionRepositoryImpl buildIntroductionRepository(Database db) {
+    return IntroductionRepositoryImpl(
+      dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
+      dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
+      dbDeleteIntroduction: (id) => dbDeleteIntroduction(db, id),
+      dbLoadIntroductionsByRecipient: (recipientId) =>
+          dbLoadIntroductionsByRecipient(db, recipientId),
+      dbLoadIntroductionsByIntroduced: (introducedId) =>
+          dbLoadIntroductionsByIntroduced(db, introducedId),
+      dbLoadIntroductionsByIntroducer: (introducerId) =>
+          dbLoadIntroductionsByIntroducer(db, introducerId),
+      dbLoadIntroductionsForRecipientAndIntroducer:
+          (recipientId, introducerId) =>
+              dbLoadIntroductionsForRecipientAndIntroducer(
+                db,
+                recipientId,
+                introducerId,
+              ),
+      dbUpdateRecipientStatus: (id, status, respondedAt) =>
+          dbUpdateRecipientStatus(db, id, status, respondedAt),
+      dbUpdateIntroducedStatus: (id, status, respondedAt) =>
+          dbUpdateIntroducedStatus(db, id, status, respondedAt),
+      dbUpdateOverallStatus: (id, status) =>
+          dbUpdateOverallStatus(db, id, status),
+      dbLoadPendingIntroductionsForUser: (peerId) =>
+          dbLoadPendingIntroductionsForUser(db, peerId),
+      dbCountPendingIntroductions: (peerId) =>
+          dbCountPendingIntroductions(db, peerId),
+      dbUpsertPendingIntroductionResponse: (row) =>
+          dbUpsertPendingIntroductionResponse(db, row),
+      dbLoadPendingIntroductionResponses: (introductionId) =>
+          dbLoadPendingIntroductionResponses(db, introductionId),
+      dbDeletePendingIntroductionResponse: (responseKey) =>
+          dbDeletePendingIntroductionResponse(db, responseKey),
+      dbUpsertIntroductionOutboxDelivery: (row) =>
+          dbUpsertIntroductionOutboxDelivery(db, row),
+      dbLoadIntroductionOutboxDeliveriesForIntroduction: (introductionId) =>
+          dbLoadIntroductionOutboxDeliveriesForIntroduction(db, introductionId),
+      dbLoadRetryableIntroductionOutboxDeliveries:
+          ({required olderThan, limit = 100}) =>
+              dbLoadRetryableIntroductionOutboxDeliveries(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbDeleteIntroductionOutboxDelivery: (deliveryId) =>
+          dbDeleteIntroductionOutboxDelivery(db, deliveryId),
+      dbDeleteIntroductionOutboxDeliveriesForIntroduction: (introductionId) =>
+          dbDeleteIntroductionOutboxDeliveriesForIntroduction(
+            db,
+            introductionId,
+          ),
+    );
   }
 
   group('Full DB migration chain', () {
@@ -126,7 +288,9 @@ void main() {
           'group_keys',
           'group_messages',
           'introductions',
+          'introduction_outbox_deliveries',
           'inbox_staging_entries',
+          'pending_introduction_responses',
         ]),
       );
 
@@ -536,7 +700,172 @@ void main() {
       expect(request.first['status'], 'pending');
     });
 
-    test('1c. Idempotent migrations can be re-run safely', () async {
+    test(
+      '1c. migrated schema persists newly arrived incoming messages',
+      () async {
+        db = await databaseFactoryFfi.openDatabase(
+          inMemoryDatabasePath,
+          options: OpenDatabaseOptions(version: 1),
+        );
+
+        await runIdentityTableMigration(db);
+
+        await db.insert('identity', {
+          'id': 1,
+          'peer_id': 'peer-migrated-self',
+          'public_key': 'pk-self',
+          'private_key': 'sk-self',
+          'mnemonic12':
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+          'username': 'MigratedUser',
+          'created_at': '2026-01-01T00:00:00Z',
+          'updated_at': '2026-01-01T00:00:00Z',
+        });
+        await db.insert('contacts', {
+          'peer_id': 'contact-migrated',
+          'public_key': 'pk-contact',
+          'rendezvous': '/rv/contact',
+          'username': 'Contact',
+          'signature': 'sig-contact',
+          'scanned_at': '2026-01-01T00:00:00Z',
+        });
+
+        final keyStore = FakeSecureKeyStore();
+        await runUpgradePathFromV1(db, keyStore: keyStore);
+
+        final messageRepo = buildMessageRepository(db);
+        const timestamp = '2026-01-02T12:34:56.000Z';
+
+        await messageRepo.saveMessage(
+          const ConversationMessage(
+            id: 'post-migration-msg-1',
+            contactPeerId: 'contact-migrated',
+            senderPeerId: 'contact-migrated',
+            text: 'Delivered after migration',
+            timestamp: timestamp,
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: timestamp,
+            transport: 'inbox',
+            wireEnvelope: '{"type":"chat","id":"post-migration-msg-1"}',
+          ),
+        );
+
+        final messages = await messageRepo.getMessagesForContact(
+          'contact-migrated',
+        );
+        expect(messages, hasLength(1));
+        expect(messages.single.text, 'Delivered after migration');
+        expect(messages.single.isIncoming, isTrue);
+        expect(messages.single.transport, 'inbox');
+        expect(messages.single.wireEnvelope, isNotNull);
+
+        final latest = await messageRepo.getLatestMessageForContact(
+          'contact-migrated',
+        );
+        expect(latest?.id, 'post-migration-msg-1');
+        expect(
+          await messageRepo.getUnreadCountForContact('contact-migrated'),
+          1,
+        );
+      },
+    );
+
+    test(
+      '1c. migrated schema persists newly arrived introductions and deferred responses',
+      () async {
+        db = await databaseFactoryFfi.openDatabase(
+          inMemoryDatabasePath,
+          options: OpenDatabaseOptions(version: 1),
+        );
+
+        await runIdentityTableMigration(db);
+
+        await db.insert('identity', {
+          'id': 1,
+          'peer_id': 'peer-migrated-self',
+          'public_key': 'pk-self',
+          'private_key': 'sk-self',
+          'mnemonic12':
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+          'username': 'MigratedUser',
+          'created_at': '2026-01-01T00:00:00Z',
+          'updated_at': '2026-01-01T00:00:00Z',
+        });
+        await db.insert('contacts', {
+          'peer_id': 'introducer-migrated',
+          'public_key': 'pk-introducer',
+          'rendezvous': '/rv/introducer',
+          'username': 'Noor',
+          'signature': 'sig-introducer',
+          'scanned_at': '2026-01-01T00:00:00Z',
+        });
+        await db.insert('contacts', {
+          'peer_id': 'contact-migrated',
+          'public_key': 'pk-contact',
+          'rendezvous': '/rv/contact',
+          'username': 'Sarah',
+          'signature': 'sig-contact',
+          'scanned_at': '2026-01-01T00:00:00Z',
+        });
+
+        final keyStore = FakeSecureKeyStore();
+        await runUpgradePathFromV1(db, keyStore: keyStore);
+
+        final introRepo = buildIntroductionRepository(db);
+        const introId = 'post-migration-intro-1';
+        const createdAt = '2026-01-02T12:34:56.000Z';
+
+        await introRepo.saveIntroduction(
+          const IntroductionModel(
+            id: introId,
+            introducerId: 'introducer-migrated',
+            recipientId: 'peer-migrated-self',
+            introducedId: 'contact-migrated',
+            introducerUsername: 'Noor',
+            recipientUsername: 'MigratedUser',
+            introducedUsername: 'Sarah',
+            createdAt: createdAt,
+            introducedPublicKey: 'pk-contact',
+            introducedMlKemPublicKey: 'mlkem-pk-contact',
+          ),
+        );
+
+        await introRepo.savePendingResponse(
+          const PendingIntroductionResponse(
+            responseKey: 'post-migration-intro-1::contact-migrated::accept',
+            introductionId: introId,
+            action: 'accept',
+            responderId: 'contact-migrated',
+            responderUsername: 'Sarah',
+            createdAt: createdAt,
+          ),
+        );
+
+        final loaded = await introRepo.getIntroduction(introId);
+        expect(loaded, isNotNull);
+        expect(loaded!.recipientId, 'peer-migrated-self');
+        expect(loaded.introducedId, 'contact-migrated');
+        expect(loaded.introducerUsername, 'Noor');
+        expect(loaded.introducedMlKemPublicKey, 'mlkem-pk-contact');
+
+        final pending = await introRepo.loadPendingResponses(introId);
+        expect(pending, hasLength(1));
+        expect(pending.single.responderId, 'contact-migrated');
+        expect(pending.single.action, 'accept');
+
+        final pendingForUser = await introRepo.getPendingIntroductionsForUser(
+          'peer-migrated-self',
+        );
+        expect(pendingForUser, hasLength(1));
+        expect(
+          await introRepo.countPendingIntroductions('peer-migrated-self'),
+          1,
+        );
+      },
+    );
+
+    test('1d. Idempotent migrations can be re-run safely', () async {
       db = await databaseFactoryFfi.openDatabase(
         inMemoryDatabasePath,
         options: OpenDatabaseOptions(version: 1),
@@ -613,7 +942,7 @@ void main() {
     });
 
     test(
-      '1d. v25 to v26 upgrade adds group quoted_message_id safely',
+      '1e. v25 to v26 upgrade adds group quoted_message_id safely',
       () async {
         db = await databaseFactoryFfi.openDatabase(
           inMemoryDatabasePath,

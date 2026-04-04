@@ -24,6 +24,25 @@ ConversationMessage _makeSentMessage({
   );
 }
 
+ConversationMessage _makeSentDeletedMessage({
+  String id = 'msg-delete-sent-001',
+  String contactPeerId = 'peer-target',
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: 'my-peer-id',
+    text: '',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    status: 'sent',
+    isIncoming: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    deletedAt: '2026-01-01T00:01:00.000Z',
+    deletedByPeerId: 'my-peer-id',
+    wireEnvelope: '{"type":"message_deletion","version":"1"}',
+  );
+}
+
 void main() {
   group('retryUnackedMessages', () {
     late FakeMessageRepository messageRepo;
@@ -88,6 +107,33 @@ void main() {
       expect(messageRepo.lastSavedMessage!.wireEnvelope, isNull);
     });
 
+    test(
+      'hides delivered outgoing delete tombstones after inbox retry succeeds',
+      () async {
+        final msg = _makeSentDeletedMessage();
+        messageRepo.seed([msg]);
+        messageRepo.unackedOutgoingOverride = [msg];
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+
+        expect(count, 1);
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'delivered');
+        expect(saved.isDeleted, isTrue);
+        expect(saved.isHidden, isTrue);
+        expect(saved.hiddenAt, saved.deletedAt);
+      },
+    );
+
     test('leaves status as sent when storeInInbox fails', () async {
       final msg = _makeSentMessage();
       messageRepo.seed([msg]);
@@ -148,49 +194,46 @@ void main() {
       expect(count, 2);
     });
 
-    test(
-      'retryUnackedMessages skips storeInInbox when message transport '
-      'is already inbox',
-      () async {
-        // Simulate the post-crash state: message was successfully stored
-        // in inbox but app crashed before DB was updated. On resume,
-        // a recovery path re-saved the row with transport='inbox'.
-        final msgWithInboxTransport = ConversationMessage(
-          id: 'msg-crash-002',
-          contactPeerId: 'peer-target',
-          senderPeerId: 'my-peer-id',
-          text: 'Unacked crash test',
-          timestamp: '2026-01-01T00:00:00.000Z',
-          status: 'sent',
-          isIncoming: false,
-          createdAt: '2026-01-01T00:00:00.000Z',
-          transport: 'inbox', // already in inbox
-          wireEnvelope:
-              '{"type":"chat","version":"1","payload":{"id":"msg-crash-002"}}',
-        );
-        messageRepo.seed([msgWithInboxTransport]);
-        messageRepo.unackedOutgoingOverride = [msgWithInboxTransport];
+    test('retryUnackedMessages skips storeInInbox when message transport '
+        'is already inbox', () async {
+      // Simulate the post-crash state: message was successfully stored
+      // in inbox but app crashed before DB was updated. On resume,
+      // a recovery path re-saved the row with transport='inbox'.
+      final msgWithInboxTransport = ConversationMessage(
+        id: 'msg-crash-002',
+        contactPeerId: 'peer-target',
+        senderPeerId: 'my-peer-id',
+        text: 'Unacked crash test',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        status: 'sent',
+        isIncoming: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        transport: 'inbox', // already in inbox
+        wireEnvelope:
+            '{"type":"chat","version":"1","payload":{"id":"msg-crash-002"}}',
+      );
+      messageRepo.seed([msgWithInboxTransport]);
+      messageRepo.unackedOutgoingOverride = [msgWithInboxTransport];
 
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-          storeInInboxResult: true,
-        );
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
 
-        final count = await retryUnackedMessages(
-          messageRepo: messageRepo,
-          p2pService: p2pService,
-        );
+      final count = await retryUnackedMessages(
+        messageRepo: messageRepo,
+        p2pService: p2pService,
+      );
 
-        // storeInInbox should NOT be called — message already has transport='inbox'
-        expect(p2pService.storeInInboxCallCount, 0);
-        // But the message should still be marked as delivered
-        expect(count, 1);
-        final saved = messageRepo.lastSavedMessage;
-        expect(saved, isNotNull);
-        expect(saved!.status, 'delivered');
-        expect(saved.wireEnvelope, isNull);
-      },
-    );
+      // storeInInbox should NOT be called — message already has transport='inbox'
+      expect(p2pService.storeInInboxCallCount, 0);
+      // But the message should still be marked as delivered
+      expect(count, 1);
+      final saved = messageRepo.lastSavedMessage;
+      expect(saved, isNotNull);
+      expect(saved!.status, 'delivered');
+      expect(saved.wireEnvelope, isNull);
+    });
 
     test('continues on storeInInbox error and tries next message', () async {
       final msg1 = _makeSentMessage(id: 'msg-1', contactPeerId: 'peer-a');

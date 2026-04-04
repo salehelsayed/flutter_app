@@ -8,6 +8,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
+
 // ---------------------------------------------------------------------------
 // Test constants
 // ---------------------------------------------------------------------------
@@ -42,7 +44,8 @@ class _ReconnectGateBridge implements Bridge {
   /// If non-null, `relay:reconnect` will await this completer before returning.
   Completer<void>? relayReconnectGate;
 
-  /// If non-null, `inbox:retrieve` will await this completer before returning.
+  /// If non-null, `inbox:retrieve_pending` will await this completer before
+  /// returning.
   Completer<void>? inboxRetrieveGate;
 
   /// Pre-canned JSON responses keyed by command name.
@@ -111,8 +114,8 @@ class _ReconnectGateBridge implements Bridge {
       }
     }
 
-    // Gate: inbox:retrieve
-    if (cmd == 'inbox:retrieve' && inboxRetrieveGate != null) {
+    // Gate: inbox:retrieve_pending
+    if (cmd == 'inbox:retrieve_pending' && inboxRetrieveGate != null) {
       final gate = inboxRetrieveGate!;
       if (!gate.isCompleted) {
         await gate.future;
@@ -204,6 +207,13 @@ Future<void> _waitForCommandCount(
   }
 }
 
+P2PServiceImpl _makeService(_ReconnectGateBridge bridge) {
+  return P2PServiceImpl(
+    bridge: bridge,
+    inboxStagingRepository: InMemoryInboxStagingRepository(),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -228,9 +238,12 @@ void main() {
         bridge.responses['node:status'] = _nodeStatusDegraded();
         bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
         bridge.responses['relay:reconnect'] = {'ok': true};
-        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['inbox:retrieve_pending'] = {
+          'ok': true,
+          'messages': [],
+        };
 
-        final service = P2PServiceImpl(bridge: bridge);
+        final service = _makeService(bridge);
 
         // Start the node in healthy state first (sets _hasEverBeenOnline = true).
         await service.startNodeCore(_testBase64Key, _testPeerId);
@@ -276,9 +289,12 @@ void main() {
         bridge.responses['node:status'] = _nodeStatusDegraded();
         bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
         bridge.responses['relay:reconnect'] = {'ok': true};
-        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['inbox:retrieve_pending'] = {
+          'ok': true,
+          'messages': [],
+        };
 
-        final service = P2PServiceImpl(bridge: bridge);
+        final service = _makeService(bridge);
 
         // Start healthy (sets _hasEverBeenOnline).
         await service.startNodeCore(_testBase64Key, _testPeerId);
@@ -324,9 +340,12 @@ void main() {
         bridge.responses['node:start'] = _nodeStartOk();
         bridge.responses['node:status'] = _nodeStatusDegraded();
         bridge.responses['relay:reconnect'] = {'ok': true};
-        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['inbox:retrieve_pending'] = {
+          'ok': true,
+          'messages': [],
+        };
 
-        final service = P2PServiceImpl(bridge: bridge);
+        final service = _makeService(bridge);
 
         // Start healthy.
         await service.startNodeCore(_testBase64Key, _testPeerId);
@@ -354,7 +373,7 @@ void main() {
       final bridge = _ReconnectGateBridge();
       bridge.responses['node:start'] = _nodeStartOk();
 
-      final service = P2PServiceImpl(bridge: bridge);
+      final service = _makeService(bridge);
 
       // First dispose.
       service.dispose();
@@ -373,9 +392,12 @@ void main() {
 
       bridge.responses['node:start'] = _nodeStartOk();
       bridge.responses['node:status'] = _nodeStatusOk();
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+      bridge.responses['inbox:retrieve_pending'] = {
+        'ok': true,
+        'messages': [],
+      };
 
-      final service = P2PServiceImpl(bridge: bridge);
+      final service = _makeService(bridge);
 
       // Start the node.
       await service.startNodeCore(_testBase64Key, _testPeerId);
@@ -404,9 +426,12 @@ void main() {
       final bridge = _ReconnectGateBridge();
       bridge.responses['node:start'] = _nodeStartOk();
       bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+      bridge.responses['inbox:retrieve_pending'] = {
+        'ok': true,
+        'messages': [],
+      };
 
-      final service = P2PServiceImpl(bridge: bridge);
+      final service = _makeService(bridge);
 
       // Start the node.
       await service.startNodeCore(_testBase64Key, _testPeerId);
@@ -456,9 +481,12 @@ void main() {
           'errorMessage': 'stop failed',
         };
         bridge.responses['node:status'] = _nodeStatusOk();
-        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['inbox:retrieve_pending'] = {
+          'ok': true,
+          'messages': [],
+        };
 
-        final service = P2PServiceImpl(bridge: bridge);
+        final service = _makeService(bridge);
 
         // Start the node.
         await service.startNodeCore(_testBase64Key, _testPeerId);
@@ -491,9 +519,12 @@ void main() {
         bridge.responses['node:start'] = _nodeStartOk();
         bridge.responses['node:status'] = _nodeStatusOk();
         bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
-        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['inbox:retrieve_pending'] = {
+          'ok': true,
+          'messages': [],
+        };
 
-        final service = P2PServiceImpl(bridge: bridge);
+        final service = _makeService(bridge);
 
         // Start the node (also calls warmBackground which starts the timer).
         service.startNode(_testBase64Key, _testPeerId);
@@ -539,9 +570,12 @@ void main() {
         bridge.responses['node:start'] = _nodeStartDegraded();
         bridge.responses['node:status'] = _nodeStatusDegraded();
         bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
-        bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+        bridge.responses['inbox:retrieve_pending'] = {
+          'ok': true,
+          'messages': [],
+        };
 
-        final service = P2PServiceImpl(bridge: bridge);
+        final service = _makeService(bridge);
 
         // Start the node. warmBackground schedules a 2s delayed callback.
         service.startNode(_testBase64Key, _testPeerId);
@@ -589,9 +623,12 @@ void main() {
       bridge.responses['node:status'] = _nodeStatusDegraded();
       bridge.responses['node:stop'] = {'ok': true, 'stopped': true};
       bridge.responses['relay:reconnect'] = {'ok': true};
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+      bridge.responses['inbox:retrieve_pending'] = {
+        'ok': true,
+        'messages': [],
+      };
 
-      final service = P2PServiceImpl(bridge: bridge);
+      final service = _makeService(bridge);
 
       // Start healthy (sets _hasEverBeenOnline).
       await service.startNodeCore(_testBase64Key, _testPeerId);
@@ -632,9 +669,12 @@ void main() {
       bridge.responses['node:start'] = _nodeStartOk();
       bridge.responses['node:status'] = _nodeStatusDegraded();
       bridge.responses['relay:reconnect'] = {'ok': true};
-      bridge.responses['inbox:retrieve'] = {'ok': true, 'messages': []};
+      bridge.responses['inbox:retrieve_pending'] = {
+        'ok': true,
+        'messages': [],
+      };
 
-      final service = P2PServiceImpl(bridge: bridge);
+      final service = _makeService(bridge);
 
       // Start healthy.
       await service.startNodeCore(_testBase64Key, _testPeerId);

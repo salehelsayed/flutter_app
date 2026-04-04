@@ -1,6 +1,8 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/introduction_model.dart';
+import '../models/introduction_outbox_delivery.dart';
+import '../models/pending_introduction_response.dart';
 import 'introduction_repository.dart';
 
 /// Implementation of IntroductionRepository using database helper functions.
@@ -27,6 +29,25 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   final Future<List<Map<String, Object?>>> Function(String peerId)
   dbLoadPendingIntroductionsForUser;
   final Future<int> Function(String peerId) dbCountPendingIntroductions;
+  final Future<void> Function(Map<String, Object?> row)
+  dbUpsertPendingIntroductionResponse;
+  final Future<List<Map<String, Object?>>> Function(String introductionId)
+  dbLoadPendingIntroductionResponses;
+  final Future<void> Function(String responseKey)
+  dbDeletePendingIntroductionResponse;
+  final Future<void> Function(Map<String, Object?> row)
+  dbUpsertIntroductionOutboxDelivery;
+  final Future<List<Map<String, Object?>>> Function(String introductionId)
+  dbLoadIntroductionOutboxDeliveriesForIntroduction;
+  final Future<List<Map<String, Object?>>> Function({
+    required String olderThan,
+    int limit,
+  })
+  dbLoadRetryableIntroductionOutboxDeliveries;
+  final Future<void> Function(String deliveryId)
+  dbDeleteIntroductionOutboxDelivery;
+  final Future<void> Function(String introductionId)
+  dbDeleteIntroductionOutboxDeliveriesForIntroduction;
 
   IntroductionRepositoryImpl({
     required this.dbInsertIntroduction,
@@ -41,6 +62,14 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     required this.dbUpdateOverallStatus,
     required this.dbLoadPendingIntroductionsForUser,
     required this.dbCountPendingIntroductions,
+    required this.dbUpsertPendingIntroductionResponse,
+    required this.dbLoadPendingIntroductionResponses,
+    required this.dbDeletePendingIntroductionResponse,
+    required this.dbUpsertIntroductionOutboxDelivery,
+    required this.dbLoadIntroductionOutboxDeliveriesForIntroduction,
+    required this.dbLoadRetryableIntroductionOutboxDeliveries,
+    required this.dbDeleteIntroductionOutboxDelivery,
+    required this.dbDeleteIntroductionOutboxDeliveriesForIntroduction,
   });
 
   @override
@@ -82,6 +111,11 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
 
   @override
   Future<void> deleteIntroduction(String id) async {
+    final pendingResponses = await loadPendingResponses(id);
+    for (final response in pendingResponses) {
+      await deletePendingResponse(response.responseKey);
+    }
+    await deleteOutboxDeliveriesForIntroduction(id);
     await dbDeleteIntroduction(id);
   }
 
@@ -239,5 +273,68 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   @override
   Future<int> countPendingIntroductions(String peerId) async {
     return await dbCountPendingIntroductions(peerId);
+  }
+
+  @override
+  Future<void> savePendingResponse(PendingIntroductionResponse response) async {
+    await dbUpsertPendingIntroductionResponse(response.toMap());
+  }
+
+  @override
+  Future<List<PendingIntroductionResponse>> loadPendingResponses(
+    String introductionId,
+  ) async {
+    final rows = await dbLoadPendingIntroductionResponses(introductionId);
+    return rows
+        .map((row) => PendingIntroductionResponse.fromMap(row))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> deletePendingResponse(String responseKey) async {
+    await dbDeletePendingIntroductionResponse(responseKey);
+  }
+
+  @override
+  Future<void> saveOutboxDelivery(IntroductionOutboxDelivery delivery) async {
+    await dbUpsertIntroductionOutboxDelivery(delivery.toMap());
+  }
+
+  @override
+  Future<List<IntroductionOutboxDelivery>> loadOutboxDeliveriesForIntroduction(
+    String introductionId,
+  ) async {
+    final rows = await dbLoadIntroductionOutboxDeliveriesForIntroduction(
+      introductionId,
+    );
+    return rows.map(IntroductionOutboxDelivery.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<List<IntroductionOutboxDelivery>> loadRetryableOutboxDeliveries({
+    Duration olderThan = const Duration(seconds: 60),
+    int limit = 100,
+  }) async {
+    final threshold = DateTime.now()
+        .toUtc()
+        .subtract(olderThan)
+        .toIso8601String();
+    final rows = await dbLoadRetryableIntroductionOutboxDeliveries(
+      olderThan: threshold,
+      limit: limit,
+    );
+    return rows.map(IntroductionOutboxDelivery.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<void> deleteOutboxDelivery(String deliveryId) async {
+    await dbDeleteIntroductionOutboxDelivery(deliveryId);
+  }
+
+  @override
+  Future<void> deleteOutboxDeliveriesForIntroduction(
+    String introductionId,
+  ) async {
+    await dbDeleteIntroductionOutboxDeliveriesForIntroduction(introductionId);
   }
 }

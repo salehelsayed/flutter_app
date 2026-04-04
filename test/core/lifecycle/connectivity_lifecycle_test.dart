@@ -7,6 +7,7 @@ import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../../shared/fakes/lifecycle_bridge.dart';
 
 void main() {
@@ -15,7 +16,10 @@ void main() {
 
   setUp(() {
     bridge = LifecycleBridge();
-    service = P2PServiceImpl(bridge: bridge);
+    service = P2PServiceImpl(
+      bridge: bridge,
+      inboxStagingRepository: InMemoryInboxStagingRepository(),
+    );
   });
 
   tearDown(() {
@@ -120,7 +124,7 @@ void main() {
       await service.performImmediateHealthCheck();
       expect(healthFromState(service.currentState), ConnectionHealth.degraded);
 
-      // But inbox:retrieve still works (the bridge call returns ok)
+      // But retrieve_pending still works (the bridge call returns ok)
       // In the real system, inbox drain happens on each health check
       // The fact that relay is degraded doesn't break inbox retrieval
       expect(bridge.inboxRetrieveFails, isFalse);
@@ -238,7 +242,10 @@ void main() {
     test('2.7 Health check timer drift (duplicate timers)', () {
       fakeAsync((async) {
         final bridge = LifecycleBridge();
-        final service = P2PServiceImpl(bridge: bridge);
+        final service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: InMemoryInboxStagingRepository(),
+        );
 
         // Start node — this sets up the first health check timer via warmBackground
         // We call startNodeCore directly to avoid warmBackground's delayed callbacks
