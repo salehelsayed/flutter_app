@@ -87,10 +87,7 @@ void main() {
       });
 
       test('returns null for missing payload', () {
-        final json = jsonEncode({
-          'type': 'chat_message',
-          'version': '1',
-        });
+        final json = jsonEncode({'type': 'chat_message', 'version': '1'});
         expect(MessagePayload.fromJson(json), isNull);
       });
 
@@ -171,11 +168,15 @@ void main() {
       const kem = 'base64kem==';
       const ciphertext = 'base64ct==';
       const nonce = 'base64nonce==';
+      const messageId = 'msg-123';
       const senderPeerId = '12D3KooWSender123';
+      const senderUsername = 'Alice';
 
       test('buildEncryptedEnvelope produces correct structure', () {
         final envelope = MessagePayload.buildEncryptedEnvelope(
+          id: messageId,
           senderPeerId: senderPeerId,
+          senderUsername: senderUsername,
           kem: kem,
           ciphertext: ciphertext,
           nonce: nonce,
@@ -184,7 +185,9 @@ void main() {
         final parsed = jsonDecode(envelope) as Map<String, dynamic>;
         expect(parsed['type'], 'chat_message');
         expect(parsed['version'], '2');
+        expect(parsed['id'], messageId);
         expect(parsed['senderPeerId'], senderPeerId);
+        expect(parsed['senderUsername'], senderUsername);
         expect(parsed['encrypted']['kem'], kem);
         expect(parsed['encrypted']['ciphertext'], ciphertext);
         expect(parsed['encrypted']['nonce'], nonce);
@@ -192,7 +195,9 @@ void main() {
 
       test('parseEncryptedEnvelope returns map for valid v2', () {
         final envelope = MessagePayload.buildEncryptedEnvelope(
+          id: messageId,
           senderPeerId: senderPeerId,
+          senderUsername: senderUsername,
           kem: kem,
           ciphertext: ciphertext,
           nonce: nonce,
@@ -220,25 +225,29 @@ void main() {
         expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
       });
 
-      test('parseEncryptedEnvelope returns null for missing encrypted fields',
-          () {
-        final json = jsonEncode({
-          'type': 'chat_message',
-          'version': '2',
-          'encrypted': {'kem': 'x'},
-        });
-        expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
-      });
+      test(
+        'parseEncryptedEnvelope returns null for missing encrypted fields',
+        () {
+          final json = jsonEncode({
+            'type': 'chat_message',
+            'version': '2',
+            'encrypted': {'kem': 'x'},
+          });
+          expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
+        },
+      );
 
-      test('parseEncryptedEnvelope returns null for missing encrypted block',
-          () {
-        final json = jsonEncode({
-          'type': 'chat_message',
-          'version': '2',
-          'senderPeerId': senderPeerId,
-        });
-        expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
-      });
+      test(
+        'parseEncryptedEnvelope returns null for missing encrypted block',
+        () {
+          final json = jsonEncode({
+            'type': 'chat_message',
+            'version': '2',
+            'senderPeerId': senderPeerId,
+          });
+          expect(MessagePayload.parseEncryptedEnvelope(json), isNull);
+        },
+      );
 
       test('parseEncryptedEnvelope returns null for invalid JSON', () {
         expect(MessagePayload.parseEncryptedEnvelope('not json'), isNull);
@@ -337,22 +346,25 @@ void main() {
         expect(payload.containsKey('quotedMessageId'), isFalse);
       });
 
-      test('v1 fromJson reads null when quotedMessageId absent (backward compat)', () {
-        final json = jsonEncode({
-          'type': 'chat_message',
-          'version': '1',
-          'payload': {
-            'id': 'old-msg',
-            'text': 'old message',
-            'senderPeerId': 'peer',
-            'senderUsername': 'user',
-            'timestamp': '2026-01-01T00:00:00.000Z',
-          },
-        });
-        final restored = MessagePayload.fromJson(json);
-        expect(restored, isNotNull);
-        expect(restored!.quotedMessageId, isNull);
-      });
+      test(
+        'v1 fromJson reads null when quotedMessageId absent (backward compat)',
+        () {
+          final json = jsonEncode({
+            'type': 'chat_message',
+            'version': '1',
+            'payload': {
+              'id': 'old-msg',
+              'text': 'old message',
+              'senderPeerId': 'peer',
+              'senderUsername': 'user',
+              'timestamp': '2026-01-01T00:00:00.000Z',
+            },
+          });
+          final restored = MessagePayload.fromJson(json);
+          expect(restored, isNotNull);
+          expect(restored!.quotedMessageId, isNull);
+        },
+      );
 
       test('v2 inner round-trip preserves quotedMessageId', () {
         final innerJson = payloadWithQuote.toInnerJson();
@@ -363,14 +375,14 @@ void main() {
       });
 
       test('v2 toInnerJson includes quotedMessageId', () {
-        final inner = jsonDecode(payloadWithQuote.toInnerJson())
-            as Map<String, dynamic>;
+        final inner =
+            jsonDecode(payloadWithQuote.toInnerJson()) as Map<String, dynamic>;
         expect(inner['quotedMessageId'], 'original-msg-001');
       });
 
       test('v2 toInnerJson omits quotedMessageId when null', () {
-        final inner = jsonDecode(testPayload.toInnerJson())
-            as Map<String, dynamic>;
+        final inner =
+            jsonDecode(testPayload.toInnerJson()) as Map<String, dynamic>;
         expect(inner.containsKey('quotedMessageId'), isFalse);
       });
 
@@ -496,15 +508,15 @@ void main() {
       });
 
       test('v2 toInnerJson includes media', () {
-        final inner = jsonDecode(payloadWithMedia.toInnerJson())
-            as Map<String, dynamic>;
+        final inner =
+            jsonDecode(payloadWithMedia.toInnerJson()) as Map<String, dynamic>;
         expect(inner['media'], isNotNull);
         expect((inner['media'] as List).length, 2);
       });
 
       test('v2 toInnerJson omits media when null', () {
-        final inner = jsonDecode(testPayload.toInnerJson())
-            as Map<String, dynamic>;
+        final inner =
+            jsonDecode(testPayload.toInnerJson()) as Map<String, dynamic>;
         expect(inner.containsKey('media'), isFalse);
       });
 

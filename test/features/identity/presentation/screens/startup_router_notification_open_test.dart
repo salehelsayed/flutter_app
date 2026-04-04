@@ -48,6 +48,7 @@ void main() {
   late ContactRequestPresentationGate contactRequestPresentationGate;
   late List<NotificationRouteTarget> routedTargets;
   late Future<RemoteMessage?> Function() getInitialRemoteMessage;
+  late int clearDeliveredNotificationsCount;
 
   final identity = IdentityModel(
     peerId: 'peer-self',
@@ -103,6 +104,7 @@ void main() {
     contactRequestPresentationGate = ContactRequestPresentationGate();
     routedTargets = <NotificationRouteTarget>[];
     getInitialRemoteMessage = () async => null;
+    clearDeliveredNotificationsCount = 0;
 
     contactRequestListener = ContactRequestListener(
       contactRequestStream: const Stream<ChatMessage>.empty(),
@@ -157,6 +159,9 @@ void main() {
         contactRequestPresentationGate: contactRequestPresentationGate,
         getInitialRemoteMessage: getInitialRemoteMessage,
         shouldHandleInitialPushOpen: () => true,
+        clearDeliveredNotifications: () async {
+          clearDeliveredNotificationsCount += 1;
+        },
         onNotificationRouteTarget: (routeTarget) async {
           routedTargets.add(routeTarget);
         },
@@ -182,6 +187,7 @@ void main() {
     expect(routedTargets.single.peerId, 'peer-request-123');
     expect(p2pService.startNodeCallCount, 1);
     expect(p2pService.drainOfflineInboxCallCount, 1);
+    expect(clearDeliveredNotificationsCount, 1);
     expect(
       contactRequestPresentationGate.shouldSuppress('peer-request-123'),
       isFalse,
@@ -201,6 +207,7 @@ void main() {
     expect(routedTargets.single.kind, NotificationRouteTargetKind.intros);
     expect(p2pService.startNodeCallCount, 1);
     expect(p2pService.drainOfflineInboxCallCount, 1);
+    expect(clearDeliveredNotificationsCount, 1);
   });
 
   testWidgets('invalid cold-start push falls back cleanly without route', (
@@ -219,5 +226,6 @@ void main() {
       1,
       reason: 'missing initial pushes should still trigger inbox recovery',
     );
+    expect(clearDeliveredNotificationsCount, 0);
   });
 }

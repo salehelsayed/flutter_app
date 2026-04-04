@@ -5,13 +5,16 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 void main() {
   late InMemoryContactRepository contactRepo;
+  late InMemoryMessageRepository messageRepo;
   late IntroductionModel mutualIntro;
 
   setUp(() {
     contactRepo = InMemoryContactRepository();
+    messageRepo = InMemoryMessageRepository();
     mutualIntro = IntroductionModel(
       id: 'intro-1',
       introducerId: 'peer-A',
@@ -30,29 +33,33 @@ void main() {
   });
 
   group('handleMutualAcceptance', () {
-    test('mutual_accepted triggers contactRepo.addContact() for other party',
-        () async {
-      final result = await handleMutualAcceptance(
-        introduction: mutualIntro,
-        contactRepo: contactRepo,
-        ownPeerId: 'peer-B',
-      );
+    test(
+      'mutual_accepted triggers contactRepo.addContact() for other party',
+      () async {
+        final result = await handleMutualAcceptance(
+          introduction: mutualIntro,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+        );
 
-      expect(result, isNotNull);
-      expect(await contactRepo.contactExists('peer-C'), isTrue);
-    });
+        expect(result, isNotNull);
+        expect(await contactRepo.contactExists('peer-C'), isTrue);
+      },
+    );
 
-    test('new contact has correct peerId and username from introduction',
-        () async {
-      final result = await handleMutualAcceptance(
-        introduction: mutualIntro,
-        contactRepo: contactRepo,
-        ownPeerId: 'peer-B',
-      );
+    test(
+      'new contact has correct peerId and username from introduction',
+      () async {
+        final result = await handleMutualAcceptance(
+          introduction: mutualIntro,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+        );
 
-      expect(result!.peerId, 'peer-C');
-      expect(result.username, 'Sarah');
-    });
+        expect(result!.peerId, 'peer-C');
+        expect(result.username, 'Sarah');
+      },
+    );
 
     test('new contact has introducedBy set to introducer username', () async {
       final result = await handleMutualAcceptance(
@@ -65,14 +72,16 @@ void main() {
     });
 
     test('contact NOT created if already exists (idempotency)', () async {
-      contactRepo.addTestContact(ContactModel(
-        peerId: 'peer-C',
-        publicKey: 'existing-pk',
-        rendezvous: '/existing',
-        username: 'ExistingSarah',
-        signature: 'sig',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ));
+      contactRepo.addTestContact(
+        ContactModel(
+          peerId: 'peer-C',
+          publicKey: 'existing-pk',
+          rendezvous: '/existing',
+          username: 'ExistingSarah',
+          signature: 'sig',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
 
       final result = await handleMutualAcceptance(
         introduction: mutualIntro,
@@ -131,6 +140,25 @@ void main() {
 
       expect(result!.mlKemPublicKey, 'mlkem-pk-peer-C');
     });
+
+    test(
+      'stores a meaningful system message in the new conversation',
+      () async {
+        await handleMutualAcceptance(
+          introduction: mutualIntro,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+          messageRepo: messageRepo,
+        );
+
+        final messages = await messageRepo.getMessagesForContact('peer-C');
+        expect(messages, hasLength(1));
+        expect(
+          messages.single.text,
+          'You and Sarah are now connected — introduced by Noor',
+        );
+      },
+    );
   });
 
   group('ConnectionFeedItem.fromContact', () {

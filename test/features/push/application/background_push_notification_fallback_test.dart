@@ -1,10 +1,16 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 
 void main() {
   group('background push fallback notifications', () {
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+
     test('shows a fallback for Android-style data-only chat pushes', () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
       const message = RemoteMessage(
         data: {'type': 'new_message', 'sender_id': '12D3KooWPeer'},
       );
@@ -30,6 +36,37 @@ void main() {
       final fallback = buildBackgroundPushFallbackNotification(message);
       expect(fallback.title, 'Alice');
       expect(fallback.body, 'Hello');
+      expect(fallback.payload, '12D3KooWPeer');
+    });
+
+    test('uses pushTitle/pushBody when title/body are absent', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'group_message',
+          'groupId': 'group-abc-123',
+          'pushTitle': 'Team Chat',
+          'pushBody': 'Alice: Hello',
+        },
+      );
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'Team Chat');
+      expect(fallback.body, 'Alice: Hello');
+      expect(fallback.payload, 'group:group-abc-123');
+    });
+
+    test('uses senderUsername as the fallback title when title is absent', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'new_message',
+          'sender_id': '12D3KooWPeer',
+          'senderUsername': 'Alice',
+        },
+      );
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'Alice');
+      expect(fallback.body, backgroundPushDefaultBody);
       expect(fallback.payload, '12D3KooWPeer');
     });
 
@@ -80,6 +117,36 @@ void main() {
       },
     );
 
+    test(
+      'shows iOS fallback for data-only chat pushes when Flutter sees no visible notification payload',
+      () {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        const message = RemoteMessage(
+          data: {'type': 'new_message', 'sender_id': '12D3KooWPeer'},
+        );
+
+        expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+      },
+    );
+
+    test(
+      'skips named chat fallback on iOS when RemoteMessage already has a visible notification payload',
+      () {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        const message = RemoteMessage(
+          notification: RemoteNotification(title: 'Alice', body: 'Hello'),
+          data: {
+            'type': 'new_message',
+            'sender_id': '12D3KooWPeer',
+            'title': 'Alice',
+            'body': 'Hello',
+          },
+        );
+
+        expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);
+      },
+    );
+
     test('shows fallback for group_message type with groupId', () {
       const message = RemoteMessage(
         data: {
@@ -97,6 +164,44 @@ void main() {
       expect(fallback.body, 'New group message');
       expect(fallback.payload, 'group:group-abc-123');
     });
+
+    test(
+      'shows group fallback on iOS when Flutter sees only the data payload',
+      () {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        const message = RemoteMessage(
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'title': 'Team Chat',
+            'body': 'Alice: Hello',
+          },
+        );
+
+        expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+      },
+    );
+
+    test(
+      'skips group fallback on iOS when RemoteMessage already has a visible notification payload',
+      () {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        const message = RemoteMessage(
+          notification: RemoteNotification(
+            title: 'Team Chat',
+            body: 'Alice: Hello',
+          ),
+          data: {
+            'type': 'group_message',
+            'groupId': 'group-abc-123',
+            'title': 'Team Chat',
+            'body': 'Alice: Hello',
+          },
+        );
+
+        expect(shouldShowBackgroundPushFallbackNotification(message), isFalse);
+      },
+    );
 
     test('skips fallback for group_message type without groupId', () {
       const message = RemoteMessage(data: {'type': 'group_message'});
@@ -173,6 +278,19 @@ void main() {
 
       final fallback = buildBackgroundPushFallbackNotification(message);
       expect(fallback.payload, 'trigger');
+    });
+
+    test('builds a stable dedupe key from payload and message identity', () {
+      final message = RemoteMessage(
+        messageId: 'fcm-msg-123',
+        sentTime: DateTime.utc(2026, 4, 4, 12),
+        data: {'type': 'new_message', 'sender_id': '12D3KooWPeer'},
+      );
+
+      expect(
+        backgroundPushFallbackDedupeKey(message),
+        'payload=12D3KooWPeer|id=fcm-msg-123|ts=1775304000000',
+      );
     });
 
     test('shows fallback for post_create with post payload routing', () {

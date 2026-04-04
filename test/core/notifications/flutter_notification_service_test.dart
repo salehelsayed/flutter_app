@@ -65,33 +65,61 @@ void main() {
     expect(channelArgs['name'], mknoonMessagesChannelName);
     expect(channelArgs['description'], mknoonMessagesChannelDescription);
     expect(channelArgs['importance'], Importance.high.value);
-
-    expect(await service.consumeInitialPayload(), 'peer-123');
-    expect(await service.consumeInitialPayload(), isNull);
   });
 
-  test('onNotificationTap forwards non-empty payloads', () async {
-    final service = FlutterNotificationService();
-    final tapped = <String>[];
-    service.onNotificationTap = tapped.add;
+  test(
+    'consumeInitialPayload dismisses the launch notification once',
+    () async {
+      final service = FlutterNotificationService();
 
-    await service.initialize();
-    await _sendNotificationResponse(payload: 'peer-456');
+      await service.initialize();
 
-    expect(tapped, <String>['peer-456']);
-  });
+      expect(await service.consumeInitialPayload(), 'peer-123');
+      expect(await service.consumeInitialPayload(), isNull);
 
-  test('onNotificationTap ignores null and empty payloads', () async {
-    final service = FlutterNotificationService();
-    final tapped = <String>[];
-    service.onNotificationTap = tapped.add;
+      final cancelCall = log.lastWhere((call) => call.method == 'cancel');
+      final cancelArgs = cancelCall.arguments as Map;
+      expect(cancelArgs['id'], 7);
+    },
+  );
 
-    await service.initialize();
-    await _sendNotificationResponse(payload: null);
-    await _sendNotificationResponse(payload: '');
+  test(
+    'onNotificationTap forwards non-empty payloads and dismisses by id',
+    () async {
+      final service = FlutterNotificationService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
 
-    expect(tapped, isEmpty);
-  });
+      await service.initialize();
+      await _sendNotificationResponse(payload: 'peer-456');
+
+      expect(tapped, <String>['peer-456']);
+      final cancelCall = log.lastWhere((call) => call.method == 'cancel');
+      final cancelArgs = cancelCall.arguments as Map;
+      expect(cancelArgs['id'], 99);
+    },
+  );
+
+  test(
+    'onNotificationTap ignores null and empty payloads but still dismisses',
+    () async {
+      final service = FlutterNotificationService();
+      final tapped = <String>[];
+      service.onNotificationTap = tapped.add;
+
+      await service.initialize();
+      await _sendNotificationResponse(payload: null);
+      await _sendNotificationResponse(payload: '');
+
+      expect(tapped, isEmpty);
+      final cancelCalls = log.where((call) => call.method == 'cancel').toList();
+      expect(cancelCalls, hasLength(2));
+      for (final call in cancelCalls) {
+        final args = call.arguments as Map;
+        expect(args['id'], 99);
+      }
+    },
+  );
 
   test('showNotification forwards title, body, payload, and details', () async {
     final service = FlutterNotificationService();
@@ -147,6 +175,15 @@ void main() {
       expect(platformSpecifics['channelName'], mknoonMessagesChannelName);
     },
   );
+
+  test('clearDeliveredNotifications forwards cancelAll', () async {
+    final service = FlutterNotificationService();
+
+    await service.initialize();
+    await service.clearDeliveredNotifications();
+
+    expect(log.last.method, 'cancelAll');
+  });
 }
 
 Future<void> _sendNotificationResponse({required String? payload}) async {

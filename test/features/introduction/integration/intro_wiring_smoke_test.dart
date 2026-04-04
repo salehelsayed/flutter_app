@@ -427,6 +427,10 @@ void main() {
       expect(intros.first.recipientId, 'peer-B');
       expect(intros.first.introducedId, 'peer-C');
       expect(intros.first.introducerUsername, 'Noor');
+
+      final systemMessages = await messageRepo.getMessagesForContact('peer-B');
+      expect(systemMessages, hasLength(1));
+      expect(systemMessages.single.text, 'You introduced Sarah to Lina');
     });
 
     testWidgets('tap does nothing when introductionRepository is null', (

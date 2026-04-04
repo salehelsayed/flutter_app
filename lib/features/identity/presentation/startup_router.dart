@@ -151,6 +151,7 @@ class StartupRouter extends StatefulWidget {
   final ContactRequestPresentationGate? contactRequestPresentationGate;
   final GetInitialRemoteMessageFn? getInitialRemoteMessage;
   final bool Function()? shouldHandleInitialPushOpen;
+  final Future<void> Function()? clearDeliveredNotifications;
   final Future<void> Function(NotificationRouteTarget routeTarget)?
   onNotificationRouteTarget;
 
@@ -190,6 +191,7 @@ class StartupRouter extends StatefulWidget {
     this.contactRequestPresentationGate,
     this.getInitialRemoteMessage,
     this.shouldHandleInitialPushOpen,
+    this.clearDeliveredNotifications,
     this.onNotificationRouteTarget,
   });
 
@@ -475,6 +477,7 @@ class _StartupRouterState extends State<StartupRouter> {
             bridge: widget.bridge,
             groupRepo: groupRepo,
             msgRepo: groupMsgRepo,
+            groupMessageListener: widget.groupMessageListener,
             mediaAttachmentRepo: widget.mediaAttachmentRepository,
             reactionRepo: widget.reactionRepository,
           );
@@ -521,7 +524,10 @@ class _StartupRouterState extends State<StartupRouter> {
             routeTarget: routeTarget,
             action: () => routeRemoteNotificationOpen(
               data: message.data,
-              onBeforeRouteTarget: _prepareNotificationRouteTarget,
+              onBeforeRouteTarget: (resolvedRouteTarget) async {
+                await widget.clearDeliveredNotifications?.call();
+                await _prepareNotificationRouteTarget(resolvedRouteTarget);
+              },
               onRouteTarget: (resolvedRouteTarget) async {
                 if (widget.onNotificationRouteTarget == null) {
                   return;
@@ -700,6 +706,7 @@ class _StartupRouterState extends State<StartupRouter> {
       bridge: widget.bridge,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
     );

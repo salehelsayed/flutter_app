@@ -26,6 +26,9 @@ abstract class NotificationService {
   /// Returns the launch payload if the app was opened from a local notification.
   Future<String?> consumeInitialPayload();
 
+  /// Clears delivered notifications owned by the app.
+  Future<void> clearDeliveredNotifications();
+
   /// Clean up resources.
   void dispose();
 }

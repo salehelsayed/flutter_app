@@ -39,7 +39,11 @@ void main() {
       await firebaseMessagingBackgroundHandler(
         const RemoteMessage(
           notification: RemoteNotification(title: 'Alice', body: 'Hey!'),
-          data: {'type': 'new_message', 'sender_id': peerId},
+          data: {
+            'type': 'new_message',
+            'sender_id': peerId,
+            'message_id': 'msg-remote-dedupe-1',
+          },
         ),
       );
 
@@ -95,7 +99,13 @@ void main() {
 
       expect(notificationService.shown, isEmpty);
       expect(messageRepo.lastSavedMessage?.id, 'msg-remote-dedupe-1');
-      expect(await gate.consumeIfRecentPayload(peerId), isFalse);
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: peerId,
+          messageId: 'msg-remote-dedupe-1',
+        ),
+        isFalse,
+      );
     },
   );
 }

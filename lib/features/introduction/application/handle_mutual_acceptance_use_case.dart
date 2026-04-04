@@ -3,6 +3,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
@@ -28,8 +29,9 @@ Future<ContactModel?> handleMutualAcceptance({
   }
 
   final isRecipient = introduction.recipientId == ownPeerId;
-  final otherPeerId =
-      isRecipient ? introduction.introducedId : introduction.recipientId;
+  final otherPeerId = isRecipient
+      ? introduction.introducedId
+      : introduction.recipientId;
   final otherUsername = isRecipient
       ? introduction.introducedUsername
       : introduction.recipientUsername;
@@ -100,11 +102,13 @@ Future<ContactModel?> handleMutualAcceptance({
 
   // Insert "Connected through [introducer]" system message
   if (messageRepo != null) {
-    final introducerName = introduction.introducerUsername ?? 'a friend';
     await insertIntroSystemMessage(
       messageRepo: messageRepo,
       contactPeerId: otherPeerId,
-      text: 'Connected through $introducerName',
+      text: formatMutualAcceptanceSystemMessage(
+        otherUsername: otherUsername ?? '',
+        introducerName: introduction.introducerUsername ?? '',
+      ),
       ownPeerId: ownPeerId,
     );
   }

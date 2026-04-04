@@ -10,9 +10,9 @@ import 'package:uuid/uuid.dart';
 /// muted bubbles via [IntroSystemMessage] instead of [LetterCard].
 ///
 /// Three system message types for introductions:
-/// 1. Introducer sends: "You introduced N people to [name]"
-/// 2. Recipient receives: "[name] introduced N people to you"
-/// 3. Mutual acceptance: "Connected through [introducer name]"
+/// 1. Introducer sends: "You introduced [name] to [recipient]"
+/// 2. Recipient or introduced party receives a role-aware intro summary.
+/// 3. Mutual acceptance: "You and [name] are now connected — introduced by X"
 Future<void> insertIntroSystemMessage({
   required MessageRepository messageRepo,
   required String contactPeerId,

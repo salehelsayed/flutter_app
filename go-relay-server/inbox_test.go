@@ -558,7 +558,11 @@ func TestInboxStore_RetrievePendingRequiresExplicitAckAcrossInstances(t *testing
 }
 
 func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
-	msg := buildPushMessage("fcm-token", "peer-from")
+	msg := buildPushMessage(
+		"fcm-token",
+		"peer-from",
+		`{"type":"chat_message","version":"1","payload":{"id":"msg-chat-1","text":"hello","senderUsername":"Alice"}}`,
+	)
 
 	if msg.Token != "fcm-token" {
 		t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
@@ -569,11 +573,34 @@ func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
 	if msg.Data["sender_id"] != "peer-from" {
 		t.Fatalf("sender_id = %q, want %q", msg.Data["sender_id"], "peer-from")
 	}
-	if msg.Data["title"] != pushNotificationTitle {
-		t.Fatalf("title = %q, want %q", msg.Data["title"], pushNotificationTitle)
+	if msg.Data["message_id"] != "msg-chat-1" {
+		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "msg-chat-1")
 	}
-	if msg.Data["body"] != pushNotificationBody {
-		t.Fatalf("body = %q, want %q", msg.Data["body"], pushNotificationBody)
+	if msg.Data["sender_username"] != "Alice" {
+		t.Fatalf("sender_username = %q, want %q", msg.Data["sender_username"], "Alice")
+	}
+	if msg.Data["title"] != "Alice" {
+		t.Fatalf("title = %q, want %q", msg.Data["title"], "Alice")
+	}
+	if msg.Data["body"] != "hello" {
+		t.Fatalf("body = %q, want %q", msg.Data["body"], "hello")
+	}
+	if msg.Notification == nil {
+		t.Fatal("expected top-level notification payload")
+	}
+	if msg.Notification.Title != "Alice" {
+		t.Fatalf(
+			"notification title = %q, want %q",
+			msg.Notification.Title,
+			"Alice",
+		)
+	}
+	if msg.Notification.Body != "hello" {
+		t.Fatalf(
+			"notification body = %q, want %q",
+			msg.Notification.Body,
+			"hello",
+		)
 	}
 
 	if msg.Android == nil {
@@ -585,18 +612,18 @@ func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
 	if msg.Android.Notification == nil {
 		t.Fatal("expected Android notification payload")
 	}
-	if msg.Android.Notification.Title != pushNotificationTitle {
+	if msg.Android.Notification.Title != "Alice" {
 		t.Fatalf(
 			"android title = %q, want %q",
 			msg.Android.Notification.Title,
-			pushNotificationTitle,
+			"Alice",
 		)
 	}
-	if msg.Android.Notification.Body != pushNotificationBody {
+	if msg.Android.Notification.Body != "hello" {
 		t.Fatalf(
 			"android body = %q, want %q",
 			msg.Android.Notification.Body,
-			pushNotificationBody,
+			"hello",
 		)
 	}
 	if msg.Android.Notification.ChannelID != pushNotificationChannelID {
@@ -609,7 +636,11 @@ func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
 }
 
 func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
-	msg := buildPushMessage("fcm-token", "peer-from")
+	msg := buildPushMessage(
+		"fcm-token",
+		"peer-from",
+		`{"type":"chat_message","version":"2","id":"msg-chat-2","senderUsername":"Alice","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+	)
 
 	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
 		t.Fatal("expected APNS payload")
@@ -631,11 +662,11 @@ func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
 	if msg.APNS.Payload.Aps.Alert == nil {
 		t.Fatal("expected APNS alert")
 	}
-	if msg.APNS.Payload.Aps.Alert.Title != pushNotificationTitle {
+	if msg.APNS.Payload.Aps.Alert.Title != "Alice" {
 		t.Fatalf(
 			"apns title = %q, want %q",
 			msg.APNS.Payload.Aps.Alert.Title,
-			pushNotificationTitle,
+			"Alice",
 		)
 	}
 	if msg.APNS.Payload.Aps.Alert.Body != pushNotificationBody {
@@ -645,8 +676,91 @@ func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
 			pushNotificationBody,
 		)
 	}
+	if msg.Data["message_id"] != "msg-chat-2" {
+		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "msg-chat-2")
+	}
+	if msg.Data["sender_username"] != "Alice" {
+		t.Fatalf("sender_username = %q, want %q", msg.Data["sender_username"], "Alice")
+	}
 	if !msg.APNS.Payload.Aps.ContentAvailable {
 		t.Fatal("expected APNS content-available")
+	}
+}
+
+func TestBuildGroupPushMessage_IncludesTopLevelNotificationAndData(t *testing.T) {
+	msg := buildGroupPushMessage(
+		"fcm-token",
+		"group-1",
+		"Team Chat",
+		"Alice: hello",
+		"group-msg-1",
+	)
+
+	if msg.Token != "fcm-token" {
+		t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
+	}
+	if msg.Notification == nil {
+		t.Fatal("expected top-level notification payload")
+	}
+	if msg.Notification.Title != "Team Chat" {
+		t.Fatalf(
+			"notification title = %q, want %q",
+			msg.Notification.Title,
+			"Team Chat",
+		)
+	}
+	if msg.Notification.Body != "Alice: hello" {
+		t.Fatalf(
+			"notification body = %q, want %q",
+			msg.Notification.Body,
+			"Alice: hello",
+		)
+	}
+	if msg.Data["type"] != "group_message" {
+		t.Fatalf("type = %q, want %q", msg.Data["type"], "group_message")
+	}
+	if msg.Data["groupId"] != "group-1" {
+		t.Fatalf("groupId = %q, want %q", msg.Data["groupId"], "group-1")
+	}
+	if msg.Data["message_id"] != "group-msg-1" {
+		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "group-msg-1")
+	}
+	if msg.Android == nil || msg.Android.Notification == nil {
+		t.Fatal("expected Android notification payload")
+	}
+	if msg.Android.Notification.Title != "Team Chat" {
+		t.Fatalf(
+			"android title = %q, want %q",
+			msg.Android.Notification.Title,
+			"Team Chat",
+		)
+	}
+	if msg.Android.Notification.Body != "Alice: hello" {
+		t.Fatalf(
+			"android body = %q, want %q",
+			msg.Android.Notification.Body,
+			"Alice: hello",
+		)
+	}
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
+		t.Fatal("expected APNS payload")
+	}
+	if msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("expected APNS alert")
+	}
+	if msg.APNS.Payload.Aps.Alert.Title != "Team Chat" {
+		t.Fatalf(
+			"apns title = %q, want %q",
+			msg.APNS.Payload.Aps.Alert.Title,
+			"Team Chat",
+		)
+	}
+	if msg.APNS.Payload.Aps.Alert.Body != "Alice: hello" {
+		t.Fatalf(
+			"apns body = %q, want %q",
+			msg.APNS.Payload.Aps.Alert.Body,
+			"Alice: hello",
+		)
 	}
 }
 
@@ -757,6 +871,9 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 		}
 		if msg.Data["body"] != "Alice: hello" {
 			t.Fatalf("body = %q, want Alice: hello", msg.Data["body"])
+		}
+		if msg.Data["message_id"] != "group-msg-1" {
+			t.Fatalf("message_id = %q, want group-msg-1", msg.Data["message_id"])
 		}
 	}
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -102,13 +103,13 @@ func (ps *PushService) UnregisterToken(peerId string) {
 	log.Printf("[PUSH] Token unregistered for %s", peerId[:min(20, len(peerId))])
 }
 
-func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId string) {
+func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId, message string) {
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
 		return
 	}
 
-	msg := buildPushMessage(entry.Token, fromPeerId)
+	msg := buildPushMessage(entry.Token, fromPeerId, message)
 
 	err := ps.send(ctx, msg)
 	if err != nil {
@@ -133,13 +134,14 @@ func (ps *PushService) SendGroupNotification(
 	groupId string,
 	title string,
 	body string,
+	messageID string,
 ) {
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
 		return
 	}
 
-	msg := buildGroupPushMessage(entry.Token, groupId, title, body)
+	msg := buildGroupPushMessage(entry.Token, groupId, title, body, messageID)
 
 	err := ps.send(ctx, msg)
 	if err != nil {
@@ -169,65 +171,37 @@ func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
 	return err
 }
 
-func buildPushMessage(token, fromPeerId string) *messaging.Message {
-	return &messaging.Message{
-		Token: token,
-		Data: map[string]string{
-			"type":      "new_message",
-			"sender_id": fromPeerId,
-			"title":     pushNotificationTitle,
-			"body":      pushNotificationBody,
-		},
-		Android: &messaging.AndroidConfig{
-			Priority: "high",
-			Notification: &messaging.AndroidNotification{
-				Title:     pushNotificationTitle,
-				Body:      pushNotificationBody,
-				ChannelID: pushNotificationChannelID,
-			},
-		},
-		APNS: &messaging.APNSConfig{
-			Headers: map[string]string{
-				"apns-priority":  "10",
-				"apns-push-type": "alert",
-			},
-			Payload: &messaging.APNSPayload{
-				Aps: &messaging.Aps{
-					ContentAvailable: true,
-					Alert: &messaging.ApsAlert{
-						Title: pushNotificationTitle,
-						Body:  pushNotificationBody,
-					},
-				},
-			},
-		},
-	}
-}
-
-func buildGroupPushMessage(token, groupId, title, body string) *messaging.Message {
-	resolvedTitle := title
+func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
+	metadata := extractChatPushMetadata(message)
+	resolvedTitle := metadata.SenderUsername
 	if resolvedTitle == "" {
 		resolvedTitle = pushNotificationTitle
 	}
-	resolvedBody := body
+	resolvedBody := metadata.Body
 	if resolvedBody == "" {
 		resolvedBody = pushNotificationBody
 	}
 
 	data := map[string]string{
-		"type":    "group_message",
-		"groupId": groupId,
+		"type":      "new_message",
+		"sender_id": fromPeerId,
+		"title":     resolvedTitle,
+		"body":      resolvedBody,
 	}
-	if title != "" {
-		data["title"] = title
+	if metadata.MessageID != "" {
+		data["message_id"] = metadata.MessageID
 	}
-	if body != "" {
-		data["body"] = body
+	if metadata.SenderUsername != "" {
+		data["sender_username"] = metadata.SenderUsername
 	}
 
 	return &messaging.Message{
 		Token: token,
-		Data:  data,
+		Notification: &messaging.Notification{
+			Title: resolvedTitle,
+			Body:  resolvedBody,
+		},
+		Data: data,
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
 			Notification: &messaging.AndroidNotification{
@@ -252,6 +226,93 @@ func buildGroupPushMessage(token, groupId, title, body string) *messaging.Messag
 			},
 		},
 	}
+}
+
+func buildGroupPushMessage(token, groupId, title, body, messageID string) *messaging.Message {
+	resolvedTitle := title
+	if resolvedTitle == "" {
+		resolvedTitle = pushNotificationTitle
+	}
+	resolvedBody := body
+	if resolvedBody == "" {
+		resolvedBody = pushNotificationBody
+	}
+
+	data := map[string]string{
+		"type":    "group_message",
+		"groupId": groupId,
+	}
+	if messageID != "" {
+		data["message_id"] = messageID
+	}
+	if title != "" {
+		data["title"] = title
+	}
+	if body != "" {
+		data["body"] = body
+	}
+
+	return &messaging.Message{
+		Token: token,
+		Notification: &messaging.Notification{
+			Title: resolvedTitle,
+			Body:  resolvedBody,
+		},
+		Data: data,
+		Android: &messaging.AndroidConfig{
+			Priority: "high",
+			Notification: &messaging.AndroidNotification{
+				Title:     resolvedTitle,
+				Body:      resolvedBody,
+				ChannelID: pushNotificationChannelID,
+			},
+		},
+		APNS: &messaging.APNSConfig{
+			Headers: map[string]string{
+				"apns-priority":  "10",
+				"apns-push-type": "alert",
+			},
+			Payload: &messaging.APNSPayload{
+				Aps: &messaging.Aps{
+					ContentAvailable: true,
+					Alert: &messaging.ApsAlert{
+						Title: resolvedTitle,
+						Body:  resolvedBody,
+					},
+				},
+			},
+		},
+	}
+}
+
+type chatPushMetadata struct {
+	MessageID      string
+	SenderUsername string
+	Body           string
+}
+
+func extractChatPushMetadata(message string) chatPushMetadata {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
+		return chatPushMetadata{}
+	}
+
+	metadata := chatPushMetadata{
+		MessageID:      extractMessageId(message),
+		SenderUsername: trimmedString(envelope["senderUsername"]),
+		Body:           trimmedString(envelope["text"]),
+	}
+
+	if payload, ok := envelope["payload"].(map[string]interface{}); ok {
+		if metadata.SenderUsername == "" {
+			metadata.SenderUsername = trimmedString(payload["senderUsername"])
+		}
+		if metadata.Body == "" {
+			metadata.Body = trimmedString(payload["text"])
+		}
+	}
+
+	return metadata
 }
 
 func (ps *PushService) TokenCount() int {
@@ -308,6 +369,14 @@ func extractMessageId(message string) string {
 	}
 
 	return ""
+}
+
+func trimmedString(raw interface{}) string {
+	value, ok := raw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }
 
 // --- Inbox store ---
@@ -370,7 +439,7 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) bool {
 		entry.From[:min(20, len(entry.From))])
 
 	// Fire push notification only for genuinely new messages.
-	go is.push.SendNotification(context.Background(), toPeerId, entry.From)
+	go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
 	return true
 }
 
@@ -494,7 +563,7 @@ func (s *GroupInboxStore) StoreWithPushMetadata(
 		return nil
 	}
 
-	s.fanOutPush(groupId, from, recipientPeerIds, pushTitle, pushBody)
+	s.fanOutPush(groupId, from, recipientPeerIds, pushTitle, pushBody, message)
 	return nil
 }
 
@@ -529,11 +598,13 @@ func (s *GroupInboxStore) fanOutPush(
 	recipientPeerIds []string,
 	pushTitle string,
 	pushBody string,
+	message string,
 ) {
 	if s.push == nil || len(recipientPeerIds) == 0 {
 		return
 	}
 
+	messageID := extractMessageId(message)
 	seen := make(map[string]struct{}, len(recipientPeerIds))
 	for _, peerID := range recipientPeerIds {
 		if peerID == "" || peerID == from {
@@ -549,6 +620,7 @@ func (s *GroupInboxStore) fanOutPush(
 			groupId,
 			pushTitle,
 			pushBody,
+			messageID,
 		)
 	}
 }

@@ -98,6 +98,30 @@ func TestRedisInboxBackend_RetrieveOnceAcrossClients(t *testing.T) {
 	}
 }
 
+func TestRedisInboxBackend_DedupesByMessageIDAcrossClients(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	maxPerPeer := DefaultServerLimits().MaxInboxMessagesPerPeer
+	backendA := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
+	backendB := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
+
+	entry := inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-dedup-redis-001","text":"hello"}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	if !backendA.Store("peer-recipient", entry) {
+		t.Fatal("expected first store to succeed")
+	}
+	if backendB.Store("peer-recipient", entry) {
+		t.Fatal("expected duplicate store to be rejected")
+	}
+	if count := backendA.Count("peer-recipient"); count != 1 {
+		t.Fatalf("expected 1 message after duplicate store, got %d", count)
+	}
+}
+
 func TestRedisInboxBackend_RetrievePendingRequiresExplicitAckAcrossClients(t *testing.T) {
 	server := miniredis.RunT(t)
 

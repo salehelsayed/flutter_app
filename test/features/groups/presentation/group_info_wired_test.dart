@@ -88,6 +88,11 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
   }
 }
 
+Future<void> confirmRemoveMemberDialog(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('group-remove-confirm')));
+  await pumpFrames(tester, count: 30);
+}
+
 void main() {
   group('GroupInfoWired', () {
     testWidgets('loads and displays group members on init', (tester) async {
@@ -168,6 +173,41 @@ void main() {
       await pumpFrames(tester);
 
       expect(find.text('Add Member'), findsNothing);
+    });
+
+    testWidgets('hides member remove controls for non-admin role', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final group = makeMemberGroup();
+      await groupRepo.saveGroup(group);
+
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(peerId: 'peer-bob', username: 'Bob'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
     });
 
     testWidgets('leave group calls bridge and pops to first route', (
@@ -276,10 +316,19 @@ void main() {
       expect(removeButtons, findsWidgets);
 
       await tester.tap(removeButtons.last);
-      await pumpFrames(tester, count: 20);
+      await pumpFrames(tester);
+
+      expect(find.text('Remove Alice from the group?'), findsOneWidget);
+      expect(
+        find.text('They will stop receiving new messages from this group.'),
+        findsOneWidget,
+      );
+
+      await confirmRemoveMemberDialog(tester);
 
       // Verify bridge received group:updateConfig AND group:generateNextKey
       expect(bridge.commandLog, contains('group:updateConfig'));
+      expect(bridge.commandLog, contains('group:inboxStore'));
       expect(bridge.commandLog, contains('group:generateNextKey'));
 
       // Alice should disappear after the member list refresh
@@ -367,17 +416,19 @@ void main() {
       expect(aliceRemoveButton, findsOneWidget);
 
       await tester.tap(aliceRemoveButton);
-      await pumpFrames(tester, count: 30);
+      await pumpFrames(tester);
+      await confirmRemoveMemberDialog(tester);
 
-      // Verify group:publish was called for the member_removed system message
+      // Verify the live broadcast and replay artifact both ran.
       expect(bridge.commandLog, contains('group:publish'));
+      expect(bridge.commandLog, contains('group:inboxStore'));
 
       // Key generation starts after broadcast to preserve the current flow shape
       expect(bridge.commandLog, contains('group:generateNextKey'));
     });
 
     testWidgets(
-      'remove member calls bridge in correct order: updateConfig → publish → generateNextKey',
+      'remove member calls bridge in correct order: updateConfig → publish → inboxStore → generateNextKey',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final group = makeAdminGroup();
@@ -438,19 +489,21 @@ void main() {
           matching: find.byIcon(Icons.remove_circle_outline),
         );
         await tester.tap(aliceRemoveButton);
-        await pumpFrames(tester, count: 30);
+        await pumpFrames(tester);
+        await confirmRemoveMemberDialog(tester);
 
-        // Extract the first 3 distinct commands to verify ordering
+        // Extract the first 4 distinct commands to verify ordering
         final distinctCommands = <String>[];
         for (final cmd in bridge.commandLog) {
           if (!distinctCommands.contains(cmd)) {
             distinctCommands.add(cmd);
           }
-          if (distinctCommands.length == 3) break;
+          if (distinctCommands.length == 4) break;
         }
         expect(distinctCommands, [
           'group:updateConfig',
           'group:publish',
+          'group:inboxStore',
           'group:generateNextKey',
         ]);
       },
@@ -528,7 +581,8 @@ void main() {
           matching: find.byIcon(Icons.remove_circle_outline),
         );
         await tester.tap(aliceRemoveButton);
-        await pumpFrames(tester, count: 30);
+        await pumpFrames(tester);
+        await confirmRemoveMemberDialog(tester);
 
         // Only Bob should receive the key update (not Alice, not self)
         expect(p2pService.sentMessageLog.length, 1);
@@ -545,7 +599,7 @@ void main() {
     );
 
     testWidgets(
-      'remove member broadcast contains correct member_removed payload',
+      'remove member broadcast and replay artifact contain correct member_removed payload',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final group = makeAdminGroup();
@@ -617,7 +671,8 @@ void main() {
           matching: find.byIcon(Icons.remove_circle_outline),
         );
         await tester.tap(aliceRemoveButton);
-        await pumpFrames(tester, count: 30);
+        await pumpFrames(tester);
+        await confirmRemoveMemberDialog(tester);
 
         // Find the group:publish command in sentMessages
         final publishMsg = bridge.sentMessages.firstWhere((m) {
@@ -644,7 +699,84 @@ void main() {
         expect(memberPeerIds, contains('peer-admin'));
         expect(memberPeerIds, contains('peer-bob'));
         expect(memberPeerIds, isNot(contains('peer-alice')));
+
+        final inboxStoreMsg = bridge.sentMessages.firstWhere((m) {
+          final parsed = jsonDecode(m) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:inboxStore';
+        });
+        final inboxStorePayload =
+            (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(inboxStorePayload['recipientPeerIds'], ['peer-alice']);
+
+        final inboxEnvelope =
+            jsonDecode(inboxStorePayload['message'] as String)
+                as Map<String, dynamic>;
+        expect(inboxEnvelope['groupId'], 'group-1');
+        expect(inboxEnvelope['senderId'], 'peer-admin');
+        expect(inboxEnvelope['senderUsername'], 'Admin');
+        expect(inboxEnvelope['keyEpoch'], 0);
+        expect(inboxEnvelope['text'], publishPayload['text']);
       },
     );
+
+    testWidgets('canceling remove member keeps membership unchanged', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(peerId: 'peer-alice', username: 'Alice'),
+      );
+
+      final bridge = FakeBridge();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: bridge,
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      final aliceRow = find.ancestor(
+        of: find.text('Alice'),
+        matching: find.byType(Row),
+      );
+      final aliceRemoveButton = find.descendant(
+        of: aliceRow,
+        matching: find.byIcon(Icons.remove_circle_outline),
+      );
+
+      await tester.tap(aliceRemoveButton);
+      await pumpFrames(tester);
+
+      expect(find.text('Remove Alice from the group?'), findsOneWidget);
+      expect(
+        find.text('They will stop receiving new messages from this group.'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('group-remove-cancel')));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Alice'), findsOneWidget);
+      expect(bridge.commandLog, isEmpty);
+    });
   });
 }

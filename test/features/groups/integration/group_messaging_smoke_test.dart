@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
@@ -41,12 +43,45 @@ void main() {
         const groupId = 'group-1';
         await alice.createGroup(groupId: groupId, name: 'Test Group');
         await alice.addMember(groupId: groupId, invitee: bob);
-        await alice.addMember(groupId: groupId, invitee: charlie);
 
-        // Start listeners AFTER groups and members are set up
+        // Existing members need the member_added system event to hydrate later
+        // joins into their local member list before the row is fully proven.
         alice.start();
         bob.start();
         charlie.start();
+
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        Future<void> expectHydratedGroupState(
+          GroupTestUser user,
+          GroupRole expectedRole,
+        ) async {
+          final hydratedGroup = await user.groupRepo.getGroup(groupId);
+          expect(hydratedGroup, isNotNull);
+          expect(hydratedGroup!.id, groupId);
+          expect(hydratedGroup.name, 'Test Group');
+          expect(hydratedGroup.myRole, expectedRole);
+          expect(hydratedGroup.createdBy, 'alice-peer');
+
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(
+            members.map((member) => member.peerId).toSet(),
+            {'alice-peer', 'bob-peer', 'charlie-peer'},
+          );
+
+          final rolesByPeerId = {
+            for (final member in members) member.peerId: member.role,
+          };
+          expect(rolesByPeerId['alice-peer'], MemberRole.admin);
+          expect(rolesByPeerId['bob-peer'], MemberRole.writer);
+          expect(rolesByPeerId['charlie-peer'], MemberRole.writer);
+        }
+
+        await expectHydratedGroupState(alice, GroupRole.admin);
+        await expectHydratedGroupState(bob, GroupRole.member);
+        await expectHydratedGroupState(charlie, GroupRole.member);
 
         // -- act --
         await alice.sendGroupMessage(groupId: groupId, text: 'Hello group!');
@@ -168,6 +203,56 @@ void main() {
         bob.dispose();
         charlie.dispose();
         diana.dispose();
+      },
+    );
+
+    test(
+      'simultaneous sends fan out to the third member without loss',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+
+        const groupId = 'group-simultaneous';
+        await alice.createGroup(groupId: groupId, name: 'Simultaneous Group');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await Future.wait([
+          alice.sendGroupMessage(groupId: groupId, text: 'From Alice'),
+          bob.sendGroupMessage(groupId: groupId, text: 'From Bob'),
+        ]);
+        await pump();
+
+        final charlieIncoming = (await charlie.loadGroupMessages(
+          groupId,
+        )).where((message) => message.isIncoming).toList();
+        expect(charlieIncoming, hasLength(2));
+        expect(
+          charlieIncoming.map((message) => message.text).toSet(),
+          {'From Alice', 'From Bob'},
+        );
+        expect(charlieIncoming.map((message) => message.id).toSet(), hasLength(2));
+
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
       },
     );
 
@@ -340,13 +425,20 @@ void main() {
         username: 'Bob',
         network: network,
       );
+      final charlie = GroupTestUser.create(
+        peerId: 'charlie-peer',
+        username: 'Charlie',
+        network: network,
+      );
 
       const groupId = 'group-quote';
       await alice.createGroup(groupId: groupId, name: 'Quote Group');
       await alice.addMember(groupId: groupId, invitee: bob);
+      await alice.addMember(groupId: groupId, invitee: charlie);
 
       alice.start();
       bob.start();
+      charlie.start();
 
       final parent = await alice.sendGroupMessage(
         groupId: groupId,
@@ -362,21 +454,35 @@ void main() {
       await pump();
 
       final aliceMessages = await alice.loadGroupMessages(groupId);
-      final aliceReply = aliceMessages.firstWhere(
+      final aliceReplies = aliceMessages.where(
         (message) => message.text == 'Quoted reply',
-      );
+      ).toList();
+      expect(aliceReplies, hasLength(1));
+      final aliceReply = aliceReplies.single;
       expect(aliceReply.isIncoming, isTrue);
       expect(aliceReply.quotedMessageId, parent.id);
 
-      final bobMessages = await bob.loadGroupMessages(groupId);
-      final bobReply = bobMessages.firstWhere(
+      final charlieMessages = await charlie.loadGroupMessages(groupId);
+      final charlieReplies = charlieMessages.where(
         (message) => message.text == 'Quoted reply',
-      );
+      ).toList();
+      expect(charlieReplies, hasLength(1));
+      final charlieReply = charlieReplies.single;
+      expect(charlieReply.isIncoming, isTrue);
+      expect(charlieReply.quotedMessageId, parent.id);
+
+      final bobMessages = await bob.loadGroupMessages(groupId);
+      final bobReplies = bobMessages.where(
+        (message) => message.text == 'Quoted reply',
+      ).toList();
+      expect(bobReplies, hasLength(1));
+      final bobReply = bobReplies.single;
       expect(bobReply.isIncoming, isFalse);
       expect(bobReply.quotedMessageId, parent.id);
 
       alice.dispose();
       bob.dispose();
+      charlie.dispose();
     });
 
     test('message is received after app restart with rejoin', () async {
@@ -462,6 +568,12 @@ void main() {
         'Before restart',
         'After restart',
       });
+      expect(await bob.msgRepo.getMessageCount(groupId), 2);
+      expect(await bob.msgRepo.getUnreadCount(groupId), 2);
+
+      final threadSummary = await bob.msgRepo.getGroupThreadSummary(groupId);
+      expect(threadSummary.unreadCount, 2);
+      expect(threadSummary.latestMessage?.text, 'After restart');
 
       // -- cleanup --
       alice.dispose();

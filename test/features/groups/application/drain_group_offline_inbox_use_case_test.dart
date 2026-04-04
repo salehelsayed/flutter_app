@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -265,6 +266,72 @@ void main() {
     );
     expect(msgRepo.count, 1);
   });
+
+  test(
+    'replayed member_removed routes through listener cleanup instead of saving a chat row',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Self',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+      final removedGroups = <String>[];
+      final sub = listener.groupRemovedStream.listen(removedGroups.add);
+      addTearDown(() async {
+        await sub.cancel();
+        listener.dispose();
+      });
+
+      final ts = DateTime.now().toUtc().toIso8601String();
+      bridge.addPage('group-1', '', [
+        {
+          'message': jsonEncode({
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_removed',
+              'member': {'peerId': 'peer-self', 'username': 'Self'},
+              'groupConfig': {
+                'name': 'Test Group',
+                'groupType': 'chat',
+                'members': [
+                  {'peerId': 'peer-admin', 'role': 'admin'},
+                ],
+                'createdBy': 'peer-admin',
+                'createdAt': ts,
+              },
+            }),
+            'timestamp': ts,
+          }),
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      expect(await groupRepo.getGroup('group-1'), isNull);
+      expect(bridge.commandLog, contains('group:leave'));
+      expect(removedGroups, ['group-1']);
+      expect(msgRepo.count, 0);
+    },
+  );
 
   test('drain preserves quotedMessageId from inbox payload', () async {
     final ts = DateTime.now().toUtc().toIso8601String();

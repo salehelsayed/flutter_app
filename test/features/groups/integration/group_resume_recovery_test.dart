@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -1205,6 +1206,146 @@ void main() {
     );
 
     test(
+      'removed offline member drains replayed removal, loses group access, and cannot send after resume',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'admin-offline-remove-peer',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-offline-remove-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-offline-remove-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final bobBridge = bob.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-offline-member-removed';
+        final joinedAt = DateTime.now().toUtc();
+
+        await admin.createGroup(groupId: groupId, name: 'Offline Removal');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        Future<void> saveKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'test-key',
+              createdAt: joinedAt,
+            ),
+          );
+        }
+
+        await saveKey(admin);
+        await saveKey(bob);
+        await saveKey(charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        final removedGroups = <String>[];
+        final removedSub = bob.groupMessageListener.groupRemovedStream.listen(
+          removedGroups.add,
+        );
+
+        network.unsubscribe(groupId, bob.peerId);
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          memberUsername: 'Bob',
+        );
+        await pump();
+
+        expect(await bob.groupRepo.getGroup(groupId), isNotNull);
+        expect(removedGroups, isEmpty);
+
+        final group = await admin.groupRepo.getGroup(groupId);
+        final remainingMembers = await admin.groupRepo.getMembers(groupId);
+        final removalSystemMessage = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': bob.peerId, 'username': 'Bob'},
+          'groupConfig': {
+            'name': group!.name,
+            'groupType': group.type.toValue(),
+            if (group.description != null) 'description': group.description,
+            'members': remainingMembers
+                .map(
+                  (member) => {
+                    'peerId': member.peerId,
+                    'username': member.username,
+                    'role': member.role.toValue(),
+                    'publicKey': member.publicKey,
+                  },
+                )
+                .toList(),
+            'createdBy': group.createdBy,
+            'createdAt': group.createdAt.toUtc().toIso8601String(),
+          },
+        });
+
+        await callGroupInboxStore(
+          admin.bridge,
+          groupId,
+          jsonEncode({
+            'groupId': groupId,
+            'senderId': admin.peerId,
+            'senderUsername': admin.username,
+            'keyEpoch': 0,
+            'text': removalSystemMessage,
+            'timestamp': DateTime.now().toUtc().toIso8601String(),
+          }),
+          recipientPeerIds: [bob.peerId],
+        );
+
+        _injectInboxMessageFromLatestStore(
+          senderBridge: admin.bridge,
+          receiverBridge: bobBridge,
+          receiverPeerId: bob.peerId,
+          groupId: groupId,
+        );
+
+        await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          groupMessageListener: bob.groupMessageListener,
+        );
+
+        expect(removedGroups, contains(groupId));
+        expect(await bob.groupRepo.getGroup(groupId), isNull);
+        expect(bob.bridge.commandLog, contains('group:leave'));
+        expect(await bob.loadGroupMessages(groupId), isEmpty);
+
+        final (result, message) = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'Should not send after offline removal',
+        );
+
+        expect(result, SendGroupMessageResult.groupNotFound);
+        expect(message, isNull);
+        expect(
+          bob.bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+
+        await removedSub.cancel();
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
       'watchdog restart rejoins topics and receives subsequent live messages',
       () async {
         final alice = GroupTestUser.create(
@@ -2239,6 +2380,19 @@ void main() {
         expect(sent, isNotNull);
         expect(sent!.status, 'sent');
 
+        await pump();
+        final preDrainOnlineMessages = await onlineReader.loadGroupMessages(
+          groupId,
+        );
+        expect(
+          preDrainOnlineMessages.where(
+            (message) => message.text == 'Partial delivery',
+          ),
+          hasLength(1),
+        );
+        expect(await inboxReaderOne.loadGroupMessages(groupId), isEmpty);
+        expect(await inboxReaderTwo.loadGroupMessages(groupId), isEmpty);
+
         _injectInboxMessageFromLatestStore(
           senderBridge: admin.bridge,
           receiverBridge: inboxBridgeOne,
@@ -2271,16 +2425,20 @@ void main() {
           groupId,
         );
         expect(
-          onlineMessages.any((message) => message.text == 'Partial delivery'),
-          isTrue,
+          onlineMessages.where((message) => message.text == 'Partial delivery'),
+          hasLength(1),
         );
         expect(
-          inboxMessagesOne.any((message) => message.text == 'Partial delivery'),
-          isTrue,
+          inboxMessagesOne.where(
+            (message) => message.text == 'Partial delivery',
+          ),
+          hasLength(1),
         );
         expect(
-          inboxMessagesTwo.any((message) => message.text == 'Partial delivery'),
-          isTrue,
+          inboxMessagesTwo.where(
+            (message) => message.text == 'Partial delivery',
+          ),
+          hasLength(1),
         );
 
         admin.dispose();
@@ -2390,15 +2548,23 @@ void main() {
           username: 'Bob',
           network: network,
         );
+        final charlie = GroupTestUser.create(
+          peerId: 'reader-retry-peer-2',
+          username: 'Charlie',
+          network: network,
+        );
 
         const groupId = 'group-retry-after-network';
         await admin.createGroup(groupId: groupId, name: 'Retry After Recovery');
         await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
         await _saveKey(admin, groupId, 1, 'k1');
         await _saveKey(bob, groupId, 1, 'k1');
+        await _saveKey(charlie, groupId, 1, 'k1');
 
         admin.start();
         bob.start();
+        charlie.start();
 
         final (initialResult, initialSent) = await admin
             .sendGroupMessageViaBridge(groupId: groupId, text: 'Retry me');
@@ -2428,12 +2594,19 @@ void main() {
         await pump();
         final bobMessages = await bob.loadGroupMessages(groupId);
         expect(
-          bobMessages.any((message) => message.id == initialSent.id),
-          isTrue,
+          bobMessages.where((message) => message.id == initialSent.id),
+          hasLength(1),
+        );
+
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          charlieMessages.where((message) => message.id == initialSent.id),
+          hasLength(1),
         );
 
         admin.dispose();
         bob.dispose();
+        charlie.dispose();
       });
 
       test("multi-group resume doesn't burst", () async {

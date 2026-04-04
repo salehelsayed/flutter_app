@@ -4,6 +4,7 @@ import 'package:flutter_app/core/notifications/notification_service.dart';
 class FakeNotificationService implements NotificationService {
   final List<FakeNotification> shown = [];
   bool initialized = false;
+  int clearedDeliveredNotificationsCount = 0;
 
   @override
   void Function(String payload)? onNotificationTap;
@@ -48,6 +49,11 @@ class FakeNotificationService implements NotificationService {
     final payload = initialPayload;
     initialPayload = null;
     return payload;
+  }
+
+  @override
+  Future<void> clearDeliveredNotifications() async {
+    clearedDeliveredNotificationsCount += 1;
   }
 
   @override

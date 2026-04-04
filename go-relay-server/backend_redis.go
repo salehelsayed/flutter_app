@@ -260,7 +260,6 @@ func (b *redisInboxBackend) allPattern() string {
 }
 
 func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
-	ctx := context.Background()
 	entry = ensureInboxMessageID(entry)
 	payload, err := json.Marshal(entry)
 	if err != nil {
@@ -268,15 +267,47 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 		return false
 	}
 
-	if _, err := b.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.RPush(ctx, b.key(toPeerId), payload)
-		pipe.LTrim(ctx, b.key(toPeerId), int64(-b.maxPerPeer), -1)
-		return nil
-	}); err != nil {
+	key := b.key(toPeerId)
+	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	msgID := extractMessageId(entry.Message)
+	stored := false
+
+	err = withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
+		rawEntries, err := tx.LRange(context.Background(), key, 0, -1).Result()
+		if err == redis.Nil {
+			rawEntries = nil
+		} else if err != nil {
+			return err
+		}
+
+		validRaw, validMessages := normalizeInboxEntries(rawEntries, cutoff)
+
+		if msgID != "" {
+			for _, message := range validMessages {
+				if extractMessageId(message.Message) == msgID {
+					if len(validRaw) != len(rawEntries) {
+						return redisReplaceList(tx, key, validRaw)
+					}
+					stored = false
+					return nil
+				}
+			}
+		}
+
+		values := append([]string(nil), validRaw...)
+		values = append(values, string(payload))
+		if len(values) > b.maxPerPeer {
+			values = values[len(values)-b.maxPerPeer:]
+		}
+
+		stored = true
+		return redisReplaceList(tx, key, values)
+	})
+	if err != nil {
 		log.Printf("[REDIS][INBOX] store failed: %v", err)
 		return false
 	}
-	return true
+	return stored
 }
 
 func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {

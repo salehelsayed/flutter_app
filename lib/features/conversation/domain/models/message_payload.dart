@@ -117,7 +117,9 @@ class MessagePayload {
   /// The envelope contains the KEM ciphertext, AES ciphertext, and nonce
   /// alongside the sender's peer ID (cleartext for routing).
   static String buildEncryptedEnvelope({
+    required String id,
     required String senderPeerId,
+    required String senderUsername,
     required String kem,
     required String ciphertext,
     required String nonce,
@@ -125,12 +127,10 @@ class MessagePayload {
     final envelope = {
       'type': 'chat_message',
       'version': '2',
+      'id': id,
       'senderPeerId': senderPeerId,
-      'encrypted': {
-        'kem': kem,
-        'ciphertext': ciphertext,
-        'nonce': nonce,
-      },
+      'senderUsername': senderUsername,
+      'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     };
     return jsonEncode(envelope);
   }

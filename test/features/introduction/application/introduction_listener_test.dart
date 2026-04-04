@@ -255,7 +255,7 @@ void main() {
         );
         expect(
           notificationService.shownGeneric.single.body,
-          'Noor introduced you to Sarah',
+          'Noor introduced Sarah to you',
         );
         expect(notificationService.shownGeneric.single.payload, 'intros');
 
@@ -314,6 +314,45 @@ void main() {
       expect(updated.id, 'intro-status');
       expect(updated.recipientStatus, IntroductionStatus.accepted);
     });
+
+    test(
+      'introduced-side receipt uses introduced perspective in system message and notification',
+      () async {
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: 'peer-A',
+            to: 'own-peer',
+            content: IntroductionPayload(
+              action: 'send',
+              introductionId: 'intro-introduced',
+              introducerId: 'peer-A',
+              introducerUsername: 'Noor',
+              recipientId: 'peer-B',
+              recipientUsername: 'Lina',
+              introducedId: 'own-peer',
+              introducedUsername: 'Me',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+            ).toJson(),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, IntroductionMessageProcessState.stored);
+
+        final systemMessages = await messageRepo.getMessagesForContact(
+          'peer-A',
+        );
+        expect(systemMessages, hasLength(1));
+        expect(systemMessages.single.text, 'Noor introduced you to Lina');
+
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(
+          notificationService.shownGeneric.single.body,
+          'Noor introduced you to Lina',
+        );
+      },
+    );
 
     test(
       'mutual acceptance shows a local new-connection notification',
@@ -407,8 +446,8 @@ void main() {
         expect(
           notificationService.shownGeneric.map((item) => item.body).toList(),
           <String>[
-            'Noor introduced you to Sarah',
-            'Dana introduced you to Yara',
+            'Noor introduced Sarah to you',
+            'Dana introduced Yara to you',
           ],
         );
       },
