@@ -28,6 +28,10 @@ Future<void> deliverIntroductionPayloadReliably({
     targetMlKemPublicKey: targetMlKemPublicKey,
     payload: payload,
   );
+  final normalizedEnvelope = IntroductionPayload.ensureEnvelopeMessageId(
+    rawEnvelope,
+    payload.introductionId,
+  );
 
   final deliveryId = _uuid.v4();
   final staged = IntroductionOutboxDelivery(
@@ -36,7 +40,7 @@ Future<void> deliverIntroductionPayloadReliably({
     action: payload.action,
     targetPeerId: targetPeerId,
     senderPeerId: senderPeerId,
-    rawEnvelope: rawEnvelope,
+    rawEnvelope: normalizedEnvelope,
     deliveryStatus: IntroductionOutboxDeliveryStatus.sending,
     deliveryPath: IntroductionOutboxDeliveryPath.pending,
     createdAt: now,
@@ -48,7 +52,7 @@ Future<void> deliverIntroductionPayloadReliably({
     p2pService: p2pService,
     senderPeerId: senderPeerId,
     targetPeerId: targetPeerId,
-    rawEnvelope: rawEnvelope,
+    rawEnvelope: normalizedEnvelope,
   );
 
   final updatedAt = DateTime.now().toUtc().toIso8601String();
@@ -97,6 +101,10 @@ Future<int> retryPendingIntroductionDeliveries({
 
   var deliveredCount = 0;
   for (final delivery in deliveries) {
+    final normalizedEnvelope = IntroductionPayload.ensureEnvelopeMessageId(
+      delivery.rawEnvelope,
+      delivery.introductionId,
+    );
     if (delivery.deliveryStatus == IntroductionOutboxDeliveryStatus.delivered &&
         delivery.deliveryPath == IntroductionOutboxDeliveryPath.inbox) {
       await introRepo.deleteOutboxDelivery(delivery.deliveryId);
@@ -107,11 +115,12 @@ Future<int> retryPendingIntroductionDeliveries({
     try {
       final stored = await p2pService.storeInInbox(
         delivery.targetPeerId,
-        delivery.rawEnvelope,
+        normalizedEnvelope,
       );
       if (stored) {
         await introRepo.saveOutboxDelivery(
           delivery.copyWith(
+            rawEnvelope: normalizedEnvelope,
             deliveryStatus: IntroductionOutboxDeliveryStatus.delivered,
             deliveryPath: IntroductionOutboxDeliveryPath.inbox,
             lastError: null,
@@ -136,6 +145,7 @@ Future<int> retryPendingIntroductionDeliveries({
 
     await introRepo.saveOutboxDelivery(
       delivery.copyWith(
+        rawEnvelope: normalizedEnvelope,
         deliveryStatus: IntroductionOutboxDeliveryStatus.failed,
         deliveryPath: delivery.deliveryPath,
         lastError: 'inbox_retry_failed',
@@ -162,6 +172,7 @@ Future<String> _buildRawEnvelope({
       );
       if (encrypted['ok'] == true) {
         return IntroductionPayload.buildEncryptedEnvelope(
+          introductionId: payload.introductionId,
           senderPeerId: senderPeerId,
           kem: encrypted['kem'] as String,
           ciphertext: encrypted['ciphertext'] as String,

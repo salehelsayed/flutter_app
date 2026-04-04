@@ -48,8 +48,21 @@ void main() {
           controller,
           contains('class ShareViewController: RSIShareViewController'),
         );
+        expect(
+          controller,
+          contains('override func shouldAutoRedirect() -> Bool'),
+        );
+        expect(controller, contains('true'));
+        expect(controller, isNot(contains('false')));
         expect(fallback, contains('#if !canImport(receive_sharing_intent)'));
         expect(fallback, contains('open class RSIShareViewController'));
+        expect(
+          fallback,
+          contains(
+            'guard index == (content.attachments?.count ?? 0) - 1,\n'
+            '              shouldAutoRedirect() else {',
+          ),
+        );
         expect(runnerEntitlements, contains('group.com.mknoon.app.share'));
         expect(extensionEntitlements, contains('group.com.mknoon.app.share'));
         expect(

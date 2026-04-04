@@ -687,6 +687,50 @@ func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
 	}
 }
 
+func TestBuildIntroductionPushMessage_UsesIntrosRouteAndGenericCopy(t *testing.T) {
+	msg := buildPushMessage(
+		"fcm-token",
+		"peer-from",
+		`{"type":"introduction","version":"1","messageId":"intro-1","payload":{"action":"send","introductionId":"intro-1","timestamp":"2026-04-04T20:36:00Z"}}`,
+	)
+
+	if msg.Token != "fcm-token" {
+		t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
+	}
+	if msg.Data["type"] != "intros" {
+		t.Fatalf("type = %q, want %q", msg.Data["type"], "intros")
+	}
+	if _, ok := msg.Data["sender_id"]; ok {
+		t.Fatalf("sender_id should be omitted for intros push, got %q", msg.Data["sender_id"])
+	}
+	if msg.Data["message_id"] != "intro-1" {
+		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "intro-1")
+	}
+	if msg.Data["title"] != introPushNotificationTitle {
+		t.Fatalf("title = %q, want %q", msg.Data["title"], introPushNotificationTitle)
+	}
+	if msg.Data["body"] != introPushNotificationBody {
+		t.Fatalf("body = %q, want %q", msg.Data["body"], introPushNotificationBody)
+	}
+	if msg.Notification == nil {
+		t.Fatal("expected top-level notification payload")
+	}
+	if msg.Notification.Title != introPushNotificationTitle {
+		t.Fatalf(
+			"notification title = %q, want %q",
+			msg.Notification.Title,
+			introPushNotificationTitle,
+		)
+	}
+	if msg.Notification.Body != introPushNotificationBody {
+		t.Fatalf(
+			"notification body = %q, want %q",
+			msg.Notification.Body,
+			introPushNotificationBody,
+		)
+	}
+}
+
 func TestBuildGroupPushMessage_IncludesTopLevelNotificationAndData(t *testing.T) {
 	msg := buildGroupPushMessage(
 		"fcm-token",
