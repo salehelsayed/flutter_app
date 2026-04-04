@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -27,6 +28,7 @@ Future<void> drainGroupOfflineInbox({
   required GroupMessageRepository msgRepo,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
   bool drainAllPages = true,
   int pageSize = 50,
 }) async {
@@ -49,6 +51,7 @@ Future<void> drainGroupOfflineInbox({
         groupId: group.id,
         mediaAttachmentRepo: mediaAttachmentRepo,
         reactionRepo: reactionRepo,
+        groupMessageListener: groupMessageListener,
         drainAllPages: drainAllPages,
         pageSize: pageSize,
       );
@@ -100,6 +103,7 @@ Future<void> drainGroupOfflineInboxForGroup({
   required String groupId,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
   bool drainAllPages = true,
   int pageSize = 50,
 }) async {
@@ -120,6 +124,7 @@ Future<void> drainGroupOfflineInboxForGroup({
       groupId: groupId,
       mediaAttachmentRepo: mediaAttachmentRepo,
       reactionRepo: reactionRepo,
+      groupMessageListener: groupMessageListener,
       drainAllPages: drainAllPages,
       pageSize: pageSize,
     );
@@ -170,6 +175,7 @@ Future<void> _drainGroupInbox({
   required String groupId,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
   bool drainAllPages = true,
   int pageSize = 50,
 }) async {
@@ -211,18 +217,54 @@ Future<void> _drainGroupInbox({
 
       final mediaRaw = payload['media'] as List<dynamic>?;
       final media = mediaRaw?.cast<Map<String, dynamic>>();
+      final resolvedGroupId = payload['groupId'] as String? ?? groupId;
+      final senderId =
+          payload['senderId'] as String? ?? (msg['from'] as String? ?? '');
+      final senderUsername = payload['senderUsername'] as String? ?? '';
+      final keyEpoch = payload['keyEpoch'] as int? ?? 0;
+      final text = payload['text'] as String? ?? '';
+      final timestamp =
+          payload['timestamp'] as String? ??
+          DateTime.now().toUtc().toIso8601String();
+
+      if (groupMessageListener != null && text.startsWith('{"__sys":')) {
+        await groupMessageListener.handleReplayEnvelope({
+          'groupId': resolvedGroupId,
+          'senderId': senderId,
+          'senderUsername': senderUsername,
+          'keyEpoch': keyEpoch,
+          'text': text,
+          'timestamp': timestamp,
+          if (payload['messageId'] is String) 'messageId': payload['messageId'],
+          if (payload['quotedMessageId'] is String)
+            'quotedMessageId': payload['quotedMessageId'],
+          if (media != null) 'media': media,
+        });
+
+        if (await groupRepo.getGroup(resolvedGroupId) == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_DRAIN_OFFLINE_INBOX_STOP_GROUP_REMOVED',
+            details: {
+              'groupId': resolvedGroupId.length > 8
+                  ? resolvedGroupId.substring(0, 8)
+                  : resolvedGroupId,
+            },
+          );
+          return;
+        }
+        continue;
+      }
 
       await handleIncomingGroupMessage(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
-        groupId: payload['groupId'] as String? ?? groupId,
-        senderId: payload['senderId'] as String? ?? '',
-        senderUsername: payload['senderUsername'] as String? ?? '',
-        keyEpoch: payload['keyEpoch'] as int? ?? 0,
-        text: payload['text'] as String? ?? '',
-        timestamp:
-            payload['timestamp'] as String? ??
-            DateTime.now().toUtc().toIso8601String(),
+        groupId: resolvedGroupId,
+        senderId: senderId,
+        senderUsername: senderUsername,
+        keyEpoch: keyEpoch,
+        text: text,
+        timestamp: timestamp,
         messageId: payload['messageId'] as String?,
         quotedMessageId: payload['quotedMessageId'] as String?,
         media: media,

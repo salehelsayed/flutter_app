@@ -8,6 +8,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -46,6 +47,7 @@ class GroupMessageListener {
   final NotificationService? _notificationService;
   final ActiveConversationTracker? _groupConversationTracker;
   final AppLifecycleState Function()? _getAppLifecycleState;
+  final RecentRemoteNotificationGate _remoteNotificationGate;
   final ReactionRepository? _reactionRepo;
 
   StreamSubscription<Map<String, dynamic>>? _subscription;
@@ -66,6 +68,7 @@ class GroupMessageListener {
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
+    RecentRemoteNotificationGate? remoteNotificationGate,
     ReactionRepository? reactionRepo,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
@@ -76,6 +79,8 @@ class GroupMessageListener {
        _notificationService = notificationService,
        _groupConversationTracker = groupConversationTracker,
        _getAppLifecycleState = getAppLifecycleState,
+       _remoteNotificationGate =
+           remoteNotificationGate ?? recentRemoteNotificationGate,
        _reactionRepo = reactionRepo;
 
   /// Stream of new incoming group messages for the UI to listen to.
@@ -87,6 +92,14 @@ class GroupMessageListener {
   /// Stream of incoming group reaction changes for the UI to listen to.
   Stream<ReactionChange> get groupReactionChangeStream =>
       _reactionChangeController.stream;
+
+  /// Replays one already-decoded group envelope through the live listener path.
+  ///
+  /// Offline inbox recovery uses this so replayed system payloads can trigger
+  /// the same cleanup and UI streams as live listener traffic.
+  Future<void> handleReplayEnvelope(Map<String, dynamic> data) {
+    return _handleMessage(data);
+  }
 
   /// Starts listening for incoming group messages and optionally reactions.
   void start(
@@ -192,9 +205,8 @@ class GroupMessageListener {
             _getAppLifecycleState != null) {
           final group = await _groupRepo.getGroup(groupId);
           final groupName = group?.name ?? 'Group';
-          final notifAttachments = media
-              ?.map((m) => MediaAttachment.fromJson(m))
-              .toList() ??
+          final notifAttachments =
+              media?.map((m) => MediaAttachment.fromJson(m)).toList() ??
               <MediaAttachment>[];
           maybeShowNotification(
             notificationService: _notificationService!,
@@ -202,7 +214,16 @@ class GroupMessageListener {
             getAppLifecycleState: _getAppLifecycleState!,
             contactPeerId: 'group:$groupId',
             senderUsername: groupName,
-            messageText: '$senderUsername: ${notificationBodyForMessage(text, notifAttachments)}',
+            messageText:
+                '$senderUsername: ${notificationBodyForMessage(text, notifAttachments)}',
+            messageId: result.id,
+            consumeRecentRemoteNotificationAnnouncement:
+                ({required payload, String? messageId}) =>
+                    _remoteNotificationGate.consumeIfRecentAnnouncement(
+                      payload: payload,
+                      messageId: messageId,
+                    ),
+            backgroundDuplicateGuardDelay: Duration.zero,
           );
         }
 
@@ -521,9 +542,7 @@ class GroupMessageListener {
     Future<void> Function() work,
   ) async {
     final previousWork = _groupConfigWorkQueue[groupId] ?? Future.value();
-    final nextWork = previousWork
-        .catchError((_) {})
-        .then((_) => work());
+    final nextWork = previousWork.catchError((_) {}).then((_) => work());
 
     _groupConfigWorkQueue[groupId] = nextWork.whenComplete(() {
       if (_groupConfigWorkQueue[groupId] == nextWork) {
@@ -563,9 +582,7 @@ class GroupMessageListener {
             layer: 'FL',
             event: 'GROUP_MESSAGE_LISTENER_CONFIG_UPDATE_RETRY_FAILED',
             details: {
-              'groupId': groupId.length > 8
-                  ? groupId.substring(0, 8)
-                  : groupId,
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
               'error': e.toString(),
             },
           );

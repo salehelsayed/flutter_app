@@ -405,8 +405,8 @@ func (n *Node) InboxAck(entryIDs []string, timeoutMs int) (int, error) {
 	})
 }
 
-// InboxRegisterToken registers an FCM push token with the relay.
-// Tries each configured relay in order until one succeeds.
+// InboxRegisterToken registers an FCM push token with all configured relays.
+// Succeeds if at least one relay accepts the token.
 func (n *Node) InboxRegisterToken(token string, platform string) error {
 	n.mu.RLock()
 	h := n.host
@@ -418,7 +418,7 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 
 	rs := n.buildRelaySelector(nil)
 
-	return rs.ForEach(func(relay RelayInfo) error {
+	return rs.FanOut(func(relay RelayInfo) error {
 		timeout := InboxTimeout
 		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
@@ -464,7 +464,8 @@ func (n *Node) InboxRegisterToken(token string, platform string) error {
 			return fmt.Errorf("register token failed: %s", resp.Error)
 		}
 
-		log.Printf("[INBOX] Push token registered (%s)", platform)
+		log.Printf("[INBOX] Push token registered on relay %s (%s)",
+			relay.ID.String()[:min(20, len(relay.ID.String()))], platform)
 		streamOK = true
 		return nil
 	})

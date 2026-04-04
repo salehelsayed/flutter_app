@@ -1367,7 +1367,10 @@ void main() {
               '${Directory.systemTemp.path}/chat-listener-remote-push-${DateTime.now().microsecondsSinceEpoch}.json',
         );
         addTearDown(gate.clear);
-        await gate.markPayload(senderPeerId);
+        await gate.markAnnouncement(
+          payload: senderPeerId,
+          messageId: 'msg-notif-remote-push',
+        );
 
         final listener = createListenerWithNotifications(
           lifecycleState: AppLifecycleState.paused,
@@ -1387,6 +1390,34 @@ void main() {
 
         await Future.delayed(const Duration(milliseconds: 200));
 
+        expect(notificationService.shown, isEmpty);
+        expect(messageRepo.saved, hasLength(1));
+
+        listener.dispose();
+      },
+    );
+
+    test(
+      'recovery replay persists the message without showing a local notification',
+      () async {
+        final senderPeerId = 'sender-notif-replay';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Bob'));
+
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.resumed,
+        );
+
+        final outcome = await listener.processIncomingMessage(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-notif-replay',
+            text: 'Recovered from inbox',
+            senderUsername: 'Bob',
+          ),
+          suppressNotification: true,
+        );
+
+        expect(outcome.state, ChatMessageProcessState.stored);
         expect(notificationService.shown, isEmpty);
         expect(messageRepo.saved, hasLength(1));
 

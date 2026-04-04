@@ -86,6 +86,32 @@ void main() {
       expect(p2pService.drainOfflineInboxCallCount, equals(1));
     });
 
+    test('retries push registration on normal resume', () async {
+      var retryCount = 0;
+
+      await handleAppResumed(
+        bridge: bridge,
+        p2pService: p2pService,
+        retryPushRegistrationFn: () async {
+          retryCount += 1;
+        },
+      );
+
+      expect(retryCount, 1);
+    });
+
+    test('swallows push-registration retry errors during resume', () async {
+      await handleAppResumed(
+        bridge: bridge,
+        p2pService: p2pService,
+        retryPushRegistrationFn: () async {
+          throw StateError('retry failed');
+        },
+      );
+
+      expect(p2pService.drainOfflineInboxCallCount, 1);
+    });
+
     test('retries incomplete key exchanges when repos are provided', () async {
       final runningP2P = FakeP2PService(
         initialState: const NodeState(

@@ -133,6 +133,44 @@ func TestRelaySelector_ForEach_AllFail(t *testing.T) {
 	}
 }
 
+func TestRelaySelector_FanOut_AttemptsAllRelaysAndSucceedsIfAnyRelaySucceeds(t *testing.T) {
+	addr1 := generateFakeRelayAddr(t, 19001)
+	addr2 := generateFakeRelayAddr(t, 19002)
+	addr3 := generateFakeRelayAddr(t, 19003)
+
+	rs := NewRelaySelector([]string{addr1, addr2, addr3})
+	calls := 0
+	err := rs.FanOut(func(relay RelayInfo) error {
+		calls++
+		if calls == 2 {
+			return nil
+		}
+		return fmt.Errorf("relay down")
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 calls (fan out across all relays), got %d", calls)
+	}
+}
+
+func TestRelaySelector_FanOut_AllFail(t *testing.T) {
+	addr1 := generateFakeRelayAddr(t, 19001)
+	addr2 := generateFakeRelayAddr(t, 19002)
+
+	rs := NewRelaySelector([]string{addr1, addr2})
+	err := rs.FanOut(func(relay RelayInfo) error {
+		return fmt.Errorf("relay down")
+	})
+	if err == nil {
+		t.Fatal("expected error when all relays fail")
+	}
+	if !strings.Contains(err.Error(), "all 2 relays failed") {
+		t.Errorf("error should mention all relays failed: %v", err)
+	}
+}
+
 func TestRelaySelector_ForEach_EmptyList(t *testing.T) {
 	rs := NewRelaySelector(nil)
 	err := rs.ForEach(func(relay RelayInfo) error {

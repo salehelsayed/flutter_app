@@ -45,5 +45,36 @@ void main() {
       expect(await gate.consumeIfRecentPayload('   '), isFalse);
       expect(File(filePath).existsSync(), isFalse);
     });
+
+    test(
+      'keeps exact-message announcements beyond the short payload ttl',
+      () async {
+        await gate.markAnnouncement(payload: 'peer-123', messageId: 'msg-1');
+        now = now.add(const Duration(seconds: 31));
+
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-1',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'does not suppress a different message id in the same conversation',
+      () async {
+        await gate.markAnnouncement(payload: 'peer-123', messageId: 'msg-1');
+
+        expect(
+          await gate.consumeIfRecentAnnouncement(
+            payload: 'peer-123',
+            messageId: 'msg-2',
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 }

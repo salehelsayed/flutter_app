@@ -925,7 +925,10 @@ void main() async {
     pushTokenStore: pushTokenStore,
     inboxStagingRepository: inboxStagingRepository,
     replayRecoveredInboxChatMessage: (message) async {
-      var outcome = await chatMessageListener.processIncomingMessage(message);
+      var outcome = await chatMessageListener.processIncomingMessage(
+        message,
+        suppressNotification: true,
+      );
       if (outcome.state == ChatMessageProcessState.unknownSender) {
         final ownPeerId = message.to;
         if (ownPeerId.isNotEmpty) {
@@ -936,7 +939,10 @@ void main() async {
             senderPeerId: message.from,
           );
           if (resolution == UnknownInboxSenderResolution.contactRecovered) {
-            outcome = await chatMessageListener.processIncomingMessage(message);
+            outcome = await chatMessageListener.processIncomingMessage(
+              message,
+              suppressNotification: true,
+            );
           }
           if (outcome.state == ChatMessageProcessState.unknownSender &&
               resolution != UnknownInboxSenderResolution.rejected) {
@@ -1086,7 +1092,9 @@ void main() async {
   );
 
   // Create notification service and conversation trackers
-  final notificationService = FlutterNotificationService();
+  final notificationService = FlutterNotificationService(
+    requestApplePermissions: !kE2ETestMode,
+  );
   await notificationService.initialize();
   final PushRegistrationCoordinator? pushRegistrationCoordinator =
       !isDesktop && Firebase.apps.isNotEmpty && !kE2ETestMode
@@ -1317,6 +1325,7 @@ void main() async {
       bridge: bridge,
       groupRepo: groupRepository,
       msgRepo: groupMessageRepository,
+      groupMessageListener: groupMessageListener,
       mediaAttachmentRepo: mediaAttachmentRepository,
       reactionRepo: reactionRepository,
     ),
@@ -1509,6 +1518,40 @@ void main() async {
     contactRequestRepo: contactRequestRepository,
     introRepo: introductionRepository,
     messageRepo: messageRepository,
+    openConversationByPeerId: (peerId) async {
+      for (var attempt = 0; attempt < 30; attempt++) {
+        final navigator = MyApp.navigatorKey.currentState;
+        final contact = await contactRepository.getContact(peerId);
+        if (navigator != null && contact != null) {
+          navigator.popUntil((route) => route.isFirst);
+          unawaited(
+            navigator.push(
+              buildConversationSlideUpRoute(
+                builder: (_) => ConversationWired(
+                  contact: contact,
+                  identityRepo: repository,
+                  messageRepo: messageRepository,
+                  chatMessageListener: chatMessageListener,
+                  p2pService: p2pService,
+                  bridge: bridge,
+                  contactRepo: contactRepository,
+                  mediaAttachmentRepo: mediaAttachmentRepository,
+                  mediaFileManager: mediaFileManager,
+                  conversationTracker: conversationTracker,
+                  audioRecorderService: audioRecorderService,
+                  reactionRepo: reactionRepository,
+                  reactionListener: reactionListener,
+                  introductionRepository: introductionRepository,
+                ),
+              ),
+            ),
+          );
+          return true;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      return false;
+    },
   );
 }
 
@@ -1767,6 +1810,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       routeTarget: routeTarget,
       action: () => routeAppRootRemoteNotificationOpen(
         data: data,
+        onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
         onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
         onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
@@ -1798,6 +1842,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     try {
       await routeAppRootInitialLocalNotificationOpen(
         consumeInitialPayload: widget.notificationService.consumeInitialPayload,
+        onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
         onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
@@ -1814,6 +1859,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     try {
       await routeAppRootLocalNotificationTap(
         payload: payload,
+        onBeforeOpen: widget.notificationService.clearDeliveredNotifications,
         onBeforeRouteTarget: _prepareNotificationRouteTarget,
         onRouteTarget: _handleNotificationRouteTarget,
       );
@@ -1998,6 +2044,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       bridge: widget.bridge,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,
     );
@@ -2116,10 +2163,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
+        retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,
         groupRepo: widget.groupRepository,
         groupMsgRepo: widget.groupMessageRepository,
+        groupMessageListener: widget.groupMessageListener,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         reactionRepo: widget.reactionRepository,
         nearbyLocationService: widget.nearbyLocationService,
@@ -2264,6 +2313,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             widget.contactPresenceSnapshotRepository,
         nearbyLocationService: widget.nearbyLocationService,
         pushRegistrationCoordinator: widget.pushRegistrationCoordinator,
+        clearDeliveredNotifications:
+            widget.notificationService.clearDeliveredNotifications,
         onNotificationRouteTarget: _handleNotificationRouteTarget,
       ),
       debugShowCheckedModeBanner: false,

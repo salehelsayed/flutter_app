@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
@@ -20,12 +21,27 @@ void main() {
   setUp(() {
     flowEventLoggingEnabled = false;
     log.clear();
+
+    final backgroundGate = RecentBackgroundNotificationGate(
+      filePath:
+          '${Directory.systemTemp.path}/background-handler-gate-${DateTime.now().microsecondsSinceEpoch}.json',
+    );
+    debugSetRecentBackgroundNotificationGate(backgroundGate);
+    addTearDown(backgroundGate.clear);
+
+    final remoteGate = RecentRemoteNotificationGate(
+      filePath:
+          '${Directory.systemTemp.path}/background-handler-remote-gate-${DateTime.now().microsecondsSinceEpoch}.json',
+    );
+    debugSetRecentRemoteNotificationGate(remoteGate);
+    addTearDown(remoteGate.clear);
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
+    debugResetRecentBackgroundNotificationGate();
     debugResetRecentRemoteNotificationGate();
   });
 
@@ -85,6 +101,37 @@ void main() {
       },
     );
 
+    test('suppresses a repeated background fallback for the same push', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      AndroidFlutterLocalNotificationsPlugin.registerWith();
+      final gate = RecentBackgroundNotificationGate(
+        filePath:
+            '${Directory.systemTemp.path}/background-fallback-dedupe-${DateTime.now().microsecondsSinceEpoch}.json',
+      );
+      debugSetRecentBackgroundNotificationGate(gate);
+      addTearDown(gate.clear);
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            log.add(call);
+            if (call.method == 'initialize') {
+              return true;
+            }
+            return null;
+          });
+
+      final message = RemoteMessage(
+        messageId: 'msg-fallback-dedupe-1',
+        sentTime: DateTime.utc(2026, 4, 4, 12),
+        data: {'type': 'new_message', 'sender_id': '12D3KooWTestPeer'},
+      );
+
+      await firebaseMessagingBackgroundHandler(message);
+      await firebaseMessagingBackgroundHandler(message);
+
+      expect(log.where((call) => call.method == 'show'), hasLength(1));
+    });
+
     test('handles RemoteMessage with null messageId', () async {
       const message = RemoteMessage(data: {'type': 'inbox'});
 
@@ -115,9 +162,42 @@ void main() {
         await firebaseMessagingBackgroundHandler(message);
 
         expect(
-          await gate.consumeIfRecentPayload('12D3KooWVisiblePeer'),
+          await gate.consumeIfRecentAnnouncement(
+            payload: '12D3KooWVisiblePeer',
+          ),
           isTrue,
         );
+      },
+    );
+
+    test(
+      'shows iOS local fallback for chat pushes when Flutter surfaces only the data payload',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        IOSFlutterLocalNotificationsPlugin.registerWith();
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        const message = RemoteMessage(
+          data: {
+            'type': 'new_message',
+            'sender_id': '12D3KooWVisiblePeer',
+            'title': 'Alice',
+            'body': 'Hey!',
+            'message_id': 'msg-visible-chat-1',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        expect(log.where((call) => call.method == 'show'), hasLength(1));
       },
     );
   });

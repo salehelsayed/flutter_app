@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart' show DebugPrintCallback, debugPrint;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -337,7 +339,11 @@ void main() {
             'name': 'Test Group',
             'groupType': 'chat',
             'members': [
-              {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
               {
                 'peerId': 'peer-sender',
                 'role': 'writer',
@@ -375,19 +381,20 @@ void main() {
             .length;
         expect(updateConfigCalls, 2);
 
-        final secondUpdate = jsonDecode(
-              bridge.sentMessages.where((message) {
-                final parsed = jsonDecode(message) as Map<String, dynamic>;
-                return parsed['cmd'] == 'group:updateConfig';
-              }).last,
-            )
-            as Map<String, dynamic>;
+        final secondUpdate =
+            jsonDecode(
+                  bridge.sentMessages.where((message) {
+                    final parsed = jsonDecode(message) as Map<String, dynamic>;
+                    return parsed['cmd'] == 'group:updateConfig';
+                  }).last,
+                )
+                as Map<String, dynamic>;
         final groupConfig =
             secondUpdate['payload']['groupConfig'] as Map<String, dynamic>;
         final members = groupConfig['members'] as List<dynamic>;
-        final charlieConfig = members
-            .cast<Map<String, dynamic>>()
-            .firstWhere((member) => member['peerId'] == 'peer-charlie');
+        final charlieConfig = members.cast<Map<String, dynamic>>().firstWhere(
+          (member) => member['peerId'] == 'peer-charlie',
+        );
         expect(charlieConfig['username'], 'Charlie Snapshot');
       },
     );
@@ -492,7 +499,11 @@ void main() {
             'name': 'Test Group',
             'groupType': 'chat',
             'members': [
-              {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
               {
                 'peerId': 'peer-sender',
                 'role': 'writer',
@@ -539,145 +550,152 @@ void main() {
             .length;
         expect(updateConfigCalls, 2);
 
-        final secondUpdate = jsonDecode(
-              bridge.sentMessages.where((message) {
-                final parsed = jsonDecode(message) as Map<String, dynamic>;
-                return parsed['cmd'] == 'group:updateConfig';
-              }).last,
-            )
-            as Map<String, dynamic>;
+        final secondUpdate =
+            jsonDecode(
+                  bridge.sentMessages.where((message) {
+                    final parsed = jsonDecode(message) as Map<String, dynamic>;
+                    return parsed['cmd'] == 'group:updateConfig';
+                  }).last,
+                )
+                as Map<String, dynamic>;
         final groupConfig =
             secondUpdate['payload']['groupConfig'] as Map<String, dynamic>;
         final members = groupConfig['members'] as List<dynamic>;
-        final daveConfig = members
-            .cast<Map<String, dynamic>>()
-            .firstWhere((member) => member['peerId'] == 'peer-dave');
-        final eveConfig = members
-            .cast<Map<String, dynamic>>()
-            .firstWhere((member) => member['peerId'] == 'peer-eve');
+        final daveConfig = members.cast<Map<String, dynamic>>().firstWhere(
+          (member) => member['peerId'] == 'peer-dave',
+        );
+        final eveConfig = members.cast<Map<String, dynamic>>().firstWhere(
+          (member) => member['peerId'] == 'peer-eve',
+        );
         expect(daveConfig['username'], 'Dave Snapshot');
         expect(eveConfig['username'], 'Eve Snapshot');
       },
     );
 
-    test('concurrent system messages execute sequentially across full pipeline',
-        () async {
-      final firstUpdate = Completer<String>();
-      final secondUpdateStarted = Completer<void>();
+    test(
+      'concurrent system messages execute sequentially across full pipeline',
+      () async {
+        final firstUpdate = Completer<String>();
+        final secondUpdateStarted = Completer<void>();
 
-      bridge = SequencedUpdateConfigBridge([
-        (_) => firstUpdate.future,
-        (_) async {
-          secondUpdateStarted.complete();
-          return jsonEncode({'ok': true});
-        },
-      ]);
-      listener = GroupMessageListener(
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        bridge: bridge,
-      );
-      listener.start(sourceController.stream);
+        bridge = SequencedUpdateConfigBridge([
+          (_) => firstUpdate.future,
+          (_) async {
+            secondUpdateStarted.complete();
+            return jsonEncode({'ok': true});
+          },
+        ]);
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        listener.start(sourceController.stream);
 
-      final firstMessage = jsonEncode({
-        '__sys': 'member_added',
-        'member': {
-          'peerId': 'peer-alice',
-          'username': 'Alice',
-          'role': 'writer',
-          'publicKey': 'pk-alice',
-        },
-        'groupConfig': {
-          'name': 'Test Group',
-          'groupType': 'chat',
-          'members': [
-            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
-            {
-              'peerId': 'peer-sender',
-              'role': 'writer',
-              'publicKey': 'pk-sender',
-            },
-            {
-              'peerId': 'peer-alice',
-              'role': 'writer',
-              'publicKey': 'pk-alice',
-            },
-          ],
-          'createdBy': 'peer-admin',
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      });
-      final secondMessage = jsonEncode({
-        '__sys': 'member_added',
-        'member': {
-          'peerId': 'peer-bob',
-          'username': 'Bob',
-          'role': 'writer',
-          'publicKey': 'pk-bob',
-        },
-        'groupConfig': {
-          'name': 'Test Group',
-          'groupType': 'chat',
-          'members': [
-            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
-            {
-              'peerId': 'peer-sender',
-              'role': 'writer',
-              'publicKey': 'pk-sender',
-            },
-            {
-              'peerId': 'peer-alice',
-              'role': 'writer',
-              'publicKey': 'pk-alice',
-            },
-            {
-              'peerId': 'peer-bob',
-              'role': 'writer',
-              'publicKey': 'pk-bob',
-            },
-          ],
-          'createdBy': 'peer-admin',
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      });
+        final firstMessage = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-alice',
+            'username': 'Alice',
+            'role': 'writer',
+            'publicKey': 'pk-alice',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-alice',
+                'role': 'writer',
+                'publicKey': 'pk-alice',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+        final secondMessage = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-bob',
+            'username': 'Bob',
+            'role': 'writer',
+            'publicKey': 'pk-bob',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-alice',
+                'role': 'writer',
+                'publicKey': 'pk-alice',
+              },
+              {'peerId': 'peer-bob', 'role': 'writer', 'publicKey': 'pk-bob'},
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': firstMessage,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': secondMessage,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': firstMessage,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': secondMessage,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(
-        bridge.commandLog.where((command) => command == 'group:updateConfig'),
-        hasLength(1),
-      );
-      expect(await groupRepo.getMember('group-1', 'peer-alice'), isNotNull);
-      expect(await groupRepo.getMember('group-1', 'peer-bob'), isNull);
-      expect(secondUpdateStarted.isCompleted, isFalse);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+        expect(await groupRepo.getMember('group-1', 'peer-alice'), isNotNull);
+        expect(await groupRepo.getMember('group-1', 'peer-bob'), isNull);
+        expect(secondUpdateStarted.isCompleted, isFalse);
 
-      firstUpdate.complete(jsonEncode({'ok': true}));
-      await Future.delayed(const Duration(milliseconds: 50));
+        firstUpdate.complete(jsonEncode({'ok': true}));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(
-        bridge.commandLog.where((command) => command == 'group:updateConfig'),
-        hasLength(2),
-      );
-      expect(await groupRepo.getMember('group-1', 'peer-bob'), isNotNull);
-      expect(secondUpdateStarted.isCompleted, isTrue);
-    });
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(2),
+        );
+        expect(await groupRepo.getMember('group-1', 'peer-bob'), isNotNull);
+        expect(secondUpdateStarted.isCompleted, isTrue);
+      },
+    );
 
     test('member_added is not emitted on groupMessageStream', () async {
       listener.start(sourceController.stream);
@@ -1247,6 +1265,52 @@ void main() {
       notifListener.dispose();
     });
 
+    test(
+      'suppresses local notification when a recent remote push already announced the same group message',
+      () async {
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/group-listener-remote-push-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        addTearDown(gate.clear);
+        await gate.markAnnouncement(
+          payload: 'group:group-1',
+          messageId: 'group-msg-1',
+        );
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          remoteNotificationGate: gate,
+        );
+        notifListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'Hello group!',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'group-msg-1',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(notifService.shown, isEmpty);
+        expect(msgRepo.count, 1);
+
+        notifListener.dispose();
+      },
+    );
+
     test('suppresses notification when viewing group conversation', () async {
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();
@@ -1306,6 +1370,76 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
 
       expect(notifService.shown, isEmpty);
+
+      notifListener.dispose();
+    });
+
+    test('does not notify after self-removal deletes the group', () async {
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Me',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final notifListener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+      notifListener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {'peerId': 'peer-self', 'username': 'Me'},
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin'},
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getGroup('group-1'), isNull);
+      expect(bridge.commandLog, contains('group:leave'));
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': 'After removal',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(notifService.shown, isEmpty);
+      expect(msgRepo.count, 0);
 
       notifListener.dispose();
     });

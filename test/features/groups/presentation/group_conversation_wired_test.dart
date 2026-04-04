@@ -143,11 +143,14 @@ class FakeIdentityRepository implements IdentityRepository {
 class FakeGroupMessageListener extends GroupMessageListener {
   final Stream<GroupMessage> _externalStream;
   final Stream<ReactionChange>? _externalReactionStream;
+  final Stream<String>? _externalRemovedStream;
 
   FakeGroupMessageListener(
     this._externalStream, {
     Stream<ReactionChange>? reactionStream,
+    Stream<String>? removedStream,
   }) : _externalReactionStream = reactionStream,
+       _externalRemovedStream = removedStream,
        super(groupRepo: _NoOpGroupRepo(), msgRepo: _NoOpMsgRepo());
 
   @override
@@ -156,6 +159,10 @@ class FakeGroupMessageListener extends GroupMessageListener {
   @override
   Stream<ReactionChange> get groupReactionChangeStream =>
       _externalReactionStream ?? super.groupReactionChangeStream;
+
+  @override
+  Stream<String> get groupRemovedStream =>
+      _externalRemovedStream ?? super.groupRemovedStream;
 }
 
 class _NoOpGroupRepo implements GroupRepository {
@@ -450,6 +457,7 @@ void main() {
       int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
       ReactionRepository? reactionRepo,
       StreamController<ReactionChange>? reactionStreamController,
+      StreamController<String>? removedStreamController,
     }) {
       final g = group ?? makeChatGroup();
       return MaterialApp(
@@ -463,6 +471,7 @@ void main() {
           groupMessageListener: FakeGroupMessageListener(
             messageStreamController.stream,
             reactionStream: reactionStreamController?.stream,
+            removedStream: removedStreamController?.stream,
           ),
           bridge: bridge,
           identityRepo: identityRepo,
@@ -1942,6 +1951,66 @@ void main() {
 
       expect(tracker.isViewing('group:${group.id}'), isFalse);
     });
+
+    testWidgets(
+      'current group removal shows a notice and exits the conversation route',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final tracker = ActiveConversationTracker();
+        final removedStreamController = StreamController<String>.broadcast();
+        addTearDown(removedStreamController.close);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupConversationWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          groupMessageListener: FakeGroupMessageListener(
+                            messageStreamController.stream,
+                            removedStream: removedStreamController.stream,
+                          ),
+                          bridge: bridge,
+                          identityRepo: identityRepo,
+                          contactRepo: contactRepo,
+                          p2pService: p2pService,
+                          groupConversationTracker: tracker,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Group Conversation'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Group Conversation'));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(tracker.isViewing('group:${group.id}'), isTrue);
+
+        removedStreamController.add(group.id);
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(GroupConversationScreen), findsNothing);
+        expect(find.text('Open Group Conversation'), findsOneWidget);
+        expect(find.text('You were removed from this group.'), findsOneWidget);
+        expect(tracker.isViewing('group:${group.id}'), isFalse);
+      },
+    );
 
     testWidgets('accepts empty initialAttachments without error', (
       tester,

@@ -125,6 +125,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   String _senderPublicKey = '';
   String _senderPrivateKey = '';
   StreamSubscription<GroupMessage>? _messageSubscription;
+  StreamSubscription<String>? _removedSubscription;
   final ScrollController _scrollController = ScrollController();
   bool _initialLoadDone = false;
   bool _isSending = false;
@@ -715,6 +716,29 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             );
           },
         );
+
+    _removedSubscription = widget.groupMessageListener.groupRemovedStream
+        .listen((groupId) {
+          if (groupId != widget.group.id || !mounted) return;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            unawaited(_handleCurrentGroupRemoved());
+          });
+        });
+  }
+
+  Future<void> _handleCurrentGroupRemoved() async {
+    if (!mounted) return;
+
+    widget.groupConversationTracker?.clear();
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.hideCurrentSnackBar();
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('You were removed from this group.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   static const _uuid = Uuid();
@@ -2400,6 +2424,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   void dispose() {
     widget.groupConversationTracker?.clear();
     _messageSubscription?.cancel();
+    _removedSubscription?.cancel();
     _reactionSubscription?.cancel();
     _mediaUploadProgressSubscription?.cancel();
     _durationSub?.cancel();

@@ -64,11 +64,55 @@ void main() {
           contactPeerId: 'peer-123',
           senderUsername: 'Alice',
           messageText: 'Hello!',
-          consumeRecentRemoteNotificationAnnouncement: (_) async => true,
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async => true,
           backgroundDuplicateGuardDelay: Duration.zero,
         );
 
         expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test('suppresses notification during recovery replay', () async {
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.resumed,
+        contactPeerId: 'peer-123',
+        senderUsername: 'Alice',
+        messageText: 'Hello!',
+        suppressNotification: true,
+      );
+
+      expect(notificationService.shown, isEmpty);
+    });
+
+    test(
+      'prefers exact message-id suppression over route-wide suppression when available',
+      () async {
+        var capturedPayload = '';
+        String? capturedMessageId;
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'peer-123',
+          senderUsername: 'Alice',
+          messageText: 'Hello!',
+          messageId: 'msg-123',
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async {
+                capturedPayload = payload;
+                capturedMessageId = messageId;
+                return true;
+              },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(notificationService.shown, isEmpty);
+        expect(capturedPayload, 'peer-123');
+        expect(capturedMessageId, 'msg-123');
       },
     );
 

@@ -106,8 +106,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final identity = await widget.identityRepo.loadIdentity();
       if (identity != null) {
         final group = await widget.groupRepo.getGroup(widget.group.id);
-        final allMembers =
-            await widget.groupRepo.getMembers(widget.group.id);
+        final allMembers = await widget.groupRepo.getMembers(widget.group.id);
 
         if (group != null) {
           final groupConfig = {
@@ -115,14 +114,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             'groupType': group.type.toValue(),
             if (group.description != null) 'description': group.description,
             'members': allMembers
-                .map((m) => {
-                      'peerId': m.peerId,
-                      'username': m.username,
-                      'role': m.role.toValue(),
-                      'publicKey': m.publicKey,
-                      if (m.mlKemPublicKey != null)
-                        'mlKemPublicKey': m.mlKemPublicKey,
-                    })
+                .map(
+                  (m) => {
+                    'peerId': m.peerId,
+                    'username': m.username,
+                    'role': m.role.toValue(),
+                    'publicKey': m.publicKey,
+                    if (m.mlKemPublicKey != null)
+                      'mlKemPublicKey': m.mlKemPublicKey,
+                  },
+                )
                 .toList(),
             'createdBy': group.createdBy,
             'createdAt': group.createdAt.toUtc().toIso8601String(),
@@ -130,11 +131,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
           final sysMessage = jsonEncode({
             '__sys': 'member_removed',
-            'member': {
-              'peerId': member.peerId,
-              'username': member.username,
-            },
+            'member': {'peerId': member.peerId, 'username': member.username},
             'groupConfig': groupConfig,
+          });
+          final removalInboxPayload = jsonEncode({
+            'groupId': widget.group.id,
+            'senderId': identity.peerId,
+            'senderUsername': identity.username ?? '',
+            'keyEpoch': 0,
+            'text': sysMessage,
+            'timestamp': DateTime.now().toUtc().toIso8601String(),
           });
 
           await callGroupPublish(
@@ -145,6 +151,12 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPublicKey: identity.publicKey,
             senderPrivateKey: identity.privateKey,
             senderUsername: identity.username ?? '',
+          );
+          await callGroupInboxStore(
+            widget.bridge,
+            widget.group.id,
+            removalInboxPayload,
+            recipientPeerIds: [member.peerId],
           );
 
           emitFlowEvent(
@@ -174,7 +186,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
               return true;
             },
           );
-
         }
       }
 
@@ -188,32 +199,64 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
   }
 
-  void _onAddMember() {
-    Navigator.of(context).push<int>(
-      MaterialPageRoute(
-        builder: (_) => ContactPickerWired(
-          groupId: widget.group.id,
-          groupRepo: widget.groupRepo,
-          contactRepo: widget.contactRepo,
-          bridge: widget.bridge,
-          identityRepo: widget.identityRepo,
-          p2pService: widget.p2pService,
+  Future<void> _confirmRemoveMember(GroupMember member) async {
+    if (!mounted) return;
+
+    final shouldRemove = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remove ${member.username ?? 'member'} from the group?'),
+        content: const Text(
+          'They will stop receiving new messages from this group.',
         ),
+        actions: [
+          TextButton(
+            key: const ValueKey('group-remove-cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('group-remove-confirm'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
       ),
-    ).then((count) {
-      if (count != null && count > 0) {
-        _loadMembers();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                count == 1 ? 'Member invited' : '$count members invited',
-              ),
+    );
+
+    if (shouldRemove == true) {
+      await _onRemoveMember(member);
+    }
+  }
+
+  void _onAddMember() {
+    Navigator.of(context)
+        .push<int>(
+          MaterialPageRoute(
+            builder: (_) => ContactPickerWired(
+              groupId: widget.group.id,
+              groupRepo: widget.groupRepo,
+              contactRepo: widget.contactRepo,
+              bridge: widget.bridge,
+              identityRepo: widget.identityRepo,
+              p2pService: widget.p2pService,
             ),
-          );
-        }
-      }
-    });
+          ),
+        )
+        .then((count) {
+          if (count != null && count > 0) {
+            _loadMembers();
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    count == 1 ? 'Member invited' : '$count members invited',
+                  ),
+                ),
+              );
+            }
+          }
+        });
   }
 
   void _onBack() {
@@ -230,11 +273,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       onBack: _onBack,
       onLeave: _onLeave,
       onRemoveMember: widget.group.myRole == GroupRole.admin
-          ? _onRemoveMember
+          ? _confirmRemoveMember
           : null,
-      onAddMember: widget.group.myRole == GroupRole.admin
-          ? _onAddMember
-          : null,
+      onAddMember: widget.group.myRole == GroupRole.admin ? _onAddMember : null,
     );
   }
 }

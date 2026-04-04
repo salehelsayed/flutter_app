@@ -19,16 +19,22 @@ class BackgroundPushNotificationFallback {
 bool shouldShowBackgroundPushFallbackNotification(RemoteMessage message) {
   if (message.notification != null) return false;
 
-  return NotificationRouteTarget.fromRemoteMessageData(message.data) != null;
+  final routeTarget = NotificationRouteTarget.fromRemoteMessageData(
+    message.data,
+  );
+  if (routeTarget == null) {
+    return false;
+  }
+
+  return true;
 }
 
 BackgroundPushNotificationFallback buildBackgroundPushFallbackNotification(
   RemoteMessage message,
 ) {
   final payload = _payloadFromMessage(message);
-  final title =
-      _trimToNull(message.data['title']) ?? backgroundPushDefaultTitle;
-  final body = _trimToNull(message.data['body']) ?? backgroundPushDefaultBody;
+  final title = _resolvedTitle(message);
+  final body = _resolvedBody(message);
 
   return BackgroundPushNotificationFallback(
     title: title,
@@ -37,10 +43,74 @@ BackgroundPushNotificationFallback buildBackgroundPushFallbackNotification(
   );
 }
 
+String? backgroundPushFallbackDedupeKey(RemoteMessage message) {
+  final payload = _payloadFromMessage(message);
+  if (payload == null) {
+    return null;
+  }
+
+  final uniqueId =
+      _trimToNull(message.data['message_id']?.toString()) ??
+      _trimToNull(message.data['messageId']?.toString()) ??
+      _trimToNull(message.data['id']?.toString()) ??
+      _trimToNull(message.data['msgId']?.toString()) ??
+      _trimToNull(message.messageId);
+  final timestamp =
+      _trimToNull(message.data['timestamp']?.toString()) ??
+      _trimToNull(message.data['sent_at']?.toString()) ??
+      _trimToNull(message.data['sentAt']?.toString()) ??
+      _trimToNull(message.data['ts']?.toString()) ??
+      message.sentTime?.millisecondsSinceEpoch.toString();
+  final threadId = _trimToNull(message.threadId);
+  final collapseKey = _trimToNull(message.collapseKey);
+  final title = _resolvedTitle(message);
+  final body = _resolvedBody(message);
+  final hasMessageIdentity =
+      uniqueId != null ||
+      timestamp != null ||
+      threadId != null ||
+      collapseKey != null;
+  final hasSpecificCopy =
+      title != backgroundPushDefaultTitle || body != backgroundPushDefaultBody;
+
+  if (!hasMessageIdentity && !hasSpecificCopy) {
+    return null;
+  }
+
+  final parts = <String>[
+    'payload=$payload',
+    if (uniqueId != null) 'id=$uniqueId',
+    if (timestamp != null) 'ts=$timestamp',
+    if (threadId != null) 'thread=$threadId',
+    if (collapseKey != null) 'collapse=$collapseKey',
+    if (!hasMessageIdentity && title != backgroundPushDefaultTitle)
+      'title=$title',
+    if (!hasMessageIdentity && body != backgroundPushDefaultBody) 'body=$body',
+  ];
+  return parts.join('|');
+}
+
 String? _payloadFromMessage(RemoteMessage message) {
   return NotificationRouteTarget.fromRemoteMessageData(
     message.data,
   )?.toPayload();
+}
+
+String _resolvedTitle(RemoteMessage message) {
+  return _trimToNull(message.data['title']?.toString()) ??
+      _trimToNull(message.data['pushTitle']?.toString()) ??
+      _trimToNull(message.data['sender_username']?.toString()) ??
+      _trimToNull(message.data['senderUsername']?.toString()) ??
+      _trimToNull(message.data['username']?.toString()) ??
+      backgroundPushDefaultTitle;
+}
+
+String _resolvedBody(RemoteMessage message) {
+  return _trimToNull(message.data['body']?.toString()) ??
+      _trimToNull(message.data['pushBody']?.toString()) ??
+      _trimToNull(message.data['message']?.toString()) ??
+      _trimToNull(message.data['text']?.toString()) ??
+      backgroundPushDefaultBody;
 }
 
 String? _trimToNull(String? value) {

@@ -18,12 +18,17 @@ void main() {
             'type': 'new_message',
             'sender_id': 'peer-123',
           },
+          onBeforeOpen: harness.clear,
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.route,
           onMissingRouteTarget: harness.missing,
         );
 
-        expect(harness.events, <String>['prepare:peer-123', 'route:peer-123']);
+        expect(harness.events, <String>[
+          'clear',
+          'prepare:peer-123',
+          'route:peer-123',
+        ]);
         expect(
           harness.routed.single.kind,
           NotificationRouteTargetKind.conversation,
@@ -38,11 +43,13 @@ void main() {
       () async {
         await routeAppRootInitialLocalNotificationOpen(
           consumeInitialPayload: () async => 'group:group-123',
+          onBeforeOpen: harness.clear,
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.route,
         );
 
         expect(harness.events, <String>[
+          'clear',
           'prepare:group:group-123',
           'route:group:group-123',
         ]);
@@ -56,11 +63,16 @@ void main() {
       () async {
         await routeAppRootLocalNotificationTap(
           payload: 'peer-456',
+          onBeforeOpen: harness.clear,
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.route,
         );
 
-        expect(harness.events, <String>['prepare:peer-456', 'route:peer-456']);
+        expect(harness.events, <String>[
+          'clear',
+          'prepare:peer-456',
+          'route:peer-456',
+        ]);
         expect(
           harness.routed.single.kind,
           NotificationRouteTargetKind.conversation,
@@ -74,11 +86,13 @@ void main() {
       () async {
         await routeAppRootLocalNotificationTap(
           payload: 'contact_request:peer-request-123',
+          onBeforeOpen: harness.clear,
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.route,
         );
 
         expect(harness.events, <String>[
+          'clear',
           'prepare:contact_request:peer-request-123',
           'route:contact_request:peer-request-123',
         ]);
@@ -98,12 +112,14 @@ void main() {
             'type': 'contact_request',
             'sender_id': 'peer-request-123',
           },
+          onBeforeOpen: harness.clear,
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.route,
           onMissingRouteTarget: harness.missing,
         );
 
         expect(harness.events, <String>[
+          'clear',
           'prepare:contact_request:peer-request-123',
           'route:contact_request:peer-request-123',
         ]);
@@ -120,12 +136,13 @@ void main() {
       () async {
         await routeAppRootRemoteNotificationOpen(
           data: const <String, dynamic>{'type': 'unknown_type'},
+          onBeforeOpen: harness.clear,
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.route,
           onMissingRouteTarget: harness.missing,
         );
 
-        expect(harness.events, <String>['missing']);
+        expect(harness.events, <String>['clear', 'missing']);
         expect(harness.routed, isEmpty);
         expect(harness.missingCalls, 1);
       },
@@ -140,6 +157,10 @@ class _AppRootNotificationHarness {
 
   Future<void> prepare(NotificationRouteTarget routeTarget) async {
     events.add('prepare:${routeTarget.toPayload()}');
+  }
+
+  Future<void> clear() async {
+    events.add('clear');
   }
 
   Future<void> route(NotificationRouteTarget routeTarget) async {

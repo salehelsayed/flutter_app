@@ -6,10 +6,15 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 /// Production implementation of [NotificationService] using
 /// `flutter_local_notifications`.
 class FlutterNotificationService implements NotificationService {
+  final bool _requestApplePermissions;
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   String? _initialPayload;
+  int? _initialNotificationId;
   bool _initialPayloadConsumed = false;
+
+  FlutterNotificationService({bool requestApplePermissions = true})
+    : _requestApplePermissions = requestApplePermissions;
 
   @override
   void Function(String payload)? onNotificationTap;
@@ -20,10 +25,10 @@ class FlutterNotificationService implements NotificationService {
       '@mipmap/ic_launcher',
     );
 
-    const iosSettings = DarwinInitializationSettings(
-      requestSoundPermission: true,
-      requestBadgePermission: true,
-      requestAlertPermission: true,
+    final iosSettings = DarwinInitializationSettings(
+      requestSoundPermission: _requestApplePermissions,
+      requestBadgePermission: _requestApplePermissions,
+      requestAlertPermission: _requestApplePermissions,
     );
 
     final settings = InitializationSettings(
@@ -38,6 +43,7 @@ class FlutterNotificationService implements NotificationService {
     await ensureMknoonNotificationChannel(_plugin);
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
     _initialPayload = launchDetails?.notificationResponse?.payload;
+    _initialNotificationId = launchDetails?.notificationResponse?.id;
 
     emitFlowEvent(
       layer: 'FL',
@@ -47,6 +53,11 @@ class FlutterNotificationService implements NotificationService {
   }
 
   void _onNotificationResponse(NotificationResponse response) {
+    final notificationId = response.id;
+    if (notificationId != null) {
+      _dismissNotificationById(notificationId, reason: 'notification_tap');
+    }
+
     final payload = response.payload;
     if (payload == null || payload.isEmpty) return;
 
@@ -67,7 +78,39 @@ class FlutterNotificationService implements NotificationService {
       return null;
     }
     _initialPayloadConsumed = true;
+    final notificationId = _initialNotificationId;
+    _initialNotificationId = null;
+    if (notificationId != null) {
+      await _dismissNotificationById(
+        notificationId,
+        reason: 'initial_local_notification_launch',
+      );
+    }
     return _initialPayload;
+  }
+
+  Future<void> _dismissNotificationById(
+    int notificationId, {
+    required String reason,
+  }) async {
+    try {
+      await _plugin.cancel(notificationId);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_DISMISSED',
+        details: {'id': notificationId, 'reason': reason},
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_DISMISS_ERROR',
+        details: {
+          'id': notificationId,
+          'reason': reason,
+          'error': e.toString(),
+        },
+      );
+    }
   }
 
   @override
@@ -121,6 +164,20 @@ class FlutterNotificationService implements NotificationService {
       event: 'NOTIFICATION_SHOWN',
       details: {'title': title, 'payload': payload ?? ''},
     );
+  }
+
+  @override
+  Future<void> clearDeliveredNotifications() async {
+    try {
+      await _plugin.cancelAll();
+      emitFlowEvent(layer: 'FL', event: 'NOTIFICATIONS_CLEARED', details: {});
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATIONS_CLEAR_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   @override

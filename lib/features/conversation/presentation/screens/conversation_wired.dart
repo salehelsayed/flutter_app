@@ -52,6 +52,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/upload_pr
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
+import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_wired.dart';
@@ -811,12 +812,15 @@ class _ConversationWiredState extends State<ConversationWired> {
           // Insert system message into conversation history
           final identity = _identity;
           if (identity != null && intros.isNotEmpty) {
-            final count = intros.length;
-            final noun = count == 1 ? 'person' : 'people';
             insertIntroSystemMessage(
               messageRepo: widget.messageRepo,
               contactPeerId: _contact.peerId,
-              text: 'You introduced $count $noun to ${_contact.username}',
+              text: formatIntroducerIntroductionSystemMessage(
+                recipientUsername: _contact.username,
+                introducedUsernames: intros
+                    .map((intro) => intro.introducedUsername ?? '')
+                    .toList(growable: false),
+              ),
               ownPeerId: identity.peerId,
             ).then((_) {
               if (mounted) _loadInitialPage();

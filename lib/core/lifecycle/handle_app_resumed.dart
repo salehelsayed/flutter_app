@@ -8,6 +8,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -32,6 +33,7 @@ Future<bool?> handleAppResumed({
   IdentityRepository? identityRepo,
   GroupRepository? groupRepo,
   GroupMessageRepository? groupMsgRepo,
+  GroupMessageListener? groupMessageListener,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
   NearbyLocationService? nearbyLocationService,
@@ -46,6 +48,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryUnackedMessagesFn, // existing
   Future<int> Function()? retryPendingIntroductionDeliveriesFn,
   Future<int> Function()? retryFailedGroupInboxStoresFn, // Section 4
+  Future<void> Function()? retryPushRegistrationFn,
 }) async {
   final resumeStart = DateTime.now();
   debugPrint(
@@ -98,6 +101,18 @@ Future<bool?> handleAppResumed({
       'isStarted=${p2pService.currentState.isStarted}, '
       'circuitAddresses=${p2pService.currentState.circuitAddresses.length}',
     );
+
+    if (retryPushRegistrationFn != null) {
+      try {
+        await retryPushRegistrationFn();
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'APP_LIFECYCLE_RESUME_PUSH_REGISTRATION_RETRY_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+    }
 
     // 3. Drain offline inbox (messages queued while backgrounded)
     final drainStart = DateTime.now();
@@ -161,6 +176,7 @@ Future<bool?> handleAppResumed({
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: groupMsgRepo,
+        groupMessageListener: groupMessageListener,
         mediaAttachmentRepo: mediaAttachmentRepo,
         reactionRepo: reactionRepo,
       );

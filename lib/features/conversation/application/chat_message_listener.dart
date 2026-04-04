@@ -273,8 +273,9 @@ class ChatMessageListener {
   }
 
   Future<ChatMessageProcessOutcome> processIncomingMessage(
-    ChatMessage message,
-  ) async {
+    ChatMessage message, {
+    bool suppressNotification = false,
+  }) async {
     Future<ChatMessageProcessOutcome> finish(
       ChatMessageProcessOutcome outcome,
     ) async {
@@ -454,9 +455,15 @@ class ChatMessageListener {
               conversationMessage.text,
               conversationMessage.media,
             ),
+            suppressNotification: suppressNotification,
+            messageId: conversationMessage.id,
             consumeRecentRemoteNotificationAnnouncement:
-                (remoteNotificationGate ?? recentRemoteNotificationGate)
-                    .consumeIfRecentPayload,
+                ({required payload, String? messageId}) =>
+                    (remoteNotificationGate ?? recentRemoteNotificationGate)
+                        .consumeIfRecentAnnouncement(
+                          payload: payload,
+                          messageId: messageId,
+                        ),
             backgroundDuplicateGuardDelay:
                 backgroundNotificationDuplicateGuardDelay,
           );

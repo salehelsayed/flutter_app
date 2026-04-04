@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Robust small/medium-group messaging via GossipSub, symmetric group encryption, relay inbox fallback, and startup/resume recovery. The earlier pass overstated three things: group media retry is **already implemented**, announcement coverage inside the Flutter tree is stronger than initially reported, and announcement writer enforcement is now repo-locally verifiable in `go-mknoon`. The remaining architectural risks are concentrated around receipt-less publish semantics, revocation timing, and unprofiled scale beyond the current sweet spot.
+Robust small/medium-group messaging via GossipSub, symmetric group encryption, relay inbox fallback, and startup/resume recovery. The earlier pass overstated three things: group media retry is **already implemented**, announcement coverage inside the Flutter tree is stronger than initially reported, and announcement writer enforcement is now repo-locally verifiable in `go-mknoon`. Removed peers now also have a repo-local offline catch-up path: removal stores a targeted replay payload for the removed peer, and inbox drain replays the same `member_removed` cleanup path on reconnect. The remaining architectural risks are concentrated around receipt-less publish semantics, revocation timing, and unprofiled scale beyond the current sweet spot.
 
 ---
 
@@ -92,7 +92,7 @@ Go GossipSub → validate signature → decrypt → emit group message
 |------|--------|
 | `member_added` | Persist member, sync config |
 | `members_added` | Batch persist, sync config |
-| `member_removed` | Remove from DB or leave group if self |
+| `member_removed` | Remove from DB or leave group if self; replayed removal uses the same path during inbox drain |
 | `key_rotated` | Update stored key + keyEpoch |
 
 ---
@@ -105,6 +105,15 @@ Go GossipSub → validate signature → decrypt → emit group message
 2. Persist member to DB
 3. Sync config to bridge/native layer
 4. New member becomes valid sender under the current config
+
+### Remove Member
+
+1. Admin updates membership/key state for the remaining group
+2. Publish `member_removed` live so online peers converge immediately
+3. Store a targeted relay inbox payload for the removed peer with the same
+   `member_removed` system envelope
+4. On reconnect, replay that system envelope through `GroupMessageListener` so
+   self-removal reuses the live `leaveGroup()` plus `groupRemovedStream` path
 
 ### Group Invite (P2P)
 
@@ -157,6 +166,9 @@ Go GossipSub → validate signature → decrypt → emit group message
 - Cursor-based retrieval
 - Paged processing
 - Resume until cursor exhausted
+- Replayed `{"__sys": ...}` envelopes are routed through
+  `GroupMessageListener`, so offline `member_removed` catch-up reuses the live
+  self-removal cleanup path and stops draining once the group is deleted locally
 
 ---
 
@@ -206,6 +218,8 @@ Go GossipSub → validate signature → decrypt → emit group message
 - Durable group media retry/recovery is already implemented
 - Announcement auth/reaction coverage already exists in Flutter tests
 - Announcement-specific create-group coverage now exists in Flutter tests
+- Offline self-removal catch-up is implemented and directly covered by
+  listener/drain/resume group regressions plus the `groups` gate
 - Repo-local Go-side announcement writer enforcement is present in `go-mknoon/node/pubsub.go`, backed by announcement-specific node tests, and verified by `go test ./node` plus `go test ./bridge`
 - Duplicate reaction prevention/replacement is already covered by current reaction storage/tests
 

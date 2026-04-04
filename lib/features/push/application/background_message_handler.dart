@@ -2,7 +2,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
+import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/remote_notification_identity.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
@@ -57,7 +59,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     message.data,
   );
   if (routeTarget != null) {
-    await recentRemoteNotificationGate.markPayload(routeTarget.toPayload());
+    final payload = routeTarget.toPayload();
+    final messageId =
+        routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind)
+        ? remoteNotificationMessageIdFromData(message.data)
+        : null;
+    await recentRemoteNotificationGate.markAnnouncement(
+      payload: payload,
+      messageId: messageId,
+    );
   }
 
   if (!shouldShowBackgroundPushFallbackNotification(message)) {
@@ -67,6 +77,20 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     await _initializeBackgroundNotifications();
     final fallback = buildBackgroundPushFallbackNotification(message);
+    final dedupeKey = backgroundPushFallbackDedupeKey(message);
+    if (dedupeKey != null &&
+        await recentBackgroundNotificationGate.wasRecentlyShown(dedupeKey)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PUSH_BACKGROUND_NOTIFICATION_SUPPRESSED',
+        details: {
+          'messageId': message.messageId,
+          'reason': 'recent_duplicate_background_push',
+          'payload': fallback.payload ?? '',
+        },
+      );
+      return;
+    }
     final notificationId =
         (fallback.payload ?? message.messageId ?? fallback.title).hashCode;
 
@@ -77,6 +101,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       mknoonMessagesNotificationDetails,
       payload: fallback.payload,
     );
+    if (dedupeKey != null) {
+      await recentBackgroundNotificationGate.markShown(dedupeKey);
+    }
 
     emitFlowEvent(
       layer: 'FL',

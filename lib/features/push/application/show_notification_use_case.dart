@@ -4,6 +4,9 @@ import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
+typedef ConsumeRecentRemoteNotificationAnnouncement =
+    Future<bool> Function({required String payload, String? messageId});
+
 /// Returns the notification body text for a message.
 ///
 /// If [text] is non-empty it is returned as-is (caption-first rule).
@@ -42,10 +45,26 @@ Future<void> maybeShowNotification({
   required String contactPeerId,
   required String senderUsername,
   required String messageText,
-  Future<bool> Function(String payload)?
+  bool suppressNotification = false,
+  String? messageId,
+  ConsumeRecentRemoteNotificationAnnouncement?
   consumeRecentRemoteNotificationAnnouncement,
   Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
 }) async {
+  if (suppressNotification) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'NOTIFICATION_SUPPRESSED',
+      details: {
+        'reason': 'recovery_replay',
+        'contactPeerId': contactPeerId.length > 10
+            ? contactPeerId.substring(0, 10)
+            : contactPeerId,
+      },
+    );
+    return;
+  }
+
   final lifecycleState = getAppLifecycleState();
   final isViewingConversation = conversationTracker.isViewing(contactPeerId);
 
@@ -70,7 +89,8 @@ Future<void> maybeShowNotification({
     }
 
     final shouldSuppress = await consumeRecentRemoteNotificationAnnouncement(
-      contactPeerId,
+      payload: contactPeerId,
+      messageId: messageId,
     );
     if (shouldSuppress) {
       emitFlowEvent(

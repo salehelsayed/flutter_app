@@ -15,6 +15,8 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
+import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -24,6 +26,8 @@ import 'package:path_provider/path_provider.dart';
 const _kConfigFile = 'intro_e2e_config.json';
 const _kExportFile = 'intro_e2e_identity.json';
 const _kResultFile = 'intro_e2e_result.json';
+
+typedef OpenConversationForIntroE2EFn = Future<bool> Function(String peerId);
 
 Timer? _introE2EPoller;
 bool _introE2ERunInFlight = false;
@@ -76,6 +80,7 @@ Future<void> runIntroE2EActions({
   required ContactRequestRepository contactRequestRepo,
   required IntroductionRepository introRepo,
   required MessageRepository messageRepo,
+  OpenConversationForIntroE2EFn? openConversationByPeerId,
 }) async {
   if (!kDebugMode || !kE2ETestMode) return;
 
@@ -125,6 +130,7 @@ Future<void> runIntroE2EActions({
       p2pService: p2pService,
       bridge: bridge,
       identityRepo: identityRepo,
+      messageRepo: messageRepo,
     );
 
     final introDelayMs =
@@ -145,11 +151,17 @@ Future<void> runIntroE2EActions({
       pollIntervalMs: (config['poll_interval_ms'] as num?)?.toInt() ?? 1000,
     );
 
+    final uiNavigation = await _openConversationIfRequested(
+      config: config,
+      openConversationByPeerId: openConversationByPeerId,
+    );
+
     final snapshot = await _collectSnapshot(
       identityRepo: identityRepo,
       contactRepo: contactRepo,
       contactRequestRepo: contactRequestRepo,
       introRepo: introRepo,
+      messageRepo: messageRepo,
     );
     await resultFile.writeAsString(
       jsonEncode({
@@ -157,6 +169,7 @@ Future<void> runIntroE2EActions({
         'status': 'complete',
         'success': true,
         'introAction': introActionResult,
+        'uiNavigation': uiNavigation,
         'snapshot': snapshot,
       }),
     );
@@ -166,6 +179,7 @@ Future<void> runIntroE2EActions({
       contactRepo: contactRepo,
       contactRequestRepo: contactRequestRepo,
       introRepo: introRepo,
+      messageRepo: messageRepo,
     );
     await resultFile.writeAsString(
       jsonEncode({
@@ -190,6 +204,7 @@ void startIntroE2EPoller({
   required ContactRequestRepository contactRequestRepo,
   required IntroductionRepository introRepo,
   required MessageRepository messageRepo,
+  OpenConversationForIntroE2EFn? openConversationByPeerId,
   Duration initialDelay = const Duration(seconds: 2),
   Duration pollInterval = const Duration(seconds: 3),
 }) {
@@ -211,6 +226,7 @@ void startIntroE2EPoller({
         contactRequestRepo: contactRequestRepo,
         introRepo: introRepo,
         messageRepo: messageRepo,
+        openConversationByPeerId: openConversationByPeerId,
       );
     } finally {
       _introE2ERunInFlight = false;
@@ -223,6 +239,37 @@ void startIntroE2EPoller({
   _introE2EPoller = Timer.periodic(pollInterval, (_) {
     unawaited(tick());
   });
+}
+
+Future<Map<String, dynamic>?> _openConversationIfRequested({
+  required Map<String, dynamic> config,
+  OpenConversationForIntroE2EFn? openConversationByPeerId,
+}) async {
+  final requestedPeerId = (config['open_conversation_with_peer_id'] as String?)
+      ?.trim();
+  if (requestedPeerId == null || requestedPeerId.isEmpty) {
+    return null;
+  }
+  if (openConversationByPeerId == null) {
+    throw StateError(
+      'Conversation opener missing for intro E2E peer $requestedPeerId',
+    );
+  }
+
+  final opened = await openConversationByPeerId(requestedPeerId);
+  if (!opened) {
+    throw StateError(
+      'Failed to open intro E2E conversation for $requestedPeerId',
+    );
+  }
+
+  final postNavigationDelayMs =
+      (config['post_navigation_delay_ms'] as num?)?.toInt() ?? 1500;
+  if (postNavigationDelayMs > 0) {
+    await Future<void>.delayed(Duration(milliseconds: postNavigationDelayMs));
+  }
+
+  return {'requestedPeerId': requestedPeerId, 'opened': true};
 }
 
 Future<Map<String, dynamic>?> _loadConfig() async {
@@ -346,6 +393,7 @@ Future<void> _runIntroductionSends({
   required P2PService p2pService,
   required Bridge bridge,
   required IdentityRepository identityRepo,
+  required MessageRepository messageRepo,
 }) async {
   final sendPlans = config['send_introductions'];
   if (sendPlans is! List<dynamic> || sendPlans.isEmpty) return;
@@ -383,6 +431,17 @@ Future<void> _runIntroductionSends({
       recipientUsername: recipient.username,
       recipientMlKemPublicKey: recipient.mlKemPublicKey,
       friendsToIntroduce: friends,
+    );
+    await insertIntroSystemMessage(
+      messageRepo: messageRepo,
+      contactPeerId: recipient.peerId,
+      text: formatIntroducerIntroductionSystemMessage(
+        recipientUsername: recipient.username,
+        introducedUsernames: friends
+            .map((friend) => friend.username)
+            .toList(growable: false),
+      ),
+      ownPeerId: identity.peerId,
     );
   }
 }
@@ -472,6 +531,7 @@ Future<Map<String, dynamic>> _collectSnapshot({
   required ContactRepository contactRepo,
   required ContactRequestRepository contactRequestRepo,
   required IntroductionRepository introRepo,
+  required MessageRepository messageRepo,
 }) async {
   final identity = await identityRepo.loadIdentity();
   final contacts = await contactRepo.getAllContacts();
@@ -493,6 +553,45 @@ Future<Map<String, dynamic>> _collectSnapshot({
     olderThan: Duration.zero,
     limit: 100,
   );
+
+  final conversationPeerIds = <String>{
+    ...contacts.map((contact) => contact.peerId),
+  };
+  if (identity != null) {
+    for (final intro in introMap.values) {
+      if (intro.introducerId != identity.peerId) {
+        conversationPeerIds.add(intro.introducerId);
+      }
+      if (intro.recipientId != identity.peerId) {
+        conversationPeerIds.add(intro.recipientId);
+      }
+      if (intro.introducedId != identity.peerId) {
+        conversationPeerIds.add(intro.introducedId);
+      }
+    }
+  }
+
+  final systemMessages = <Map<String, dynamic>>[];
+  final sortedPeerIds = conversationPeerIds.toList()..sort();
+  for (final peerId in sortedPeerIds) {
+    final messages = await messageRepo.getMessagesForContact(peerId);
+    final visibleSystemMessages = messages
+        .where((message) => message.transport == 'system')
+        .map(
+          (message) => {
+            'text': message.text,
+            'timestamp': message.timestamp,
+            'isIncoming': message.isIncoming,
+          },
+        )
+        .toList(growable: false);
+    if (visibleSystemMessages.isNotEmpty) {
+      systemMessages.add({
+        'contactPeerId': peerId,
+        'messages': visibleSystemMessages,
+      });
+    }
+  }
 
   return {
     'identity': identity == null
@@ -541,5 +640,6 @@ Future<Map<String, dynamic>> _collectSnapshot({
           },
         )
         .toList(growable: false),
+    'systemMessages': systemMessages,
   };
 }

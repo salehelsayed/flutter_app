@@ -283,7 +283,9 @@ void main() {
 
       // Build a v2 encrypted envelope (simulated — no real crypto)
       final v2Envelope = MessagePayload.buildEncryptedEnvelope(
+        id: innerPayload.id,
         senderPeerId: 'alice-peer',
+        senderUsername: innerPayload.senderUsername,
         kem: 'fake-kem-ciphertext',
         ciphertext: 'fake-aes-ciphertext',
         nonce: 'fake-nonce',

@@ -854,7 +854,7 @@ void main() {
       expect(message!.status, 'delivered');
     });
 
-    test('success without ack sets status to sent', () async {
+    test('success without ack keeps sent when inbox handoff fails', () async {
       p2pService = FakeP2PService(sendMessageReply: null);
 
       final (result, message) = await sendChatMessage(
@@ -870,30 +870,33 @@ void main() {
       expect(message!.status, 'sent');
       expect(message.transport, 'direct');
       expect(message.wireEnvelope, isNotNull);
-      expect(p2pService.storeInInboxCallCount, 0);
-    });
-
-    test('success with empty reply sets status to sent', () async {
-      p2pService = FakeP2PService(sendMessageReply: '');
-
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Hello!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
-
-      expect(result, SendChatMessageResult.success);
-      expect(message!.status, 'sent');
-      expect(message.transport, 'direct');
-      expect(message.wireEnvelope, isNotNull);
-      expect(p2pService.storeInInboxCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 1);
     });
 
     test(
-      'unacked direct send stays sent and retains wireEnvelope for retry',
+      'success with empty reply keeps sent when inbox handoff fails',
+      () async {
+        p2pService = FakeP2PService(sendMessageReply: '');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'sent');
+        expect(message.transport, 'direct');
+        expect(message.wireEnvelope, isNotNull);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
+
+    test(
+      'unacked direct send hands off to inbox immediately when available',
       () async {
         p2pService = FakeP2PService(
           sendMessageReply: null,
@@ -911,10 +914,10 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'sent');
-        expect(message.transport, 'direct');
-        expect(message.wireEnvelope, isNotNull);
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(message.wireEnvelope, isNull);
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 
@@ -1180,7 +1183,7 @@ void main() {
     );
 
     test(
-      'probe-connected send with lost ACK stays sent for later retry',
+      'probe-connected send with lost ACK hands off to inbox immediately',
       () async {
         p2pService = FakeP2PService(
           useNullDiscover: true,
@@ -1200,12 +1203,12 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'sent');
-        expect(message.transport, isNot('inbox'));
-        expect(message.wireEnvelope, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(message.wireEnvelope, isNull);
         expect(p2pService.probeRelayCallCount, 1);
         expect(p2pService.sendCallCount, 1);
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
   });
@@ -1386,7 +1389,7 @@ void main() {
     );
 
     test(
-      'existing connected peer keeps unacked send as sent on the same attempt',
+      'existing connected peer hands off an unacked send to inbox on the same attempt',
       () async {
         p2pService = FakeP2PService(
           currentState: NodeState(
@@ -1415,11 +1418,11 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'sent');
-        expect(message.transport, isNot('inbox'));
-        expect(message.wireEnvelope, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(message.wireEnvelope, isNull);
         expect(p2pService.sendCallCount, 1);
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 1);
         expect(p2pService.discoverCallCount, 0);
         expect(p2pService.dialCallCount, 0);
       },
@@ -1724,10 +1727,11 @@ void main() {
       },
     );
 
-    test('storeInInbox is NOT called when P2P succeeds without ACK', () async {
+    test('storeInInbox is called when P2P succeeds without ACK', () async {
       p2pService = FakeP2PService(
         sendMessageResult: true,
         sendMessageReply: '',
+        storeInInboxResult: true,
       );
 
       final (result, message) = await sendChatMessage(
@@ -1741,14 +1745,14 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
-      expect(message!.status, 'sent');
-      expect(message.transport, 'direct');
-      expect(message.wireEnvelope, isNotNull);
-      expect(p2pService.storeInInboxCallCount, 0);
+      expect(message!.status, 'delivered');
+      expect(message.transport, 'inbox');
+      expect(message.wireEnvelope, isNull);
+      expect(p2pService.storeInInboxCallCount, 1);
     });
 
     test(
-      'explicit acked=false stays sent instead of forcing inbox-backed delivered',
+      'explicit acked=false hands off to inbox-backed delivered when available',
       () async {
         p2pService = FakeP2PService(
           sendMessageResult: true,
@@ -1769,10 +1773,10 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'sent');
-        expect(message.transport, 'direct');
-        expect(message.wireEnvelope, isNotNull);
-        expect(p2pService.storeInInboxCallCount, 0);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'inbox');
+        expect(message.wireEnvelope, isNull);
+        expect(p2pService.storeInInboxCallCount, 1);
       },
     );
 

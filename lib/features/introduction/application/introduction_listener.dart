@@ -9,6 +9,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_pay
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/introduction/application/handle_incoming_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -313,16 +314,12 @@ class IntroductionListener {
         if (payload.action == 'send') {
           _introReceivedController.add(model);
 
-          final isAlreadyConnected =
-              model.status == IntroductionOverallStatus.alreadyConnected;
-
           // Insert system message
           if (messageRepo != null) {
-            final introducerName = model.introducerUsername ?? 'Someone';
-            final introducedName = model.introducedUsername ?? 'someone';
-            final text = isAlreadyConnected
-                ? '$introducerName introduced $introducedName to you — you\'re already connected'
-                : '$introducerName introduced $introducedName to you';
+            final text = formatIncomingIntroductionMessage(
+              introduction: model,
+              ownPeerId: ownPeerId,
+            );
             await insertIntroSystemMessage(
               messageRepo: messageRepo!,
               contactPeerId: model.introducerId,
@@ -333,11 +330,10 @@ class IntroductionListener {
 
           // Show local notification for new introduction
           if (notificationService != null) {
-            final introducerName = payload.introducerUsername ?? 'Someone';
-            final introducedName = payload.introducedUsername ?? 'someone';
-            final body = isAlreadyConnected
-                ? '$introducerName introduced you to $introducedName — you\'re already connected'
-                : '$introducerName introduced you to $introducedName';
+            final body = formatIncomingIntroductionMessage(
+              introduction: model,
+              ownPeerId: ownPeerId,
+            );
             await notificationService!.showNotification(
               title: 'New Introduction',
               body: body,

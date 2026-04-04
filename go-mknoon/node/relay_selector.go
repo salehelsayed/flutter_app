@@ -109,6 +109,40 @@ func (rs *RelaySelector) ForEach(fn func(relay RelayInfo) error) error {
 	return fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
 }
 
+// FanOut calls fn for every relay in order.
+// Returns nil if at least one relay succeeds, otherwise returns the last error.
+func (rs *RelaySelector) FanOut(fn func(relay RelayInfo) error) error {
+	rs.mu.RLock()
+	relays := make([]RelayInfo, len(rs.relays))
+	copy(relays, rs.relays)
+	rs.mu.RUnlock()
+
+	if len(relays) == 0 {
+		return fmt.Errorf("no relays configured")
+	}
+
+	var (
+		lastErr      error
+		successCount int
+	)
+	for i, relay := range relays {
+		err := fn(relay)
+		if err == nil {
+			successCount++
+			continue
+		}
+		lastErr = err
+		log.Printf("[RELAY_SELECTOR] Relay %d/%d (%s) failed: %v",
+			i+1, len(relays), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
+	}
+
+	if successCount > 0 {
+		return nil
+	}
+
+	return fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
+}
+
 // ForEachWithResult calls fn for each relay in order. If fn returns a non-nil
 // result and nil error, iteration stops and the result is returned. If all
 // relays fail, the last error is returned.

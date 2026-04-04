@@ -9,6 +9,7 @@ EXPORT_FILE="intro_e2e_identity.json"
 CONFIG_FILE="intro_e2e_config.json"
 RESULT_FILE="intro_e2e_result.json"
 INTRO_E2E_SCENARIO="${INTRO_E2E_SCENARIO:-all}"
+ARTIFACT_ROOT="build/intro_e2e"
 
 get_docs_dir() {
   local container
@@ -160,6 +161,36 @@ result_file_path() {
   echo "$docs/$RESULT_FILE"
 }
 
+capture_step_screenshots() {
+  local step_id="$1"
+  local dir="$ARTIFACT_ROOT/$step_id"
+  mkdir -p "$dir"
+  xcrun simctl io "$DEVICE_A" screenshot "$dir/a.png" >/dev/null
+  xcrun simctl io "$DEVICE_B" screenshot "$dir/b.png" >/dev/null
+  xcrun simctl io "$DEVICE_C" screenshot "$dir/c.png" >/dev/null
+  echo "  Screenshots: $dir"
+}
+
+assert_system_message_for_contact() {
+  local result_path="$1"
+  local contact_peer_id="$2"
+  local expected_text="$3"
+  python3 - "$result_path" "$contact_peer_id" "$expected_text" <<'PY'
+import json, sys
+result_path, contact_peer_id, expected_text = sys.argv[1:]
+snapshot = json.load(open(result_path))["snapshot"]
+messages = []
+for row in snapshot.get("systemMessages", []):
+    if row.get("contactPeerId") == contact_peer_id:
+        messages.extend(message.get("text") for message in row.get("messages", []))
+assert expected_text in messages, {
+    "contactPeerId": contact_peer_id,
+    "expected": expected_text,
+    "messages": messages,
+}
+PY
+}
+
 assert_handshake() {
   python3 - "$(result_file_path "$DEVICE_A")" "$(result_file_path "$DEVICE_B")" "$(result_file_path "$DEVICE_C")" "$PEER_A" "$PEER_B" "$PEER_C" <<'PY'
 import json, sys
@@ -214,6 +245,36 @@ if expect_contact == "yes":
     assert peer_c in b_contacts, b_snap
     assert peer_b in c_contacts, c_snap
 PY
+}
+
+assert_copy_send_messages() {
+  assert_system_message_for_contact \
+    "$(result_file_path "$DEVICE_A")" \
+    "$PEER_B" \
+    "You introduced $USER_C to $USER_B"
+  assert_system_message_for_contact \
+    "$(result_file_path "$DEVICE_B")" \
+    "$PEER_A" \
+    "$USER_A introduced $USER_C to you"
+  assert_system_message_for_contact \
+    "$(result_file_path "$DEVICE_C")" \
+    "$PEER_A" \
+    "$USER_A introduced you to $USER_B"
+}
+
+assert_copy_accept_messages() {
+  assert_system_message_for_contact \
+    "$(result_file_path "$DEVICE_A")" \
+    "$PEER_B" \
+    "You introduced $USER_C to $USER_B"
+  assert_system_message_for_contact \
+    "$(result_file_path "$DEVICE_B")" \
+    "$PEER_C" \
+    "You and $USER_C are now connected — introduced by $USER_A"
+  assert_system_message_for_contact \
+    "$(result_file_path "$DEVICE_C")" \
+    "$PEER_B" \
+    "You and $USER_B are now connected — introduced by $USER_A"
 }
 
 prepare_devices() {
@@ -343,6 +404,109 @@ EOF
   wait_for_all_results "$step_id"
 }
 
+run_copy_send_phase() {
+  local step_id="copy-send"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "send_introductions": [
+    {
+      "recipientPeerId": "$PEER_B",
+      "friendPeerIds": ["$PEER_C"]
+    }
+  ],
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "introduction_settle_delay_ms": 3000,
+  "open_conversation_with_peer_id": "$PEER_B",
+  "post_navigation_delay_ms": 2500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500,
+  "open_conversation_with_peer_id": "$PEER_A",
+  "post_navigation_delay_ms": 2500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500,
+  "open_conversation_with_peer_id": "$PEER_A",
+  "post_navigation_delay_ms": 2500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+  assert_copy_send_messages
+  capture_step_screenshots "$step_id"
+}
+
+run_copy_accept_phase() {
+  local step_id="copy-accept"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500,
+  "open_conversation_with_peer_id": "$PEER_B",
+  "post_navigation_delay_ms": 2500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "accept_all",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500,
+  "open_conversation_with_peer_id": "$PEER_C",
+  "post_navigation_delay_ms": 2500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "accept_all",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500,
+  "open_conversation_with_peer_id": "$PEER_B",
+  "post_navigation_delay_ms": 2500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+  assert_copy_accept_messages
+  capture_step_screenshots "$step_id"
+}
+
 scenario_happy_path() {
   echo ""
   echo "=== Scenario 1/4: Happy path mutual acceptance ==="
@@ -384,12 +548,23 @@ scenario_repair_missing_side() {
   assert_pair_state "mutual_accepted" "yes"
 }
 
+scenario_visible_copy_review() {
+  echo ""
+  echo "=== Scenario 5/5: Visible intro copy across all three users ==="
+  prepare_devices
+  run_handshake_phase "copy-handshake"
+  run_copy_send_phase
+  run_copy_accept_phase
+  assert_pair_state "mutual_accepted" "yes"
+}
+
 case "$INTRO_E2E_SCENARIO" in
   all)
     scenario_happy_path
     scenario_resend_refresh_pending
     scenario_resend_after_pass
     scenario_repair_missing_side
+    scenario_visible_copy_review
     ;;
   happy)
     scenario_happy_path
@@ -402,6 +577,9 @@ case "$INTRO_E2E_SCENARIO" in
     ;;
   repair)
     scenario_repair_missing_side
+    ;;
+  copy)
+    scenario_visible_copy_review
     ;;
   *)
     echo "ERROR: Unknown INTRO_E2E_SCENARIO=$INTRO_E2E_SCENARIO" >&2
