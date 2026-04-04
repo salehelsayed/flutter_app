@@ -44,6 +44,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryIncompleteUploadsFn, // Part G -- NEW
   Future<int> Function()? retryFailedMessagesFn, // Parts B/C
   Future<int> Function()? retryUnackedMessagesFn, // existing
+  Future<int> Function()? retryPendingIntroductionDeliveriesFn,
   Future<int> Function()? retryFailedGroupInboxStoresFn, // Section 4
 }) async {
   final resumeStart = DateTime.now();
@@ -388,12 +389,35 @@ Future<bool?> handleAppResumed({
       }
     }
 
-    // Step 8e: Retry failed group inbox stores (Section 4)
+    // Step 8e: Retry pending introduction deliveries
+    if (retryPendingIntroductionDeliveriesFn != null) {
+      try {
+        final count = await retryPendingIntroductionDeliveriesFn();
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 8e: retryPendingIntroductionDeliveries=$count',
+          );
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_PENDING_INTRO_DELIVERIES_RESUME_ERROR',
+          details: {'error': e.toString()},
+        );
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 8e: retryPendingIntroductionDeliveries ERROR: $e',
+          );
+        }
+      }
+    }
+
+    // Step 8f: Retry failed group inbox stores (Section 4)
     if (retryFailedGroupInboxStoresFn != null) {
       try {
         final count = await retryFailedGroupInboxStoresFn();
         if (kDebugMode)
-          debugPrint('[RESUME] Step 8e: retryFailedGroupInboxStores=$count');
+          debugPrint('[RESUME] Step 8f: retryFailedGroupInboxStores=$count');
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
@@ -401,7 +425,7 @@ Future<bool?> handleAppResumed({
           details: {'error': e.toString()},
         );
         if (kDebugMode)
-          debugPrint('[RESUME] Step 8e: retryFailedGroupInboxStores ERROR: $e');
+          debugPrint('[RESUME] Step 8f: retryFailedGroupInboxStores ERROR: $e');
       }
     }
 

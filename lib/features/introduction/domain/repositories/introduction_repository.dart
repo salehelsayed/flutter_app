@@ -1,4 +1,6 @@
 import '../models/introduction_model.dart';
+import '../models/introduction_outbox_delivery.dart';
+import '../models/pending_introduction_response.dart';
 
 /// Repository interface for managing introductions.
 abstract class IntroductionRepository {
@@ -50,4 +52,35 @@ abstract class IntroductionRepository {
 
   /// Returns the count of pending introductions for a user.
   Future<int> countPendingIntroductions(String peerId);
+
+  /// Durably stages an intro response that arrived before the intro row.
+  Future<void> savePendingResponse(PendingIntroductionResponse response);
+
+  /// Loads staged intro responses for a single introduction.
+  Future<List<PendingIntroductionResponse>> loadPendingResponses(
+    String introductionId,
+  );
+
+  /// Deletes a single staged intro response after successful replay.
+  Future<void> deletePendingResponse(String responseKey);
+
+  /// Upserts one durable outbound intro delivery row.
+  Future<void> saveOutboxDelivery(IntroductionOutboxDelivery delivery);
+
+  /// Loads all outbox rows for a single introduction.
+  Future<List<IntroductionOutboxDelivery>> loadOutboxDeliveriesForIntroduction(
+    String introductionId,
+  );
+
+  /// Loads retryable outbound intro delivery rows.
+  Future<List<IntroductionOutboxDelivery>> loadRetryableOutboxDeliveries({
+    Duration olderThan = const Duration(seconds: 60),
+    int limit = 100,
+  });
+
+  /// Deletes one durable outbound intro delivery row.
+  Future<void> deleteOutboxDelivery(String deliveryId);
+
+  /// Deletes all durable outbound intro delivery rows for an introduction.
+  Future<void> deleteOutboxDeliveriesForIntroduction(String introductionId);
 }

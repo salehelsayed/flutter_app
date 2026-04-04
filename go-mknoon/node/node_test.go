@@ -110,6 +110,51 @@ func TestNodeStartStop(t *testing.T) {
 	}
 }
 
+func TestNodeStart_ExplicitEmptyRelayAddressesDisableStartupRelayWarmup(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.mu.RLock()
+	relayPeerOrder := append([]peer.ID(nil), n.relayPeerOrder...)
+	n.mu.RUnlock()
+
+	if len(relayPeerOrder) != 0 {
+		t.Fatalf("expected no startup relay peers for explicit empty relay config, got %d", len(relayPeerOrder))
+	}
+}
+
+func TestNodeStart_NilRelayAddressesUseDefaultRelay(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		AutoRegister:  false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	n.mu.RLock()
+	relayPeerOrder := append([]peer.ID(nil), n.relayPeerOrder...)
+	n.mu.RUnlock()
+
+	if len(relayPeerOrder) != 1 {
+		t.Fatalf("expected default relay to be configured when relay addresses are omitted, got %d", len(relayPeerOrder))
+	}
+}
+
 func TestNodeStatus(t *testing.T) {
 	hexKey := generateTestKey(t)
 

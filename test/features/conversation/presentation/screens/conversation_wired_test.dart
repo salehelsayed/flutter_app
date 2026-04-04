@@ -306,6 +306,33 @@ class FakeMessageRepository
   }) async => 0;
 }
 
+class _FakeIncomingConversationListener extends ChatMessageListener {
+  final _incomingController = StreamController<ConversationMessage>.broadcast();
+
+  _FakeIncomingConversationListener({
+    required MessageRepository messageRepo,
+    required ContactRepository contactRepo,
+  }) : super(
+         chatMessageStream: const Stream<ChatMessage>.empty(),
+         messageRepo: messageRepo,
+         contactRepo: contactRepo,
+       );
+
+  @override
+  Stream<ConversationMessage> get incomingMessageStream =>
+      _incomingController.stream;
+
+  void emitIncomingMessage(ConversationMessage message) {
+    _incomingController.add(message);
+  }
+
+  @override
+  void dispose() {
+    _incomingController.close();
+    super.dispose();
+  }
+}
+
 class SlowInitialPageMessageRepository extends FakeMessageRepository {
   final Completer<void> firstPageGate = Completer<void>();
 
@@ -1365,6 +1392,49 @@ void main() {
         await tester.pump();
 
         expect(sendCallCount, 2);
+      },
+    );
+
+    testWidgets(
+      'shows a newly received message while the conversation stays mounted',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = _FakeIncomingConversationListener(
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        addTearDown(chatListener.dispose);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(find.text('Live receive while open'), findsNothing);
+
+        chatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'live-receive-while-open',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'Live receive while open',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+
+        await pumpUntil(
+          tester,
+          () => find.text('Live receive while open').evaluate().isNotEmpty,
+        );
+
+        expect(find.text('Live receive while open'), findsOneWidget);
       },
     );
   });
@@ -2452,6 +2522,59 @@ void main() {
     });
 
     testWidgets(
+      'failed outgoing delete tombstones stay visible in the Orbit list',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final original = ConversationMessage(
+          id: 'delete-for-everyone-failed-row',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Delete but still pending',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(original);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        await messageRepo.saveMessage(
+          original.copyWith(
+            text: '',
+            status: 'failed',
+            deletedAt: '2026-03-31T11:02:00.000Z',
+            deletedByPeerId: original.senderPeerId,
+            media: const [],
+          ),
+        );
+        await pumpUntil(
+          tester,
+          () => find.text('This message was deleted').evaluate().isNotEmpty,
+        );
+
+        expect(find.text('Delete but still pending'), findsNothing);
+        expect(find.text('This message was deleted'), findsOneWidget);
+        expect(
+          messageRepo.store['delete-for-everyone-failed-row']?.isHidden,
+          isFalse,
+        );
+      },
+    );
+
+    testWidgets(
       'incoming deleted tombstones refresh into the Orbit placeholder',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -3285,14 +3408,14 @@ void main() {
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
           'Cancel upload',
         );
-        expect(find.text('Retry'), findsOneWidget);
-        expect(find.text('Delete'), findsOneWidget);
+        expect(find.text('Retry'), findsNothing);
+        expect(find.text('Delete'), findsNothing);
         expect(messageRepo.store.values.single.status, 'failed');
         final failedMessageId = messageRepo.store.values.single.id;
         final storedAttachments = await mediaAttachmentRepo
             .getAttachmentsForMessage(failedMessageId);
         expect(storedAttachments, hasLength(1));
-        expect(storedAttachments.single.downloadStatus, 'upload_failed');
+        expect(storedAttachments.single.downloadStatus, 'upload_cancelled');
         expect(sendCalls, 0);
         expect(UploadWakeLockController.debugActiveHolds, 0);
       },
@@ -3414,13 +3537,15 @@ void main() {
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
           'Cancel failed upload',
         );
+        expect(find.text('Retry'), findsNothing);
+        expect(find.text('Delete'), findsNothing);
         expect(sendCalls, 0);
         expect(messageRepo.store.values.single.status, 'failed');
         final failedMessageId = messageRepo.store.values.single.id;
         final storedAttachments = await mediaAttachmentRepo
             .getAttachmentsForMessage(failedMessageId);
         expect(storedAttachments, hasLength(1));
-        expect(storedAttachments.single.downloadStatus, 'upload_failed');
+        expect(storedAttachments.single.downloadStatus, 'upload_cancelled');
       },
     );
 

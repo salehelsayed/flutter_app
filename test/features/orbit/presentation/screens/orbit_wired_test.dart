@@ -725,6 +725,88 @@ void main() {
     });
 
     testWidgets(
+      'archived friend refresh stays in archived results after an incoming message',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        final spyContactRepo = _SpyContactRepository();
+        final spyMessageRepo = _SpyMessageRepository();
+        spyContactRepo.seed([
+          testContact.copyWith(
+            isArchived: true,
+            archivedAt: DateTime.utc(2026, 3, 1).toIso8601String(),
+          ),
+        ]);
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: spyMessageRepo,
+          contactRepo: spyContactRepo,
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: fakeChatListener,
+            contactRepository: spyContactRepo,
+            messageRepository: spyMessageRepo,
+            initialFilterTab: 'archived',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Bob'), findsWidgets);
+
+        spyContactRepo.resetTracking();
+        spyMessageRepo.resetTracking();
+
+        await spyMessageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-archived-refresh',
+            contactPeerId: 'contact-peer-id',
+            text: 'Archived ping',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        fakeChatListener.emitIncomingMessage(
+          ConversationMessage(
+            id: 'msg-archived-refresh',
+            contactPeerId: 'contact-peer-id',
+            text: 'Archived ping',
+            senderPeerId: 'contact-peer-id',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Archived ping'), findsOneWidget);
+        expect(spyContactRepo.getActiveContactsCallCount, 0);
+        expect(spyContactRepo.getArchivedContactsCallCount, 0);
+        expect(spyContactRepo.getContactCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(spyMessageRepo.getConversationThreadSummaryCallCountByPeerId, {
+          'contact-peer-id': 1,
+        });
+        expect(spyMessageRepo.getConversationThreadSummariesCallCount, 0);
+
+        await tester.tap(find.text('All'));
+        await pumpOrbitFrames(tester, count: 3);
+
+        expect(find.text('Archived ping'), findsNothing);
+        expect(find.text('Bob'), findsNothing);
+      },
+    );
+
+    testWidgets(
       'incoming mixed Arabic-first message refreshes the row and renders RTL',
       (tester) async {
         setLargeTestSurface(tester);
@@ -1412,59 +1494,58 @@ void main() {
       },
     );
 
-    testWidgets(
-      'startup repairs a stale persisted mutual acceptance row',
-      (tester) async {
-        setLargeTestSurface(tester);
-        suppressOverflowErrors();
-        identityRepo.seed(testIdentity);
+    testWidgets('startup repairs a stale persisted mutual acceptance row', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
 
-        final introRepo = InMemoryIntroductionRepository();
-        await introRepo.saveIntroduction(
-          IntroductionModel(
-            id: 'intro-stale-upgrade-row',
-            introducerId: 'peer-A',
-            recipientId: testIdentity.peerId,
-            introducedId: 'intro-peer-id',
-            introducerUsername: 'Noor',
-            recipientUsername: testIdentity.username,
-            introducedUsername: 'Dora',
-            recipientStatus: IntroductionStatus.accepted,
-            introducedStatus: IntroductionStatus.accepted,
-            status: IntroductionOverallStatus.pending,
-            createdAt: '2026-03-25T12:00:00.000Z',
-          ),
-        );
+      final introRepo = InMemoryIntroductionRepository();
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-stale-upgrade-row',
+          introducerId: 'peer-A',
+          recipientId: testIdentity.peerId,
+          introducedId: 'intro-peer-id',
+          introducerUsername: 'Noor',
+          recipientUsername: testIdentity.username,
+          introducedUsername: 'Dora',
+          recipientStatus: IntroductionStatus.accepted,
+          introducedStatus: IntroductionStatus.accepted,
+          status: IntroductionOverallStatus.pending,
+          createdAt: '2026-03-25T12:00:00.000Z',
+        ),
+      );
 
-        await contactRepo.addContact(
-          ContactModel(
-            peerId: 'intro-peer-id',
-            publicKey: 'intro-pk',
-            rendezvous: '/dns4/relay/tcp/443',
-            username: 'Dora',
-            signature: 'intro-sig',
-            scannedAt: '2026-03-25T12:05:00.000Z',
-            introducedBy: 'Noor',
-            introducedByPeerId: 'peer-A',
-          ),
-        );
+      await contactRepo.addContact(
+        ContactModel(
+          peerId: 'intro-peer-id',
+          publicKey: 'intro-pk',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'Dora',
+          signature: 'intro-sig',
+          scannedAt: '2026-03-25T12:05:00.000Z',
+          introducedBy: 'Noor',
+          introducedByPeerId: 'peer-A',
+        ),
+      );
 
-        await tester.pumpWidget(
-          buildOrbitWired(
-            introductionRepository: introRepo,
-            initialFilterTab: 'intros',
-          ),
-        );
-        await pumpOrbitFrames(tester, count: 6);
+      await tester.pumpWidget(
+        buildOrbitWired(
+          introductionRepository: introRepo,
+          initialFilterTab: 'intros',
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 6);
 
-        expect(find.text('Waiting for Dora'), findsNothing);
-        expect(find.text('No introductions yet'), findsOneWidget);
+      expect(find.text('Waiting for Dora'), findsNothing);
+      expect(find.text('No introductions yet'), findsOneWidget);
 
-        final loaded = await introRepo.getIntroduction('intro-stale-upgrade-row');
-        expect(loaded, isNotNull);
-        expect(loaded!.status, IntroductionOverallStatus.mutualAccepted);
-      },
-    );
+      final loaded = await introRepo.getIntroduction('intro-stale-upgrade-row');
+      expect(loaded, isNotNull);
+      expect(loaded!.status, IntroductionOverallStatus.mutualAccepted);
+    });
 
     testWidgets(
       'live intro delete confirmation removes the row, clears the badge, and marks route-return refresh',

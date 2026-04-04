@@ -32,6 +32,21 @@ readonly FEED_TESTS=(
   "test/features/feed/integration/feed_color_smoke_test.dart"
 )
 
+readonly INTRO_TESTS=(
+  "test/features/introduction/application/accept_introduction_test.dart"
+  "test/features/introduction/application/create_connection_on_mutual_acceptance_test.dart"
+  "test/features/introduction/application/handle_incoming_introduction_test.dart"
+  "test/features/introduction/application/introduction_listener_test.dart"
+  "test/features/introduction/application/mutual_acceptance_test.dart"
+  "test/features/introduction/application/pass_introduction_test.dart"
+  "test/features/introduction/application/send_introduction_test.dart"
+  "test/features/introduction/integration/intro_wiring_smoke_test.dart"
+  "test/features/introduction/integration/introduction_multi_node_test.dart"
+  "test/features/introduction/integration/introduction_smoke_test.dart"
+  "test/features/introduction/presentation/screens/friend_picker_wired_test.dart"
+  "test/features/introduction/regression/introduction_regression_test.dart"
+)
+
 readonly GROUP_TESTS=(
   "test/features/groups/integration/group_messaging_smoke_test.dart"
   "test/features/groups/integration/group_resume_recovery_test.dart"
@@ -102,6 +117,7 @@ Usage:
   ./scripts/run_test_gates.sh baseline
   ./scripts/run_test_gates.sh 1to1
   ./scripts/run_test_gates.sh feed
+  ./scripts/run_test_gates.sh intro
   ./scripts/run_test_gates.sh groups
   ./scripts/run_test_gates.sh posts
   ./scripts/run_test_gates.sh transport
@@ -169,16 +185,10 @@ run_gate_command() {
 }
 
 run_transport_gate() {
-  local -a args=()
-  while IFS= read -r path; do
-    args+=("$path")
-  done < <(integration_test_args)
-
-  if ((${#args[@]} > 0)); then
-    run_flutter_test "Startup / Transport Gate" "${args[@]}" "${TRANSPORT_TESTS[@]}"
-  else
-    run_flutter_test "Startup / Transport Gate" "${TRANSPORT_TESTS[@]}"
-  fi
+  # Run transport integration suites one file at a time. The combined macOS
+  # invocation can fail later files with app-start/log-reader flake even when
+  # the same suites pass in isolated runs.
+  run_gate_command "Startup / Transport Gate" "${TRANSPORT_TESTS[@]}"
 }
 
 array_contains() {
@@ -210,6 +220,11 @@ classify_path() {
 
   if array_contains "$path" "${FEED_TESTS[@]}"; then
     printf 'feed / surface gate'
+    return 0
+  fi
+
+  if array_contains "$path" "${INTRO_TESTS[@]}"; then
+    printf 'intro / reintroduction gate'
     return 0
   fi
 
@@ -278,6 +293,16 @@ classify_path() {
     return 0
   fi
 
+  if [[ "$path" =~ ^test/features/[^/]+/integration/.*_test\.dart$ ]]; then
+    printf 'feature integration direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/integration/.*_test\.dart$ ]]; then
+    printf 'repo integration direct suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/features/[^/]+/(application|domain|presentation|improvement|phase[1-5]|regression)/.*_test\.dart$ ]]; then
     printf 'feature-local direct suite'
     return 0
@@ -329,6 +354,9 @@ main() {
     feed)
       run_gate_command "Feed / Surface Gate" "${FEED_TESTS[@]}"
       ;;
+    intro)
+      run_gate_command "Intro / Reintroduction Gate" "${INTRO_TESTS[@]}"
+      ;;
     groups)
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
       ;;
@@ -342,6 +370,7 @@ main() {
       run_gate_command "Baseline Gate" "${BASELINE_TESTS[@]}"
       run_gate_command "1:1 Reliability Gate" "${ONE_TO_ONE_TESTS[@]}"
       run_gate_command "Feed / Surface Gate" "${FEED_TESTS[@]}"
+      run_gate_command "Intro / Reintroduction Gate" "${INTRO_TESTS[@]}"
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
       run_transport_gate

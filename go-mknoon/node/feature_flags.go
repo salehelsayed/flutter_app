@@ -25,6 +25,10 @@ type FeatureFlags struct {
 	// EnableResumeGroupRecovery enables recovering group pubsub topics
 	// after relay session recovery.
 	EnableResumeGroupRecovery bool `json:"enableResumeGroupRecovery"`
+
+	// EnableDeferredDirectAck delays direct chat ACK until Flutter confirms
+	// receiver-side terminal handling for that chat nonce.
+	EnableDeferredDirectAck bool `json:"enableDeferredDirectAck"`
 }
 
 // DefaultFeatureFlags returns a FeatureFlags with all features enabled.
@@ -35,5 +39,6 @@ func DefaultFeatureFlags() FeatureFlags {
 		EnableReservationAwareHealth: true,
 		EnableInPlaceRelayRecovery:   true,
 		EnableResumeGroupRecovery:    true,
+		EnableDeferredDirectAck:      true,
 	}
 }

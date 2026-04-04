@@ -3,6 +3,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
@@ -120,6 +121,13 @@ Future<IntroductionModel> _sendIntroductionChain({
   required ContactModel friend,
   required String now,
 }) async {
+  await _deleteExistingIntroductionsForPair(
+    introRepo: introRepo,
+    introducerPeerId: introducerPeerId,
+    recipientPeerId: recipientPeerId,
+    introducedPeerId: friend.peerId,
+  );
+
   final introId = const Uuid().v4();
 
   // Build "send" payload for recipient (User-B)
@@ -158,7 +166,8 @@ Future<IntroductionModel> _sendIntroductionChain({
   );
 
   // Send to recipient (User-B)
-  await _sendPayload(
+  await deliverIntroductionPayloadReliably(
+    introRepo: introRepo,
     p2pService: p2pService,
     bridge: bridge,
     senderPeerId: introducerPeerId,
@@ -168,7 +177,8 @@ Future<IntroductionModel> _sendIntroductionChain({
   );
 
   // Send to introduced friend (User-C)
-  await _sendPayload(
+  await deliverIntroductionPayloadReliably(
+    introRepo: introRepo,
     p2pService: p2pService,
     bridge: bridge,
     senderPeerId: introducerPeerId,
@@ -208,38 +218,43 @@ Future<IntroductionModel> _sendIntroductionChain({
   return model;
 }
 
-/// Sends a payload to a target peer, encrypting with ML-KEM if possible.
-Future<void> _sendPayload({
-  required P2PService p2pService,
-  required Bridge bridge,
-  required String senderPeerId,
-  required String targetPeerId,
-  required String? targetMlKemPublicKey,
-  required IntroductionPayload payload,
+Future<void> _deleteExistingIntroductionsForPair({
+  required IntroductionRepository introRepo,
+  required String introducerPeerId,
+  required String recipientPeerId,
+  required String introducedPeerId,
 }) async {
-  if (targetMlKemPublicKey != null) {
-    final encrypted = await callEncryptMessage(
-      bridge: bridge,
-      recipientMlKemPublicKey: targetMlKemPublicKey,
-      plaintext: payload.toInnerJson(),
-    );
-    if (encrypted['ok'] == true) {
-      final envelope = IntroductionPayload.buildEncryptedEnvelope(
-        senderPeerId: senderPeerId,
-        kem: encrypted['kem'] as String,
-        ciphertext: encrypted['ciphertext'] as String,
-        nonce: encrypted['nonce'] as String,
-      );
-      final sent = await p2pService.sendMessage(targetPeerId, envelope);
-      if (sent) return;
-      await p2pService.storeInInbox(targetPeerId, envelope);
-      return;
-    }
-  }
+  final existing = await introRepo.getIntroductionsByIntroducer(
+    introducerPeerId,
+  );
+  final duplicates = existing
+      .where((intro) {
+        if (intro.introducerId != introducerPeerId) return false;
+        return _isSameIntroductionPair(
+          introRecipientId: intro.recipientId,
+          introIntroducedId: intro.introducedId,
+          recipientPeerId: recipientPeerId,
+          introducedPeerId: introducedPeerId,
+        );
+      })
+      .toList(growable: false);
 
-  // Fall back to v1 plaintext
-  final sent = await p2pService.sendMessage(targetPeerId, payload.toJson());
-  if (!sent) {
-    await p2pService.storeInInbox(targetPeerId, payload.toJson());
+  for (final intro in duplicates) {
+    await introRepo.deleteIntroduction(intro.id);
   }
+}
+
+bool _isSameIntroductionPair({
+  required String introRecipientId,
+  required String introIntroducedId,
+  required String recipientPeerId,
+  required String introducedPeerId,
+}) {
+  final sameDirection =
+      introRecipientId == recipientPeerId &&
+      introIntroducedId == introducedPeerId;
+  final reversedDirection =
+      introRecipientId == introducedPeerId &&
+      introIntroducedId == recipientPeerId;
+  return sameDirection || reversedDirection;
 }

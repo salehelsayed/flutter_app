@@ -49,6 +49,10 @@ Map<String, bool> defaultResilienceFeatureFlags() {
       'MKNOON_ENABLE_RESUME_GROUP_RECOVERY',
       defaultValue: true,
     ),
+    'enableDeferredDirectAck': const bool.fromEnvironment(
+      'MKNOON_ENABLE_DEFERRED_DIRECT_ACK',
+      defaultValue: true,
+    ),
   };
 }
 
@@ -825,6 +829,36 @@ Future<Map<String, dynamic>> callP2PMessageSend(
       'errorCode': response['errorCode'],
       'errorMessage': response['errorMessage'],
     },
+  );
+
+  return response;
+}
+
+/// Confirms the receiver-side terminal handling result for a deferred direct
+/// chat ACK nonce.
+Future<Map<String, dynamic>> callP2PConfirmDirectMessage(
+  Bridge bridge, {
+  required String nonce,
+  required bool ok,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_DIRECT_CONFIRM_REQUEST',
+    details: {'nonce': nonce, 'ok': ok},
+  );
+
+  final request = {
+    'cmd': 'message:confirm',
+    'payload': {'nonce': nonce, 'ok': ok},
+  };
+
+  final responseJson = await bridge.send(jsonEncode(request));
+  final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'P2P_DIRECT_CONFIRM_RESPONSE',
+    details: {'nonce': nonce, 'ok': response['ok'], 'confirmed': ok},
   );
 
   return response;

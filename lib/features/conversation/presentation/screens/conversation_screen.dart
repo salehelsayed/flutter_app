@@ -25,6 +25,13 @@ import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bu
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
+typedef ConversationMediaViewerBuilder =
+    Widget Function({
+      required String localPath,
+      required List<String> allPaths,
+      required int initialIndex,
+    });
+
 @immutable
 class ConversationComposerViewState {
   final List<File> pendingAttachments;
@@ -137,6 +144,7 @@ class ConversationScreen extends StatefulWidget {
   final bool isEditingMessage;
   final VoidCallback? onCancelEdit;
   final bool allowEditAction;
+  final ConversationMediaViewerBuilder? mediaViewerBuilder;
 
   const ConversationScreen({
     super.key,
@@ -193,6 +201,7 @@ class ConversationScreen extends StatefulWidget {
     this.isEditingMessage = false,
     this.onCancelEdit,
     this.allowEditAction = true,
+    this.mediaViewerBuilder,
   });
 
   @override
@@ -441,11 +450,17 @@ class _ConversationScreenState extends State<ConversationScreen> {
             }
 
             final messageReactions = widget.reactions[message.id] ?? const [];
+            final hasRetryableFailedMedia =
+                message.media.isNotEmpty &&
+                message.media.any(
+                  (attachment) =>
+                      attachment.downloadStatus != 'upload_cancelled',
+                );
             final showFailedMediaActions =
                 !message.isDeleted &&
                 !message.isIncoming &&
                 message.status == 'failed' &&
-                message.media.isNotEmpty;
+                hasRetryableFailedMedia;
             final canOpenContextOverlay = !message.isDeleted;
             final displayText = message.isDeleted
                 ? l10n.conversation_message_deleted
@@ -467,13 +482,21 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 final startIndex = allPaths
                     .indexOf(tappedPath)
                     .clamp(0, allPaths.length - 1);
+                final mediaViewerBuilder = widget.mediaViewerBuilder;
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => FullScreenImageViewer(
-                      localPath: tappedPath,
-                      allPaths: allPaths,
-                      initialIndex: startIndex,
-                    ),
+                    builder: (_) =>
+                        mediaViewerBuilder != null
+                        ? mediaViewerBuilder(
+                            localPath: tappedPath,
+                            allPaths: allPaths,
+                            initialIndex: startIndex,
+                          )
+                        : FullScreenImageViewer(
+                            localPath: tappedPath,
+                            allPaths: allPaths,
+                            initialIndex: startIndex,
+                          ),
                   ),
                 );
               }

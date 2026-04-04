@@ -55,6 +55,24 @@ void main() {
     });
 
     test(
+      'suppresses background local notification when a recent remote push already announced the same conversation',
+      () async {
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'peer-123',
+          senderUsername: 'Alice',
+          messageText: 'Hello!',
+          consumeRecentRemoteNotificationAnnouncement: (_) async => true,
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
+    test(
       'preserves mixed-script sender and body when forwarding notification text',
       () async {
         const sender = '\u0644\u064a\u0644\u0649 Alpha';

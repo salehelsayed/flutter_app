@@ -61,8 +61,12 @@ import 'package:flutter_app/core/database/migrations/041_group_message_reliabili
 import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
 import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
+import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
+import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_follow_on_outbox_db_helpers.dart';
@@ -81,13 +85,21 @@ import 'package:flutter_app/core/database/helpers/post_repost_state_db_helpers.d
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository_impl.dart';
+import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/introduction/application/resolve_unknown_inbox_sender_use_case.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
@@ -102,6 +114,8 @@ import 'package:flutter_app/features/conversation/application/retry_unacked_mess
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
@@ -117,7 +131,12 @@ import 'package:flutter_app/features/posts/application/pending_post_delivery_ret
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
+import 'package:flutter_app/core/debug/e2e_test_mode.dart';
+import 'package:flutter_app/core/debug/intro_e2e_runner.dart';
+import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
+import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository_impl.dart';
@@ -153,6 +172,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
@@ -175,7 +195,10 @@ import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
+import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
+import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository_impl.dart';
 
 void main() async {
@@ -219,7 +242,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 45,
+    version: 47,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -266,6 +289,8 @@ void main() async {
       await runMessagesEditedAtMigration(db);
       await runMessagesDeletedStateMigration(db);
       await runInboxStagingEntriesMigration(db);
+      await runPendingIntroductionResponsesMigration(db);
+      await runIntroductionOutboxMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -397,6 +422,12 @@ void main() async {
       }
       if (oldVersion < 45) {
         await runInboxStagingEntriesMigration(db);
+      }
+      if (oldVersion < 46) {
+        await runPendingIntroductionResponsesMigration(db);
+      }
+      if (oldVersion < 47) {
+        await runIntroductionOutboxMigration(db);
       }
     },
   );
@@ -785,6 +816,27 @@ void main() async {
         dbLoadPendingIntroductionsForUser(db, peerId),
     dbCountPendingIntroductions: (peerId) =>
         dbCountPendingIntroductions(db, peerId),
+    dbUpsertPendingIntroductionResponse: (row) =>
+        dbUpsertPendingIntroductionResponse(db, row),
+    dbLoadPendingIntroductionResponses: (introductionId) =>
+        dbLoadPendingIntroductionResponses(db, introductionId),
+    dbDeletePendingIntroductionResponse: (responseKey) =>
+        dbDeletePendingIntroductionResponse(db, responseKey),
+    dbUpsertIntroductionOutboxDelivery: (row) =>
+        dbUpsertIntroductionOutboxDelivery(db, row),
+    dbLoadIntroductionOutboxDeliveriesForIntroduction: (introductionId) =>
+        dbLoadIntroductionOutboxDeliveriesForIntroduction(db, introductionId),
+    dbLoadRetryableIntroductionOutboxDeliveries:
+        ({required olderThan, limit = 100}) =>
+            dbLoadRetryableIntroductionOutboxDeliveries(
+              db,
+              olderThan: olderThan,
+              limit: limit,
+            ),
+    dbDeleteIntroductionOutboxDelivery: (deliveryId) =>
+        dbDeleteIntroductionOutboxDelivery(db, deliveryId),
+    dbDeleteIntroductionOutboxDeliveriesForIntroduction: (introductionId) =>
+        dbDeleteIntroductionOutboxDeliveriesForIntroduction(db, introductionId),
   );
 
   // Create media file manager
@@ -801,6 +853,61 @@ void main() async {
   await bridge.initialize();
   StartupTiming.instance.mark('bridge_initialized');
 
+  // ── Auto-setup for simulator scripts (dart-define only, dead-code in release) ──
+  const autoSetupUsername = String.fromEnvironment('AUTO_SETUP_USERNAME');
+  if (autoSetupUsername.isNotEmpty) {
+    final existing = await repository.loadIdentity();
+    if (existing == null) {
+      final result = await generateNewIdentity(
+        callGenerate: () => callIdentityGenerate(bridge),
+        callMlKemKeygen: () => callMlKemKeygen(bridge),
+        repo: repository,
+      );
+      if (result == GenerateIdentityResult.success) {
+        final identity = await repository.loadIdentity();
+        if (identity != null) {
+          await repository.saveIdentity(
+            IdentityModel(
+              peerId: identity.peerId,
+              publicKey: identity.publicKey,
+              privateKey: identity.privateKey,
+              mnemonic12: identity.mnemonic12,
+              mlKemPublicKey: identity.mlKemPublicKey,
+              mlKemSecretKey: identity.mlKemSecretKey,
+              username: autoSetupUsername,
+              avatarBlob: identity.avatarBlob,
+              avatarVersion: identity.avatarVersion,
+              createdAt: identity.createdAt,
+              updatedAt: identity.updatedAt,
+            ),
+          );
+          if (kDebugMode)
+            print('[AUTO-SETUP] Identity created: $autoSetupUsername');
+
+          // Export signed QR payload for cross-device smoke tests
+          final (qrResult, qrJson) = await buildQRPayload(
+            repo: repository,
+            callSign: (data, key) => callSignPayload(
+              bridge: bridge,
+              dataToSign: data,
+              privateKey: key,
+            ),
+            cachedIdentity: await repository.loadIdentity(),
+          );
+          if (qrResult == BuildQRPayloadResult.success && qrJson != null) {
+            final loadedId = await repository.loadIdentity();
+            await exportIdentityForIntroE2E(
+              signedQrPayloadJson: qrJson,
+              mlKemPublicKey: loadedId?.mlKemPublicKey,
+            );
+          }
+        }
+      }
+    } else {
+      if (kDebugMode) print('[AUTO-SETUP] Identity already exists, skipping');
+    }
+  }
+
   // Create local P2P service for WiFi-first delivery
   final localDiscovery = BonsoirDiscoveryService();
   final localWsServer = LocalWsServer();
@@ -809,6 +916,7 @@ void main() async {
     wsServer: localWsServer,
   );
   late final ChatMessageListener chatMessageListener;
+  late final IntroductionListener introductionListener;
 
   // Create P2P service (uses the same bridge + local P2P)
   final p2pService = P2PServiceImpl(
@@ -817,7 +925,30 @@ void main() async {
     pushTokenStore: pushTokenStore,
     inboxStagingRepository: inboxStagingRepository,
     replayRecoveredInboxChatMessage: (message) async {
-      final outcome = await chatMessageListener.processIncomingMessage(message);
+      var outcome = await chatMessageListener.processIncomingMessage(message);
+      if (outcome.state == ChatMessageProcessState.unknownSender) {
+        final ownPeerId = message.to;
+        if (ownPeerId.isNotEmpty) {
+          final resolution = await resolveUnknownInboxSender(
+            introRepo: introductionRepository,
+            contactRepo: contactRepository,
+            ownPeerId: ownPeerId,
+            senderPeerId: message.from,
+          );
+          if (resolution == UnknownInboxSenderResolution.contactRecovered) {
+            outcome = await chatMessageListener.processIncomingMessage(message);
+          }
+          if (outcome.state == ChatMessageProcessState.unknownSender &&
+              resolution != UnknownInboxSenderResolution.rejected) {
+            return (
+              disposition: RecoveredInboxChatDisposition.retryable,
+              reasonCode: 'unknown_sender_intro_pending',
+              reasonDetail: null,
+            );
+          }
+        }
+      }
+
       switch (outcome.state) {
         case ChatMessageProcessState.stored:
           return (
@@ -875,6 +1006,38 @@ void main() async {
           );
       }
     },
+    replayRecoveredInboxIntroductionMessage: (message) async {
+      final outcome = await introductionListener.processIncomingMessage(
+        message,
+      );
+      switch (outcome.state) {
+        case IntroductionMessageProcessState.stored:
+          return (
+            disposition: RecoveredInboxChatDisposition.committed,
+            reasonCode: outcome.reasonCode,
+            reasonDetail: outcome.reasonDetail,
+          );
+        case IntroductionMessageProcessState.deferred:
+          return (
+            disposition: RecoveredInboxChatDisposition.committed,
+            reasonCode: outcome.reasonCode,
+            reasonDetail: outcome.reasonDetail,
+          );
+        case IntroductionMessageProcessState.retryableError:
+          return (
+            disposition: RecoveredInboxChatDisposition.retryable,
+            reasonCode: outcome.reasonCode,
+            reasonDetail: outcome.reasonDetail,
+          );
+        case IntroductionMessageProcessState.blockedSender:
+        case IntroductionMessageProcessState.rejected:
+          return (
+            disposition: RecoveredInboxChatDisposition.rejected,
+            reasonCode: outcome.reasonCode,
+            reasonDetail: outcome.reasonDetail,
+          );
+      }
+    },
   );
   nearbyLocationService = NearbyLocationServiceImpl(
     settingsRepository: postsPrivacySettingsRepository,
@@ -903,6 +1066,10 @@ void main() async {
 
   // Create message router — single subscription, routes by type
   final messageRouter = IncomingMessageRouter(p2pService: p2pService);
+  final contactRequestPresentationGate = ContactRequestPresentationGate();
+  if (kE2ETestMode) {
+    contactRequestPresentationGate.suppressAll();
+  }
 
   // Create contact request listener
   // The getOwnPeerId function gets the peerId from the P2P service's current state.
@@ -914,13 +1081,15 @@ void main() async {
     bridge: bridge,
     getOwnPeerId: () => p2pService.currentState.peerId ?? '',
     getOwnPrivateKey: () => secureKeyStore.read('identity_private_key'),
+    shouldSuppressPresentationForPeerId:
+        contactRequestPresentationGate.shouldSuppress,
   );
 
   // Create notification service and conversation trackers
   final notificationService = FlutterNotificationService();
   await notificationService.initialize();
   final PushRegistrationCoordinator? pushRegistrationCoordinator =
-      !isDesktop && Firebase.apps.isNotEmpty
+      !isDesktop && Firebase.apps.isNotEmpty && !kE2ETestMode
       ? PushRegistrationCoordinator(
           requestPermission: requestPushPermission,
           registerPushToken: () => push_registration.registerPushToken(
@@ -1104,7 +1273,7 @@ void main() async {
   );
 
   // Create introduction listener
-  final introductionListener = IntroductionListener(
+  introductionListener = IntroductionListener(
     introductionStream: messageRouter.introductionStream,
     introRepo: introductionRepository,
     contactRepo: contactRepository,
@@ -1169,6 +1338,11 @@ void main() async {
       bridge: bridge,
       mediaAttachmentRepo: mediaAttachmentRepository,
     ),
+    retryPendingIntroductionDeliveriesFn: () =>
+        retryPendingIntroductionDeliveries(
+          introRepo: introductionRepository,
+          p2pService: p2pService,
+        ),
     retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
       bridge: bridge,
       msgRepo: groupMessageRepository,
@@ -1264,12 +1438,19 @@ void main() async {
     mediaFileManager: mediaFileManager,
   );
 
+  // ── Smoke test Phase 1: pre-populate contacts before UI renders ──
+  // This ensures StartupRouter sees contacts and routes to Feed, not FTE.
+  if (kDebugMode) {
+    await prePopulateContactsFromIntroE2EConfig(contactRepo: contactRepository);
+  }
+
   runApp(
     MyApp(
       repository: repository,
       contactRepository: contactRepository,
       contactRequestRepository: contactRequestRepository,
       contactRequestListener: contactRequestListener,
+      contactRequestPresentationGate: contactRequestPresentationGate,
       messageRepository: messageRepository,
       postRepository: postRepository,
       postsPrivacySettingsRepository: postsPrivacySettingsRepository,
@@ -1317,6 +1498,18 @@ void main() async {
     ),
   );
   StartupTiming.instance.mark('run_app_called');
+
+  // Keep polling for intro E2E config files in explicit test mode so
+  // simulator relaunch timing does not race a single startup timer.
+  startIntroE2EPoller(
+    p2pService: p2pService,
+    bridge: bridge,
+    identityRepo: repository,
+    contactRepo: contactRepository,
+    contactRequestRepo: contactRequestRepository,
+    introRepo: introductionRepository,
+    messageRepo: messageRepository,
+  );
 }
 
 Future<void> openIntroNotificationOrbitRoute({
@@ -1352,6 +1545,7 @@ class MyApp extends StatefulWidget {
   final ContactRepositoryImpl contactRepository;
   final ContactRequestRepositoryImpl contactRequestRepository;
   final ContactRequestListener contactRequestListener;
+  final ContactRequestPresentationGate contactRequestPresentationGate;
   final MessageRepositoryImpl messageRepository;
   final PostRepositoryImpl postRepository;
   final PostsPrivacySettingsRepositoryImpl postsPrivacySettingsRepository;
@@ -1405,6 +1599,7 @@ class MyApp extends StatefulWidget {
     required this.contactRepository,
     required this.contactRequestRepository,
     required this.contactRequestListener,
+    required this.contactRequestPresentationGate,
     required this.messageRepository,
     required this.postRepository,
     required this.postsPrivacySettingsRepository,
@@ -1459,6 +1654,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   bool _isResuming = false;
   NotificationRouteTarget? _deferredNotificationRouteTarget;
   late final PostNotificationOpenCoordinator _postNotificationOpenCoordinator;
+  late final ContactRequestNotificationMaterializer
+  _contactRequestNotificationMaterializer;
 
   @override
   void initState() {
@@ -1473,6 +1670,46 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       appShellController: widget.appShellController,
       revealPostsSurface: _revealPostsSurface,
     );
+    _contactRequestNotificationMaterializer =
+        ContactRequestNotificationMaterializer(
+          requestRepository: widget.contactRequestRepository,
+          contactRepository: widget.contactRepository,
+          identityRepository: widget.repository,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
+          presentPendingRequest:
+              ({
+                required navigator,
+                required request,
+                required onAccept,
+                required onDecline,
+              }) async {
+                if (kE2ETestMode) {
+                  return;
+                }
+                await showDialog<void>(
+                  context: navigator.context,
+                  barrierDismissible: false,
+                  builder: (dialogContext) => ContactRequestDialog(
+                    request: request,
+                    onAccept: () {
+                      Navigator.of(dialogContext).pop();
+                      unawaited(onAccept());
+                    },
+                    onDecline: () {
+                      Navigator.of(dialogContext).pop();
+                      unawaited(onDecline());
+                    },
+                  ),
+                );
+              },
+          openConversation: ({required navigator, required contact}) =>
+              _openConversationForContact(
+                navigator: navigator,
+                contact: contact,
+              ),
+        );
     _setupPushListeners();
     _setupNotificationTapHandler();
     _setupShareIntentHandling();
@@ -1522,6 +1759,39 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   void _setupNotificationTapHandler() {
     widget.notificationService.onNotificationTap = _onNotificationTap;
+  }
+
+  Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {
+    final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+    await _withContactRequestPresentationSuppressed(
+      routeTarget: routeTarget,
+      action: () => routeAppRootRemoteNotificationOpen(
+        data: data,
+        onBeforeRouteTarget: _prepareNotificationRouteTarget,
+        onRouteTarget: _handleNotificationRouteTarget,
+        onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
+      ),
+    );
+  }
+
+  Future<void> _withContactRequestPresentationSuppressed({
+    required NotificationRouteTarget? routeTarget,
+    required Future<void> Function() action,
+  }) async {
+    final peerId =
+        routeTarget?.kind == NotificationRouteTargetKind.contactRequest
+        ? routeTarget?.peerId
+        : null;
+    if (peerId != null) {
+      widget.contactRequestPresentationGate.suppress(peerId);
+    }
+    try {
+      await action();
+    } finally {
+      if (peerId != null) {
+        widget.contactRequestPresentationGate.release(peerId);
+      }
+    }
   }
 
   Future<void> _handleInitialLocalNotificationLaunch() async {
@@ -1578,6 +1848,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
 
     switch (routeTarget.kind) {
+      case NotificationRouteTargetKind.contactRequest:
+        await _contactRequestNotificationMaterializer.handleRoute(
+          navigator: navigator,
+          peerId: routeTarget.peerId!,
+        );
+        return;
       case NotificationRouteTargetKind.intros:
         await openIntroNotificationOrbitRoute(
           navigator: navigator,
@@ -1652,31 +1928,41 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         if (contact == null) {
           return;
         }
-        navigator.push(
-          buildConversationSlideUpRoute(
-            builder: (_) => ConversationWired(
-              contact: contact,
-              identityRepo: widget.repository,
-              messageRepo: widget.messageRepository,
-              chatMessageListener: widget.chatMessageListener,
-              p2pService: widget.p2pService,
-              bridge: widget.bridge,
-              contactRepo: widget.contactRepository,
-              mediaAttachmentRepo: widget.mediaAttachmentRepository,
-              mediaFileManager: widget.mediaFileManager,
-              conversationTracker: widget.conversationTracker,
-              audioRecorderService: widget.audioRecorderService,
-              reactionRepo: widget.reactionRepository,
-              reactionListener: widget.reactionListener,
-              introductionRepository: widget.introductionRepository,
-            ),
-          ),
+        await _openConversationForContact(
+          navigator: navigator,
+          contact: contact,
         );
         return;
       case NotificationRouteTargetKind.post:
       case NotificationRouteTargetKind.postComment:
         return;
     }
+  }
+
+  Future<void> _openConversationForContact({
+    required NavigatorState navigator,
+    required ContactModel contact,
+  }) async {
+    navigator.push(
+      buildConversationSlideUpRoute(
+        builder: (_) => ConversationWired(
+          contact: contact,
+          identityRepo: widget.repository,
+          messageRepo: widget.messageRepository,
+          chatMessageListener: widget.chatMessageListener,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          contactRepo: widget.contactRepository,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+          conversationTracker: widget.conversationTracker,
+          audioRecorderService: widget.audioRecorderService,
+          reactionRepo: widget.reactionRepository,
+          reactionListener: widget.reactionListener,
+          introductionRepository: widget.introductionRepository,
+        ),
+      ),
+    );
   }
 
   void _revealPostsSurface() {
@@ -1862,6 +2148,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           bridge: widget.bridge,
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
         ),
+        retryPendingIntroductionDeliveriesFn: () =>
+            retryPendingIntroductionDeliveries(
+              introRepo: widget.introductionRepository,
+              p2pService: widget.p2pService,
+            ),
         retryIncompleteUploadsFn: () => retryIncompleteUploads(
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
           messageRepo: widget.messageRepository,
@@ -1919,14 +2210,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             'dataKeys': message.data.keys.toList(),
           },
         );
-        unawaited(
-          routeAppRootRemoteNotificationOpen(
-            data: message.data,
-            onBeforeRouteTarget: _prepareNotificationRouteTarget,
-            onRouteTarget: _handleNotificationRouteTarget,
-            onMissingRouteTarget: widget.p2pService.drainOfflineInbox,
-          ),
-        );
+        unawaited(_routeRemoteNotificationOpen(message.data));
       });
     } catch (e) {
       emitFlowEvent(
@@ -1951,6 +2235,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         contactRepository: widget.contactRepository,
         contactRequestRepository: widget.contactRequestRepository,
         contactRequestListener: widget.contactRequestListener,
+        contactRequestPresentationGate: widget.contactRequestPresentationGate,
         messageRepository: widget.messageRepository,
         postRepository: widget.postRepository,
         mediaAttachmentRepository: widget.mediaAttachmentRepository,

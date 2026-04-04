@@ -88,6 +88,7 @@ void main() {
       'peer:dial': 'dialPeer',
       'peer:disconnect': 'disconnectPeer',
       'message:send': 'sendMessage',
+      'message:confirm': 'confirmDirectMessage',
       'inbox:retrieve': 'inboxRetrieve',
       'inbox:retrieve_pending': 'inboxRetrievePending',
       'inbox:ack': 'inboxAck',
@@ -335,7 +336,7 @@ void main() {
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 49 commands are covered', () async {
+  test('all 50 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -367,6 +368,7 @@ void main() {
       'peer:disconnect',
       // Messaging
       'message:send',
+      'message:confirm',
       // Inbox
       'inbox:store',
       'inbox:retrieve',
@@ -400,7 +402,7 @@ void main() {
       'group.decrypt',
     ];
 
-    expect(allCmds, hasLength(49));
+    expect(allCmds, hasLength(50));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

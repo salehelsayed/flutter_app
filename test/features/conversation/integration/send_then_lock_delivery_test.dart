@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
@@ -59,6 +60,11 @@ class BobTestHarness {
       conversationTracker: conversationTracker,
       getAppLifecycleState: () => lifecycleState,
       getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
+      remoteNotificationGate: RecentRemoteNotificationGate(
+        filePath:
+            '${Directory.systemTemp.path}/send_then_lock_delivery_test_${identityHashCode(this)}.json',
+      ),
+      backgroundNotificationDuplicateGuardDelay: Duration.zero,
     );
   }
 
@@ -1315,6 +1321,59 @@ void main() {
           body: 'Switch then lock',
           senderUsername: 'Alice',
         );
+      },
+    );
+
+    test(
+      '7c. failed delete-for-everyone stays visible through pause and hides only after resume delivery',
+      () async {
+        final (sendResult, sentMessage) = await alice.sendMessage(
+          bob.peerId,
+          'Delete after lock',
+        );
+        expect(sendResult, SendChatMessageResult.success);
+        expect(sentMessage, isNotNull);
+
+        await waitForBob();
+
+        network.deliveryFails = true;
+        network.inboxDisabled = true;
+
+        final (deleteResult, failedDelete) = await alice
+            .deleteMessageForEveryone(sentMessage!);
+
+        expect(deleteResult, SendChatMessageResult.sendFailed);
+        expect(failedDelete, isNotNull);
+        expect(failedDelete!.id, sentMessage.id);
+        expect(failedDelete.status, 'failed');
+        expect(failedDelete.isDeleted, isTrue);
+        expect(failedDelete.isHidden, isFalse);
+
+        final beforePause = await alice.loadConversationWith(bob.peerId);
+        expect(beforePause, hasLength(1));
+        expect(beforePause.single.id, sentMessage.id);
+        expect(beforePause.single.isDeleted, isTrue);
+        expect(beforePause.single.isHidden, isFalse);
+
+        await alice.simulatePause();
+
+        network.deliveryFails = false;
+        network.inboxDisabled = false;
+
+        await alice.simulateResume(
+          retryFailedMessagesFn: retryAliceFailedMessages,
+        );
+
+        final stored = await alice.messageRepo.getMessage(sentMessage.id);
+        expect(stored, isNotNull);
+        expect(stored!.status, 'delivered');
+        expect(stored.transport, 'inbox');
+        expect(stored.isDeleted, isTrue);
+        expect(stored.isHidden, isTrue);
+        expect(stored.hiddenAt, stored.deletedAt);
+
+        final afterResume = await alice.loadConversationWith(bob.peerId);
+        expect(afterResume, isEmpty);
       },
     );
 

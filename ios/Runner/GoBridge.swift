@@ -10,6 +10,9 @@ class GoBridge: NSObject {
     private let methodChannel: FlutterMethodChannel
     private let eventChannel: FlutterEventChannel
     private var eventSink: FlutterEventSink?
+    private var pendingEvents: [String] = []
+    private let pendingEventsLock = NSLock()
+    private let maxPendingEvents = 256
 
     init(messenger: FlutterBinaryMessenger) {
         methodChannel = FlutterMethodChannel(
@@ -91,6 +94,8 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeDisconnectPeer(args ?? "") }, result: result)
         case "sendMessage":
             runOnBackground({ BridgeSendMessage(args ?? "") }, result: result)
+        case "confirmDirectMessage":
+            runOnBackground({ BridgeConfirmDirectMessage(args ?? "") }, result: result)
 
         // Inbox
         case "inboxStore":
@@ -208,6 +213,7 @@ extension GoBridge: FlutterStreamHandler {
     func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         NSLog("[GoBridge] onListen: eventSink registered")
         self.eventSink = events
+        flushPendingEvents()
         return nil
     }
 
@@ -224,15 +230,42 @@ extension GoBridge: BridgeEventCallbackProtocol {
         guard let json = jsonString else { return }
         let hasSink = self.eventSink != nil
         if !hasSink {
-            NSLog("[GoBridge] onEvent: DROPPED (no sink) event=%@", String(json.prefix(80)))
+            bufferEvent(json, reason: "no sink")
             return
         }
         DispatchQueue.main.async { [weak self] in
             guard let sink = self?.eventSink else {
-                NSLog("[GoBridge] onEvent: DROPPED (sink gone) event=%@", String(json.prefix(80)))
+                self?.bufferEvent(json, reason: "sink gone")
                 return
             }
             sink(json)
+        }
+    }
+
+    private func bufferEvent(_ json: String, reason: String) {
+        pendingEventsLock.lock()
+        if pendingEvents.count >= maxPendingEvents {
+            pendingEvents.removeFirst()
+            NSLog(
+                "[GoBridge] bufferEvent: dropped oldest buffered event to keep queue <= %d",
+                maxPendingEvents
+            )
+        }
+        pendingEvents.append(json)
+        pendingEventsLock.unlock()
+        NSLog("[GoBridge] onEvent: BUFFERED (%@) event=%@", reason, String(json.prefix(80)))
+    }
+
+    private func flushPendingEvents() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let sink = self.eventSink else { return }
+            self.pendingEventsLock.lock()
+            let snapshot = self.pendingEvents
+            self.pendingEvents.removeAll(keepingCapacity: true)
+            self.pendingEventsLock.unlock()
+            if snapshot.isEmpty { return }
+            NSLog("[GoBridge] flushPendingEvents: replaying %d buffered event(s)", snapshot.count)
+            snapshot.forEach { sink($0) }
         }
     }
 }

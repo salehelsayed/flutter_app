@@ -102,6 +102,7 @@ class OrbitWired extends StatefulWidget {
   final IntroductionListener? introductionListener;
   final AppShellController? appShellController;
   final ValueListenable<int>? feedUnreadCountListenable;
+  final ValueListenable<FeedRouteChanges?>? externalRouteChangesListenable;
   final ValueChanged<FeedRouteChanges?>? onEmbeddedExit;
   final ValueChanged<VoidCallback?>? onEmbeddedExitActionChanged;
   final ValueChanged<bool>? onRowActionOpenChanged;
@@ -139,6 +140,7 @@ class OrbitWired extends StatefulWidget {
     this.introductionListener,
     this.appShellController,
     this.feedUnreadCountListenable,
+    this.externalRouteChangesListenable,
     this.onEmbeddedExit,
     this.onEmbeddedExitActionChanged,
     this.onRowActionOpenChanged,
@@ -325,6 +327,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _startListeningForContactRequests();
     _startListeningForGroupMessages();
     _startListeningForIntroductions();
+    _attachExternalRouteChangesListenable(
+      widget.externalRouteChangesListenable,
+    );
     _scrollController.addListener(_onScroll);
   }
 
@@ -336,6 +341,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             widget.onEmbeddedExitActionChanged ||
         oldWidget.onRowActionOpenChanged != widget.onRowActionOpenChanged) {
       _publishHostGestureContracts();
+    }
+    if (oldWidget.externalRouteChangesListenable !=
+        widget.externalRouteChangesListenable) {
+      _detachExternalRouteChangesListenable(
+        oldWidget.externalRouteChangesListenable,
+      );
+      _attachExternalRouteChangesListenable(
+        widget.externalRouteChangesListenable,
+      );
     }
   }
 
@@ -1066,11 +1080,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (!confirmed || !mounted) return;
 
     try {
-      await deleteContactAndMessages(
-        contactRepo: widget.contactRepo,
-        messageRepo: widget.messageRepo,
-        peerId: friend.peerId,
-      );
+      await _deleteContactFromOrbit(friend.peerId);
       _openRowNotifier.value = null;
       _markContactChanged(friend.peerId);
       await _refreshOrbitFriend(friend.peerId);
@@ -1107,6 +1117,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               reactionRepo: widget.reactionRepository,
               reactionListener: widget.reactionListener,
               introductionRepository: widget.introductionRepository,
+              deleteContactFn: _deleteContactFromOrbit,
             ),
           ),
         )
@@ -1118,6 +1129,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     // Push first, then let the conversation route perform its own initial
     // read-marking without blocking the transition.
     unawaited(_markConversationReadInBackground(friend.peerId));
+  }
+
+  Future<void> _deleteContactFromOrbit(String peerId) {
+    return deleteContactAndMessages(
+      contactRepo: widget.contactRepo,
+      messageRepo: widget.messageRepo,
+      peerId: peerId,
+      mediaAttachmentRepo: widget.mediaAttachmentRepo,
+      reactionRepo: widget.reactionRepository,
+      mediaFileManager: widget.mediaFileManager,
+      contactRequestRepo: widget.contactRequestRepo,
+      introductionRepo: widget.introductionRepository,
+    );
   }
 
   Future<void> _markConversationReadInBackground(String peerId) async {
@@ -1163,6 +1187,24 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     } else if (changes.changedGroupIds.isNotEmpty) {
       await Future.wait(changes.changedGroupIds.map(_refreshOrbitGroup));
     }
+  }
+
+  void _attachExternalRouteChangesListenable(
+    ValueListenable<FeedRouteChanges?>? listenable,
+  ) {
+    listenable?.addListener(_onExternalRouteChangesChanged);
+  }
+
+  void _detachExternalRouteChangesListenable(
+    ValueListenable<FeedRouteChanges?>? listenable,
+  ) {
+    listenable?.removeListener(_onExternalRouteChangesChanged);
+  }
+
+  void _onExternalRouteChangesChanged() {
+    final changes = widget.externalRouteChangesListenable?.value;
+    if (changes == null) return;
+    unawaited(_applyRouteChanges(changes));
   }
 
   void _onScanQR() {
@@ -1241,6 +1283,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _groupMessageSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
+    _detachExternalRouteChangesListenable(
+      widget.externalRouteChangesListenable,
+    );
     _collapseController.dispose();
     _searchDockController.dispose();
     _searchTriggerController.dispose();

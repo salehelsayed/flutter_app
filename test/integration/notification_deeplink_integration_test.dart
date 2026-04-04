@@ -155,7 +155,94 @@ void main() {
     );
 
     test(
-      '5. push token survives logical app restart (persistent token store)',
+      '5. contact-request push open follows prepare -> drain -> route sequencing',
+      () async {
+        final events = <String>[];
+        final routed = <NotificationRouteTarget>[];
+
+        await routeRemoteNotificationOpen(
+          data: const <String, dynamic>{
+            'type': 'contact_request',
+            'sender_id': 'peer-request-123',
+          },
+          onBeforeRouteTarget: (target) async {
+            events.add('prepare:${target.toPayload()}');
+            final result = await prepareNotificationOpen(
+              routeTarget: target,
+              drainOfflineInbox: () async => events.add('drain:inbox'),
+              drainGroupOfflineInboxForGroup: (_) async {},
+            );
+            expect(result.ok, isTrue);
+            events.add('open:${target.toPayload()}');
+          },
+          onRouteTarget: (target) async {
+            events.add('route:${target.toPayload()}');
+            routed.add(target);
+          },
+          onMissingRouteTarget: () async => events.add('missing'),
+        );
+
+        expect(events, [
+          'prepare:contact_request:peer-request-123',
+          'drain:inbox',
+          'open:contact_request:peer-request-123',
+          'route:contact_request:peer-request-123',
+        ]);
+        expect(routed.single.kind, NotificationRouteTargetKind.contactRequest);
+        expect(routed.single.peerId, 'peer-request-123');
+      },
+    );
+
+    test(
+      '6. contact-request payload round-trips through local tap open',
+      () async {
+        final notificationService = FakeNotificationService();
+        final events = <String>[];
+        final routed = <NotificationRouteTarget>[];
+
+        await notificationService.showNotification(
+          title: 'New Contact Request',
+          body: 'Alice wants to connect',
+          payload: const NotificationRouteTarget.contactRequest(
+            'peer-request-123',
+          ).toPayload(),
+        );
+        notificationService.initialPayload =
+            notificationService.shownGeneric.single.payload;
+
+        await routeInitialLocalNotificationOpen(
+          consumeInitialPayload: notificationService.consumeInitialPayload,
+          onBeforeRouteTarget: (target) async {
+            events.add('prepare:${target.toPayload()}');
+            final result = await prepareNotificationOpen(
+              routeTarget: target,
+              drainOfflineInbox: () async => events.add('drain:inbox'),
+              drainGroupOfflineInboxForGroup: (_) async {},
+            );
+            expect(result.ok, isTrue);
+          },
+          onRouteTarget: (target) async {
+            events.add('route:${target.toPayload()}');
+            routed.add(target);
+          },
+        );
+
+        expect(
+          notificationService.shownGeneric.single.payload,
+          'contact_request:peer-request-123',
+        );
+        expect(events, [
+          'prepare:contact_request:peer-request-123',
+          'drain:inbox',
+          'route:contact_request:peer-request-123',
+        ]);
+        expect(routed.single.kind, NotificationRouteTargetKind.contactRequest);
+        expect(routed.single.peerId, 'peer-request-123');
+      },
+    );
+
+    test(
+      '7. push token survives logical app restart (persistent token store)',
       () async {
         final tokenStore = FakePushTokenStore();
 

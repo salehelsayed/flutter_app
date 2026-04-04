@@ -50,6 +50,8 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
+import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+
 const _readDir = String.fromEnvironment('E2E_TEMP_DIR', defaultValue: '/tmp');
 const _writeDir = String.fromEnvironment('E2E_WRITE_DIR', defaultValue: '/tmp');
 const _dbName = String.fromEnvironment(
@@ -365,7 +367,10 @@ Future<_TestStack> _setupStack() async {
       'mlKemPublicKey': identity.mlKemPublicKey,
   });
 
-  final p2pService = P2PServiceImpl(bridge: bridge);
+  final p2pService = P2PServiceImpl(
+    bridge: bridge,
+    inboxStagingRepository: InMemoryInboxStagingRepository(),
+  );
   final started = await p2pService.startNode(
     identity.privateKey,
     identity.peerId,

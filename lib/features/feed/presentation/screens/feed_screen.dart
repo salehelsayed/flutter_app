@@ -51,6 +51,8 @@ class FeedScreen extends StatelessWidget {
   final void Function(String contactPeerId)? onViewFullConversation;
   final Map<String, String>? draftTexts;
   final String? activeFocusPeerId;
+  final String? pendingViewportFollowContactPeerId;
+  final int viewportFollowRequestId;
   final void Function(String contactPeerId, String text)? onDraftChanged;
   final void Function(String contactPeerId, bool hasFocus)? onInputFocusChanged;
   final String? editingContactPeerId;
@@ -97,6 +99,8 @@ class FeedScreen extends StatelessWidget {
     this.onViewFullConversation,
     this.draftTexts,
     this.activeFocusPeerId,
+    this.pendingViewportFollowContactPeerId,
+    this.viewportFollowRequestId = 0,
     this.onDraftChanged,
     this.onInputFocusChanged,
     this.editingContactPeerId,
@@ -227,20 +231,14 @@ class FeedScreen extends StatelessWidget {
       (contentConstraints.maxWidth - maxFeedWidth) / 2,
     );
 
-    return CustomScrollView(
-      key: const PageStorageKey<String>('feed-scroll'),
-      physics: const BouncingScrollPhysics(),
-      cacheExtent: 1200,
-      slivers: [
-        SliverPadding(
-          padding: EdgeInsets.only(
-            left: centeredHorizontalPadding,
-            right: centeredHorizontalPadding,
-            bottom: 60 + bottomInset,
-          ),
-          sliver: _buildFeedSliver(context, items),
-        ),
-      ],
+    return _FeedScrollableContent(
+      horizontalPadding: centeredHorizontalPadding,
+      bottomInset: bottomInset,
+      entries: _buildFeedEntries(items),
+      loadingSliver: _buildLoadingSliver(),
+      entryBuilder: _buildFeedEntry,
+      pendingViewportFollowContactPeerId: pendingViewportFollowContactPeerId,
+      viewportFollowRequestId: viewportFollowRequestId,
     );
   }
 
@@ -290,25 +288,6 @@ class FeedScreen extends StatelessWidget {
           feedBadgeCount: unreadCount,
           orbitBadgeCount: orbitCount,
         ),
-      ),
-    );
-  }
-
-  Widget _buildFeedSliver(BuildContext context, List<FeedItem> items) {
-    if (!feedLoaded && items.isEmpty) {
-      return _buildLoadingSliver();
-    }
-
-    final entries = _buildFeedEntries(items);
-    if (entries.isEmpty) {
-      return const SliverToBoxAdapter(child: SizedBox.shrink());
-    }
-
-    return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) => _buildFeedEntry(context, entries[index]),
-        childCount: entries.length,
-        findChildIndexCallback: (key) => _findFeedEntryIndex(entries, key),
       ),
     );
   }
@@ -644,7 +623,6 @@ class FeedScreen extends StatelessWidget {
       final groupDraftKey = 'group:${item.groupId}';
       final canWrite = item.canWrite;
       return FeedCard(
-        key: ValueKey(item.id),
         thread: item,
         canWrite: canWrite,
         sessionReply: sessionReplies?.get('group:${item.groupId}'),
@@ -690,7 +668,6 @@ class FeedScreen extends StatelessWidget {
     if (item is ConnectionFeedItem) {
       if (item.introducedBy != null && userPeerId != null) {
         return IntroductionConnectionCard(
-          key: ValueKey(item.id),
           ownPeerId: userPeerId!,
           ownUsername: username,
           contactPeerId: item.contactPeerId,
@@ -704,7 +681,6 @@ class FeedScreen extends StatelessWidget {
         );
       }
       return ConnectionCard(
-        key: ValueKey(item.id),
         contactPeerId: item.contactPeerId,
         contactUsername: item.contactUsername,
         contactAvatarPath: item.contactAvatarPath,
@@ -718,7 +694,6 @@ class FeedScreen extends StatelessWidget {
     if (item is ThreadFeedItem) {
       final activeQuoteMessageId = activeQuoteMessageIds?[item.contactPeerId];
       return FeedCard(
-        key: ValueKey(item.id),
         thread: item,
         sessionReply: sessionReplies?.get(item.contactPeerId),
         isExpanded: expandedCardId == item.id,
@@ -794,6 +769,279 @@ class FeedScreen extends StatelessWidget {
     if (quoted.text.isNotEmpty) return quoted.text;
     if (quoted.media.isNotEmpty) return mediaPreviewText(quoted.media);
     return 'Message unavailable';
+  }
+}
+
+class _FeedScrollableContent extends StatefulWidget {
+  final double horizontalPadding;
+  final double bottomInset;
+  final List<_FeedEntry> entries;
+  final Widget loadingSliver;
+  final Widget Function(BuildContext context, _FeedEntry entry) entryBuilder;
+  final String? pendingViewportFollowContactPeerId;
+  final int viewportFollowRequestId;
+
+  const _FeedScrollableContent({
+    required this.horizontalPadding,
+    required this.bottomInset,
+    required this.entries,
+    required this.loadingSliver,
+    required this.entryBuilder,
+    this.pendingViewportFollowContactPeerId,
+    this.viewportFollowRequestId = 0,
+  });
+
+  @override
+  State<_FeedScrollableContent> createState() => _FeedScrollableContentState();
+}
+
+class _FeedScrollableContentState extends State<_FeedScrollableContent> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _viewportKey = GlobalKey();
+  final Map<String, GlobalKey> _threadCardKeys = <String, GlobalKey>{};
+
+  GlobalKey _threadCardKey(String itemId) {
+    return _threadCardKeys.putIfAbsent(
+      itemId,
+      () => GlobalKey(debugLabel: 'feed-thread-$itemId'),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _FeedScrollableContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.viewportFollowRequestId == oldWidget.viewportFollowRequestId) {
+      return;
+    }
+    final contactPeerId = widget.pendingViewportFollowContactPeerId;
+    if (contactPeerId == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _reorientToThreadCard(contactPeerId);
+    });
+  }
+
+  Future<void> _reorientToThreadCard(String contactPeerId) async {
+    final target = _targetThreadForContact(contactPeerId);
+    if (target == null) {
+      return;
+    }
+
+    final directContext = _threadCardKeys[target.id]?.currentContext;
+    if (directContext != null) {
+      await _ensureVisible(directContext);
+      return;
+    }
+
+    if (!_scrollController.hasClients) {
+      return;
+    }
+
+    final estimatedOffset = _estimatedOffsetForIndex(target.index);
+    await _scrollController.animateTo(
+      estimatedOffset,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+
+    if (!mounted) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final mountedContext = _threadCardKeys[target.id]?.currentContext;
+      if (mountedContext == null) {
+        return;
+      }
+      _ensureVisible(mountedContext);
+    });
+  }
+
+  Future<void> _ensureVisible(BuildContext context) {
+    return Scrollable.ensureVisible(
+      context,
+      alignment: 0.18,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+    );
+  }
+
+  ({String id, int index})? _targetThreadForContact(String contactPeerId) {
+    for (var index = 0; index < widget.entries.length; index++) {
+      final item = widget.entries[index].item;
+      if (item is ThreadFeedItem && item.contactPeerId == contactPeerId) {
+        return (id: item.id, index: index);
+      }
+    }
+    return null;
+  }
+
+  double _estimatedOffsetForIndex(int targetIndex) {
+    final position = _scrollController.position;
+    final anchors = _visibleThreadAnchors();
+    final estimatedEntryExtent = _estimatedEntryExtent(anchors);
+    final nearestAnchor =
+        anchors.isEmpty
+        ? null
+        : anchors.reduce(
+            (best, candidate) =>
+                (candidate.index - targetIndex).abs() <
+                    (best.index - targetIndex).abs()
+                ? candidate
+                : best,
+          );
+    final rawOffset =
+        ((nearestAnchor?.absoluteOffset ?? position.pixels) +
+            ((targetIndex - (nearestAnchor?.index ?? 0)) *
+                estimatedEntryExtent)) -
+        (position.viewportDimension * 0.18);
+    return rawOffset
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+  }
+
+  List<({int index, double absoluteOffset})> _visibleThreadAnchors() {
+    if (!_scrollController.hasClients) {
+      return const [];
+    }
+    final viewportContext = _viewportKey.currentContext;
+    final viewportRenderObject = viewportContext?.findRenderObject();
+    if (viewportRenderObject is! RenderBox) {
+      return const [];
+    }
+
+    final anchors = <({int index, double absoluteOffset})>[];
+    for (var index = 0; index < widget.entries.length; index++) {
+      final item = widget.entries[index].item;
+      if (item is! ThreadFeedItem) {
+        continue;
+      }
+      final context = _threadCardKeys[item.id]?.currentContext;
+      if (context == null) {
+        continue;
+      }
+      final renderObject = context.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) {
+        continue;
+      }
+      final relativeTop = renderObject.localToGlobal(
+        Offset.zero,
+        ancestor: viewportRenderObject,
+      );
+      anchors.add(
+        (
+          index: index,
+          absoluteOffset: _scrollController.position.pixels + relativeTop.dy,
+        ),
+      );
+    }
+    anchors.sort((a, b) => a.index.compareTo(b.index));
+    return anchors;
+  }
+
+  double _estimatedEntryExtent(List<({int index, double absoluteOffset})> anchors) {
+    if (anchors.length < 2) {
+      return 72;
+    }
+
+    final perIndexExtents = <double>[];
+    for (var index = 1; index < anchors.length; index++) {
+      final previous = anchors[index - 1];
+      final current = anchors[index];
+      final deltaIndex = current.index - previous.index;
+      if (deltaIndex <= 0) {
+        continue;
+      }
+      perIndexExtents.add(
+        (current.absoluteOffset - previous.absoluteOffset) / deltaIndex,
+      );
+    }
+
+    if (perIndexExtents.isEmpty) {
+      return 72;
+    }
+
+    final averageExtent =
+        perIndexExtents.reduce((sum, extent) => sum + extent) /
+        perIndexExtents.length;
+    return averageExtent.clamp(48, 180).toDouble();
+  }
+
+  int? _findFeedEntryIndex(Key key) {
+    if (key is! ValueKey<String>) {
+      return null;
+    }
+
+    for (var index = 0; index < widget.entries.length; index++) {
+      final entry = widget.entries[index];
+      if (entry.item?.id == key.value) {
+        return index;
+      }
+    }
+    return null;
+  }
+
+  Widget _buildWrappedEntry(BuildContext context, _FeedEntry entry) {
+    final child = widget.entryBuilder(context, entry);
+    final item = entry.item;
+    if (item == null) {
+      return child;
+    }
+
+    Widget wrappedChild = child;
+    if (item is ThreadFeedItem) {
+      wrappedChild = SizedBox(
+        key: _threadCardKey(item.id),
+        child: child,
+      );
+    }
+
+    return KeyedSubtree(
+      key: ValueKey<String>(item.id),
+      child: wrappedChild,
+    );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sliver = widget.entries.isEmpty
+        ? widget.loadingSliver
+        : SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) =>
+                  _buildWrappedEntry(context, widget.entries[index]),
+              childCount: widget.entries.length,
+              findChildIndexCallback: _findFeedEntryIndex,
+            ),
+          );
+
+    return SizedBox(
+      key: _viewportKey,
+      child: CustomScrollView(
+        key: const PageStorageKey<String>('feed-scroll'),
+        controller: _scrollController,
+        physics: const BouncingScrollPhysics(),
+        cacheExtent: 1200,
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.only(
+              left: widget.horizontalPadding,
+              right: widget.horizontalPadding,
+              bottom: 60 + widget.bottomInset,
+            ),
+            sliver: sliver,
+          ),
+        ],
+      ),
+    );
   }
 }
 

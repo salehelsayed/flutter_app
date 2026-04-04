@@ -64,7 +64,8 @@ void main() {
       final caraPosts = InMemoryPostRepository();
 
       final bobRouter = IncomingMessageRouter(p2pService: bobService)..start();
-      final caraRouter = IncomingMessageRouter(p2pService: caraService)..start();
+      final caraRouter = IncomingMessageRouter(p2pService: caraService)
+        ..start();
       final aliceRouter = IncomingMessageRouter(p2pService: aliceService)
         ..start();
       final bobPostListener = PostListener(
@@ -174,6 +175,198 @@ void main() {
     },
   );
 
+  testWidgets(
+    'media post delivery, heart, and offline comment replay stay coherent across users',
+    (tester) async {
+      final network = FakeP2PNetwork();
+      final aliceService = FakeP2PService(
+        peerId: 'peer-alice',
+        network: network,
+      );
+      final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+
+      final aliceContacts = InMemoryContactRepository()
+        ..addTestContact(_contact('peer-bob', 'Bob'));
+      final bobContacts = InMemoryContactRepository()
+        ..addTestContact(_contact('peer-alice', 'Alice'));
+
+      final alicePosts = InMemoryPostRepository();
+      final bobPosts = InMemoryPostRepository();
+      final secureKeyStore = FakeSecureKeyStore();
+      final mediaFileManager = FakeMediaFileManager();
+
+      final aliceRouter = IncomingMessageRouter(p2pService: aliceService)
+        ..start();
+      final bobRouter = IncomingMessageRouter(p2pService: bobService)..start();
+      final bobPostListener = PostListener(
+        postCreateStream: bobRouter.postCreateStream,
+        postRepo: bobPosts,
+        contactRepo: bobContacts,
+      )..start();
+      final aliceCommentListener = PostCommentListener(
+        postCommentStream: aliceRouter.postCommentStream,
+        postRepo: alicePosts,
+        contactRepo: aliceContacts,
+      )..start();
+      final aliceReactionListener = PostReactionListener(
+        postReactionStream: aliceRouter.postReactionStream,
+        postCommentReactionStream: aliceRouter.postCommentReactionStream,
+        postRepo: alicePosts,
+        contactRepo: aliceContacts,
+      )..start();
+
+      addTearDown(() {
+        bobPostListener.dispose();
+        aliceCommentListener.dispose();
+        aliceReactionListener.dispose();
+        aliceRouter.dispose();
+        bobRouter.dispose();
+        alicePosts.dispose();
+        bobPosts.dispose();
+      });
+
+      await secureKeyStore.write(
+        ImageQualityPreference.storageKey,
+        ImageQualityPreference.original.toStorageString(),
+      );
+
+      final (sendResult, post) = await sendPost(
+        p2pService: aliceService,
+        postRepo: alicePosts,
+        contactRepo: aliceContacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: 'Need a ladder',
+        audience: PostAudience.allFriends(),
+        mediaDrafts: const [
+          PostMediaDraft(
+            localFilePath: '/tmp/ladder.jpg',
+            mime: 'image/jpeg',
+            width: 1440,
+            height: 1080,
+          ),
+        ],
+        secureKeyStore: secureKeyStore,
+        imageProcessor: ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                return XFile('${path}_processed');
+              },
+          compressVideo:
+              ({required path, required compress, onProgress}) async {
+                return VideoProcessResult(
+                  path: '${path}_processed',
+                  width: 1440,
+                  height: 1080,
+                );
+              },
+        ),
+        mediaFileManager: mediaFileManager,
+        uploadPostMediaFn:
+            ({
+              required postId,
+              required localFilePath,
+              required mime,
+              required allowedPeers,
+              mediaFileManager,
+              width,
+              height,
+              durationMs,
+              waveform,
+            }) async {
+              return PostMediaAttachmentModel(
+                mediaId: 'media-image',
+                postId: postId,
+                blobId: 'blob-image',
+                kind: 'image',
+                mime: mime,
+                sizeBytes: 248120,
+                width: width,
+                height: height,
+                localPath: 'post_media/$postId/blob-image',
+                downloadStatus: 'done',
+                createdAt: '2026-03-15T10:20:00.000Z',
+              );
+            },
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(sendResult, SendPostResult.success);
+      expect(post, isNotNull);
+      final sentPost = post!;
+      expect(
+        await alicePosts.getRecipientDeliveries(sentPost.id),
+        hasLength(1),
+      );
+
+      final bobFeed = await loadPostsFeed(
+        postRepo: bobPosts,
+        viewerPeerId: 'peer-bob',
+      );
+      expect(bobFeed, hasLength(1));
+      expect(bobFeed.single.id, sentPost.id);
+      expect(bobFeed.single.mediaKind, 'image');
+      expect(bobFeed.single.media, hasLength(1));
+      expect(bobFeed.single.media.single.blobId, 'blob-image');
+
+      final heartResult = await sendPostReaction(
+        p2pService: bobService,
+        postRepo: bobPosts,
+        contactRepo: bobContacts,
+        postId: sentPost.id,
+        senderPeerId: 'peer-bob',
+        isActive: true,
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(heartResult.$1, SendPostReactionResult.success);
+      expect(await alicePosts.loadPostReactions(sentPost.id), hasLength(1));
+
+      final aliceFeedAfterHeart = await loadPostsFeed(
+        postRepo: alicePosts,
+        viewerPeerId: 'peer-alice',
+      );
+      expect(aliceFeedAfterHeart.single.heartCount, 1);
+
+      aliceService.setOnline(false);
+      final (commentResult, comment) = await sendPostComment(
+        p2pService: bobService,
+        postRepo: bobPosts,
+        contactRepo: bobContacts,
+        postId: sentPost.id,
+        senderPeerId: 'peer-bob',
+        senderUsername: 'Bob',
+        body: 'I can lend one.',
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(commentResult, SendPostCommentResult.success);
+      expect(comment, isNotNull);
+      expect(network.inboxCount('peer-alice'), 1);
+
+      aliceService.setOnline(true);
+      await aliceService.drainOfflineInbox();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final aliceComments = await alicePosts.loadComments(sentPost.id);
+      expect(aliceComments, hasLength(1));
+      expect(aliceComments.single.body, 'I can lend one.');
+
+      final aliceFeedAfterComment = await loadPostsFeed(
+        postRepo: alicePosts,
+        viewerPeerId: 'peer-alice',
+      );
+      expect(aliceFeedAfterComment.single.commentCount, 1);
+      expect(aliceFeedAfterComment.single.heartCount, 1);
+    },
+  );
+
   testWidgets('image, video, and voice media posts survive fake reload', (
     tester,
   ) async {
@@ -191,80 +384,83 @@ void main() {
       ImageQualityPreference.original.toStorageString(),
     );
 
-    final cases = <({
-      String expectedKind,
-      PostMediaDraft draft,
-      PostMediaAttachmentModel attachment,
-    })>[
-      (
-        expectedKind: 'image',
-        draft: const PostMediaDraft(
-          localFilePath: '/tmp/image.jpg',
-          mime: 'image/jpeg',
-          width: 1440,
-          height: 1080,
-        ),
-        attachment: const PostMediaAttachmentModel(
-          mediaId: 'media-image',
-          postId: '',
-          blobId: 'blob-image',
-          kind: 'image',
-          mime: 'image/jpeg',
-          sizeBytes: 248120,
-          width: 1440,
-          height: 1080,
-          localPath: '',
-          downloadStatus: 'done',
-          createdAt: '2026-03-15T10:20:00.000Z',
-        ),
-      ),
-      (
-        expectedKind: 'video',
-        draft: const PostMediaDraft(
-          localFilePath: '/tmp/video.mp4',
-          mime: 'video/mp4',
-          width: 1280,
-          height: 720,
-          durationMs: 125000,
-        ),
-        attachment: const PostMediaAttachmentModel(
-          mediaId: 'media-video',
-          postId: '',
-          blobId: 'blob-video',
-          kind: 'video',
-          mime: 'video/mp4',
-          sizeBytes: 512000,
-          width: 1280,
-          height: 720,
-          durationMs: 125000,
-          localPath: '',
-          downloadStatus: 'done',
-          createdAt: '2026-03-15T10:21:00.000Z',
-        ),
-      ),
-      (
-        expectedKind: 'voice',
-        draft: const PostMediaDraft(
-          localFilePath: '/tmp/voice.m4a',
-          mime: 'audio/mp4',
-          durationMs: 5000,
-          waveform: [0.1, 0.5, 0.9],
-        ),
-        attachment: const PostMediaAttachmentModel(
-          mediaId: 'media-voice',
-          postId: '',
-          blobId: 'blob-voice',
-          kind: 'voice',
-          mime: 'audio/mp4',
-          sizeBytes: 48000,
-          durationMs: 5000,
-          waveform: [0.1, 0.5, 0.9],
-          localPath: '',
-          downloadStatus: 'done',
-          createdAt: '2026-03-15T10:22:00.000Z',
-        ),
-      ),
-    ];
+    final cases =
+        <
+          ({
+            String expectedKind,
+            PostMediaDraft draft,
+            PostMediaAttachmentModel attachment,
+          })
+        >[
+          (
+            expectedKind: 'image',
+            draft: const PostMediaDraft(
+              localFilePath: '/tmp/image.jpg',
+              mime: 'image/jpeg',
+              width: 1440,
+              height: 1080,
+            ),
+            attachment: const PostMediaAttachmentModel(
+              mediaId: 'media-image',
+              postId: '',
+              blobId: 'blob-image',
+              kind: 'image',
+              mime: 'image/jpeg',
+              sizeBytes: 248120,
+              width: 1440,
+              height: 1080,
+              localPath: '',
+              downloadStatus: 'done',
+              createdAt: '2026-03-15T10:20:00.000Z',
+            ),
+          ),
+          (
+            expectedKind: 'video',
+            draft: const PostMediaDraft(
+              localFilePath: '/tmp/video.mp4',
+              mime: 'video/mp4',
+              width: 1280,
+              height: 720,
+              durationMs: 125000,
+            ),
+            attachment: const PostMediaAttachmentModel(
+              mediaId: 'media-video',
+              postId: '',
+              blobId: 'blob-video',
+              kind: 'video',
+              mime: 'video/mp4',
+              sizeBytes: 512000,
+              width: 1280,
+              height: 720,
+              durationMs: 125000,
+              localPath: '',
+              downloadStatus: 'done',
+              createdAt: '2026-03-15T10:21:00.000Z',
+            ),
+          ),
+          (
+            expectedKind: 'voice',
+            draft: const PostMediaDraft(
+              localFilePath: '/tmp/voice.m4a',
+              mime: 'audio/mp4',
+              durationMs: 5000,
+              waveform: [0.1, 0.5, 0.9],
+            ),
+            attachment: const PostMediaAttachmentModel(
+              mediaId: 'media-voice',
+              postId: '',
+              blobId: 'blob-voice',
+              kind: 'voice',
+              mime: 'audio/mp4',
+              sizeBytes: 48000,
+              durationMs: 5000,
+              waveform: [0.1, 0.5, 0.9],
+              localPath: '',
+              downloadStatus: 'done',
+              createdAt: '2026-03-15T10:22:00.000Z',
+            ),
+          ),
+        ];
 
     for (final mediaCase in cases) {
       final (result, post) = await sendPost(
@@ -333,16 +529,20 @@ void main() {
         mediaFileManager: mediaFileManager,
         viewerPeerId: 'peer-alice',
       );
-      final restoredPost = feed.firstWhere((feedPost) => feedPost.id == post!.id);
+      final restoredPost = feed.firstWhere(
+        (feedPost) => feedPost.id == post!.id,
+      );
       expect(restoredPost.mediaKind, mediaCase.expectedKind);
       expect(
         restoredPost.media.single.localPath,
         startsWith('/tmp/test_docs/'),
       );
 
-      final payload = jsonDecode(
-        network.retrieveInbox('peer-bob').single['message'] as String,
-      ) as Map<String, dynamic>;
+      final payload =
+          jsonDecode(
+                network.retrieveInbox('peer-bob').single['message'] as String,
+              )
+              as Map<String, dynamic>;
       final snapshot = payload['payload']['snapshot'] as Map<String, dynamic>;
       expect(snapshot['media_kind'], mediaCase.expectedKind);
       expect(snapshot['media'], hasLength(1));

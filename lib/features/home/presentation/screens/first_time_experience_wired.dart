@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -166,6 +167,10 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   }
 
   void _onContactRequest(ContactRequestModel request) {
+    if (kE2ETestMode) {
+      return;
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'FTE_FL_CONTACT_REQUEST_RECEIVED',
@@ -489,9 +494,13 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(AppLocalizations.of(context)!.error_update_photo(e.toString()))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.error_update_photo(e.toString()),
+            ),
+          ),
+        );
       }
     }
   }

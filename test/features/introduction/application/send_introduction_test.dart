@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -226,6 +227,39 @@ void main() {
     }
   });
 
+  test('re-sending the same pair replaces the older local intro row', () async {
+    final firstRound = await _sendFriends([contactC]);
+    final firstIntro = firstRound.single;
+
+    await introRepo.updateRecipientStatus(
+      firstIntro.id,
+      IntroductionStatus.passed,
+    );
+    await introRepo.updateOverallStatus(
+      firstIntro.id,
+      IntroductionOverallStatus.passed,
+    );
+
+    final secondRound = await _sendFriends([contactC]);
+    final secondIntro = secondRound.single;
+
+    expect(secondIntro.id, isNot(firstIntro.id));
+    expect(await introRepo.getIntroduction(firstIntro.id), isNull);
+
+    final stored = await introRepo.getIntroductionsByIntroducer('peer-A');
+    final pairRows = stored
+        .where(
+          (intro) =>
+              intro.recipientId == 'peer-B' && intro.introducedId == 'peer-C',
+        )
+        .toList(growable: false);
+    expect(pairRows, hasLength(1));
+    expect(pairRows.single.id, secondIntro.id);
+    expect(pairRows.single.status, IntroductionOverallStatus.pending);
+    expect(pairRows.single.recipientStatus, IntroductionStatus.pending);
+    expect(pairRows.single.introducedStatus, IntroductionStatus.pending);
+  });
+
   test(
     'caps active intro work at 10 and splits later friends into a second batch',
     () async {
@@ -384,7 +418,11 @@ class _ControlledP2PService extends FakeP2PService {
   int peakBlockedSends = 0;
 
   @override
-  Future<bool> sendMessage(String targetPeerId, String message) async {
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     final shouldBlock = blockMatcher?.call(targetPeerId, message) ?? false;
     if (shouldBlock) {
       final completer = Completer<void>();
@@ -402,14 +440,18 @@ class _ControlledP2PService extends FakeP2PService {
     }
 
     if (failMatcher?.call(targetPeerId, message) ?? false) {
-      return false;
+      return const SendMessageResult(sent: false);
     }
 
-    final sent = await super.sendMessage(targetPeerId, message);
+    final sendResult = await super.sendMessageWithReply(
+      targetPeerId,
+      message,
+      timeoutMs: timeoutMs,
+    );
     if (shouldBlock) {
       completedBlockedTargets.add(targetPeerId);
     }
-    return sent;
+    return sendResult;
   }
 
   @override

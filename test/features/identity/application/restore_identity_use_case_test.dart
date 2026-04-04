@@ -1,7 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+
+import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/test_user.dart';
 
 class _FakeIdentityRepo implements IdentityRepository {
   IdentityModel? savedIdentity;
@@ -56,7 +60,8 @@ void main() {
 
   test('success: restores identity with normalized mnemonic', () async {
     final result = await restoreIdentityFromMnemonic(
-      input: '  Abandon  ABANDON   abandon abandon abandon abandon abandon abandon abandon abandon abandon about  ',
+      input:
+          '  Abandon  ABANDON   abandon abandon abandon abandon abandon abandon abandon abandon abandon about  ',
       callRestore: fakeRestore,
       callMlKemKeygen: () async => _fakeMlKemResponse,
       repo: repo,
@@ -160,4 +165,64 @@ void main() {
 
     expect(result, equals(RestoreIdentityResult.dbError));
   });
+
+  test(
+    'success: restored identity can receive queued messages after device recovery',
+    () async {
+      final result = await restoreIdentityFromMnemonic(
+        input: _validMnemonic,
+        callRestore: fakeRestore,
+        callMlKemKeygen: () async => _fakeMlKemResponse,
+        repo: repo,
+      );
+
+      expect(result, RestoreIdentityResult.success);
+      final restoredIdentity = repo.savedIdentity;
+      expect(restoredIdentity, isNotNull);
+
+      final network = FakeP2PNetwork();
+      final alice = TestUser.create(
+        peerId: 'alice-restore-sender',
+        username: 'Alice',
+        network: network,
+      );
+      final restoredUser = TestUser.create(
+        peerId: restoredIdentity!.peerId,
+        username: 'Recovered',
+        network: network,
+      );
+
+      alice.addContact(restoredUser);
+      restoredUser.addContact(alice);
+
+      alice.start();
+      restoredUser.start();
+      restoredUser.p2pService.setOnline(false);
+
+      try {
+        final (sendResult, _) = await alice.sendMessage(
+          restoredUser.peerId,
+          'Welcome back after restore',
+        );
+        expect(sendResult, SendChatMessageResult.success);
+
+        restoredUser.p2pService.setOnline(true);
+        final drained = await restoredUser.drainOfflineInbox();
+        expect(drained, 1);
+
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final restoredConversation = await restoredUser.loadConversationWith(
+          alice.peerId,
+        );
+        expect(restoredConversation, hasLength(1));
+        expect(restoredConversation.single.isIncoming, isTrue);
+        expect(restoredConversation.single.text, 'Welcome back after restore');
+        expect(restoredConversation.single.senderPeerId, alice.peerId);
+      } finally {
+        alice.dispose();
+        restoredUser.dispose();
+      }
+    },
+  );
 }

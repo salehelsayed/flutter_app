@@ -1,6 +1,10 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/handle_incoming_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -15,6 +19,7 @@ import 'fake_p2p_network.dart';
 import 'fake_p2p_service_integration.dart';
 import 'in_memory_contact_repository.dart';
 import 'in_memory_introduction_repository.dart';
+import 'in_memory_message_repository.dart';
 
 /// Encapsulates the full per-user introduction stack for integration tests.
 ///
@@ -26,6 +31,8 @@ class IntroTestUser {
   final FakeP2PService p2pService;
   final InMemoryContactRepository contactRepo;
   final InMemoryIntroductionRepository introRepo;
+  final InMemoryMessageRepository messageRepo;
+  final ChatMessageListener chatListener;
   final IntroductionListener introListener;
   final IncomingMessageRouter router;
   final Bridge bridge;
@@ -36,6 +43,8 @@ class IntroTestUser {
     required this.p2pService,
     required this.contactRepo,
     required this.introRepo,
+    required this.messageRepo,
+    required this.chatListener,
     required this.introListener,
     required this.router,
     required this.bridge,
@@ -51,7 +60,15 @@ class IntroTestUser {
     final p2p = FakeP2PService(peerId: peerId, network: network);
     final contactRepo = InMemoryContactRepository();
     final introRepo = InMemoryIntroductionRepository();
+    final messageRepo = InMemoryMessageRepository();
     final router = IncomingMessageRouter(p2pService: p2p);
+    final chatListener = ChatMessageListener(
+      chatMessageStream: router.chatMessageStream,
+      messageRepo: messageRepo,
+      contactRepo: contactRepo,
+      bridge: effectiveBridge,
+      getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
+    );
 
     final listener = IntroductionListener(
       introductionStream: router.introductionStream,
@@ -60,6 +77,7 @@ class IntroTestUser {
       bridge: effectiveBridge,
       getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
       getOwnPeerId: () async => peerId,
+      messageRepo: messageRepo,
     );
 
     return IntroTestUser._(
@@ -68,6 +86,8 @@ class IntroTestUser {
       p2pService: p2p,
       contactRepo: contactRepo,
       introRepo: introRepo,
+      messageRepo: messageRepo,
+      chatListener: chatListener,
       introListener: listener,
       router: router,
       bridge: effectiveBridge,
@@ -156,6 +176,8 @@ class IntroTestUser {
       introRepo: introRepo,
       contactRepo: contactRepo,
       ownPeerId: peerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
     );
     return model;
   }
@@ -177,26 +199,57 @@ class IntroTestUser {
       introRepo: introRepo,
       contactRepo: contactRepo,
       ownPeerId: peerId,
+      messageRepo: messageRepo,
+      bridge: bridge,
     );
     return model;
   }
 
+  /// Sends a chat message to a contact.
+  Future<(SendChatMessageResult, ConversationMessage?)> sendMessage(
+    String targetPeerId,
+    String text,
+  ) async {
+    final recipient = await contactRepo.getContact(targetPeerId);
+    return sendChatMessage(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: targetPeerId,
+      text: text,
+      senderPeerId: peerId,
+      senderUsername: username,
+      bridge: bridge,
+      recipientMlKemPublicKey: recipient?.mlKemPublicKey,
+    );
+  }
+
+  /// Loads the conversation history with the contact.
+  Future<List<ConversationMessage>> loadConversationWith(String contactPeerId) {
+    return loadConversation(
+      messageRepo: messageRepo,
+      contactPeerId: contactPeerId,
+    );
+  }
+
   /// Loads pending introductions for this user.
   Future<List<IntroductionModel>> loadPendingIntros() {
-    return loadIntroductionsForUser(
-      introRepo: introRepo,
-      peerId: peerId,
-    );
+    return loadIntroductionsForUser(introRepo: introRepo, peerId: peerId);
   }
 
   /// Starts the router and listener.
   void start() {
     router.start();
+    chatListener.start();
     introListener.start();
   }
 
+  void setOnline(bool online) => p2pService.setOnline(online);
+
+  Future<int> drainOfflineInbox() => p2pService.drainOfflineInboxCount();
+
   /// Disposes of the listener, router, and p2p service.
   void dispose() {
+    chatListener.dispose();
     introListener.dispose();
     router.dispose();
     p2pService.dispose();
@@ -215,16 +268,15 @@ Future<List<IntroductionModel>> sendIntroductionsUseCase({
   required String recipientUsername,
   required String? recipientMlKemPublicKey,
   required List<ContactModel> friendsToIntroduce,
-}) =>
-    sendIntroductions(
-      contactRepo: contactRepo,
-      introRepo: introRepo,
-      p2pService: p2pService,
-      bridge: bridge,
-      introducerPeerId: introducerPeerId,
-      introducerUsername: introducerUsername,
-      recipientPeerId: recipientPeerId,
-      recipientUsername: recipientUsername,
-      recipientMlKemPublicKey: recipientMlKemPublicKey,
-      friendsToIntroduce: friendsToIntroduce,
-    );
+}) => sendIntroductions(
+  contactRepo: contactRepo,
+  introRepo: introRepo,
+  p2pService: p2pService,
+  bridge: bridge,
+  introducerPeerId: introducerPeerId,
+  introducerUsername: introducerUsername,
+  recipientPeerId: recipientPeerId,
+  recipientUsername: recipientUsername,
+  recipientMlKemPublicKey: recipientMlKemPublicKey,
+  friendsToIntroduce: friendsToIntroduce,
+);

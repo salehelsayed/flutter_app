@@ -65,6 +65,7 @@ class ContactRequestListener {
   final String Function() getOwnPeerId;
   final Future<String?> Function()? getOwnPrivateKey;
   final DownloadProfilePictureFn downloadProfilePictureFn;
+  final bool Function(String peerId)? shouldSuppressPresentationForPeerId;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _requestController = StreamController<ContactRequestModel>.broadcast();
@@ -81,6 +82,7 @@ class ContactRequestListener {
     this.getOwnPrivateKey,
     DownloadProfilePictureFn? downloadProfilePictureFn,
     ReplayCache? replayCache,
+    this.shouldSuppressPresentationForPeerId,
   }) : downloadProfilePictureFn =
            downloadProfilePictureFn ?? downloadProfilePicture,
        _replayCache = replayCache ?? ReplayCache();
@@ -205,7 +207,17 @@ class ContactRequestListener {
         );
 
         _prefetchRequestAvatar(request);
-        _requestController.add(request);
+        final shouldSuppressPresentation =
+            shouldSuppressPresentationForPeerId?.call(request.peerId) ?? false;
+        if (shouldSuppressPresentation) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_REQUEST_LISTENER_PRESENTATION_SUPPRESSED',
+            details: {'peerId': peerIdPrefix},
+          );
+        } else {
+          _requestController.add(request);
+        }
       } else if (result == HandleMessageResult.contactKeyUpdated &&
           keyUpdatePeerId != null) {
         final peerPrefix = keyUpdatePeerId.length > 10

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
@@ -7,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -90,7 +92,26 @@ class _FakeMessageRepository implements MessageRepository {
   }
 
   @override
-  Future<ConversationMessage?> getMessage(String id) async => null;
+  Future<ConversationMessage?> getMessage(String id) async {
+    for (final message in saved) {
+      if (message.id == id) {
+        return message;
+      }
+    }
+    if (!existingIds.contains(id)) {
+      return null;
+    }
+    return ConversationMessage(
+      id: id,
+      contactPeerId: 'existing-contact',
+      senderPeerId: 'existing-sender',
+      text: 'existing message',
+      timestamp: DateTime.utc(2026, 1, 1).toIso8601String(),
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: DateTime.utc(2026, 1, 1).toIso8601String(),
+    );
+  }
 
   @override
   Future<bool> messageExists(String id) async =>
@@ -234,9 +255,11 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 class _FakeBridge implements Bridge {
   Map<String, dynamic> downloadResponse = {'ok': true};
   int downloadCallCount = 0;
+  final List<Map<String, dynamic>> requests = [];
 
   @override
   Future<String> send(String message) async {
+    requests.add(jsonDecode(message) as Map<String, dynamic>);
     downloadCallCount++;
     return jsonEncode(downloadResponse);
   }
@@ -393,6 +416,7 @@ ChatMessage _makeChatMessage({
   String id = 'msg-test-001',
   String senderUsername = 'Alice',
   List<Map<String, dynamic>>? media,
+  String? confirmNonce,
 }) {
   final payload = <String, dynamic>{
     'id': id,
@@ -417,10 +441,14 @@ ChatMessage _makeChatMessage({
     content: json,
     timestamp: DateTime.now().toUtc().toIso8601String(),
     isIncoming: true,
+    confirmNonce: confirmNonce,
   );
 }
 
-ChatMessage _makeV2EncryptedChatMessage({required String from}) {
+ChatMessage _makeV2EncryptedChatMessage({
+  required String from,
+  String? confirmNonce,
+}) {
   final json = jsonEncode({
     'type': 'chat_message',
     'version': '2',
@@ -438,6 +466,7 @@ ChatMessage _makeV2EncryptedChatMessage({required String from}) {
     content: json,
     timestamp: DateTime.now().toUtc().toIso8601String(),
     isIncoming: true,
+    confirmNonce: confirmNonce,
   );
 }
 
@@ -565,6 +594,111 @@ void main() {
         expect(messageRepo.saved, isEmpty);
       },
     );
+
+    test('confirms stored direct chat nonce with ok=true', () async {
+      const senderPeerId = 'sender-peer-confirm-store';
+      contactRepo.seedContact(_makeContact(senderPeerId));
+      final bridge = _FakeBridge();
+      final listener = createListener(bridge: bridge);
+
+      final outcome = await listener.processIncomingMessage(
+        _makeChatMessage(
+          from: senderPeerId,
+          id: 'msg-confirm-store',
+          confirmNonce: 'nonce-store',
+        ),
+      );
+
+      expect(outcome.state, ChatMessageProcessState.stored);
+      final confirmRequests = bridge.requests
+          .where((request) => request['cmd'] == 'message:confirm')
+          .toList();
+      expect(confirmRequests, hasLength(1));
+      expect(
+        confirmRequests.single['payload'],
+        equals({'nonce': 'nonce-store', 'ok': true}),
+      );
+    });
+
+    test('confirms duplicate direct chat nonce with ok=true', () async {
+      const senderPeerId = 'sender-peer-confirm-duplicate';
+      messageRepo = _FakeMessageRepository(existingIds: {'msg-dup-001'});
+      contactRepo.seedContact(_makeContact(senderPeerId));
+      final bridge = _FakeBridge();
+      final listener = createListener(bridge: bridge);
+
+      final outcome = await listener.processIncomingMessage(
+        _makeChatMessage(
+          from: senderPeerId,
+          id: 'msg-dup-001',
+          confirmNonce: 'nonce-dup',
+        ),
+      );
+
+      expect(outcome.state, ChatMessageProcessState.duplicate);
+      final confirmRequests = bridge.requests
+          .where((request) => request['cmd'] == 'message:confirm')
+          .toList();
+      expect(confirmRequests, hasLength(1));
+      expect(
+        confirmRequests.single['payload'],
+        equals({'nonce': 'nonce-dup', 'ok': true}),
+      );
+    });
+
+    test('confirms blocked sender nonce with ok=true', () async {
+      const senderPeerId = 'sender-peer-confirm-blocked';
+      contactRepo.seedContact(
+        _makeContact(senderPeerId, isBlocked: true, username: 'Blocked'),
+      );
+      final bridge = _FakeBridge();
+      final listener = createListener(bridge: bridge);
+
+      final outcome = await listener.processIncomingMessage(
+        _makeChatMessage(
+          from: senderPeerId,
+          id: 'msg-confirm-blocked',
+          confirmNonce: 'nonce-blocked',
+        ),
+      );
+
+      expect(outcome.state, ChatMessageProcessState.blockedSender);
+      final confirmRequests = bridge.requests
+          .where((request) => request['cmd'] == 'message:confirm')
+          .toList();
+      expect(confirmRequests, hasLength(1));
+      expect(
+        confirmRequests.single['payload'],
+        equals({'nonce': 'nonce-blocked', 'ok': true}),
+      );
+    });
+
+    test(
+      'confirms retryable decrypt-missing-key nonce with ok=false',
+      () async {
+        const senderPeerId = 'sender-peer-confirm-v2';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        final bridge = _FakeBridge();
+        final listener = createListener(bridge: bridge);
+
+        final outcome = await listener.processIncomingMessage(
+          _makeV2EncryptedChatMessage(
+            from: senderPeerId,
+            confirmNonce: 'nonce-v2',
+          ),
+        );
+
+        expect(outcome.state, ChatMessageProcessState.missingMlKemSecret);
+        final confirmRequests = bridge.requests
+            .where((request) => request['cmd'] == 'message:confirm')
+            .toList();
+        expect(confirmRequests, hasLength(1));
+        expect(
+          confirmRequests.single['payload'],
+          equals({'nonce': 'nonce-v2', 'ok': false}),
+        );
+      },
+    );
   });
 
   group('ChatMessageListener auto-download', () {
@@ -674,6 +808,48 @@ void main() {
 
       listener.dispose();
     });
+
+    test(
+      'allows a later incoming message through once the sender is unblocked',
+      () async {
+        const senderPeerId = 'sender-peer-unblocked';
+        contactRepo.seedContact(
+          _makeContact(senderPeerId, isBlocked: true, username: 'Bob'),
+        );
+
+        final listener = createListener();
+        listener.start();
+
+        final emitted = <ConversationMessage>[];
+        listener.incomingMessageStream.listen(emitted.add);
+
+        chatStreamController.add(
+          _makeChatMessage(from: senderPeerId, id: 'msg-while-blocked'),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 150));
+
+        expect(messageRepo.saved, isEmpty);
+        expect(emitted, isEmpty);
+
+        await contactRepo.addContact(
+          _makeContact(senderPeerId, username: 'Bob'),
+        );
+
+        chatStreamController.add(
+          _makeChatMessage(from: senderPeerId, id: 'msg-after-unblock'),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 150));
+
+        expect(messageRepo.saved.map((message) => message.id), [
+          'msg-after-unblock',
+        ]);
+        expect(emitted.map((message) => message.id), ['msg-after-unblock']);
+
+        listener.dispose();
+      },
+    );
 
     test(
       'persists archived sender message but suppresses UI emission',
@@ -1109,6 +1285,7 @@ void main() {
     late _FakeContactRepository contactRepo;
     late FakeNotificationService notificationService;
     late ActiveConversationTracker tracker;
+    late RecentRemoteNotificationGate remoteNotificationGate;
 
     setUp(() {
       chatStreamController = StreamController<ChatMessage>.broadcast();
@@ -1116,16 +1293,23 @@ void main() {
       contactRepo = _FakeContactRepository();
       notificationService = FakeNotificationService();
       tracker = ActiveConversationTracker();
+      remoteNotificationGate = RecentRemoteNotificationGate(
+        filePath:
+            '${Directory.systemTemp.path}/chat-listener-notification-test-${DateTime.now().microsecondsSinceEpoch}.json',
+      );
     });
 
-    tearDown(() {
-      chatStreamController.close();
+    tearDown(() async {
+      await chatStreamController.close();
+      await remoteNotificationGate.clear();
     });
 
     ChatMessageListener createListenerWithNotifications({
       AppLifecycleState lifecycleState = AppLifecycleState.paused,
       Bridge? bridge,
       Future<String?> Function()? getOwnMlKemSecretKey,
+      RecentRemoteNotificationGate? notificationGate,
+      Duration backgroundNotificationDuplicateGuardDelay = Duration.zero,
     }) {
       return ChatMessageListener(
         chatMessageStream: chatStreamController.stream,
@@ -1136,6 +1320,9 @@ void main() {
         notificationService: notificationService,
         conversationTracker: tracker,
         getAppLifecycleState: () => lifecycleState,
+        remoteNotificationGate: notificationGate ?? remoteNotificationGate,
+        backgroundNotificationDuplicateGuardDelay:
+            backgroundNotificationDuplicateGuardDelay,
       );
     }
 
@@ -1165,6 +1352,43 @@ void main() {
         expect(notificationService.shown.first.senderUsername, 'Bob');
         expect(notificationService.shown.first.messageText, 'Hey there!');
         expect(notificationService.shown.first.contactPeerId, senderPeerId);
+
+        listener.dispose();
+      },
+    );
+
+    test(
+      'suppresses local notification when a recent remote push already announced the same conversation',
+      () async {
+        final senderPeerId = 'sender-notif-remote-push';
+        contactRepo.seedContact(_makeContact(senderPeerId, username: 'Bob'));
+        final gate = RecentRemoteNotificationGate(
+          filePath:
+              '${Directory.systemTemp.path}/chat-listener-remote-push-${DateTime.now().microsecondsSinceEpoch}.json',
+        );
+        addTearDown(gate.clear);
+        await gate.markPayload(senderPeerId);
+
+        final listener = createListenerWithNotifications(
+          lifecycleState: AppLifecycleState.paused,
+          notificationGate: gate,
+          backgroundNotificationDuplicateGuardDelay: Duration.zero,
+        );
+        listener.start();
+
+        chatStreamController.add(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-notif-remote-push',
+            text: 'Hey there!',
+            senderUsername: 'Bob',
+          ),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        expect(notificationService.shown, isEmpty);
+        expect(messageRepo.saved, hasLength(1));
 
         listener.dispose();
       },

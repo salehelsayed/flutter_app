@@ -12,7 +12,7 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - `test/features/conversation/integration/quote_reply_thread_test.dart` stays in the 1:1 gate because quoted-message persistence rides the same shared send/persist path that Session 2 and Session 3 will touch.
 - `test/features/conversation/integration/emoji_reaction_exchange_test.dart` stays out of the 1:1 gate because it validates the reaction pipeline, not the shared durable send / retry / media / voice contract.
 - `test/features/feed/presentation/screens/feed_wired_test.dart` now carries the Session 2 feed inline 1:1 parity regression and the Session 35 delayed-mutual-acceptance / later-block follow-up regression; it stays outside the frozen named gate lists.
-- `test/features/orbit/presentation/screens/orbit_wired_test.dart` and `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` now carry the Session 35 stale-intro-reload and intro follow-up wiring regressions; they stay outside the frozen named gate lists and should be run directly with the intro listener/regression/integration suites when intro-to-Orbit or intro-to-Feed follow-up wiring changes.
+- `test/features/orbit/presentation/screens/orbit_wired_test.dart` and `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` now carry the Session 35 stale-intro-reload and intro follow-up wiring regressions; they stay outside the frozen named gate lists and should be run directly with the Intro / Reintroduction Gate when intro-to-Orbit or intro-to-Feed follow-up wiring changes.
 - `test/features/groups/integration/announcement_happy_path_test.dart` carries the Session 6 announcement create/send/read-only/react regression and stays in the Optional / Manual direct-suite bucket so the frozen named gate lists do not widen.
 - `test/features/groups/integration/group_startup_rejoin_smoke_test.dart` stays in the Group Messaging Gate, not Startup / Transport. It validates group-topic rejoin behavior with fake infrastructure rather than the real transport gate.
 - `integration_test/multi_relay_failover_test.dart` stays nightly-only because it needs multi-relay runtime configuration and composes heavier real-stack coverage than the named transport gate.
@@ -88,6 +88,35 @@ Files:
 Required companion rule:
 
 - If feed can enter the 1:1 send path, also run `./scripts/run_test_gates.sh 1to1`.
+
+### Intro / Reintroduction Gate
+
+Run when introduction send, resend, accept, pass, listener, or intro picker behavior changes.
+
+Command:
+
+```bash
+./scripts/run_test_gates.sh intro
+```
+
+Files:
+
+- `test/features/introduction/application/accept_introduction_test.dart`
+- `test/features/introduction/application/create_connection_on_mutual_acceptance_test.dart`
+- `test/features/introduction/application/handle_incoming_introduction_test.dart`
+- `test/features/introduction/application/introduction_listener_test.dart`
+- `test/features/introduction/application/mutual_acceptance_test.dart`
+- `test/features/introduction/application/pass_introduction_test.dart`
+- `test/features/introduction/application/send_introduction_test.dart`
+- `test/features/introduction/integration/intro_wiring_smoke_test.dart`
+- `test/features/introduction/integration/introduction_multi_node_test.dart`
+- `test/features/introduction/integration/introduction_smoke_test.dart`
+- `test/features/introduction/presentation/screens/friend_picker_wired_test.dart`
+- `test/features/introduction/regression/introduction_regression_test.dart`
+
+Required companion rule:
+
+- If intro changes affect Orbit or Feed follow-up surfaces, also run `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` and the relevant intro-follow-up assertions in `test/features/feed/presentation/screens/feed_wired_test.dart` directly.
 
 ### Group Messaging Gate
 
@@ -191,9 +220,6 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/features/conversation/integration/emoji_reaction_exchange_test.dart` | Optional / manual direct suite | Reaction pipeline coverage, not shared durable-send coverage |
 | `test/features/contact_request/integration/contact_request_flow_test.dart` | Optional / manual direct suite | Contact bootstrap and acceptance flow; run with invite or onboarding entry work |
 | `test/features/contact_request/integration/key_exchange_retry_flow_test.dart` | Optional / manual direct suite | Contact key-bootstrap retry logic, not a named gate member |
-| `test/features/introduction/integration/intro_wiring_smoke_test.dart` | Optional / manual direct suite | Onboarding / introduction wiring |
-| `test/features/introduction/integration/introduction_multi_node_test.dart` | Optional / manual direct suite | Multi-node introduction behavior |
-| `test/features/introduction/integration/introduction_smoke_test.dart` | Optional / manual direct suite | Intro happy-path and edge-case behavior |
 | `test/features/settings/integration/profile_picture_flow_test.dart` | Optional / manual direct suite | Profile media / broadcast / download flow |
 | `test/features/share/integration/share_to_contact_smoke_test.dart` | Optional / manual direct suite | Share target routing and compose hydration |
 | `test/integration/onboarding_golden_path_test.dart` | Optional / manual direct suite | Session 7 onboarding confidence flow spanning identity create, accepted contact request, and first 1:1 send without widening frozen named gates |

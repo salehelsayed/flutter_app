@@ -25,10 +25,7 @@ void main() {
 
     test('1:1 push with sender_id navigates to correct conversation', () async {
       await routeRemoteNotificationOpen(
-        data: const {
-          'type': 'new_message',
-          'sender_id': '12D3KooWAlicePeer',
-        },
+        data: const {'type': 'new_message', 'sender_id': '12D3KooWAlicePeer'},
         onRouteTarget: harness.route,
         onMissingRouteTarget: harness.missing,
       );
@@ -62,6 +59,22 @@ void main() {
         onMissingRouteTarget: harness.missing,
       );
       expect(harness.routed.single.groupId, 'group-team');
+    });
+
+    test('contact-request push navigates to contact-request route', () async {
+      await routeRemoteNotificationOpen(
+        data: const {
+          'type': 'contact_request',
+          'sender_id': '12D3KooWRequestPeer',
+        },
+        onRouteTarget: harness.route,
+        onMissingRouteTarget: harness.missing,
+      );
+      expect(
+        harness.routed.single.kind,
+        NotificationRouteTargetKind.contactRequest,
+      );
+      expect(harness.routed.single.peerId, '12D3KooWRequestPeer');
     });
   });
 }

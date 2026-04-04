@@ -19,13 +19,25 @@ void main() {
   setUp(() {
     network = FakeP2PNetwork();
     userA = IntroTestUser.create(
-        peerId: 'peer-A', username: 'Noor', network: network);
+      peerId: 'peer-A',
+      username: 'Noor',
+      network: network,
+    );
     userB = IntroTestUser.create(
-        peerId: 'peer-B', username: 'Lina', network: network);
+      peerId: 'peer-B',
+      username: 'Lina',
+      network: network,
+    );
     userC = IntroTestUser.create(
-        peerId: 'peer-C', username: 'Sarah', network: network);
+      peerId: 'peer-C',
+      username: 'Sarah',
+      network: network,
+    );
     userD = IntroTestUser.create(
-        peerId: 'peer-D', username: 'Dana', network: network);
+      peerId: 'peer-D',
+      username: 'Dana',
+      network: network,
+    );
 
     // A knows B, C, D
     userA.addContact(userB);
@@ -50,71 +62,72 @@ void main() {
   });
 
   group('introduction smoke tests', () {
-    test('happy path: A sends → B receives → both accept → connected',
-        () async {
-      // 1. A sees banner for B
-      final contactB = await userA.contactRepo.getContact('peer-B');
-      final showBanner = await shouldShowIntroBanner(
-        contactRepo: userA.contactRepo,
-        contact: contactB!,
-        messageCount: 0,
-      );
-      expect(showBanner, isTrue);
+    test(
+      'happy path: A sends → B receives → both accept → connected',
+      () async {
+        // 1. A sees banner for B
+        final contactB = await userA.contactRepo.getContact('peer-B');
+        final showBanner = await shouldShowIntroBanner(
+          contactRepo: userA.contactRepo,
+          contact: contactB!,
+          messageCount: 0,
+        );
+        expect(showBanner, isTrue);
 
-      // 2. A sends intros for C and D to B
-      final friendC = await userA.contactRepo.getContact('peer-C');
-      final friendD = await userA.contactRepo.getContact('peer-D');
-      final intros = await userA.sendIntroductions(
-        recipientPeerId: 'peer-B',
-        friends: [friendC!, friendD!],
-      );
-      expect(intros, hasLength(2));
+        // 2. A sends intros for C and D to B
+        final friendC = await userA.contactRepo.getContact('peer-C');
+        final friendD = await userA.contactRepo.getContact('peer-D');
+        final intros = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: [friendC!, friendD!],
+        );
+        expect(intros, hasLength(2));
 
-      // 3. Confirmation data correct
-      expect(intros[0].recipientId, 'peer-B');
-      expect(intros[1].recipientId, 'peer-B');
+        // 3. Confirmation data correct
+        expect(intros[0].recipientId, 'peer-B');
+        expect(intros[1].recipientId, 'peer-B');
 
-      // Wait for delivery
-      await Future.delayed(const Duration(milliseconds: 100));
+        // Wait for delivery
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      // 4. Seed intros on B and C repos
-      final introBC = intros.firstWhere((i) => i.introducedId == 'peer-C');
-      await userB.introRepo.saveIntroduction(introBC);
-      await userC.introRepo.saveIntroduction(introBC);
+        // 4. Seed intros on B and C repos
+        final introBC = intros.firstWhere((i) => i.introducedId == 'peer-C');
+        await userB.introRepo.saveIntroduction(introBC);
+        await userC.introRepo.saveIntroduction(introBC);
 
-      // 5. B accepts C
-      await userB.acceptIntro(introBC.id);
-      await userC.receiveAcceptNotification(
-        introId: introBC.id,
-        responderId: 'peer-B',
-        responderUsername: 'Lina',
-      );
+        // 5. B accepts C
+        await userB.acceptIntro(introBC.id);
+        await userC.receiveAcceptNotification(
+          introId: introBC.id,
+          responderId: 'peer-B',
+          responderUsername: 'Lina',
+        );
 
-      // 6. C accepts B
-      await userC.acceptIntro(introBC.id);
-      await userB.receiveAcceptNotification(
-        introId: introBC.id,
-        responderId: 'peer-C',
-        responderUsername: 'Sarah',
-      );
+        // 6. C accepts B
+        await userC.acceptIntro(introBC.id);
+        await userB.receiveAcceptNotification(
+          introId: introBC.id,
+          responderId: 'peer-C',
+          responderUsername: 'Sarah',
+        );
 
-      // 7. Both reach mutualAccepted
-      final bFinal = await userB.introRepo.getIntroduction(introBC.id);
-      final cFinal = await userC.introRepo.getIntroduction(introBC.id);
-      expect(bFinal!.status, IntroductionOverallStatus.mutualAccepted);
-      expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
+        // 7. Both reach mutualAccepted
+        final bFinal = await userB.introRepo.getIntroduction(introBC.id);
+        final cFinal = await userC.introRepo.getIntroduction(introBC.id);
+        expect(bFinal!.status, IntroductionOverallStatus.mutualAccepted);
+        expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
 
-      // 8. Contacts created
-      expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
-      expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
+        // 8. Contacts created
+        expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
+        expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
 
-      // 9. Contacts have introducedBy
-      final bContactC = await userB.contactRepo.getContact('peer-C');
-      expect(bContactC!.introducedBy, 'Noor');
-    });
+        // 9. Contacts have introducedBy
+        final bContactC = await userB.contactRepo.getContact('peer-C');
+        expect(bContactC!.introducedBy, 'Noor');
+      },
+    );
 
     test('dismiss + re-entry via overflow menu path', () async {
-
       // Dismiss banner
       await userA.contactRepo.dismissIntroBanner('peer-B');
 
@@ -194,29 +207,48 @@ void main() {
       expect(showAfterUnblock, isTrue);
     });
 
-    test('duplicate prevention: already-introduced filtered', () async {
-      final friendC = await userA.contactRepo.getContact('peer-C');
+    test(
+      're-introducing the same pair refreshes the intro instead of duplicating it',
+      () async {
+        final friendC = await userA.contactRepo.getContact('peer-C');
 
-      // Send first round
-      final intros = await userA.sendIntroductions(
-        recipientPeerId: 'peer-B',
-        friends: [friendC!],
-      );
-      expect(intros, hasLength(1));
+        final firstRound = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: [friendC!],
+        );
+        final firstIntroId = firstRound.single.id;
 
-      // A's intro repo has the record
-      final stored = await userA.introRepo.getIntroductionsByIntroducer('peer-A');
-      expect(stored, hasLength(1));
-      expect(stored.first.introducedId, 'peer-C');
+        await Future.delayed(const Duration(milliseconds: 100));
+        expect(await userB.introRepo.getIntroduction(firstIntroId), isNotNull);
+        expect(await userC.introRepo.getIntroduction(firstIntroId), isNotNull);
 
-      // For duplicate filtering, the picker would exclude already-introduced
-      // Verify the repo query returns existing intros
-      final existingForRecipient =
-          await userA.introRepo.getIntroductionsByRecipient('peer-B');
-      final alreadyIntroduced =
-          existingForRecipient.map((i) => i.introducedId).toSet();
-      expect(alreadyIntroduced.contains('peer-C'), isTrue);
-    });
+        final secondRound = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: [friendC],
+        );
+        final secondIntroId = secondRound.single.id;
+        expect(secondIntroId, isNot(firstIntroId));
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final stored = await userA.introRepo.getIntroductionsByIntroducer(
+          'peer-A',
+        );
+        final pairRows = stored
+            .where(
+              (intro) =>
+                  intro.recipientId == 'peer-B' &&
+                  intro.introducedId == 'peer-C',
+            )
+            .toList(growable: false);
+        expect(pairRows, hasLength(1));
+        expect(pairRows.single.id, secondIntroId);
+        expect(await userB.introRepo.getIntroduction(firstIntroId), isNull);
+        expect(await userC.introRepo.getIntroduction(firstIntroId), isNull);
+        expect(await userB.introRepo.getIntroduction(secondIntroId), isNotNull);
+        expect(await userC.introRepo.getIntroduction(secondIntroId), isNotNull);
+      },
+    );
 
     test('B passes all intros → no connections', () async {
       final friendC = await userA.contactRepo.getContact('peer-C');
@@ -257,13 +289,15 @@ void main() {
           .toIso8601String();
 
       // Save an old intro
-      await userB.introRepo.saveIntroduction(IntroductionModel(
-        id: 'old-intro',
-        introducerId: 'peer-A',
-        recipientId: 'peer-B',
-        introducedId: 'peer-C',
-        createdAt: thirtyOneDaysAgo,
-      ));
+      await userB.introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'old-intro',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          createdAt: thirtyOneDaysAgo,
+        ),
+      );
 
       // deriveStatus returns expired
       final status = IntroductionModel.deriveStatus(
@@ -349,40 +383,47 @@ void main() {
       expect(bFinal.introducedStatus, IntroductionStatus.accepted);
     });
 
-    test('accept happy path encrypts notification to stranger via v2', () async {
-      // A sends intros for C to B
-      final friendC = await userA.contactRepo.getContact('peer-C');
-      final intros = await userA.sendIntroductions(
-        recipientPeerId: 'peer-B',
-        friends: [friendC!],
-      );
+    test(
+      'accept happy path encrypts notification to stranger via v2',
+      () async {
+        // A sends intros for C to B
+        final friendC = await userA.contactRepo.getContact('peer-C');
+        final intros = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: [friendC!],
+        );
 
-      await Future.delayed(const Duration(milliseconds: 100));
+        await Future.delayed(const Duration(milliseconds: 100));
 
-      // Seed intros on B and C repos
-      final introBC = intros.first;
-      await userB.introRepo.saveIntroduction(introBC);
-      await userC.introRepo.saveIntroduction(introBC);
+        // Seed intros on B and C repos
+        final introBC = intros.first;
+        await userB.introRepo.saveIntroduction(introBC);
+        await userC.introRepo.saveIntroduction(introBC);
 
-      // B does NOT have C as a contact (stranger scenario)
-      // B only has A as a contact (the introducer)
-      // But intro record has C's ML-KEM key
+        // B does NOT have C as a contact (stranger scenario)
+        // B only has A as a contact (the introducer)
+        // But intro record has C's ML-KEM key
 
-      // Clear bridge command log
-      final bridgeB = userB.bridge as PassthroughCryptoBridge;
-      bridgeB.commandLog.clear();
+        // Clear bridge command log
+        final bridgeB = userB.bridge as PassthroughCryptoBridge;
+        bridgeB.commandLog.clear();
 
-      // B accepts
-      await userB.acceptIntro(introBC.id);
+        // B accepts
+        await userB.acceptIntro(introBC.id);
 
-      // B should have called message.encrypt twice:
-      // once for introducer (A, who is a contact) and
-      // once for stranger (C, using intro record key)
-      final encryptCalls =
-          bridgeB.commandLog.where((c) => c == 'message.encrypt').length;
-      expect(encryptCalls, 2,
-          reason: 'encrypt called for introducer + stranger');
-    });
+        // B should have called message.encrypt twice:
+        // once for introducer (A, who is a contact) and
+        // once for stranger (C, using intro record key)
+        final encryptCalls = bridgeB.commandLog
+            .where((c) => c == 'message.encrypt')
+            .length;
+        expect(
+          encryptCalls,
+          2,
+          reason: 'encrypt called for introducer + stranger',
+        );
+      },
+    );
 
     test('pass notification to stranger uses v2 encryption', () async {
       final friendC = await userA.contactRepo.getContact('peer-C');
@@ -403,10 +444,14 @@ void main() {
       await userB.passIntro(introBC.id);
 
       // Same encryption expectation
-      final encryptCalls =
-          bridgeB.commandLog.where((c) => c == 'message.encrypt').length;
-      expect(encryptCalls, 2,
-          reason: 'encrypt called for introducer + stranger');
+      final encryptCalls = bridgeB.commandLog
+          .where((c) => c == 'message.encrypt')
+          .length;
+      expect(
+        encryptCalls,
+        2,
+        reason: 'encrypt called for introducer + stranger',
+      );
     });
 
     test('full cross-step chain: send → accept → verify', () async {
@@ -482,8 +527,9 @@ void main() {
       expect(bPending, isEmpty);
 
       // Step 9: Verify A's records
-      final aIntros =
-          await userA.introRepo.getIntroductionsByIntroducer('peer-A');
+      final aIntros = await userA.introRepo.getIntroductionsByIntroducer(
+        'peer-A',
+      );
       expect(aIntros, hasLength(2));
 
       // Step 10: groupByIntroducer works

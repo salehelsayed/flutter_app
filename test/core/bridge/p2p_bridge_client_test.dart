@@ -184,6 +184,7 @@ void main() {
           'enableReservationAwareHealth': true,
           'enableInPlaceRelayRecovery': false,
           'enableResumeGroupRecovery': false,
+          'enableDeferredDirectAck': true,
         },
       );
 
@@ -192,6 +193,7 @@ void main() {
       expect(payload['featureFlags']['enableMultiRelayRouting'], isFalse);
       expect(payload['featureFlags']['enableInPlaceRelayRecovery'], isFalse);
       expect(payload['featureFlags']['enableResumeGroupRecovery'], isFalse);
+      expect(payload['featureFlags']['enableDeferredDirectAck'], isTrue);
     });
 
     test('returns parsed response map', () async {
@@ -716,6 +718,25 @@ void main() {
       final payload =
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['timeoutMs'], equals(30000));
+    });
+  });
+
+  group('callP2PConfirmDirectMessage', () {
+    test('sends message:confirm with nonce and ok payload', () async {
+      bridge.nextResponse = {'ok': true};
+
+      final result = await callP2PConfirmDirectMessage(
+        bridge,
+        nonce: 'nonce-123',
+        ok: false,
+      );
+
+      expect(result['ok'], isTrue);
+      expect(bridge.lastParsedRequest!['cmd'], equals('message:confirm'));
+      expect(
+        bridge.lastParsedRequest!['payload'],
+        equals({'nonce': 'nonce-123', 'ok': false}),
+      );
     });
   });
 

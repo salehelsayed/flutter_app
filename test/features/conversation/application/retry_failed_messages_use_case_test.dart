@@ -75,6 +75,25 @@ ConversationMessage makeFailedMessage({
   );
 }
 
+ConversationMessage makeFailedDeletedMessage({
+  String id = 'msg-delete-fail-001',
+  String contactPeerId = 'peer-target',
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: 'my-peer-id',
+    text: '',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    status: 'failed',
+    isIncoming: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    deletedAt: '2026-01-01T00:01:00.000Z',
+    deletedByPeerId: 'my-peer-id',
+    wireEnvelope: '{"type":"message_deletion","version":"1"}',
+  );
+}
+
 ContactModel makeContact({
   String peerId = 'peer-target',
   String? mlKemPublicKey = 'test-mlkem-pk',
@@ -247,6 +266,35 @@ void main() {
         );
 
         expect(count, 1);
+      },
+    );
+
+    test(
+      'hides delivered outgoing delete tombstones after failed retry stores in inbox',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedDeletedMessage()]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        expect(count, 1);
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'delivered');
+        expect(saved.isDeleted, isTrue);
+        expect(saved.isHidden, isTrue);
+        expect(saved.hiddenAt, saved.deletedAt);
       },
     );
 

@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/libp2p/go-libp2p"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -79,6 +80,10 @@ type Node struct {
 	personalRendezvousRefreshCancel context.CancelFunc
 	personalRendezvousRefreshLoopID uint64
 	personalRendezvousRegistering   atomic.Bool
+
+	pendingConfirmsMu            sync.Mutex
+	pendingDirectConfirms        map[string]chan bool
+	directConfirmTimeoutOverride time.Duration // test seam
 }
 
 type connectionInfo struct {
@@ -161,21 +166,23 @@ func filterAddresses(addrs []ma.Multiaddr) []ma.Multiaddr {
 // NewNode creates a new Node instance without an event callback.
 func NewNode() *Node {
 	return &Node{
-		connections:      make(map[string]connectionInfo),
-		relaySessionMgr:  NewRelaySessionManager(),
-		groupDialBackoff: make(map[string]groupPeerDialState),
-		groupRecoverySem: make(chan struct{}, GroupDiscoveryConcurrency),
+		connections:           make(map[string]connectionInfo),
+		relaySessionMgr:       NewRelaySessionManager(),
+		groupDialBackoff:      make(map[string]groupPeerDialState),
+		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
+		pendingDirectConfirms: make(map[string]chan bool),
 	}
 }
 
 // New creates a new Node instance with an event callback for Go → Flutter push events.
 func New(cb EventCallback) *Node {
 	return &Node{
-		connections:      make(map[string]connectionInfo),
-		eventCallback:    cb,
-		relaySessionMgr:  NewRelaySessionManager(),
-		groupDialBackoff: make(map[string]groupPeerDialState),
-		groupRecoverySem: make(chan struct{}, GroupDiscoveryConcurrency),
+		connections:           make(map[string]connectionInfo),
+		eventCallback:         cb,
+		relaySessionMgr:       NewRelaySessionManager(),
+		groupDialBackoff:      make(map[string]groupPeerDialState),
+		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
+		pendingDirectConfirms: make(map[string]chan bool),
 	}
 }
 
@@ -217,7 +224,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 
 	// Parse relay addresses
 	relayAddresses := cfg.RelayAddresses
-	if len(relayAddresses) == 0 {
+	if relayAddresses == nil {
 		relayAddresses = []string{DefaultRelayAddress}
 	}
 	relayAddresses = limitRelayAddresses(relayAddresses, flags)
@@ -1141,11 +1148,96 @@ func finishStream(s network.Stream, ok *bool) {
 	_ = s.Reset()
 }
 
+func messageEnvelopeType(msgBytes []byte) string {
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(msgBytes, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Type
+}
+
+func (n *Node) shouldDeferDirectAck(msgBytes []byte) bool {
+	if messageEnvelopeType(msgBytes) != "chat_message" {
+		return false
+	}
+	if !n.currentFeatureFlags().EnableDeferredDirectAck {
+		return false
+	}
+
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.isStarted && n.eventDispatcher != nil
+}
+
+func (n *Node) directConfirmTimeout() time.Duration {
+	if n == nil {
+		return DirectConfirmTimeout
+	}
+	if n.directConfirmTimeoutOverride > 0 {
+		return n.directConfirmTimeoutOverride
+	}
+	return DirectConfirmTimeout
+}
+
+func (n *Node) registerDirectConfirm(nonce string) chan bool {
+	ch := make(chan bool, 1)
+	n.pendingConfirmsMu.Lock()
+	if n.pendingDirectConfirms == nil {
+		n.pendingDirectConfirms = make(map[string]chan bool)
+	}
+	n.pendingDirectConfirms[nonce] = ch
+	n.pendingConfirmsMu.Unlock()
+	return ch
+}
+
+func (n *Node) waitForRegisteredDirectConfirm(nonce string, ch chan bool, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	defer func() {
+		n.pendingConfirmsMu.Lock()
+		delete(n.pendingDirectConfirms, nonce)
+		n.pendingConfirmsMu.Unlock()
+	}()
+
+	select {
+	case ok := <-ch:
+		return ok
+	case <-timer.C:
+		return false
+	}
+}
+
+func (n *Node) waitForDirectConfirm(nonce string, timeout time.Duration) bool {
+	ch := n.registerDirectConfirm(nonce)
+	return n.waitForRegisteredDirectConfirm(nonce, ch, timeout)
+}
+
+func (n *Node) ResolveDirectConfirm(nonce string, ok bool) {
+	if nonce == "" {
+		return
+	}
+
+	n.pendingConfirmsMu.Lock()
+	ch, exists := n.pendingDirectConfirms[nonce]
+	n.pendingConfirmsMu.Unlock()
+	if !exists {
+		return
+	}
+
+	select {
+	case ch <- ok:
+	default:
+	}
+}
+
 // handleIncomingMessage handles incoming chat protocol streams.
 // Applies an inbound read deadline to prevent slow/malicious peers
 // from holding a goroutine open indefinitely.
 func (n *Node) handleIncomingMessage(s network.Stream) {
-	defer s.Close()
+	ok := false
+	defer finishStream(s, &ok)
 
 	remotePeer := s.Conn().RemotePeer().String()
 
@@ -1154,19 +1246,12 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 
 	msgBytes, err := readFrame(s)
 	if err != nil {
-		s.Reset() // reset rather than graceful close on read failure
 		log.Printf("[NODE] Read error from %s: %v", remotePeer[:min(20, len(remotePeer))], err)
 		return
 	}
 
-	// Send ACK reply
-	ack := []byte(`{"ack":true}`)
-	_ = writeFrame(s, ack)
-
-	// Build ChatMessage and emit to Flutter
 	toPeer := n.peerId
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
-
 	msgData := map[string]interface{}{
 		"from":       remotePeer,
 		"to":         toPeer,
@@ -1176,7 +1261,35 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 		"transport":  classifyStreamTransport(s),
 	}
 
+	if n.shouldDeferDirectAck(msgBytes) {
+		nonce := uuid.NewString()
+		msgData["confirmNonce"] = nonce
+		confirmCh := n.registerDirectConfirm(nonce)
+		n.emitEvent("message:received", msgData)
+
+		if !n.waitForRegisteredDirectConfirm(nonce, confirmCh, n.directConfirmTimeout()) {
+			log.Printf("[NODE] Direct confirm timeout for %s — not ACKing", nonce[:min(8, len(nonce))])
+			return
+		}
+
+		ack := []byte(`{"ack":true}`)
+		if err := writeFrame(s, ack); err != nil {
+			log.Printf("[NODE] ACK write error for %s: %v", remotePeer[:min(20, len(remotePeer))], err)
+			return
+		}
+
+		ok = true
+		return
+	}
+
+	ack := []byte(`{"ack":true}`)
+	if err := writeFrame(s, ack); err != nil {
+		log.Printf("[NODE] ACK write error for %s: %v", remotePeer[:min(20, len(remotePeer))], err)
+		return
+	}
+
 	n.emitEvent("message:received", msgData)
+	ok = true
 }
 
 // waitForCircuitAddress polls until at least one /p2p-circuit address

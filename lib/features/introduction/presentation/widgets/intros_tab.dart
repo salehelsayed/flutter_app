@@ -27,6 +27,20 @@ class IntrosTab extends StatelessWidget {
     this.blockedPeerIds = const {},
   });
 
+  String _displayName(String? username, {String? fallbackPeerId}) {
+    final trimmedUsername = username?.trim();
+    if (trimmedUsername != null && trimmedUsername.isNotEmpty) {
+      return trimmedUsername;
+    }
+
+    final trimmedPeerId = fallbackPeerId?.trim();
+    if (trimmedPeerId != null && trimmedPeerId.isNotEmpty) {
+      return trimmedPeerId;
+    }
+
+    return 'Unknown';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (groupedIntros.isEmpty) {
@@ -69,8 +83,10 @@ class IntrosTab extends StatelessWidget {
           ) ...[
             if (groupIndex > 0) const SizedBox(height: 16),
             IntroGroupHeader(
-              introducerUsername:
-                  introducerUsernames[introducerIds[groupIndex]] ?? 'Unknown',
+              introducerUsername: _displayName(
+                introducerUsernames[introducerIds[groupIndex]],
+                fallbackPeerId: introducerIds[groupIndex],
+              ),
             ),
             const SizedBox(height: 8),
             for (final intro in groupedIntros[introducerIds[groupIndex]]!) ...[
@@ -79,18 +95,30 @@ class IntrosTab extends StatelessWidget {
                 child: Builder(
                   builder: (context) {
                     final amRecipient = intro.recipientId == ownPeerId;
-                    final displayUsername = amRecipient
-                        ? (intro.introducedUsername ?? 'Unknown')
-                        : (intro.recipientUsername ?? 'Unknown');
                     final displayPeerId = amRecipient
                         ? intro.introducedId
                         : intro.recipientId;
+                    final displayUsername = amRecipient
+                        ? _displayName(
+                            intro.introducedUsername,
+                            fallbackPeerId: displayPeerId,
+                          )
+                        : _displayName(
+                            intro.recipientUsername,
+                            fallbackPeerId: displayPeerId,
+                          );
                     final ownPartyStatus = amRecipient
                         ? intro.recipientStatus
                         : intro.introducedStatus;
                     final waitingForUsername = amRecipient
-                        ? (intro.introducedUsername ?? 'Unknown')
-                        : (intro.recipientUsername ?? 'Unknown');
+                        ? _displayName(
+                            intro.introducedUsername,
+                            fallbackPeerId: displayPeerId,
+                          )
+                        : _displayName(
+                            intro.recipientUsername,
+                            fallbackPeerId: displayPeerId,
+                          );
                     final showActions =
                         ownPartyStatus == IntroductionStatus.pending &&
                         intro.status == IntroductionOverallStatus.pending;

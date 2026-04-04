@@ -25,6 +25,9 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
         "com.mknoon/go_bridge_events"
     )
     private var eventSink: EventChannel.EventSink? = null
+    private val pendingEvents = ArrayDeque<String>()
+    private val pendingEventsLock = Any()
+    private val maxPendingEvents = 256
     private val executor = java.util.concurrent.Executors.newCachedThreadPool()
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
@@ -81,6 +84,7 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
             "dialPeer" -> runOnBackground({ GoMknoon.dialPeer(args ?: "") }, result)
             "disconnectPeer" -> runOnBackground({ GoMknoon.disconnectPeer(args ?: "") }, result)
             "sendMessage" -> runOnBackground({ GoMknoon.sendMessage(args ?: "") }, result)
+            "confirmDirectMessage" -> runOnBackground({ GoMknoon.confirmDirectMessage(args ?: "") }, result)
 
             // Inbox
             "inboxStore" -> runOnBackground({ GoMknoon.inboxStore(args ?: "") }, result)
@@ -132,6 +136,7 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         android.util.Log.i("GoBridge", "onListen: eventSink registered")
         eventSink = events
+        flushPendingEvents()
     }
 
     override fun onCancel(arguments: Any?) {
@@ -144,17 +149,48 @@ class GoBridge(flutterEngine: FlutterEngine) : MethodChannel.MethodCallHandler,
         jsonString?.let { json ->
             val hasSink = eventSink != null
             if (!hasSink) {
-                android.util.Log.w("GoBridge", "onEvent: DROPPED (no sink) event=${json.take(80)}")
+                bufferEvent(json, "no sink")
                 return
             }
             mainHandler.post {
                 val sink = eventSink
                 if (sink == null) {
-                    android.util.Log.w("GoBridge", "onEvent: DROPPED (sink gone) event=${json.take(80)}")
+                    bufferEvent(json, "sink gone")
                     return@post
                 }
                 sink.success(json)
             }
+        }
+    }
+
+    private fun bufferEvent(json: String, reason: String) {
+        synchronized(pendingEventsLock) {
+            if (pendingEvents.size >= maxPendingEvents) {
+                pendingEvents.removeFirst()
+                android.util.Log.w(
+                    "GoBridge",
+                    "bufferEvent: dropped oldest buffered event to keep queue <= $maxPendingEvents"
+                )
+            }
+            pendingEvents.addLast(json)
+        }
+        android.util.Log.w("GoBridge", "onEvent: BUFFERED ($reason) event=${json.take(80)}")
+    }
+
+    private fun flushPendingEvents() {
+        mainHandler.post {
+            val sink = eventSink ?: return@post
+            val snapshot = synchronized(pendingEventsLock) {
+                if (pendingEvents.isEmpty()) {
+                    return@synchronized emptyList<String>()
+                }
+                val events = pendingEvents.toList()
+                pendingEvents.clear()
+                events
+            }
+            if (snapshot.isEmpty()) return@post
+            android.util.Log.i("GoBridge", "flushPendingEvents: replaying ${snapshot.size} buffered event(s)")
+            snapshot.forEach { sink.success(it) }
         }
     }
 }

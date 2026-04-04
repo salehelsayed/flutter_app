@@ -70,6 +70,52 @@ void main() {
     );
 
     test(
+      'warm local contact-request tap prepares contact-request target before route',
+      () async {
+        await routeAppRootLocalNotificationTap(
+          payload: 'contact_request:peer-request-123',
+          onBeforeRouteTarget: harness.prepare,
+          onRouteTarget: harness.route,
+        );
+
+        expect(harness.events, <String>[
+          'prepare:contact_request:peer-request-123',
+          'route:contact_request:peer-request-123',
+        ]);
+        expect(
+          harness.routed.single.kind,
+          NotificationRouteTargetKind.contactRequest,
+        );
+        expect(harness.routed.single.peerId, 'peer-request-123');
+      },
+    );
+
+    test(
+      'warm remote contact-request push prepares contact-request target before route',
+      () async {
+        await routeAppRootRemoteNotificationOpen(
+          data: const <String, dynamic>{
+            'type': 'contact_request',
+            'sender_id': 'peer-request-123',
+          },
+          onBeforeRouteTarget: harness.prepare,
+          onRouteTarget: harness.route,
+          onMissingRouteTarget: harness.missing,
+        );
+
+        expect(harness.events, <String>[
+          'prepare:contact_request:peer-request-123',
+          'route:contact_request:peer-request-123',
+        ]);
+        expect(
+          harness.routed.single.kind,
+          NotificationRouteTargetKind.contactRequest,
+        );
+        expect(harness.routed.single.peerId, 'peer-request-123');
+      },
+    );
+
+    test(
       'missing warm remote route target skips prepare and calls missing handler',
       () async {
         await routeAppRootRemoteNotificationOpen(

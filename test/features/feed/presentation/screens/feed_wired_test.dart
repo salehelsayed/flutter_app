@@ -41,6 +41,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
@@ -280,6 +281,72 @@ void main() {
 
   Finder orbitScopedText(String text) =>
       find.descendant(of: find.byType(OrbitWired), matching: find.text(text));
+
+  Finder orbitFriendRow(String username) => find
+      .ancestor(
+        of: orbitScopedText(username).first,
+        matching: find.byType(FriendRow),
+      )
+      .first;
+
+  Finder orbitFriendUnreadCount(String username, String count) =>
+      find.descendant(of: orbitFriendRow(username), matching: find.text(count));
+
+  Finder orbitFriendChevron(String username) => find.descendant(
+    of: orbitFriendRow(username),
+    matching: find.byIcon(Icons.chevron_right),
+  );
+
+  Finder feedScrollView() =>
+      find.byKey(const PageStorageKey<String>('feed-scroll'));
+
+  Finder feedScrollable() => find.descendant(
+    of: feedScrollView(),
+    matching: find.byWidgetPredicate(
+      (widget) =>
+          widget is Scrollable && widget.axisDirection == AxisDirection.down,
+    ),
+  );
+
+  double currentFeedScrollOffset(WidgetTester tester) {
+    expect(feedScrollable(), findsOneWidget);
+    return tester.state<ScrollableState>(feedScrollable()).position.pixels;
+  }
+
+  Rect feedViewportRect(WidgetTester tester) {
+    expect(feedScrollable(), findsOneWidget);
+    return tester.getRect(feedScrollable());
+  }
+
+  bool isVisibleInFeedViewport(WidgetTester tester, Finder finder) {
+    if (finder.evaluate().isEmpty) {
+      return false;
+    }
+    final targetRect = tester.getRect(finder);
+    final viewportRect = feedViewportRect(tester);
+    return targetRect.bottom > viewportRect.top &&
+        targetRect.top < viewportRect.bottom;
+  }
+
+  Future<void> dragFeedUntilVisible(
+    WidgetTester tester,
+    Finder finder, {
+    int maxAttempts = 20,
+  }) async {
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      if (isVisibleInFeedViewport(tester, finder)) {
+        return;
+      }
+      await tester.drag(feedScrollView(), const Offset(0, -400));
+      await pumpFeedFrames(tester, count: 4);
+    }
+
+    expect(
+      isVisibleInFeedViewport(tester, finder),
+      isTrue,
+      reason: 'Expected finder to become visible in the Feed viewport',
+    );
+  }
 
   Future<void> emitInlineOrbitExit(
     WidgetTester tester,
@@ -830,6 +897,119 @@ void main() {
       expect(feedScrollOffset(), closeTo(scrolledOffset, 1));
     });
 
+    testWidgets(
+      'successful inline reply reorients the viewport to the same moved feed card',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        final contacts = List.generate(
+          28,
+          (index) => testContact.copyWith(
+            peerId: 'reorient-peer-$index',
+            publicKey: 'reorient-pk-$index',
+            username: 'Reorient User $index',
+            signature: 'reorient-sig-$index',
+            scannedAt:
+                '2026-03-01T09:${index.toString().padLeft(2, '0')}:00.000Z',
+          ),
+        );
+        contactRepo.seed(contacts);
+
+        final newestTimestamp = DateTime.utc(2026, 3, 1, 12, 0);
+        for (var index = 0; index < contacts.length; index++) {
+          final contact = contacts[index];
+          final timestamp = newestTimestamp.subtract(Duration(minutes: index));
+          await messageRepo.saveMessage(
+            ConversationMessage(
+              id: 'reorient-msg-${contact.peerId}',
+              contactPeerId: contact.peerId,
+              text: 'Unread for ${contact.username}',
+              senderPeerId: contact.peerId,
+              timestamp: timestamp.toIso8601String(),
+              isIncoming: true,
+              status: 'delivered',
+              createdAt: timestamp.toIso8601String(),
+            ),
+          );
+        }
+
+        final targetContact = contacts[18];
+        final targetCardFinder = find.byKey(
+          ValueKey<String>('thread_${targetContact.peerId}'),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 10);
+
+        await dragFeedUntilVisible(tester, targetCardFinder, maxAttempts: 24);
+        final offsetBeforeReply = currentFeedScrollOffset(tester);
+        expect(offsetBeforeReply, greaterThan(0));
+        expect(isVisibleInFeedViewport(tester, targetCardFinder), isTrue);
+
+        final targetComposerField = find.descendant(
+          of: targetCardFinder,
+          matching: find.byType(TextField),
+        );
+        expect(targetComposerField, findsOneWidget);
+
+        await tester.enterText(targetComposerField, 'Stay with this card');
+        await tester.pump();
+
+        final sendButton = find.descendant(
+          of: targetCardFinder,
+          matching: find.byIcon(Icons.arrow_upward_rounded),
+        );
+        expect(sendButton, findsOneWidget);
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await pumpFeedFrames(tester, count: 12);
+
+        final offsetAfterReply = currentFeedScrollOffset(tester);
+        expect(
+          offsetAfterReply,
+          greaterThan(offsetBeforeReply),
+          reason:
+              'The scroll offset should change so the viewport follows the moved card',
+        );
+        expect(targetCardFinder, findsOneWidget);
+        expect(
+          isVisibleInFeedViewport(tester, targetCardFinder),
+          isTrue,
+          reason:
+              'The same card should remain visible after it collapses and reorders',
+        );
+        expect(
+          find.descendant(
+            of: targetCardFinder,
+            matching: find.textContaining('You replied'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: targetCardFinder,
+            matching: find.byType(CollapsedModeCardBody),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: targetCardFinder,
+            matching: find.byType(TextField),
+          ),
+          findsOneWidget,
+          reason:
+              'The post-reply card should still be immediately usable for a follow-up reply',
+        );
+      },
+    );
+
     testWidgets('orbit search state survives an inline host tab round trip', (
       tester,
     ) async {
@@ -1140,6 +1320,231 @@ void main() {
     });
 
     testWidgets(
+      'tapping open-mode nickname collapses card and clears unread state',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final unreadTimestamp = DateTime.now().toUtc().toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-unread-name-collapse',
+            contactPeerId: testContact.peerId,
+            text: 'Tap the name to mark read',
+            senderPeerId: testContact.peerId,
+            timestamp: unreadTimestamp,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: unreadTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.byType(OpenModeCardBody), findsOneWidget);
+        final nicknameFinder = find.descendant(
+          of: find.byType(OpenModeCardBody),
+          matching: find.text('Bob'),
+        );
+        expect(nicknameFinder, findsOneWidget);
+
+        await tester.tap(nicknameFinder);
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.byType(CollapsedModeCardBody), findsOneWidget);
+        expect(find.byType(OpenModeCardBody), findsNothing);
+        expect(find.text('Tap to expand'), findsOneWidget);
+
+        final refreshedMessage = await messageRepo.getMessage(
+          'msg-unread-name-collapse',
+        );
+        expect(
+          refreshedMessage?.readAt,
+          isNotNull,
+          reason: 'Tapping the open-mode nickname should mark the message read',
+        );
+      },
+    );
+
+    testWidgets(
+      'collapsing an unread feed card clears the same mounted Orbit row',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final unreadTimestamp = DateTime.now().toUtc().toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'mounted-orbit-collapse-unread',
+            contactPeerId: testContact.peerId,
+            text: 'Unread for Orbit sync',
+            senderPeerId: testContact.peerId,
+            timestamp: unreadTimestamp,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: unreadTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.byType(OpenModeCardBody), findsOneWidget);
+
+        await tester.tap(feedOrbitNavLabel());
+        await pumpFeedFrames(tester, count: 10);
+
+        await tester.ensureVisible(orbitScopedText('Bob').first);
+        await tester.pump();
+        expect(orbitFriendUnreadCount('Bob', '1'), findsOneWidget);
+
+        await tester.tap(orbitFeedNavLabel());
+        await pumpFeedFrames(tester, count: 10);
+
+        await tester.tap(find.text('Collapse'));
+        await pumpFeedFrames(tester, count: 8);
+
+        await tester.tap(feedOrbitNavLabel());
+        await pumpFeedFrames(tester, count: 10);
+
+        await tester.ensureVisible(orbitScopedText('Bob').first);
+        await tester.pump();
+        expect(orbitFriendUnreadCount('Bob', '1'), findsNothing);
+        expect(orbitFriendChevron('Bob'), findsOneWidget);
+      },
+    );
+
+    testWidgets('successful inline reply clears the same mounted Orbit row', (
+      tester,
+    ) async {
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true),
+      );
+
+      final unreadTimestamp = DateTime.now().toUtc().toIso8601String();
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'mounted-orbit-reply-unread',
+          contactPeerId: testContact.peerId,
+          text: 'Reply from this card',
+          senderPeerId: testContact.peerId,
+          timestamp: unreadTimestamp,
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: unreadTimestamp,
+        ),
+      );
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+
+      await tester.tap(feedOrbitNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+
+      await tester.ensureVisible(orbitScopedText('Bob').first);
+      await tester.pump();
+      expect(orbitFriendUnreadCount('Bob', '1'), findsOneWidget);
+
+      await tester.tap(orbitFeedNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+
+      final feedComposerField = find.descendant(
+        of: find.byType(FeedScreen),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(feedComposerField.first, 'B1 reply');
+      await tester.pump();
+      final sendButton = find
+          .descendant(
+            of: find.byType(FeedScreen),
+            matching: find.byIcon(Icons.arrow_upward_rounded),
+          )
+          .first;
+      await tester.ensureVisible(sendButton);
+      await tester.pump();
+      await tester.tap(sendButton);
+      await pumpFeedFrames(tester, count: 8);
+
+      expect(find.textContaining('You replied'), findsOneWidget);
+
+      await tester.tap(feedOrbitNavLabel());
+      await pumpFeedFrames(tester, count: 10);
+
+      await tester.ensureVisible(orbitScopedText('Bob').first);
+      await tester.pump();
+      expect(orbitFriendUnreadCount('Bob', '1'), findsNothing);
+      expect(orbitFriendChevron('Bob'), findsOneWidget);
+    });
+
+    testWidgets(
+      'successful inline reply keeps first Orbit open clear when Orbit was not mounted',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        final unreadTimestamp = DateTime.now().toUtc().toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'later-open-orbit-reply-unread',
+            contactPeerId: testContact.peerId,
+            text: 'Later-open Orbit sync',
+            senderPeerId: testContact.peerId,
+            timestamp: unreadTimestamp,
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: unreadTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        final feedComposerField = find.descendant(
+          of: find.byType(FeedScreen),
+          matching: find.byType(TextField),
+        );
+        await tester.enterText(feedComposerField.first, 'B1 reply');
+        await tester.pump();
+        final sendButton = find
+            .descendant(
+              of: find.byType(FeedScreen),
+              matching: find.byIcon(Icons.arrow_upward_rounded),
+            )
+            .first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.textContaining('You replied'), findsOneWidget);
+
+        await tester.tap(feedOrbitNavLabel());
+        await pumpFeedFrames(tester, count: 10);
+
+        await tester.ensureVisible(orbitScopedText('Bob').first);
+        await tester.pump();
+        expect(orbitFriendUnreadCount('Bob', '1'), findsNothing);
+        expect(orbitFriendChevron('Bob'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'collapse from open-mode group card marks messages read and collapses',
       (tester) async {
         // Regression: _onToggleExpand must find GroupThreadFeedItem (not just
@@ -1418,7 +1823,10 @@ void main() {
       expect(find.byType(CollapsedModeCardBody), findsOneWidget);
 
       // Now tap "Tap to expand"
-      await tester.tap(find.text('Tap to expand'));
+      final expandFinder = find.text('Tap to expand').last;
+      await tester.ensureVisible(expandFinder);
+      await tester.pump();
+      await tester.tap(expandFinder);
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 300));
@@ -2780,18 +3188,13 @@ void main() {
       await tester.pumpWidget(buildFeedWired());
       await pumpFeedFrames(tester);
 
-      final cards = tester.widgetList<FeedCard>(find.byType(FeedCard)).toList();
-      expect(cards, isNotEmpty);
-      expect(
-        cards.map((card) => card.key).whereType<ValueKey<String>>().length,
-        cards.length,
+      final keyedEntry = find.byKey(
+        ValueKey<String>('thread_${testContact.peerId}'),
       );
+      expect(keyedEntry, findsOneWidget);
       expect(
-        cards
-            .map((card) => (card.key! as ValueKey<String>).value)
-            .toSet()
-            .length,
-        cards.length,
+        find.descendant(of: keyedEntry, matching: find.byType(FeedCard)),
+        findsOneWidget,
       );
     });
 
@@ -3817,6 +4220,100 @@ void main() {
         gatedP2P.sendGate.complete();
         await tester.pump(const Duration(milliseconds: 100));
         await tester.pump(const Duration(milliseconds: 100));
+      },
+    );
+
+    testWidgets(
+      'inline reply clears earlier unread preview before later unread arrives',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        final fakeChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        final a1Timestamp = DateTime.now()
+            .subtract(const Duration(hours: 2))
+            .toUtc();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'msg-a1',
+            contactPeerId: testContact.peerId,
+            text: 'A1 from Bob',
+            senderPeerId: testContact.peerId,
+            timestamp: a1Timestamp.toIso8601String(),
+            isIncoming: true,
+            status: 'delivered',
+            createdAt: a1Timestamp.toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(chatMessageListener: fakeChatListener),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.byType(OpenModeCardBody), findsOneWidget);
+        expect(find.text('A1 from Bob'), findsOneWidget);
+
+        await tester.enterText(find.byType(TextField).first, 'B1 reply');
+        await tester.pump();
+        final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+        await tester.ensureVisible(sendButton);
+        await tester.pump();
+        await tester.tap(sendButton);
+        await pumpFeedFrames(tester);
+
+        expect(
+          find.byType(CollapsedModeCardBody),
+          findsOneWidget,
+          reason:
+              'A successful inline reply should collapse the card into a post-read replied state',
+        );
+        expect(find.byType(OpenModeCardBody), findsNothing);
+        expect(find.textContaining('You replied'), findsOneWidget);
+        expect(
+          find.text('A1 from Bob'),
+          findsNothing,
+          reason:
+              'Earlier unread rows answered by the inline reply should not remain visible after success',
+        );
+
+        final a2Timestamp = DateTime.now().toUtc();
+        final a2Message = ConversationMessage(
+          id: 'msg-a2',
+          contactPeerId: testContact.peerId,
+          text: 'A2 from Bob',
+          senderPeerId: testContact.peerId,
+          timestamp: a2Timestamp.toIso8601String(),
+          isIncoming: true,
+          status: 'delivered',
+          createdAt: a2Timestamp.toIso8601String(),
+        );
+        await messageRepo.saveMessage(a2Message);
+        fakeChatListener.emitIncomingMessage(a2Message);
+        await pumpFeedFrames(tester);
+
+        expect(find.byType(OpenModeCardBody), findsOneWidget);
+        expect(find.text('A2 from Bob'), findsOneWidget);
+        expect(
+          find.text('A1 from Bob'),
+          findsNothing,
+          reason:
+              'Only the later unread message should remain in the reopened unread preview',
+        );
       },
     );
 
@@ -4996,6 +5493,121 @@ void main() {
         await pumpFeedFrames(tester, count: 4);
 
         expect(find.text('Earlier visible message'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'feed keeps the deleted placeholder visible while sender delete is failed',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final olderTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 5))
+            .toUtc()
+            .toIso8601String();
+        final latestTimestamp = DateTime.now()
+            .subtract(const Duration(minutes: 1))
+            .toUtc()
+            .toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-visible-earlier',
+            contactPeerId: 'contact-peer-id',
+            text: 'Earlier visible message',
+            senderPeerId: 'contact-peer-id',
+            timestamp: olderTimestamp,
+            isIncoming: true,
+            status: 'read',
+            readAt: olderTimestamp,
+            createdAt: olderTimestamp,
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-visible-latest',
+            contactPeerId: 'contact-peer-id',
+            text: 'Delete latest but keep placeholder',
+            senderPeerId: testIdentity.peerId,
+            timestamp: latestTimestamp,
+            isIncoming: false,
+            status: 'delivered',
+            createdAt: latestTimestamp,
+          ),
+        );
+
+        var deleteForEveryoneCalled = false;
+        await tester.pumpWidget(
+          buildFeedWired(
+            deleteForEveryoneFn:
+                ({
+                  required p2pService,
+                  required messageRepo,
+                  required originalMessage,
+                  reactionRepo,
+                  mediaAttachmentRepo,
+                  mediaFileManager,
+                  bridge,
+                  recipientMlKemPublicKey,
+                  emitTimingEvent = true,
+                }) async {
+                  deleteForEveryoneCalled = true;
+                  final tombstone = buildDeletedMessageTombstone(
+                    originalMessage: originalMessage,
+                    deletedAt: DateTime.now().toUtc().toIso8601String(),
+                    deletedByPeerId: originalMessage.senderPeerId,
+                    hiddenLocally: false,
+                    status: 'failed',
+                  );
+                  await messageRepo.saveMessage(tombstone);
+                  return (SendChatMessageResult.peerNotFound, tombstone);
+                },
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.text('Delete latest but keep placeholder'), findsOneWidget);
+
+        await tester.tap(find.text('Tap to expand'));
+        await pumpFeedFrames(tester, count: 4);
+
+        await tester.longPress(find.text('Delete latest but keep placeholder'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        final deleteForEveryoneInkWell = tester.widget<InkWell>(
+          find.descendant(
+            of: find.byKey(FeedWired.deleteForEveryoneKey),
+            matching: find.byType(InkWell),
+          ),
+        );
+        deleteForEveryoneInkWell.onTap?.call();
+        await tester.pump();
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(deleteForEveryoneCalled, isTrue);
+        expect(find.text('Delete latest but keep placeholder'), findsNothing);
+        expect(find.text('This message was deleted'), findsOneWidget);
+
+        await tester.tap(find.text('Collapse'));
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(find.text('Earlier visible message'), findsNothing);
+        expect(find.text('This message was deleted'), findsOneWidget);
       },
     );
 

@@ -40,7 +40,8 @@ class LifecycleBridge implements Bridge {
   /// If true, checkHealth() returns false (bridge unresponsive).
   bool bridgeUnhealthy = false;
 
-  /// If true, inbox:retrieve returns an error response.
+  /// If true, the automatic inbox drain retrieve command returns an error
+  /// response.
   bool inboxRetrieveFails = false;
 
   /// If true, node:start returns "already started" error, then node:status
@@ -169,7 +170,10 @@ class LifecycleBridge implements Bridge {
       case 'node:stop':
         return jsonEncode({'ok': true, 'stopped': true});
       case 'inbox:retrieve':
+      case 'inbox:retrieve_pending':
         return jsonEncode(_inboxRetrieveResponse());
+      case 'inbox:ack':
+        return jsonEncode({'ok': true, 'acked': 0});
       case 'message:send':
         messageSendCallCount++;
         return jsonEncode(_messageSendResponse());

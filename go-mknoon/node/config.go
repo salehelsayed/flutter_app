@@ -62,9 +62,10 @@ const (
 
 	// Stream-level deadlines applied after NewStream succeeds.
 	// These prevent hung connections from blocking goroutines forever.
-	StreamWriteDeadline = 10 * time.Second
-	StreamReadDeadline  = 10 * time.Second
-	InboundReadDeadline = 15 * time.Second // inbound reads may come from slow peers
+	StreamWriteDeadline  = 10 * time.Second
+	StreamReadDeadline   = 10 * time.Second
+	InboundReadDeadline  = 15 * time.Second // inbound reads may come from slow peers
+	DirectConfirmTimeout = 2 * time.Second  // must stay within interactive direct-send budget
 )
 
 // TimeoutProfile bundles per-operation timeout durations for a given
@@ -111,7 +112,7 @@ func RelayAddress() string {
 // NodeConfig holds the configuration for starting a Node.
 type NodeConfig struct {
 	PrivateKeyHex                     string        // Ed25519 private key as hex string
-	RelayAddresses                    []string      // Multiaddr strings for relay servers
+	RelayAddresses                    []string      // nil => defaults, explicit empty slice => disable startup relay warmup
 	Namespace                         string        // e.g. "mknoon:chat:<peerId>"
 	AutoRegister                      bool          // Auto-register on rendezvous after relay connect
 	PersonalRendezvousRefreshInterval time.Duration // 0 → DefaultPersonalRendezvousRefreshEvery

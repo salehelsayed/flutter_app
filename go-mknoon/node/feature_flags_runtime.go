@@ -36,5 +36,6 @@ func featureFlagsStatusMap(flags FeatureFlags) map[string]bool {
 		"enableReservationAwareHealth": flags.EnableReservationAwareHealth,
 		"enableInPlaceRelayRecovery":   flags.EnableInPlaceRelayRecovery,
 		"enableResumeGroupRecovery":    flags.EnableResumeGroupRecovery,
+		"enableDeferredDirectAck":      flags.EnableDeferredDirectAck,
 	}
 }

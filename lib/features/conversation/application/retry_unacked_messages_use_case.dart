@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 /// Retries outgoing messages stuck in 'sent' status by storing them
@@ -75,7 +76,9 @@ Future<int> retryUnackedMessages({
     // Skip inbox if already delivered via inbox (crash recovery guard).
     if (msg.transport == 'inbox') {
       await messageRepo.saveMessage(
-        msg.copyWith(status: 'delivered', wireEnvelope: null),
+        normalizeOutgoingDeleteTombstoneVisibility(
+          msg.copyWith(status: 'delivered', wireEnvelope: null),
+        ),
       );
       count++;
       emitFlowEvent(
@@ -92,10 +95,12 @@ Future<int> retryUnackedMessages({
       );
       if (stored) {
         await messageRepo.saveMessage(
-          msg.copyWith(
-            status: 'delivered',
-            transport: 'inbox',
-            wireEnvelope: null,
+          normalizeOutgoingDeleteTombstoneVisibility(
+            msg.copyWith(
+              status: 'delivered',
+              transport: 'inbox',
+              wireEnvelope: null,
+            ),
           ),
         );
         count++;

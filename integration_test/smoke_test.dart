@@ -37,6 +37,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'dart:io';
 
+import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_post_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 
@@ -246,7 +247,10 @@ void main() {
       rethrow;
     }
 
-    final p2pService = P2PServiceImpl(bridge: bridge);
+    final p2pService = P2PServiceImpl(
+      bridge: bridge,
+      inboxStagingRepository: InMemoryInboxStagingRepository(),
+    );
     final contactRequestListener = ContactRequestListener(
       contactRequestStream: const Stream<ChatMessage>.empty(),
       requestRepo: contactRequestRepository,

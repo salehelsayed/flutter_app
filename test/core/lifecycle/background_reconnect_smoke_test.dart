@@ -4,6 +4,7 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../../shared/fakes/lifecycle_bridge.dart';
 
 // ---------------------------------------------------------------------------
@@ -16,7 +17,10 @@ void main() {
 
   setUp(() {
     bridge = LifecycleBridge();
-    service = P2PServiceImpl(bridge: bridge);
+    service = P2PServiceImpl(
+      bridge: bridge,
+      inboxStagingRepository: InMemoryInboxStagingRepository(),
+    );
   });
 
   tearDown(() {
@@ -325,7 +329,7 @@ void main() {
 
         // checkHealth calls node:status (1) +
         // performImmediateHealthCheck calls node:status (2: initial + post-reconnect) +
-        // drainOfflineInbox may call inbox:retrieve
+        // drainOfflineInbox may call inbox:retrieve_pending
         expect(bridge.nodeStatusCallCount, greaterThan(statusBefore));
         expect(
           bridge.relayReconnectCallCount,

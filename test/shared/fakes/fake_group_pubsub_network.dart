@@ -10,6 +10,8 @@ class FakeGroupPubSubNetwork {
   final Map<String, Set<String>> _subscriptions = {};
   final Map<String, StreamController<Map<String, dynamic>>> _peerControllers =
       {};
+  final Map<String, StreamController<Map<String, dynamic>>>
+  _peerReactionControllers = {};
 
   final _random = Random();
 
@@ -29,11 +31,14 @@ class FakeGroupPubSubNetwork {
 
   /// Number of [publish] calls made.
   int publishCallCount = 0;
+  int reactionPublishCallCount = 0;
 
   int _totalDeliveries = 0;
+  int _totalReactionDeliveries = 0;
 
   /// Total deliveries across all subscribers.
   int get totalDeliveries => _totalDeliveries;
+  int get totalReactionDeliveries => _totalReactionDeliveries;
 
   /// Total publishes (alias for [publishCallCount]).
   int get publishCount => publishCallCount;
@@ -47,6 +52,13 @@ class FakeGroupPubSubNetwork {
     return controller;
   }
 
+  /// Creates and returns the broadcast reaction stream controller for a peer.
+  StreamController<Map<String, dynamic>> registerReactionPeer(String peerId) {
+    final controller = StreamController<Map<String, dynamic>>.broadcast();
+    _peerReactionControllers[peerId] = controller;
+    return controller;
+  }
+
   /// Removes a peer from all subscriptions and closes their controller.
   void unregisterPeer(String peerId) {
     // Remove from all group subscriptions.
@@ -57,6 +69,11 @@ class FakeGroupPubSubNetwork {
     final controller = _peerControllers.remove(peerId);
     if (controller != null && !controller.isClosed) {
       controller.close();
+    }
+
+    final reactionController = _peerReactionControllers.remove(peerId);
+    if (reactionController != null && !reactionController.isClosed) {
+      reactionController.close();
     }
   }
 
@@ -111,6 +128,41 @@ class FakeGroupPubSubNetwork {
     }
   }
 
+  /// Fans out the reaction envelope to all subscribers of [groupId] except the sender.
+  Future<void> publishReaction(
+    String groupId,
+    String senderPeerId,
+    Map<String, dynamic> envelope,
+  ) async {
+    reactionPublishCallCount++;
+
+    if (deliveryFails) return;
+
+    final subscribers = _subscriptions[groupId];
+    if (subscribers == null || subscribers.isEmpty) return;
+
+    for (final peerId in subscribers) {
+      if (peerId == senderPeerId) continue;
+
+      final controller = _peerReactionControllers[peerId];
+      if (controller == null || controller.isClosed) continue;
+
+      if (dropRate > 0.0 && _random.nextDouble() < dropRate) continue;
+
+      if (deliveryDelay != null) {
+        await Future.delayed(deliveryDelay!);
+      }
+
+      controller.add(envelope);
+      _totalReactionDeliveries++;
+
+      if (duplicateOnDeliver) {
+        controller.add(Map<String, dynamic>.from(envelope));
+        _totalReactionDeliveries++;
+      }
+    }
+  }
+
   /// Whether a peer is subscribed to a group.
   bool isSubscribed(String groupId, String peerId) {
     return _subscriptions[groupId]?.contains(peerId) ?? false;
@@ -124,7 +176,9 @@ class FakeGroupPubSubNetwork {
   /// Resets all counters and fault-injection flags to defaults.
   void resetCounters() {
     publishCallCount = 0;
+    reactionPublishCallCount = 0;
     _totalDeliveries = 0;
+    _totalReactionDeliveries = 0;
     deliveryFails = false;
     deliveryDelay = null;
     dropRate = 0.0;

@@ -5,6 +5,7 @@ import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -12,6 +13,8 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+
+enum _RetryFailedMessageSkipReason { none, localFileMissing, uploadCancelled }
 
 /// Retries all failed outgoing messages.
 ///
@@ -185,7 +188,9 @@ Future<bool> _retryFailedMessageCandidate({
     if (msg.wireEnvelope != null && msg.wireEnvelope!.isNotEmpty) {
       if (msg.transport == 'inbox') {
         await messageRepo.saveMessage(
-          msg.copyWith(status: 'delivered', wireEnvelope: null),
+          normalizeOutgoingDeleteTombstoneVisibility(
+            msg.copyWith(status: 'delivered', wireEnvelope: null),
+          ),
         );
         emitFlowEvent(
           layer: 'FL',
@@ -201,10 +206,12 @@ Future<bool> _retryFailedMessageCandidate({
         );
         if (stored) {
           await messageRepo.saveMessage(
-            msg.copyWith(
-              status: 'delivered',
-              transport: 'inbox',
-              wireEnvelope: null,
+            normalizeOutgoingDeleteTombstoneVisibility(
+              msg.copyWith(
+                status: 'delivered',
+                transport: 'inbox',
+                wireEnvelope: null,
+              ),
             ),
           );
           emitFlowEvent(
@@ -227,7 +234,7 @@ Future<bool> _retryFailedMessageCandidate({
     final mlKemPk = contact?.mlKemPublicKey;
 
     // Three-branch attachment dispatch (Part F)
-    final (:attachments, :skipMessage) = await _resolveAttachmentsForRetry(
+    final (:attachments, :skipReason) = await _resolveAttachmentsForRetry(
       messageId: msg.id,
       mediaAttachmentRepo: mediaAttachmentRepo,
       bridge: bridge,
@@ -235,12 +242,28 @@ Future<bool> _retryFailedMessageCandidate({
       uploadFn: uploadFn,
     );
 
-    if (skipMessage) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RETRY_FAILED_MEDIA_LOCAL_FILE_MISSING',
-        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
-      );
+    if (skipReason != _RetryFailedMessageSkipReason.none) {
+      final details = {
+        'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+      };
+      switch (skipReason) {
+        case _RetryFailedMessageSkipReason.localFileMissing:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MEDIA_LOCAL_FILE_MISSING',
+            details: details,
+          );
+          break;
+        case _RetryFailedMessageSkipReason.uploadCancelled:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MEDIA_UPLOAD_CANCELLED',
+            details: details,
+          );
+          break;
+        case _RetryFailedMessageSkipReason.none:
+          break;
+      }
       return false;
     }
 
@@ -296,9 +319,14 @@ Future<bool> _retryFailedMessageCandidate({
 ///
 /// Returns [attachments] = null for text-only messages, or the list of
 /// [MediaAttachment] objects (either reused from Part C or re-uploaded).
-/// Returns [skipMessage] = true when the message cannot be recovered
-/// (e.g. local file missing).
-Future<({List<MediaAttachment>? attachments, bool skipMessage})>
+/// Returns [skipReason] when the message cannot be recovered or should remain
+/// terminal (e.g. local file missing or user-cancelled upload).
+Future<
+  ({
+    List<MediaAttachment>? attachments,
+    _RetryFailedMessageSkipReason skipReason,
+  })
+>
 _resolveAttachmentsForRetry({
   required String messageId,
   required MediaAttachmentRepository? mediaAttachmentRepo,
@@ -311,6 +339,15 @@ _resolveAttachmentsForRetry({
       await mediaAttachmentRepo?.getAttachmentsForMessage(messageId) ??
       const <MediaAttachment>[];
 
+  if (persistedAttachments.any(
+    (attachment) => attachment.downloadStatus == 'upload_cancelled',
+  )) {
+    return (
+      attachments: null,
+      skipReason: _RetryFailedMessageSkipReason.uploadCancelled,
+    );
+  }
+
   // Use `every` not `any` -- if a message has 2 attachments, one 'done'
   // and one 'upload_pending', `any` would return true and the Part C path
   // would silently drop the incomplete attachment.
@@ -320,7 +357,10 @@ _resolveAttachmentsForRetry({
 
   if (allUploaded) {
     // CDN blobs already exist for ALL attachments -- reuse them (Part C path).
-    return (attachments: persistedAttachments, skipMessage: false);
+    return (
+      attachments: persistedAttachments,
+      skipReason: _RetryFailedMessageSkipReason.none,
+    );
   } else if (persistedAttachments.isNotEmpty) {
     // Attachment rows exist but upload never completed -> re-upload required.
     final reuploadedAttachments = await _reuploadAttachments(
@@ -330,12 +370,18 @@ _resolveAttachmentsForRetry({
       uploadFn: uploadFn,
     );
     if (reuploadedAttachments == null) {
-      return (attachments: null, skipMessage: true);
+      return (
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.localFileMissing,
+      );
     }
-    return (attachments: reuploadedAttachments, skipMessage: false);
+    return (
+      attachments: reuploadedAttachments,
+      skipReason: _RetryFailedMessageSkipReason.none,
+    );
   } else {
     // Text-only message with no attachment rows.
-    return (attachments: null, skipMessage: false);
+    return (attachments: null, skipReason: _RetryFailedMessageSkipReason.none);
   }
 }
 

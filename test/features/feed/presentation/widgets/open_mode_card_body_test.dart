@@ -289,21 +289,53 @@ void main() {
 
     testWidgets('tapping avatar fires onViewEarlier', (tester) async {
       var tapped = false;
+      var collapsed = false;
       final thread = buildThread(unreadCount: 2);
 
-      await tester.pumpWidget(wrap(OpenModeCardBody(
-        thread: thread,
-        onViewEarlier: () => tapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          OpenModeCardBody(
+            thread: thread,
+            onViewEarlier: () => tapped = true,
+            onCollapse: () => collapsed = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.byType(UserAvatar));
       expect(tapped, isTrue);
+      expect(collapsed, isFalse);
     });
+
+    testWidgets(
+      'tapping open-mode name area fires onCollapse, not onViewEarlier',
+      (tester) async {
+        var collapsed = false;
+        var viewed = false;
+        final thread = buildThread(unreadCount: 2);
+
+        await tester.pumpWidget(
+          wrap(
+            OpenModeCardBody(
+              thread: thread,
+              onCollapse: () => collapsed = true,
+              onViewEarlier: () => viewed = true,
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Alice').first);
+
+        expect(collapsed, isTrue);
+        expect(viewed, isFalse);
+      },
+    );
 
     testWidgets('group thread: tapping group icon fires onViewEarlier', (
       tester,
     ) async {
       var tapped = false;
+      var collapsed = false;
       final groupThread = GroupThreadFeedItem(
         id: 'g1',
         timestamp: DateTime(2026, 2, 9, 15, 5),
@@ -326,13 +358,19 @@ void main() {
         conversationState: ConversationState.unread,
       );
 
-      await tester.pumpWidget(wrap(OpenModeCardBody(
-        thread: groupThread,
-        onViewEarlier: () => tapped = true,
-      )));
+      await tester.pumpWidget(
+        wrap(
+          OpenModeCardBody(
+            thread: groupThread,
+            onViewEarlier: () => tapped = true,
+            onCollapse: () => collapsed = true,
+          ),
+        ),
+      );
 
       await tester.tap(find.byIcon(Icons.group_rounded));
       expect(tapped, isTrue);
+      expect(collapsed, isFalse);
     });
   });
 }

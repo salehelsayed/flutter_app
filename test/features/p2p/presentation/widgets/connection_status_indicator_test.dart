@@ -45,5 +45,49 @@ void main() {
       final health = healthFromState(state);
       expect(health, ConnectionHealth.offline);
     });
+
+    test('turns online when relayState is online even without circuit addresses', () {
+      const state = NodeState(
+        isStarted: true,
+        circuitAddresses: [],
+        relayState: 'online',
+      );
+
+      final health = healthFromState(state);
+      expect(health, ConnectionHealth.online);
+    });
+
+    test('stays online when relayState is not online but circuit addresses exist', () {
+      const state = NodeState(
+        isStarted: true,
+        circuitAddresses: ['/p2p-circuit/relay1'],
+        relayState: 'reconnecting',
+      );
+
+      final health = healthFromState(state);
+      // Circuit addresses present → online, even if relayState is stale
+      expect(health, ConnectionHealth.online);
+    });
+
+    test('shows degraded when relayState is not online and no circuit addresses', () {
+      const state = NodeState(
+        isStarted: true,
+        circuitAddresses: [],
+        relayState: 'reconnecting',
+      );
+
+      final health = healthFromState(state);
+      expect(health, ConnectionHealth.degraded);
+    });
+
+    test('falls back to circuitAddresses when relayState is null (legacy bridge)', () {
+      const state = NodeState(
+        isStarted: true,
+        circuitAddresses: ['/p2p-circuit/relay1'],
+      );
+
+      final health = healthFromState(state);
+      expect(health, ConnectionHealth.online);
+    });
   });
 }

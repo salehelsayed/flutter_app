@@ -131,6 +131,8 @@ typedef DeleteMessageForEveryoneFn =
       bool emitTimingEvent,
     });
 
+typedef DeleteContactFn = Future<void> Function(String peerId);
+
 /// Wired widget that connects ConversationScreen to business logic.
 ///
 /// Loads identity and messages on init, subscribes to incoming message stream,
@@ -171,6 +173,7 @@ class ConversationWired extends StatefulWidget {
   final ReactionRepository? reactionRepo;
   final ReactionListener? reactionListener;
   final IntroductionRepository? introductionRepository;
+  final DeleteContactFn? deleteContactFn;
   final UploadMediaFn uploadMediaFn;
   final SendVoiceMessageFn sendVoiceMessageFn;
 
@@ -203,6 +206,7 @@ class ConversationWired extends StatefulWidget {
     this.reactionRepo,
     this.reactionListener,
     this.introductionRepository,
+    this.deleteContactFn,
     this.uploadMediaFn = uploadMedia,
     this.sendVoiceMessageFn = sendVoiceMessage,
   });
@@ -497,8 +501,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (activeUpload == null || !activeUpload.cancelRequested) {
       return false;
     }
-    await widget.mediaAttachmentRepo
-        ?.markUploadPendingAttachmentsFailedForMessage(activeUpload.messageId);
+    await _markUploadPendingAttachmentsCancelledForMessage(
+      activeUpload.messageId,
+    );
     await _stopRelayUploadTracking();
     _clearActiveAttachmentUpload();
     await _restoreComposerSnapshot(
@@ -508,6 +513,25 @@ class _ConversationWiredState extends State<ConversationWired> {
       snackText: 'Upload cancelled.',
     );
     return true;
+  }
+
+  Future<void> _markUploadPendingAttachmentsCancelledForMessage(
+    String messageId,
+  ) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    if (mediaAttachmentRepo == null) return;
+
+    final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    for (final attachment in attachments) {
+      if (attachment.downloadStatus != 'upload_pending') {
+        continue;
+      }
+      await mediaAttachmentRepo.saveAttachment(
+        attachment.copyWith(downloadStatus: 'upload_cancelled'),
+      );
+    }
   }
 
   Future<void> _hydrateInitialPendingMedia(
@@ -1655,6 +1679,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     );
     _updateLocalMessageStatus(optimisticMessageId, 'failed');
     await _persistMessageStatus(optimisticMessageId, 'failed');
+    await _refreshMessageWithHydratedMedia(optimisticMessageId);
     if (mounted) {
       setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
     }
@@ -2816,11 +2841,20 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (!confirmed || !mounted) return;
 
     try {
-      await deleteContactAndMessages(
-        contactRepo: contactRepo,
-        messageRepo: widget.messageRepo,
-        peerId: _contact.peerId,
-      );
+      final deleteContactFn = widget.deleteContactFn;
+      if (deleteContactFn != null) {
+        await deleteContactFn(_contact.peerId);
+      } else {
+        await deleteContactAndMessages(
+          contactRepo: contactRepo,
+          messageRepo: widget.messageRepo,
+          peerId: _contact.peerId,
+          mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          reactionRepo: widget.reactionRepo,
+          mediaFileManager: widget.mediaFileManager,
+          introductionRepo: widget.introductionRepository,
+        );
+      }
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {

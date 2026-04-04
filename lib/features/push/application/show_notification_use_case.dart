@@ -11,10 +11,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 /// [MediaAttachment.mediaType]: image -> "Photo", video -> "Video",
 /// audio -> "Voice message", file -> "File", mixed/unknown -> "Media".
 /// Falls back to "Message" when text is empty and there are no attachments.
-String notificationBodyForMessage(
-  String text,
-  List<MediaAttachment> media,
-) {
+String notificationBodyForMessage(String text, List<MediaAttachment> media) {
   final trimmed = text.trim();
   if (trimmed.isNotEmpty) return trimmed;
   if (media.isEmpty) return 'Message';
@@ -45,6 +42,9 @@ Future<void> maybeShowNotification({
   required String contactPeerId,
   required String senderUsername,
   required String messageText,
+  Future<bool> Function(String payload)?
+  consumeRecentRemoteNotificationAnnouncement,
+  Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
 }) async {
   final lifecycleState = getAppLifecycleState();
   final isViewingConversation = conversationTracker.isViewing(contactPeerId);
@@ -61,6 +61,30 @@ Future<void> maybeShowNotification({
       },
     );
     return;
+  }
+
+  if (lifecycleState != AppLifecycleState.resumed &&
+      consumeRecentRemoteNotificationAnnouncement != null) {
+    if (backgroundDuplicateGuardDelay > Duration.zero) {
+      await Future<void>.delayed(backgroundDuplicateGuardDelay);
+    }
+
+    final shouldSuppress = await consumeRecentRemoteNotificationAnnouncement(
+      contactPeerId,
+    );
+    if (shouldSuppress) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_SUPPRESSED',
+        details: {
+          'reason': 'recent_remote_push',
+          'contactPeerId': contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+        },
+      );
+      return;
+    }
   }
 
   await notificationService.showMessageNotification(

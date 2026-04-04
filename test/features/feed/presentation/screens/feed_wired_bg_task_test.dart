@@ -169,8 +169,7 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
   @override
   Future<List<ContactRequestModel>> getPendingRequests() async => [];
   @override
-  Future<void> updateStatus(
-      String peerId, ContactRequestStatus status) async {}
+  Future<void> updateStatus(String peerId, ContactRequestStatus status) async {}
   @override
   Future<void> deleteRequest(String peerId) async {}
   @override
@@ -225,22 +224,29 @@ class _FakeP2PService implements P2PService {
     operationLog.add('p2p:sendMessageWithReply');
     return SendMessageResult(sent: sendMessageResult, reply: 'received: ok');
   }
+
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
     operationLog.add('p2p:discoverPeer');
     return discoverPeerResult;
   }
+
   @override
-  Future<bool> dialPeer(String peerId,
-      {List<String>? addresses, int? timeoutMs}) async {
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
     operationLog.add('p2p:dialPeer');
     return dialPeerResult;
   }
+
   @override
   Future<bool> storeInInbox(String toPeerId, String message) async {
     operationLog.add('p2p:storeInInbox');
     return storeInInboxResult;
   }
+
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
@@ -263,8 +269,7 @@ class _FakeP2PService implements P2PService {
     String message,
     String fromPeerId, {
     int? timeoutMs,
-  }) async =>
-      false;
+  }) async => false;
   @override
   Future<bool> sendLocalMedia({
     required String peerId,
@@ -275,8 +280,7 @@ class _FakeP2PService implements P2PService {
     int? durationMs,
     List<double>? waveform,
     String? filename,
-  }) async =>
-      false;
+  }) async => false;
   @override
   String? get lastRecoveryMethod => null;
   @override
@@ -312,11 +316,7 @@ int _logIndex(List<String> operationLog, String entry) {
   return index;
 }
 
-void _expectOrdered(
-  List<String> operationLog,
-  String earlier,
-  String later,
-) {
+void _expectOrdered(List<String> operationLog, String earlier, String later) {
   expect(
     _logIndex(operationLog, earlier),
     lessThan(_logIndex(operationLog, later)),
@@ -353,29 +353,29 @@ void main() {
     pendingPostTargetStore = PendingPostTargetStore();
     mediaFileManager = FakeMediaFileManager();
     imageProcessor = ImageProcessor(
-      compressFile: ({
-        required path,
-        required quality,
-        required keepExif,
-        minWidth = 1920,
-        minHeight = 1080,
-      }) async =>
+      compressFile:
+          ({
+            required path,
+            required quality,
+            required keepExif,
+            minWidth = 1920,
+            minHeight = 1080,
+          }) async => null,
+      compressVideo: ({required path, required compress, onProgress}) async =>
           null,
-      compressVideo:
-          ({required path, required compress, onProgress}) async => null,
     );
 
     // Mock path_provider for getApplicationDocumentsDirectory()
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      (MethodCall methodCall) async {
-        if (methodCall.method == 'getApplicationDocumentsDirectory') {
-          return '/tmp/test_docs';
-        }
-        return null;
-      },
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          (MethodCall methodCall) async {
+            if (methodCall.method == 'getApplicationDocumentsDirectory') {
+              return '/tmp/test_docs';
+            }
+            return null;
+          },
+        );
   });
 
   tearDown(() {
@@ -383,9 +383,9 @@ void main() {
     postsPrivacySettingsRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('plugins.flutter.io/path_provider'),
-      null,
-    );
+          const MethodChannel('plugins.flutter.io/path_provider'),
+          null,
+        );
   });
 
   /// Builds a FeedWired with the _OrderRecordingBridge, wrapped in MaterialApp.
@@ -473,95 +473,125 @@ void main() {
 
   group('FeedWired _onInlineSend — background task ordering', () {
     testWidgets(
-        'bg:begin happens before inline send transport and bg:end happens after success',
-        (tester) async {
-      final originalOnError = FlutterError.onError;
-      FlutterError.onError = (details) {
-        if (details.toString().contains('overflowed')) return;
-        originalOnError?.call(details);
-      };
-      addTearDown(() {
-        FlutterError.onError = originalOnError;
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
+      'bg:begin happens before inline send transport and bg:end happens after success',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() {
+          FlutterError.onError = originalOnError;
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
 
-      final operationLog = <String>[];
-      p2pService = _FakeP2PService(operationLog: operationLog);
-      final bridge = _OrderRecordingBridge(operationLog: operationLog);
-      await pumpAndSeedFeed(tester, bridge);
-      final bobCard = find.textContaining('Bob');
-      expect(bobCard, findsWidgets,
-          reason: 'Bob card must be visible in the feed');
-      await tester.tap(bobCard.first);
-      for (var i = 0; i < 6; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
+        final operationLog = <String>[];
+        p2pService = _FakeP2PService(operationLog: operationLog);
+        final bridge = _OrderRecordingBridge(operationLog: operationLog);
+        await pumpAndSeedFeed(tester, bridge);
+        final bobCard = find.textContaining('Bob');
+        expect(
+          bobCard,
+          findsWidgets,
+          reason: 'Bob card must be visible in the feed',
+        );
+        await tester.tap(bobCard.first);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
 
-      await tester.enterText(find.byType(TextField).last, 'hello from feed');
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded).last);
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 500));
+        await tester.enterText(find.byType(TextField).last, 'hello from feed');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded).last);
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 500));
 
-      final messages = await messageRepo.getMessagesForContact('contact-peer-id');
-      final outgoing = messages.where((message) => !message.isIncoming).toList();
-      expect(outgoing, isNotEmpty,
-          reason: 'Inline send should persist an outgoing message');
-      _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:discoverPeer');
-      _expectOrdered(operationLog, 'p2p:sendMessageWithReply', 'bridge:bg:end');
-    });
+        final messages = await messageRepo.getMessagesForContact(
+          'contact-peer-id',
+        );
+        final outgoing = messages
+            .where((message) => !message.isIncoming)
+            .toList();
+        expect(
+          outgoing,
+          isNotEmpty,
+          reason: 'Inline send should persist an outgoing message',
+        );
+        _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:discoverPeer');
+        _expectOrdered(
+          operationLog,
+          'p2p:sendMessageWithReply',
+          'bridge:bg:end',
+        );
+      },
+    );
 
-    testWidgets('bg:end fires after a real inline send failure and draft is restored',
-        (tester) async {
-      final originalOnError = FlutterError.onError;
-      FlutterError.onError = (details) {
-        if (details.toString().contains('overflowed')) return;
-        originalOnError?.call(details);
-      };
-      addTearDown(() {
-        FlutterError.onError = originalOnError;
-        tester.view.resetPhysicalSize();
-        tester.view.resetDevicePixelRatio();
-      });
+    testWidgets(
+      'bg:end fires after a real inline send failure and draft is restored',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() {
+          FlutterError.onError = originalOnError;
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
 
-      final operationLog = <String>[];
-      p2pService = _FakeP2PService(
-        sendMessageResult: false,
-        storeInInboxResult: false,
-        operationLog: operationLog,
-      );
-      final bridge = _OrderRecordingBridge(operationLog: operationLog);
-      await pumpAndSeedFeed(tester, bridge);
+        final operationLog = <String>[];
+        p2pService = _FakeP2PService(
+          sendMessageResult: false,
+          storeInInboxResult: false,
+          operationLog: operationLog,
+        );
+        final bridge = _OrderRecordingBridge(operationLog: operationLog);
+        await pumpAndSeedFeed(tester, bridge);
 
-      final bobCard = find.textContaining('Bob');
-      expect(bobCard, findsWidgets);
-      await tester.tap(bobCard.first);
-      for (var i = 0; i < 6; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
+        final bobCard = find.textContaining('Bob');
+        expect(bobCard, findsWidgets);
+        await tester.tap(bobCard.first);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
 
-      const draftText = 'feed send should fail';
-      await tester.enterText(find.byType(TextField).last, draftText);
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded).last);
-      await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 500));
+        const draftText = 'feed send should fail';
+        await tester.enterText(find.byType(TextField).last, draftText);
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded).last);
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 500));
 
-      final messages = await messageRepo.getMessagesForContact('contact-peer-id');
-      final failedOutgoing = messages
-          .where((message) => !message.isIncoming)
-          .firstWhere((message) => message.status == 'failed');
+        final messages = await messageRepo.getMessagesForContact(
+          'contact-peer-id',
+        );
+        final failedOutgoing = messages
+            .where((message) => !message.isIncoming)
+            .firstWhere((message) => message.status == 'failed');
 
-      expect(failedOutgoing.text, draftText);
-      expect(find.text(draftText), findsOneWidget,
-          reason: 'Draft text should be restored after a failed inline send');
-      _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:sendMessageWithReply');
-      _expectOrdered(operationLog, 'p2p:storeInInbox', 'bridge:bg:end');
-    });
+        expect(failedOutgoing.text, draftText);
+        final restoredComposer = tester.widget<TextField>(
+          find.byType(TextField).last,
+        );
+        expect(
+          restoredComposer.controller?.text,
+          draftText,
+          reason: 'Draft text should be restored after a failed inline send',
+        );
+        _expectOrdered(
+          operationLog,
+          'bridge:bg:begin',
+          'p2p:sendMessageWithReply',
+        );
+        _expectOrdered(operationLog, 'p2p:storeInInbox', 'bridge:bg:end');
+      },
+    );
 
-    testWidgets('inline send proceeds when OS refuses background task',
-        (tester) async {
+    testWidgets('inline send proceeds when OS refuses background task', (
+      tester,
+    ) async {
       final originalOnError = FlutterError.onError;
       FlutterError.onError = (details) {
         if (details.toString().contains('overflowed')) return;
@@ -601,16 +631,29 @@ void main() {
         }
       }
 
-      final messages = await messageRepo.getMessagesForContact('contact-peer-id');
-      final outgoing = messages.where((message) => !message.isIncoming).toList();
+      final messages = await messageRepo.getMessagesForContact(
+        'contact-peer-id',
+      );
+      final outgoing = messages
+          .where((message) => !message.isIncoming)
+          .toList();
 
-      expect(outgoing, isNotEmpty,
-          reason: 'Send must still succeed even if bg:begin returns no task ID');
-      expect(bridge.callLog.where((cmd) => cmd == 'bg:end'), isEmpty,
-          reason: 'bg:end should not be called when the OS refuses bg:begin');
+      expect(
+        outgoing,
+        isNotEmpty,
+        reason: 'Send must still succeed even if bg:begin returns no task ID',
+      );
+      expect(
+        bridge.callLog.where((cmd) => cmd == 'bg:end'),
+        isEmpty,
+        reason: 'bg:end should not be called when the OS refuses bg:begin',
+      );
       _expectOrdered(operationLog, 'bridge:bg:begin', 'p2p:discoverPeer');
-      expect(operationLog, contains('p2p:sendMessageWithReply'),
-          reason: 'Transport send must still execute after OS refusal');
+      expect(
+        operationLog,
+        contains('p2p:sendMessageWithReply'),
+        reason: 'Transport send must still execute after OS refusal',
+      );
     });
   });
 }

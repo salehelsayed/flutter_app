@@ -189,5 +189,37 @@ void main() {
         expect(wifi.hashCode, equals(relay.hashCode));
       });
     });
+
+    group('confirm nonce contract', () {
+      test('fromJson parses confirmNonce key in JSON', () {
+        final msg = ChatMessage.fromJson({
+          'from': 'peer-a',
+          'to': 'peer-b',
+          'content': 'hello',
+          'timestamp': '2026-01-01T00:00:00.000Z',
+          'isIncoming': true,
+          'confirmNonce': 'nonce-123',
+        });
+        expect(msg.confirmNonce, 'nonce-123');
+      });
+
+      test('toJson includes confirmNonce when present', () {
+        final tagged = baseMsg.copyWith(confirmNonce: 'nonce-123');
+        final json = tagged.toJson();
+        expect(json['confirmNonce'], 'nonce-123');
+      });
+
+      test('copyWith sets confirmNonce', () {
+        final tagged = baseMsg.copyWith(confirmNonce: 'nonce-123');
+        expect(tagged.confirmNonce, 'nonce-123');
+      });
+
+      test('equality ignores confirmNonce', () {
+        final a = baseMsg.copyWith(confirmNonce: 'nonce-a');
+        final b = baseMsg.copyWith(confirmNonce: 'nonce-b');
+        expect(a, equals(b));
+        expect(a.hashCode, equals(b.hashCode));
+      });
+    });
   });
 }

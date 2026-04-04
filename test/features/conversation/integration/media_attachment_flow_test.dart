@@ -416,5 +416,54 @@ void main() {
       // fromJson always sets downloadStatus to 'pending'
       expect(restored.downloadStatus, 'pending');
     });
+
+    test(
+      'large video attachment preserves delivery metadata through send and receive',
+      () async {
+        const largeVideoSize = 250 * 1024 * 1024;
+        const durationMs = 180000;
+        final attachment = MediaAttachment(
+          id: 'blob-large-video',
+          messageId: '',
+          mime: 'video/mp4',
+          size: largeVideoSize,
+          mediaType: 'video',
+          durationMs: durationMs,
+          localPath: '/tmp/large-video.mp4',
+          downloadStatus: 'pending',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+        );
+
+        final bobReceived = <ConversationMessage>[];
+        final sub = bob.chatListener.incomingMessageStream.listen(
+          (msg) => bobReceived.add(msg),
+        );
+
+        final (result, sentMessage) = await alice.sendMessageWithMedia(
+          bob.peerId,
+          '',
+          [attachment],
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(sentMessage, isNotNull);
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(bobReceived, hasLength(1));
+        expect(bobReceived.single.media, hasLength(1));
+        expect(bobReceived.single.media.single.size, largeVideoSize);
+        expect(bobReceived.single.media.single.durationMs, durationMs);
+
+        final bobPending = await bobMediaRepo.getPendingDownloads();
+        expect(bobPending, hasLength(1));
+        expect(bobPending.single.mime, 'video/mp4');
+        expect(bobPending.single.mediaType, 'video');
+        expect(bobPending.single.size, largeVideoSize);
+        expect(bobPending.single.durationMs, durationMs);
+
+        await sub.cancel();
+      },
+    );
   });
 }

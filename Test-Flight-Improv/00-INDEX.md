@@ -1,6 +1,6 @@
 # Test-Flight-1 Improvement Reports
 
-Generated: 2026-04-01
+Generated: 2026-04-03
 
 **Closure note:** Sessions `1` through `29` are closed execution artifacts.
 `session-30-plan.md` is a plan-only narrow reopen artifact and should not be
@@ -33,7 +33,22 @@ maintenance-time meaning. The doc-scoped Sessions `1` through `3` for Report
 `41` are the completed inbox-recovery and notification-open trust closure
 artifacts, with
 `41-notification-open-missing-incoming-messages-session-breakdown.md` plus the
-refreshed 1:1 closure reference carrying the maintenance-time meaning.
+refreshed 1:1 closure reference carrying the maintenance-time meaning. The
+doc-scoped Session `1` for Report `44` is the completed Feed/Orbit handled
+notification sync closure artifact, with
+`44-feed-orbit-notification-desync-session-breakdown.md` carrying the
+maintenance-time meaning. The doc-scoped Session `1` for Report `45` is the
+completed Feed inline-reply viewport reorientation closure artifact, with
+`45-feed-stack-card-does-not-reorient-after-inline-reply-session-breakdown.md`
+carrying the maintenance-time meaning. The doc-scoped Session `1` for Report
+`48` is the
+completed automatic 1:1 inbox-drain fallback removal closure artifact, with
+`48-gap3-remove-destructive-inbox-fallback-plan-session-breakdown.md` plus the
+refreshed 1:1 closure reference carrying the maintenance-time meaning. The
+doc-scoped Sessions `1` through `10` for Report `50` are the completed
+two-simulator coverage-refresh artifacts, with
+`50-two-simulator-user-journey-tests-todo-session-breakdown.md` plus the
+refreshed audit/journey docs carrying the maintenance-time meaning.
 Roadmaps `15` and `16` plus the residual reliability/measurement sessions `24`
 through `29` remain historical execution artifacts. Reports `01` through `14`
 remain the rationale archive. The current closure state lives in Sections `8`,
@@ -47,8 +62,13 @@ remain the rationale archive. The current closure state lives in Sections `8`,
 |--------|-------|
 | [01-unit-test-coverage.md](01-unit-test-coverage.md) | Corrected module-by-module unit test picture — broad coverage, narrower remaining gaps |
 | [02-integration-test-coverage.md](02-integration-test-coverage.md) | Cross-feature flows, integration quality, and remaining boundary gaps |
+| [50-two-simulator-user-journey-tests-coverage-audit.md](50-two-simulator-user-journey-tests-coverage-audit.md) | Refreshed manual-journey coverage matrix plus accepted notification-open contract for the current app |
 
-**Top finding:** Test coverage is materially stronger than the first pass suggested. Posts, Introduction, Groups, StartupRouter, and several cross-feature flows already have substantial coverage. The highest-value remaining gaps are notification adapter boundaries, nearby-post presence rejection logic, and one end-to-end onboarding happy path.
+**Top finding:** Test coverage is materially stronger than the first pass
+suggested. Report `50` is now the folder-local matrix for manual
+two/three-simulator journey confidence, and it retires the old stale
+Feed-expanded-card notification-open assumption in favor of the current
+conversation/group/intros routing contract.
 
 ---
 
@@ -180,6 +200,14 @@ remain the rationale archive. The current closure state lives in Sections `8`,
 | [41-notification-open-missing-incoming-messages-session-1-plan.md](41-notification-open-missing-incoming-messages-session-1-plan.md) | Historical two-phase relay inbox retrieve/ack session artifact for Report `41` |
 | [41-notification-open-missing-incoming-messages-session-2-plan.md](41-notification-open-missing-incoming-messages-session-2-plan.md) | Historical durable inbox staging/replay and reject-observability session artifact for Report `41` |
 | [41-notification-open-missing-incoming-messages-session-3-plan.md](41-notification-open-missing-incoming-messages-session-3-plan.md) | Historical app-root notification parity and closure session artifact for Report `41` |
+| [44-feed-orbit-notification-desync-session-breakdown.md](44-feed-orbit-notification-desync-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `44` |
+| [44-feed-orbit-notification-desync-session-1-plan.md](44-feed-orbit-notification-desync-session-1-plan.md) | Historical Feed/Orbit handled-notification sync and closure session artifact for Report `44` |
+| [45-feed-stack-card-does-not-reorient-after-inline-reply-session-breakdown.md](45-feed-stack-card-does-not-reorient-after-inline-reply-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `45` |
+| [45-feed-stack-card-does-not-reorient-after-inline-reply-session-1-plan.md](45-feed-stack-card-does-not-reorient-after-inline-reply-session-1-plan.md) | Historical Feed inline-reply viewport reorientation and closure session artifact for Report `45` |
+| [48-gap3-remove-destructive-inbox-fallback-plan-session-breakdown.md](48-gap3-remove-destructive-inbox-fallback-plan-session-breakdown.md) | Historical doc-scoped breakdown and closure-owner artifact for Report `48` |
+| [48-gap3-remove-destructive-inbox-fallback-plan-session-1-plan.md](48-gap3-remove-destructive-inbox-fallback-plan-session-1-plan.md) | Historical automatic 1:1 inbox-drain fallback removal and closure session artifact for Report `48` |
+| [50-two-simulator-user-journey-tests-todo-session-breakdown.md](50-two-simulator-user-journey-tests-todo-session-breakdown.md) | Closed doc-scoped controller for Report `50` manual-journey coverage refresh |
+| [50-two-simulator-user-journey-tests-todo-session-10-plan.md](50-two-simulator-user-journey-tests-todo-session-10-plan.md) | Historical closure-only matrix refresh and accepted-difference session artifact for Report `50` |
 | [17-roadmap-closure-audit.md](17-roadmap-closure-audit.md) | Post-execution closure audit and current reading order for the folder |
 
 **Top finding:** The folder has now moved from backlog mode into closure mode.
@@ -202,8 +230,19 @@ the doc-scoped Session `1` for Report `35` reclosed the narrow late-boundary
 1:1 video cancel seam without reopening the broader Report `24`
 cancelable-upload program, the doc-scoped Sessions `1` through `3` for Report
 `41` closed the staged inbox recovery plus app-root notification-open trust
-seam and refreshed the stable 1:1 closure wording, and Session `30` remains a
-plan-only residual artifact rather than executed work.
+seam and refreshed the stable 1:1 closure wording, the doc-scoped Session `1`
+for Report `44` closed the stale Feed/Orbit handled-notification contradiction
+without widening into app-root notification routing or unread architecture
+work, the doc-scoped Session `1` for Report `45` closed the stale absolute
+scroll-offset seam after successful inline reply without widening into
+unread-model redesign or broader Feed/Orbit navigation architecture, the
+doc-scoped Session `1` for Report `48` closed the automatic inbox-drain path
+from durable `retrieve_pending` back to destructive `inbox:retrieve`,
+refreshed the stable 1:1 closure wording without widening into public
+inbox-API removal, the doc-scoped Sessions `1` through `10` for Report `50`
+closed the manual-journey coverage backlog plus the stale notification-open
+assumption, and Session `30` remains a plan-only residual artifact rather than
+executed work.
 The closure audit now describes what is historical rationale, what remains
 open, and what should only be reopened if a real residual gap appears.
 
@@ -217,12 +256,16 @@ open, and what should only be reopened if a real residual gap appears.
 | Maintain | Keep the lean local messaging measurement events coherent with the current flow-event contract | Future send/retry/media/rejoin work should extend the landed local event layer, not invent a second metrics stack | 10 / 29 |
 | Maintain | Use the direct standalone CLI-backed transport command alongside the named transport gate when touching the Sessions `34` / `36` seams | The named transport gate can run `transport_e2e_test.dart` without the CLI fixture/orchestrator path | 19 / 34 / 36 |
 | Maintain | Use the direct intro/orbit/feed maintenance suite plus `baseline` when intro follow-up wiring changes | No named gate directly owns this seam; maintenance-time safety sits in `orbit_wired_test.dart`, `orbit_intros_wiring_test.dart`, `feed_wired_test.dart`, and the intro listener/regression/integration suites | 35 / test-gate-definitions |
+| Maintain | Use `50-two-simulator-user-journey-tests-todo-session-breakdown.md` plus the refreshed Report `50` audit/journey docs when manual two/three-simulator coverage claims are questioned | Report `50` is now the closure-time controller for this matrix, including the accepted notification-open routing difference and the exact direct suites that closed Sessions `1` through `9` | 50 |
 | Maintain | Use the stable 1:1/group closure refs plus `24-cancel-media-upload-session-breakdown.md` and `35-cancelled-video-upload-still-sends-session-breakdown.md` for cancelable-upload maintenance | Session `47` closed the broad rollout and the doc-scoped Session `1` for Report `35` reclosed the narrow late-boundary 1:1 video cancel seam without widening gate definitions or announcement-specific architecture | 19 / 20 / 24 / 35 / 47 |
 | Maintain | Use `41-notification-open-missing-incoming-messages-session-breakdown.md`, the direct notification-open suites, `./scripts/run_test_gates.sh 1to1`, and `baseline` when shared 1:1 inbox recovery or app-root notification-open routing changes | The doc-scoped Report `41` sessions closed durable fetched-envelope staging/replay plus prepare-before-route parity for terminated remote, warm remote, terminated local, and warm local notification opens; `transport` becomes required again only if later work broadens into startup/resume/inbox-drain ordering changes | 19 / 41 / test-gate-definitions |
+| Maintain | Use `48-gap3-remove-destructive-inbox-fallback-plan-session-breakdown.md`, the direct automatic-drain service/lifecycle suites, `./scripts/run_test_gates.sh 1to1`, `./scripts/run_test_gates.sh baseline`, and `FLUTTER_DEVICE_ID=<device-id> ./scripts/run_test_gates.sh transport` when shared automatic 1:1 inbox drain or `retrieve_pending` fallback wiring changes | The doc-scoped Session `1` for Report `48` closed the production path from durable automatic drain back to destructive `inbox:retrieve` without widening into public destructive-API removal or malformed-row cleanup architecture | 19 / 41 / 48 / test-gate-definitions |
 | Maintain | Use `27-persistent-nav-bar-orbit-session-breakdown.md`, `intro_notification_orbit_route_test.dart`, the direct Orbit/Feed nav suites, and `baseline` when app-root intro-open wiring changes | Session `55` closed the notification-opened Orbit persistent-nav seam without widening into sibling-tab hosting, keep-alive, or swipe navigation scope | 27 / 54 / 55 |
 | Maintain | Use `28-orbit-intro-badge-session-breakdown.md`, the direct Feed/Orbit intro badge suites, `intro_notification_orbit_route_test.dart`, and `baseline` when shared Orbit pending-intro badge truth changes | Session `56` closed shared badge coexistence, expiry-aware load, live refresh, route-return freshness, and persistent-nav Orbit parity without widening into a second unread system or root-owned badge controller | 28 / 56 |
 | Maintain | Use `29-batch-parallel-intro-sending-session-breakdown.md`, the direct intro application/picker/integration suites, and rerun `baseline` only when broader conversation or banner entry wiring changes | Sessions `58` and `59` closed capped batch intro sending plus truthful picker progress without widening into Go/bridge batch APIs or new named-gate ownership | 29 / 58 / 59 |
 | Maintain | Use `30-swipe-nav-feed-orbit-session-breakdown.md`, the direct Feed/Orbit swipe and local-gesture suites, and `baseline` when the shared Feed/Orbit navigation seam changes | The doc-scoped Sessions `59` and `60` closed the shared-host plus horizontal-swipe rollout without widening into notification-opened Orbit routing parity, a broader app-root tab shell, or unread/badge architecture work | 30 / 59 / 60 |
+| Maintain | Use `44-feed-orbit-notification-desync-session-breakdown.md`, the direct `feed_wired_test.dart` and `orbit_wired_test.dart` suites, plus `./scripts/run_test_gates.sh feed`, `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1`, and `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` when shared Feed/Orbit handled-notification truth changes | The doc-scoped Session `1` for Report `44` closed the mounted Orbit stale-unread contradiction after Feed collapse or successful inline reply without widening into app-root notification routing, group sync, or unread-architecture redesign | 30 / 40 / 44 / test-gate-definitions |
+| Maintain | Use `45-feed-stack-card-does-not-reorient-after-inline-reply-session-breakdown.md`, the direct `feed_wired_test.dart` and `feed_screen_test.dart` suites, plus `./scripts/run_test_gates.sh feed`, `./scripts/run_test_gates.sh 1to1`, and `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` when Feed inline-reply viewport continuity changes | The doc-scoped Session `1` for Report `45` closed the stale same-card viewport continuity seam after successful inline reply without widening into unread-truth redesign, group parity, or broader Feed/Orbit navigation architecture | 40 / 44 / 45 / test-gate-definitions |
 | Maintain | Use `34-orbit-intros-swipe-delete-missing-session-breakdown.md`, `orbit_wired_test.dart`, `orbit_intros_wiring_test.dart`, `orbit_screen_archived_groups_test.dart`, `swipeable_friend_row_test.dart`, and `baseline` when live Orbit intro delete behavior changes | The doc-scoped Session `1` closed the live Orbit intro swipe-delete seam without widening into intro protocol, loader, or broader Feed/Orbit architecture work | 34 / doc-scoped 1 |
 | Follow up only if needed | Complete external CI / release owner wiring for Session `12` if the local handoff artifact is still the final state | This is the only clearly externalized closure item | 16 |
 | Follow up only if needed | Revalidate Session `30` before any execution | The plan file alone should not reopen the already-closed broader program | 17 / 30 |

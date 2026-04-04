@@ -1118,6 +1118,38 @@ func TestSendMessage_IncludesTransportInResponse(t *testing.T) {
 	}
 }
 
+func TestConfirmDirectMessage_NotInitialized(t *testing.T) {
+	withNilSingleton(t)
+
+	result := ConfirmDirectMessage(`{"nonce":"nonce-1","ok":true}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "NOT_INITIALIZED")
+}
+
+func TestConfirmDirectMessage_InvalidJSON(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	result := ConfirmDirectMessage("not valid json")
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestConfirmDirectMessage_MissingNonce(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	result := ConfirmDirectMessage(`{"ok":true}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestConfirmDirectMessage_Success(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	result := ConfirmDirectMessage(`{"nonce":"nonce-1","ok":false}`)
+	m := parseJSON(t, result)
+	assertOk(t, m)
+}
+
 func TestRelayReconnect_ReturnsRecoveryMode(t *testing.T) {
 	withFreshSingletonNode(t)
 

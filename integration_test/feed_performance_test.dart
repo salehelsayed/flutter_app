@@ -174,6 +174,19 @@ Future<void> _pumpFeedScreen(
   }
 }
 
+FeedCard? _nextBuiltCollapsedCard(
+  WidgetTester tester,
+  Set<String> exercisedThreadIds,
+) {
+  for (final card in tester.widgetList<FeedCard>(find.byType(FeedCard))) {
+    if (!card.thread.isOpenMode &&
+        !exercisedThreadIds.contains(card.thread.id)) {
+      return card;
+    }
+  }
+  return null;
+}
+
 // ─── Frame Timing Collector ───────────────────────────────────────────────────
 
 /// Collects [FrameTiming] data from the engine via [SchedulerBinding].
@@ -331,25 +344,49 @@ void main() {
 
       final collector = _FrameTimingCollector()..start();
 
-      final threadCards = find.byType(FeedCard);
-      final cardCount = min(3, tester.widgetList(threadCards).length);
+      final scrollable = find.byType(CustomScrollView);
+      final exercisedThreadIds = <String>{};
 
-      for (var i = 0; i < cardCount; i++) {
-        // Scroll to make card visible before tapping
-        await tester.ensureVisible(threadCards.at(i));
+      for (var attempts = 0; exercisedThreadIds.length < 3; attempts++) {
+        final nextCard = _nextBuiltCollapsedCard(tester, exercisedThreadIds);
+        if (nextCard == null) {
+          expect(
+            attempts,
+            lessThan(20),
+            reason: 'Could not find three collapsed feed cards to exercise',
+          );
+          await tester.drag(scrollable, const Offset(0, -300));
+          await tester.pump(const Duration(milliseconds: 16));
+          continue;
+        }
+
+        final card = find.byKey(ValueKey(nextCard.thread.id));
+        final headerLabel = find.descendant(
+          of: card,
+          matching: find.text(nextCard.thread.displayName),
+        );
+
+        await tester.ensureVisible(headerLabel);
         await tester.pump(const Duration(milliseconds: 16));
 
-        // Expand
-        await tester.tap(threadCards.at(i));
+        // Expand via the tappable collapsed header instead of the full card body.
+        await tester.tap(headerLabel);
         await _pumpFrames(tester, count: 25);
 
-        // Scroll again (expanded card may shift layout)
-        await tester.ensureVisible(threadCards.at(i));
+        final collapseHint = find.descendant(
+          of: card,
+          matching: find.text(
+            AppLocalizations.of(tester.element(card))!.feed_collapse,
+          ),
+        );
+
+        await tester.ensureVisible(collapseHint);
         await tester.pump(const Duration(milliseconds: 16));
 
-        // Collapse
-        await tester.tap(threadCards.at(i));
+        await tester.tap(collapseHint);
         await _pumpFrames(tester, count: 25);
+
+        exercisedThreadIds.add(nextCard.thread.id);
       }
 
       await collector.stop();

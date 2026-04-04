@@ -25,6 +25,27 @@ void main() {
       expect(routeTarget.groupId, 'group-123');
     });
 
+    test(
+      'fromRemoteMessageData maps contact_request to contact-request route',
+      () {
+        final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'contact_request',
+          'sender_id': 'peer-contact-123',
+        });
+
+        expect(routeTarget, isNotNull);
+        expect(routeTarget!.kind, NotificationRouteTargetKind.contactRequest);
+        expect(routeTarget.peerId, 'peer-contact-123');
+      },
+    );
+
+    test('fromPayload maps intros to intros route', () {
+      final routeTarget = NotificationRouteTarget.fromPayload('intros');
+
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.intros);
+    });
+
     test('group payload round-trips through toPayload and fromPayload', () {
       const routeTarget = NotificationRouteTarget.group('group-xyz');
 
@@ -36,6 +57,23 @@ void main() {
       expect(parsed!.kind, NotificationRouteTargetKind.group);
       expect(parsed.groupId, 'group-xyz');
     });
+
+    test(
+      'contact-request payload round-trips through toPayload and fromPayload',
+      () {
+        const routeTarget = NotificationRouteTarget.contactRequest(
+          'peer-contact-123',
+        );
+
+        final payload = routeTarget.toPayload();
+        final parsed = NotificationRouteTarget.fromPayload(payload);
+
+        expect(payload, 'contact_request:peer-contact-123');
+        expect(parsed, isNotNull);
+        expect(parsed!.kind, NotificationRouteTargetKind.contactRequest);
+        expect(parsed.peerId, 'peer-contact-123');
+      },
+    );
 
     test('unknown whitespace payload does not coerce to an invalid route', () {
       final parsed = NotificationRouteTarget.fromPayload('   ');

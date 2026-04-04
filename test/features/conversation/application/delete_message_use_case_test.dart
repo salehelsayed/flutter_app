@@ -119,7 +119,7 @@ void main() {
     );
 
     test(
-      'deleteMessageForEveryone keeps a hidden failed tombstone on send failure',
+      'deleteMessageForEveryone keeps a sender-visible failed tombstone on send failure',
       () async {
         final original = makeMessage();
         messageRepo.seed([original]);
@@ -142,17 +142,17 @@ void main() {
         expect(tombstone.text, isEmpty);
         expect(tombstone.status, 'failed');
         expect(tombstone.isDeleted, isTrue);
-        expect(tombstone.isHidden, isTrue);
+        expect(tombstone.isHidden, isFalse);
         expect(tombstone.deletedByPeerId, 'peer-alice');
         expect(tombstone.wireEnvelope, contains('"type":"message_deletion"'));
 
         final stored = await messageRepo.getMessage(original.id);
         expect(stored, isNotNull);
         expect(stored!.status, 'failed');
-        expect(stored.isHidden, isTrue);
+        expect(stored.isHidden, isFalse);
         expect(
           await messageRepo.getMessagesForContact(original.contactPeerId),
-          isEmpty,
+          hasLength(1),
         );
 
         p2pService.dispose();

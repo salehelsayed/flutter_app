@@ -59,6 +59,8 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 
+import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+
 // ---------------------------------------------------------------------------
 // Signal helpers
 // ---------------------------------------------------------------------------
@@ -240,7 +242,10 @@ void main() {
     );
 
     // Start P2P node
-    final p2pService = P2PServiceImpl(bridge: bridge);
+    final p2pService = P2PServiceImpl(
+      bridge: bridge,
+      inboxStagingRepository: InMemoryInboxStagingRepository(),
+    );
     await p2pService.startNode(myPrivateKey, myPeerId);
 
     // Add CLI peer as contact
