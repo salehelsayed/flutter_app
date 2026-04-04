@@ -115,7 +115,8 @@ class IntroductionPayload {
         introducedId: payload['introducedId'] as String?,
         introducedUsername: payload['introducedUsername'] as String?,
         introducedPublicKey: payload['introducedPublicKey'] as String?,
-        introducedMlKemPublicKey: payload['introducedMlKemPublicKey'] as String?,
+        introducedMlKemPublicKey:
+            payload['introducedMlKemPublicKey'] as String?,
         recipientPublicKey: payload['recipientPublicKey'] as String?,
         recipientMlKemPublicKey: payload['recipientMlKemPublicKey'] as String?,
         responderId: payload['responderId'] as String?,
@@ -133,6 +134,7 @@ class IntroductionPayload {
     final envelope = {
       'type': 'introduction',
       'version': '1',
+      'messageId': introductionId,
       'payload': innerMap,
     };
     return jsonEncode(envelope);
@@ -168,7 +170,8 @@ class IntroductionPayload {
         introducedId: payload['introducedId'] as String?,
         introducedUsername: payload['introducedUsername'] as String?,
         introducedPublicKey: payload['introducedPublicKey'] as String?,
-        introducedMlKemPublicKey: payload['introducedMlKemPublicKey'] as String?,
+        introducedMlKemPublicKey:
+            payload['introducedMlKemPublicKey'] as String?,
         recipientPublicKey: payload['recipientPublicKey'] as String?,
         recipientMlKemPublicKey: payload['recipientMlKemPublicKey'] as String?,
         responderId: payload['responderId'] as String?,
@@ -185,6 +188,7 @@ class IntroductionPayload {
   /// The envelope contains the KEM ciphertext, AES ciphertext, and nonce
   /// alongside the sender's peer ID (cleartext for routing).
   static String buildEncryptedEnvelope({
+    required String introductionId,
     required String senderPeerId,
     required String kem,
     required String ciphertext,
@@ -193,12 +197,9 @@ class IntroductionPayload {
     final envelope = {
       'type': 'introduction',
       'version': '2',
+      'messageId': introductionId,
       'senderPeerId': senderPeerId,
-      'encrypted': {
-        'kem': kem,
-        'ciphertext': ciphertext,
-        'nonce': nonce,
-      },
+      'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     };
     return jsonEncode(envelope);
   }
@@ -222,6 +223,31 @@ class IntroductionPayload {
       return json;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Ensures the envelope exposes a stable top-level message identifier.
+  ///
+  /// Relay-side inbox dedupe cannot inspect encrypted introduction payloads,
+  /// so retries must carry a cleartext message ID at the envelope level.
+  static String ensureEnvelopeMessageId(
+    String rawEnvelope,
+    String introductionId,
+  ) {
+    try {
+      final json = jsonDecode(rawEnvelope) as Map<String, dynamic>;
+      if (json['type'] != 'introduction') {
+        return rawEnvelope;
+      }
+      final existingTopLevelId =
+          (json['messageId'] as String?) ?? (json['id'] as String?);
+      if (existingTopLevelId != null && existingTopLevelId.isNotEmpty) {
+        return rawEnvelope;
+      }
+      json['messageId'] = introductionId;
+      return jsonEncode(json);
+    } catch (_) {
+      return rawEnvelope;
     }
   }
 }

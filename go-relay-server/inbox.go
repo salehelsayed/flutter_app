@@ -29,9 +29,11 @@ const (
 	maxMessagesPerGroup = 500
 	groupMessageTTL     = 7 * 24 * time.Hour
 
-	pushNotificationTitle     = "New Message"
-	pushNotificationBody      = "You have a new message"
-	pushNotificationChannelID = "mknoon_messages"
+	pushNotificationTitle      = "New Message"
+	pushNotificationBody       = "You have a new message"
+	pushNotificationChannelID  = "mknoon_messages"
+	introPushNotificationTitle = "New Introduction"
+	introPushNotificationBody  = "Open Mknoon to review"
 )
 
 // --- Push service ---
@@ -174,24 +176,32 @@ func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
 func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 	metadata := extractChatPushMetadata(message)
 	resolvedTitle := metadata.SenderUsername
-	if resolvedTitle == "" {
+	if metadata.RouteType == "intros" {
+		resolvedTitle = introPushNotificationTitle
+	} else if resolvedTitle == "" {
 		resolvedTitle = pushNotificationTitle
 	}
 	resolvedBody := metadata.Body
 	if resolvedBody == "" {
-		resolvedBody = pushNotificationBody
+		if metadata.RouteType == "intros" {
+			resolvedBody = introPushNotificationBody
+		} else {
+			resolvedBody = pushNotificationBody
+		}
 	}
 
 	data := map[string]string{
-		"type":      "new_message",
-		"sender_id": fromPeerId,
-		"title":     resolvedTitle,
-		"body":      resolvedBody,
+		"type":  metadata.RouteType,
+		"title": resolvedTitle,
+		"body":  resolvedBody,
+	}
+	if metadata.RouteType == "new_message" {
+		data["sender_id"] = fromPeerId
 	}
 	if metadata.MessageID != "" {
 		data["message_id"] = metadata.MessageID
 	}
-	if metadata.SenderUsername != "" {
+	if metadata.RouteType == "new_message" && metadata.SenderUsername != "" {
 		data["sender_username"] = metadata.SenderUsername
 	}
 
@@ -286,6 +296,7 @@ func buildGroupPushMessage(token, groupId, title, body, messageID string) *messa
 }
 
 type chatPushMetadata struct {
+	RouteType      string
 	MessageID      string
 	SenderUsername string
 	Body           string
@@ -294,10 +305,19 @@ type chatPushMetadata struct {
 func extractChatPushMetadata(message string) chatPushMetadata {
 	var envelope map[string]interface{}
 	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
-		return chatPushMetadata{}
+		return chatPushMetadata{RouteType: "new_message"}
+	}
+
+	if trimmedString(envelope["type"]) == "introduction" {
+		return chatPushMetadata{
+			RouteType: "intros",
+			MessageID: extractMessageId(message),
+			Body:      introPushNotificationBody,
+		}
 	}
 
 	metadata := chatPushMetadata{
+		RouteType:      "new_message",
 		MessageID:      extractMessageId(message),
 		SenderUsername: trimmedString(envelope["senderUsername"]),
 		Body:           trimmedString(envelope["text"]),
@@ -344,7 +364,7 @@ func containsImpl(s, substr string) bool {
 }
 
 // extractMessageId attempts to extract a message ID from the JSON payload
-// for deduplication. Supports v1 (payload.id) and v2 (top-level id) envelopes.
+// for deduplication. Supports chat IDs plus introduction IDs.
 // Returns "" if the payload is malformed or has no extractable ID.
 func extractMessageId(message string) string {
 	var envelope map[string]interface{}
@@ -365,6 +385,9 @@ func extractMessageId(message string) string {
 	if payload, ok := envelope["payload"].(map[string]interface{}); ok {
 		if id, ok := payload["id"].(string); ok {
 			return id
+		}
+		if introID, ok := payload["introductionId"].(string); ok {
+			return introID
 		}
 	}
 

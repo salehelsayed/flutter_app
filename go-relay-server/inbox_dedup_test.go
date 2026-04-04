@@ -97,6 +97,46 @@ func TestInboxStoreDedup_V2EncryptedEnvelope(t *testing.T) {
 	}
 }
 
+func TestInboxStoreDedup_IntroductionPlaintextEnvelope(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+
+	msg := inboxMessage{
+		From:      "sender-peer",
+		Message:   `{"type":"introduction","version":"1","payload":{"action":"send","introductionId":"intro-plain-001","timestamp":"2026-04-04T20:36:00Z"}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	inbox.Store("recipient-peer", msg)
+	inbox.Store("recipient-peer", msg)
+	if inbox.Count("recipient-peer") != 1 {
+		t.Fatalf(
+			"expected 1 introduction after duplicate plaintext store, got %d",
+			inbox.Count("recipient-peer"),
+		)
+	}
+}
+
+func TestInboxStoreDedup_IntroductionEncryptedEnvelopeWithMessageID(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+
+	msg := inboxMessage{
+		From:      "sender-peer",
+		Message:   `{"type":"introduction","version":"2","messageId":"intro-enc-001","senderPeerId":"sender","encrypted":{"kem":"...","ciphertext":"...","nonce":"..."}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	inbox.Store("recipient-peer", msg)
+	inbox.Store("recipient-peer", msg)
+	if inbox.Count("recipient-peer") != 1 {
+		t.Fatalf(
+			"expected 1 introduction after duplicate encrypted store, got %d",
+			inbox.Count("recipient-peer"),
+		)
+	}
+}
+
 func TestInboxStoreDedup_MalformedJsonFallsThrough(t *testing.T) {
 	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
 	inbox := NewInboxStore(push)
