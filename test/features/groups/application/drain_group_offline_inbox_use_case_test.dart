@@ -105,6 +105,30 @@ class _TimeoutCursorInboxBridge extends _CursorInboxBridge {
   }
 }
 
+class _DelayedCursorInboxBridge extends _CursorInboxBridge {
+  final Map<String, Duration> delays = {};
+
+  void addDelay(String groupId, String cursor, Duration delay) {
+    delays['$groupId:$cursor'] = delay;
+  }
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:inboxRetrieveCursor') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final groupId = payload['groupId'] as String;
+      final cursor = payload['cursor'] as String? ?? '';
+      final delay = delays['$groupId:$cursor'];
+      if (delay != null) {
+        await Future<void>.delayed(delay);
+      }
+    }
+    return super.send(message);
+  }
+}
+
 void main() {
   late _CursorInboxBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -268,6 +292,76 @@ void main() {
     );
     expect(msgRepo.count, 1);
   });
+
+  test(
+    'drains groups concurrently so one slow inbox does not serially stall others',
+    () async {
+      final delayedBridge = _DelayedCursorInboxBridge();
+      bridge = delayedBridge;
+
+      final testGroup2 = GroupModel(
+        id: 'group-2',
+        name: 'Second Group',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/group-2',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      );
+      await groupRepo.saveGroup(testGroup2);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final ts = DateTime.now().toUtc().toIso8601String();
+      delayedBridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Slow group 1',
+          'timestamp': ts,
+          'messageId': 'msg-group-1-slow',
+        },
+      ], '');
+      delayedBridge.addPage('group-2', '', [
+        {
+          'groupId': 'group-2',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Slow group 2',
+          'timestamp': ts,
+          'messageId': 'msg-group-2-slow',
+        },
+      ], '');
+      delayedBridge.addDelay('group-1', '', const Duration(milliseconds: 250));
+      delayedBridge.addDelay('group-2', '', const Duration(milliseconds: 250));
+
+      final stopwatch = Stopwatch()..start();
+      await drainGroupOfflineInbox(
+        bridge: delayedBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+      stopwatch.stop();
+
+      expect(msgRepo.count, 2);
+      expect(
+        stopwatch.elapsedMilliseconds,
+        lessThan(400),
+        reason:
+            'Two 250ms group drains should overlap instead of running serially',
+      );
+    },
+  );
 
   test(
     'replayed member_removed routes through listener cleanup instead of saving a chat row',

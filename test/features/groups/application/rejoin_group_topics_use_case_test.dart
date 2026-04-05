@@ -505,7 +505,7 @@ void main() {
       expect(result.errorCount, 0);
     });
 
-    test('rejoin is skipped after successful in-place recovery', () async {
+    test('in-place recovery refreshes topics idempotently', () async {
       final now = DateTime.now().toUtc();
 
       await seedGroup(
@@ -529,16 +529,19 @@ void main() {
         ),
       );
 
-      // Rejoin with in-place recovery reason should be skipped entirely.
-      await rejoinGroupTopics(
+      final result = await rejoinGroupTopics(
         bridge: bridge,
         groupRepo: groupRepo,
         reason: RejoinReason.inPlaceRecovery,
       );
 
-      // No bridge calls should have been made.
-      expect(bridge.sendCallCount, 0);
-      expect(bridge.sentMessages, isEmpty);
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+      expect(joinCommands, hasLength(1));
+      expect(joinCommands.first['payload']['groupId'], 'group-inplace');
+      expect(result.skipped, isFalse);
     });
 
     test(
@@ -671,7 +674,7 @@ void main() {
       expect(joinCommands, hasLength(3));
     });
 
-    test('in place relay recovery skips unnecessary rejoin', () async {
+    test('in place relay recovery still refreshes group topics', () async {
       final now = DateTime.now().toUtc();
 
       // Create groups
@@ -703,12 +706,13 @@ void main() {
         reason: RejoinReason.inPlaceRecovery,
       );
 
-      // Verify bridge received 0 group:join commands
+      // Verify bridge still refreshes the topic join idempotently.
       final joinCommands = bridge.sentMessages
           .map((m) => jsonDecode(m) as Map<String, dynamic>)
           .where((m) => m['cmd'] == 'group:join')
           .toList();
-      expect(joinCommands, hasLength(0));
+      expect(joinCommands, hasLength(1));
+      expect(joinCommands.first['payload']['groupId'], equals('group-ip-1'));
     });
 
     test('startup triggers group rejoin for all groups', () async {

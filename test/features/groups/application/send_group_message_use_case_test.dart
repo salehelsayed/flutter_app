@@ -119,6 +119,28 @@ class _InboxStoreOkFalseBridge extends FakeBridge {
   }
 }
 
+class _GatedInboxStoreBridge extends FakeBridge {
+  final Completer<void> inboxGate = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:inboxStore') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      await inboxGate.future;
+      return jsonEncode({'ok': true});
+    }
+
+    return super.send(message);
+  }
+}
+
 class _DelayedGroupRepository extends InMemoryGroupRepository {
   static const _latestKeyDelay = Duration(milliseconds: 100);
   static const _membersDelay = Duration(milliseconds: 100);
@@ -1635,6 +1657,59 @@ void main() {
         expect(saved, isNotNull);
         expect(saved!.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNotNull);
+      },
+    );
+
+    test(
+      'peers > 0 returns before inbox store finishes and updates inbox state in background',
+      () async {
+        final gatedBridge = _GatedInboxStoreBridge();
+        gatedBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-peers-bg-inbox',
+          'topicPeers': 2,
+        };
+
+        final stopwatch = Stopwatch()..start();
+        final sendFuture = sendGroupMessage(
+          bridge: gatedBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Return before inbox completes',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-peers-bg-inbox',
+        );
+        final (result, message) = await sendFuture;
+        stopwatch.stop();
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message.inboxStored, isFalse);
+        expect(message.inboxRetryPayload, isNotNull);
+        expect(stopwatch.elapsedMilliseconds, lessThan(150));
+
+        final savedBeforeRelease = await msgRepo.getMessage(
+          'msg-peers-bg-inbox',
+        );
+        expect(savedBeforeRelease, isNotNull);
+        expect(savedBeforeRelease!.inboxStored, isFalse);
+        expect(savedBeforeRelease.inboxRetryPayload, isNotNull);
+
+        gatedBridge.inboxGate.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        final savedAfterRelease = await msgRepo.getMessage(
+          'msg-peers-bg-inbox',
+        );
+        expect(savedAfterRelease, isNotNull);
+        expect(savedAfterRelease!.status, 'sent');
+        expect(savedAfterRelease.inboxStored, isTrue);
+        expect(savedAfterRelease.inboxRetryPayload, isNull);
       },
     );
 

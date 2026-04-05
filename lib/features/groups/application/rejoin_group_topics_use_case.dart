@@ -15,7 +15,8 @@ enum RejoinReason {
   /// Go explicitly requested rejoin because topics may be missing.
   nodeRequestedRecovery,
 
-  /// In-place recovery succeeded — topics should still be active.
+  /// In-place recovery succeeded — refresh topics idempotently because the
+  /// transport can recover while pubsub peers still need to converge again.
   inPlaceRecovery,
 }
 
@@ -41,9 +42,9 @@ class RejoinGroupTopicsResult {
 /// [callGroupJoinWithConfig] so the node can receive and validate
 /// real-time group messages again.
 ///
-/// When [reason] is [RejoinReason.inPlaceRecovery], the rejoin is skipped
-/// because topics are still active in the Go node. This makes the function
-/// idempotent for in-place recovery scenarios.
+/// In-place recovery still refreshes topics because transport recovery does not
+/// guarantee that the pubsub mesh has fully converged again. The join call is
+/// idempotent, so this remains safe even when the topic is already active.
 ///
 /// Groups without a stored key are skipped (can't join without key material).
 /// Errors on individual groups are logged and do not prevent other groups
@@ -54,31 +55,6 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   RejoinReason reason = RejoinReason.startup,
 }) async {
   final rejoinStopwatch = Stopwatch()..start();
-  // Skip rejoin when in-place recovery succeeded — topics are still active.
-  if (reason == RejoinReason.inPlaceRecovery) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_REJOIN_TOPICS_SKIPPED',
-      details: {'reason': 'inPlaceRecovery'},
-    );
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_REJOIN_TOPICS_TIMING',
-      details: {
-        'scope': 'batch',
-        'elapsedMs': rejoinStopwatch.elapsedMilliseconds,
-        'outcome': 'skipped',
-        'reason': reason.name,
-      },
-    );
-    return const RejoinGroupTopicsResult(
-      joinedGroupCount: 0,
-      skippedNoKeyCount: 0,
-      errorCount: 0,
-      skipped: true,
-    );
-  }
-
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_REJOIN_TOPICS_BEGIN',

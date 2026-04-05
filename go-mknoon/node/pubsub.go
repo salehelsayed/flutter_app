@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 
@@ -213,9 +214,12 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	ctx, cancel := context.WithTimeout(n.ctx, PubSubTimeout)
 	defer cancel()
 
-	// Capture peer count at publish time for caller visibility.
-	topicPeers := topic.ListPeers()
-	peerCount := len(topicPeers)
+	peerCount := n.ensureGroupTopicPeersBeforePublish(
+		groupId,
+		config,
+		senderPeerId,
+		topic,
+	)
 	log.Printf("[PUBSUB] Publishing message %s to group %s (peers in topic: %d)", msgId, groupId, peerCount)
 
 	if err := topic.Publish(ctx, []byte(envelopeJSON)); err != nil {
@@ -637,6 +641,23 @@ func filterDiscoveredPeers(discovered []peer.AddrInfo, selfId peer.ID, connected
 	return result
 }
 
+func filterDiscoveredGroupMembers(discovered []peer.AddrInfo, allowedMembers map[peer.ID]struct{}) ([]peer.AddrInfo, int) {
+	if len(allowedMembers) == 0 {
+		return discovered, 0
+	}
+
+	var result []peer.AddrInfo
+	ignored := 0
+	for _, p := range discovered {
+		if _, ok := allowedMembers[p.ID]; !ok {
+			ignored++
+			continue
+		}
+		result = append(result, p)
+	}
+	return result, ignored
+}
+
 type groupPeerConnectResult struct {
 	Path              string
 	DirectAddrCount   int
@@ -678,7 +699,18 @@ func multiaddrsToStrings(addrs []ma.Multiaddr) []string {
 	return result
 }
 
-func (n *Node) connectGroupPeerPreferDirect(peerIdStr string, candidateAddrs []ma.Multiaddr) (groupPeerConnectResult, error) {
+func collectDirectMultiaddrs(h host.Host, pid peer.ID, candidateAddrs []ma.Multiaddr) []ma.Multiaddr {
+	directAddrs := make([]ma.Multiaddr, 0, len(candidateAddrs)+len(h.Peerstore().Addrs(pid)))
+	directAddrs = append(directAddrs, candidateAddrs...)
+	directAddrs = append(directAddrs, h.Peerstore().Addrs(pid)...)
+	return dedupeDirectMultiaddrs(directAddrs)
+}
+
+func (n *Node) connectGroupPeerPreferDirect(
+	peerIdStr string,
+	candidateAddrs []ma.Multiaddr,
+	allowRelayFallback bool,
+) (groupPeerConnectResult, error) {
 	result := groupPeerConnectResult{}
 
 	n.mu.RLock()
@@ -694,10 +726,7 @@ func (n *Node) connectGroupPeerPreferDirect(peerIdStr string, candidateAddrs []m
 		return result, fmt.Errorf("invalid peer ID: %w", err)
 	}
 
-	directAddrs := make([]ma.Multiaddr, 0, len(candidateAddrs)+len(h.Peerstore().Addrs(pid)))
-	directAddrs = append(directAddrs, candidateAddrs...)
-	directAddrs = append(directAddrs, h.Peerstore().Addrs(pid)...)
-	directAddrs = dedupeDirectMultiaddrs(directAddrs)
+	directAddrs := collectDirectMultiaddrs(h, pid, candidateAddrs)
 	result.DirectAddrCount = len(directAddrs)
 
 	if len(directAddrs) > 0 {
@@ -708,6 +737,13 @@ func (n *Node) connectGroupPeerPreferDirect(peerIdStr string, candidateAddrs []m
 		} else {
 			result.DirectError = err.Error()
 		}
+	}
+
+	if !allowRelayFallback {
+		if result.AttemptedDirect {
+			return result, fmt.Errorf("direct dial failed: %s", result.DirectError)
+		}
+		return result, fmt.Errorf("no direct addresses")
 	}
 
 	if err := n.DialPeerViaRelay(peerIdStr); err == nil {
@@ -748,8 +784,12 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 	// Build set of already-connected peers.
 	n.mu.RLock()
 	h := n.host
-	selfId := n.host.ID()
+	config := n.groupConfigs[groupId]
 	n.mu.RUnlock()
+	if h == nil {
+		return
+	}
+	selfId := h.ID()
 
 	connectedSet := make(map[peer.ID]struct{})
 	for _, pid := range h.Network().Peers() {
@@ -757,13 +797,29 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 	}
 
 	newPeers := filterDiscoveredPeers(peers, selfId, connectedSet)
+	alreadyConnected := len(peers) - len(newPeers)
+	allowedMembers := make(map[peer.ID]struct{})
+	if config != nil {
+		for _, member := range config.Members {
+			if member.PeerId == "" || member.PeerId == selfId.String() {
+				continue
+			}
+			memberID, err := peer.Decode(member.PeerId)
+			if err != nil {
+				continue
+			}
+			allowedMembers[memberID] = struct{}{}
+		}
+	}
+	newPeers, ignoredNonMembers := filterDiscoveredGroupMembers(newPeers, allowedMembers)
 
 	n.emitEvent("group:discovery", map[string]interface{}{
-		"groupId":          groupId,
-		"step":             "discover_result",
-		"totalFound":       len(peers),
-		"newPeers":         len(newPeers),
-		"alreadyConnected": len(peers) - len(newPeers),
+		"groupId":           groupId,
+		"step":              "discover_result",
+		"totalFound":        len(peers),
+		"newPeers":          len(newPeers),
+		"alreadyConnected":  alreadyConnected,
+		"ignoredNonMembers": ignoredNonMembers,
 	})
 
 	if len(newPeers) == 0 {
@@ -785,25 +841,35 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 			log.Printf("[PUBSUB] Group %s: added %d discovered addrs for %s", groupId, len(p.Addrs), pidShort)
 		}
 
-		if allowed, retryIn := n.allowGroupPeerDial(pidStr, time.Now()); !allowed {
-			log.Printf(
-				"[PUBSUB] Group %s: skipping discovered dial to %s during cooldown (%v remaining)",
-				groupId,
-				pidShort,
-				retryIn.Truncate(time.Second),
-			)
-			n.emitEvent("group:discovery", map[string]interface{}{
-				"groupId": groupId,
-				"step":    "dial_skipped_cooldown",
-				"peerId":  pidShort,
-				"retryIn": retryIn.String(),
-			})
+		if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDial(pidStr, time.Now()); !allowed {
+			if blockedByInFlight {
+				log.Printf("[PUBSUB] Group %s: skipping discovered dial to %s while another group dial is in flight",
+					groupId, pidShort)
+				n.emitEvent("group:discovery", map[string]interface{}{
+					"groupId": groupId,
+					"step":    "dial_skipped_inflight",
+					"peerId":  pidShort,
+				})
+			} else {
+				log.Printf(
+					"[PUBSUB] Group %s: skipping discovered dial to %s during cooldown (%v remaining)",
+					groupId,
+					pidShort,
+					retryIn.Truncate(time.Second),
+				)
+				n.emitEvent("group:discovery", map[string]interface{}{
+					"groupId": groupId,
+					"step":    "dial_skipped_cooldown",
+					"peerId":  pidShort,
+					"retryIn": retryIn.String(),
+				})
+			}
 			continue
 		}
 
-		connectResult, err := n.connectGroupPeerPreferDirect(pidStr, p.Addrs)
+		connectResult, err := n.connectGroupPeerPreferDirect(pidStr, p.Addrs, true)
 		if err != nil {
-			n.recordGroupPeerDialResult(pidStr, false, time.Now())
+			n.finishGroupPeerDial(pidStr, false, time.Now())
 			log.Printf("[PUBSUB] Group %s: dial %s failed (attemptedDirect=%t, directAddrs=%d): %v",
 				groupId, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
 			n.emitEvent("group:discovery", map[string]interface{}{
@@ -816,7 +882,7 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 				"error":             err.Error(),
 			})
 		} else {
-			n.recordGroupPeerDialResult(pidStr, true, time.Now())
+			n.finishGroupPeerDial(pidStr, true, time.Now())
 			log.Printf("[PUBSUB] Group %s: connected to %s via %s", groupId, pidShort, connectResult.Path)
 			n.emitEvent("group:discovery", map[string]interface{}{
 				"groupId":           groupId,
@@ -835,7 +901,7 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 // peerstore addresses before falling back to relay circuit dialing.
 // Already-connected peers are skipped. Errors are logged per-member and do not
 // prevent dialing other members.
-func (n *Node) dialKnownGroupMembers(groupId string) {
+func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 	n.mu.RLock()
 	config, ok := n.groupConfigs[groupId]
 	h := n.host
@@ -867,7 +933,7 @@ func (n *Node) dialKnownGroupMembers(groupId string) {
 		}
 		if _, alreadyConnected := connectedSet[member.PeerId]; alreadyConnected {
 			connected++
-			n.recordGroupPeerDialResult(member.PeerId, true, time.Now())
+			n.finishGroupPeerDial(member.PeerId, true, time.Now())
 			continue
 		}
 
@@ -876,27 +942,37 @@ func (n *Node) dialKnownGroupMembers(groupId string) {
 			pidShort = pidShort[:16]
 		}
 
-		if allowed, retryIn := n.allowGroupPeerDial(member.PeerId, time.Now()); !allowed {
-			cooldownSkipped++
-			log.Printf(
-				"[PUBSUB] Group %s: skipping direct dial to %s during cooldown (%v remaining)",
-				groupId,
-				pidShort,
-				retryIn.Truncate(time.Second),
-			)
-			n.emitEvent("group:discovery", map[string]interface{}{
-				"groupId": groupId,
-				"step":    "direct_dial_skipped_cooldown",
-				"peerId":  pidShort,
-				"retryIn": retryIn.String(),
-			})
+		if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDialWithMode(member.PeerId, time.Now(), ignoreCooldown); !allowed {
+			if blockedByInFlight {
+				log.Printf("[PUBSUB] Group %s: skipping direct dial to %s while another group dial is in flight",
+					groupId, pidShort)
+				n.emitEvent("group:discovery", map[string]interface{}{
+					"groupId": groupId,
+					"step":    "direct_dial_skipped_inflight",
+					"peerId":  pidShort,
+				})
+			} else {
+				cooldownSkipped++
+				log.Printf(
+					"[PUBSUB] Group %s: skipping direct dial to %s during cooldown (%v remaining)",
+					groupId,
+					pidShort,
+					retryIn.Truncate(time.Second),
+				)
+				n.emitEvent("group:discovery", map[string]interface{}{
+					"groupId": groupId,
+					"step":    "direct_dial_skipped_cooldown",
+					"peerId":  pidShort,
+					"retryIn": retryIn.String(),
+				})
+			}
 			continue
 		}
 
 		dialed++
-		connectResult, err := n.connectGroupPeerPreferDirect(member.PeerId, nil)
+		connectResult, err := n.connectGroupPeerPreferDirect(member.PeerId, nil, true)
 		if err != nil {
-			n.recordGroupPeerDialResult(member.PeerId, false, time.Now())
+			n.finishGroupPeerDial(member.PeerId, false, time.Now())
 			log.Printf("[PUBSUB] Group %s: dial %s (%s) failed (attemptedDirect=%t, directAddrs=%d): %v",
 				groupId, member.Username, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
 			n.emitEvent("group:discovery", map[string]interface{}{
@@ -909,7 +985,7 @@ func (n *Node) dialKnownGroupMembers(groupId string) {
 				"error":             err.Error(),
 			})
 		} else {
-			n.recordGroupPeerDialResult(member.PeerId, true, time.Now())
+			n.finishGroupPeerDial(member.PeerId, true, time.Now())
 			connected++
 			switch connectResult.Path {
 			case "direct":
@@ -946,6 +1022,87 @@ func (n *Node) dialKnownGroupMembers(groupId string) {
 	})
 }
 
+// dialKnownGroupMembersDirectOnly attempts direct member recovery using only
+// already-known non-relay addresses. This avoids stranding foreground peers on
+// the relay warm-up path when direct addresses are already available.
+func (n *Node) dialKnownGroupMembersDirectOnly(groupId string) {
+	n.mu.RLock()
+	config, ok := n.groupConfigs[groupId]
+	h := n.host
+	selfId := ""
+	if h != nil {
+		selfId = h.ID().String()
+	}
+	n.mu.RUnlock()
+
+	if !ok || h == nil {
+		return
+	}
+
+	connectedSet := make(map[string]struct{})
+	for _, pid := range h.Network().Peers() {
+		connectedSet[pid.String()] = struct{}{}
+	}
+
+	dialed := 0
+	connected := 0
+	noDirectAddr := 0
+	for _, member := range config.Members {
+		if member.PeerId == selfId {
+			continue
+		}
+		if _, alreadyConnected := connectedSet[member.PeerId]; alreadyConnected {
+			connected++
+			continue
+		}
+
+		connectResult, err := n.connectGroupPeerPreferDirect(member.PeerId, nil, false)
+		if !connectResult.AttemptedDirect {
+			noDirectAddr++
+			continue
+		}
+
+		dialed++
+		pidShort := member.PeerId
+		if len(pidShort) > 16 {
+			pidShort = pidShort[:16]
+		}
+
+		if err != nil {
+			log.Printf("[PUBSUB] Group %s: pre-relay direct dial %s (%s) failed (directAddrs=%d): %v",
+				groupId, member.Username, pidShort, connectResult.DirectAddrCount, err)
+			n.emitEvent("group:discovery", map[string]interface{}{
+				"groupId":         groupId,
+				"step":            "known_member_pre_relay_direct_failed",
+				"peerId":          pidShort,
+				"directAddrCount": connectResult.DirectAddrCount,
+				"error":           err.Error(),
+			})
+			continue
+		}
+
+		connected++
+		log.Printf("[PUBSUB] Group %s: pre-relay direct connected to %s (%s)",
+			groupId, member.Username, pidShort)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId":         groupId,
+			"step":            "known_member_pre_relay_direct_success",
+			"peerId":          pidShort,
+			"path":            "direct_pre_relay",
+			"directAddrCount": connectResult.DirectAddrCount,
+		})
+	}
+
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":          groupId,
+		"step":             "pre_relay_direct_dial",
+		"membersDialed":    dialed,
+		"membersConnected": connected,
+		"noDirectAddr":     noDirectAddr,
+		"totalMembers":     len(config.Members),
+	})
+}
+
 // countConnectedGroupMembers returns the number of group members currently
 // connected to this node (excluding self). This is used by the discovery
 // loop to determine whether to back off or reset the interval.
@@ -976,9 +1133,49 @@ func (n *Node) countConnectedGroupMembers(groupId string) int {
 	return count
 }
 
+func (n *Node) expectedConnectedGroupMembers(groupId string) int {
+	n.mu.RLock()
+	config := n.groupConfigs[groupId]
+	h := n.host
+	selfId := ""
+	if h != nil {
+		selfId = h.ID().String()
+	}
+	n.mu.RUnlock()
+
+	if config == nil {
+		return 0
+	}
+
+	expected := 0
+	for _, member := range config.Members {
+		if member.PeerId == selfId {
+			continue
+		}
+		expected++
+	}
+	return expected
+}
+
+func countRemoteGroupMembers(config *GroupConfig, selfId string) int {
+	if config == nil {
+		return 0
+	}
+
+	count := 0
+	for _, member := range config.Members {
+		if member.PeerId == "" || member.PeerId == selfId {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 type groupPeerDialState struct {
 	failureCount int
 	nextAllowed  time.Time
+	inFlight     bool
 }
 
 func jitterDuration(base time.Duration, factor int, pick func(int64) int64) time.Duration {
@@ -1018,8 +1215,8 @@ func groupPeerDialBackoff(failureCount int) time.Duration {
 		return 0
 	}
 
-	backoff := GroupDiscoveryInterval
-	for i := 1; i < failureCount; i++ {
+	backoff := GroupDiscoveryWarmInterval
+	for i := 1; i < failureCount-1; i++ {
 		backoff *= 2
 		if backoff >= MaxGroupDiscoveryBackoff {
 			return MaxGroupDiscoveryBackoff
@@ -1048,37 +1245,128 @@ func (n *Node) acquireGroupRecoverySlot(ctx context.Context) (func(), error) {
 	}
 }
 
-func (n *Node) allowGroupPeerDial(peerId string, now time.Time) (bool, time.Duration) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	if n.groupDialBackoff == nil {
-		n.groupDialBackoff = make(map[string]groupPeerDialState)
-	}
-
-	state, ok := n.groupDialBackoff[peerId]
-	if !ok || !now.Before(state.nextAllowed) {
-		return true, 0
-	}
-	return false, state.nextAllowed.Sub(now)
+func (n *Node) beginGroupPeerDial(peerId string, now time.Time) (bool, time.Duration, bool) {
+	return n.beginGroupPeerDialWithMode(peerId, now, false)
 }
 
-func (n *Node) recordGroupPeerDialResult(peerId string, success bool, now time.Time) {
+func (n *Node) beginGroupPeerDialWithMode(peerId string, now time.Time, ignoreCooldown bool) (bool, time.Duration, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	if n.groupDialBackoff == nil {
 		n.groupDialBackoff = make(map[string]groupPeerDialState)
 	}
+
+	state := n.groupDialBackoff[peerId]
+	if state.inFlight {
+		return false, 0, true
+	}
+	if !ignoreCooldown && now.Before(state.nextAllowed) {
+		return false, state.nextAllowed.Sub(now), false
+	}
+
+	state.inFlight = true
+	n.groupDialBackoff[peerId] = state
+	return true, 0, false
+}
+
+func waitForTopicPeerCount(topic *pubsub.Topic, baseline, wantAtLeast int, timeout time.Duration) int {
+	if topic == nil {
+		return 0
+	}
+
+	best := len(topic.ListPeers())
+	if best < baseline {
+		best = baseline
+	}
+	if best >= wantAtLeast || timeout <= 0 {
+		return best
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(GroupPublishPeerPoll)
+		current := len(topic.ListPeers())
+		if current > best {
+			best = current
+		}
+		if current >= wantAtLeast {
+			return current
+		}
+	}
+
+	return best
+}
+
+func (n *Node) ensureGroupTopicPeersBeforePublish(
+	groupId string,
+	config *GroupConfig,
+	senderPeerId string,
+	topic *pubsub.Topic,
+) int {
+	if topic == nil {
+		return 0
+	}
+
+	initialPeers := len(topic.ListPeers())
+	expectedPeers := countRemoteGroupMembers(config, senderPeerId)
+	if expectedPeers <= 0 || initialPeers >= expectedPeers {
+		return initialPeers
+	}
+
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":       groupId,
+		"step":          "publish_peer_refresh_begin",
+		"topicPeers":    initialPeers,
+		"expectedPeers": expectedPeers,
+	})
+
+	settleWait := GroupPublishPartialPeerSettleWait
+	if initialPeers == 0 {
+		// When there are no live topic peers at all, keep only a tiny foreground
+		// promotion window. Durable inbox fallback is already racing in parallel,
+		// so user-tapped sends should not sit on a long pubsub preflight.
+		settleWait = GroupPublishZeroPeerSettleWait
+	}
+
+	n.dialKnownGroupMembers(groupId, true)
+	peerCount := waitForTopicPeerCount(
+		topic,
+		initialPeers,
+		expectedPeers,
+		settleWait,
+	)
+
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":       groupId,
+		"step":          "publish_peer_refresh_done",
+		"topicPeers":    peerCount,
+		"expectedPeers": expectedPeers,
+		"promoted":      peerCount > initialPeers,
+		"settleWaitMs":  settleWait.Milliseconds(),
+	})
+
+	return peerCount
+}
+
+func (n *Node) finishGroupPeerDial(peerId string, success bool, now time.Time) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.groupDialBackoff == nil {
+		n.groupDialBackoff = make(map[string]groupPeerDialState)
+	}
+
+	state := n.groupDialBackoff[peerId]
 
 	if success {
 		delete(n.groupDialBackoff, peerId)
 		return
 	}
 
-	state := n.groupDialBackoff[peerId]
 	state.failureCount++
 	state.nextAllowed = now.Add(groupPeerDialBackoff(state.failureCount))
+	state.inFlight = false
 	n.groupDialBackoff[peerId] = state
 }
 
@@ -1103,6 +1391,7 @@ func (n *Node) runGroupDiscoveryCycle(
 	groupId string,
 	ns string,
 	registerNamespace bool,
+	dialKnownMembers bool,
 ) (executed bool, registered bool) {
 	release, err := n.acquireGroupRecoverySlot(ctx)
 	if err != nil {
@@ -1110,7 +1399,9 @@ func (n *Node) runGroupDiscoveryCycle(
 	}
 	defer release()
 
-	n.dialKnownGroupMembers(groupId)
+	if dialKnownMembers {
+		n.dialKnownGroupMembers(groupId, false)
+	}
 
 	if registerNamespace {
 		if err := n.RendezvousRegister(ns, nil); err != nil {
@@ -1149,11 +1440,24 @@ func (n *Node) runGroupDiscoveryCycle(
 func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 	ns := groupRendezvousNamespace(groupId)
 	registered := false
+	warmRetriesRemaining := GroupDiscoveryWarmRetries
 
-	// Wait for relay to be ready before dialing/registering.
+	// Try direct recovery immediately using already-known non-relay addresses.
+	// Foreground peers on the same network should not wait for relay warm-up
+	// before attempting to become live topic peers.
+	n.dialKnownGroupMembersDirectOnly(groupId)
+
+	// Wait for relay to be ready before relay-assisted dialing/registering.
 	select {
 	case <-n.relayReady:
 	case <-ctx.Done():
+		return
+	}
+
+	// Recover live member-to-member connectivity immediately once a relay path
+	// exists. Waiting on our own circuit address here strands active groups in
+	// the "success_no_peers" path even though the members are online.
+	if executed, _ := n.runGroupDiscoveryCycle(ctx, groupId, ns, false, true); !executed {
 		return
 	}
 
@@ -1173,8 +1477,10 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 	}
 
 	// Initial recovery cycle: stagger the burst, cap cross-group concurrency,
-	// then register/discover after known-member dials.
-	executed, registeredNow := n.runGroupDiscoveryCycle(ctx, groupId, ns, true)
+	// then re-dial known members and register/discover. The second known-member
+	// pass is what lets a late foreground peer join during the warm retry window
+	// instead of waiting for the next periodic tick.
+	executed, registeredNow := n.runGroupDiscoveryCycle(ctx, groupId, ns, true, true)
 	if !executed {
 		return
 	}
@@ -1182,9 +1488,17 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 
 	interval := GroupDiscoveryInterval
 	consecutiveFailures := 0
+	afterInitialConnected := n.countConnectedGroupMembers(groupId)
+	expectedInitialConnected := n.expectedConnectedGroupMembers(groupId)
+	if expectedInitialConnected > 0 && afterInitialConnected < expectedInitialConnected {
+		interval = GroupDiscoveryWarmInterval
+	}
 
 	for {
-		wait := jitterDuration(interval, GroupDiscoveryJitterFactor, rand.Int63n)
+		wait := interval
+		if interval > GroupDiscoveryWarmInterval {
+			wait = jitterDuration(interval, GroupDiscoveryJitterFactor, rand.Int63n)
+		}
 		if !sleepWithContext(ctx, wait) {
 			if registered {
 				// Best-effort unregister.
@@ -1200,7 +1514,7 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 
 		// Re-dial known members (handles reconnection after disconnect)
 		// and rendezvous discover (handles new members).
-		if executed, _ := n.runGroupDiscoveryCycle(ctx, groupId, ns, false); !executed {
+		if executed, _ := n.runGroupDiscoveryCycle(ctx, groupId, ns, false, true); !executed {
 			if registered {
 				if err := n.RendezvousUnregister(ns, nil); err != nil {
 					log.Printf("[PUBSUB] Group %s: rendezvous unregister failed: %v", groupId, err)
@@ -1211,27 +1525,53 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 
 		// Check AFTER dialing.
 		afterConnected := n.countConnectedGroupMembers(groupId)
+		expectedConnected := n.expectedConnectedGroupMembers(groupId)
 
-		if afterConnected > beforeConnected || afterConnected > 0 {
-			// At least one peer is connected or we made progress — reset.
+		if expectedConnected == 0 || afterConnected >= expectedConnected {
+			// All currently-known members are connected — return to the slower
+			// maintenance cadence and reset the fast foreground catch-up window.
 			consecutiveFailures = 0
+			warmRetriesRemaining = GroupDiscoveryWarmRetries
 			interval = GroupDiscoveryInterval
-		} else {
-			// All dials failed — exponential backoff.
-			consecutiveFailures++
-			interval = interval * 2
-			if interval > MaxGroupDiscoveryBackoff {
-				interval = MaxGroupDiscoveryBackoff
-			}
-			log.Printf("[PUBSUB] Group %s: all dials failed (streak=%d), backing off to %v",
-				groupId, consecutiveFailures, interval)
-			n.emitEvent("group:discovery", map[string]interface{}{
-				"groupId":             groupId,
-				"step":                "backoff",
-				"consecutiveFailures": consecutiveFailures,
-				"nextInterval":        interval.String(),
-			})
+			continue
 		}
+
+		if afterConnected > beforeConnected {
+			// We made partial progress but still have missing members. Keep a
+			// short retry cadence so a late foreground peer can join promptly.
+			consecutiveFailures = 0
+			warmRetriesRemaining = GroupDiscoveryWarmRetries
+			interval = GroupDiscoveryWarmInterval
+			continue
+		}
+
+		if warmRetriesRemaining > 0 {
+			warmRetriesRemaining--
+			interval = GroupDiscoveryWarmInterval
+			continue
+		}
+
+		// Missing peers are still not reachable after the warm retry window.
+		// Back off, but start from the short warm interval rather than jumping
+		// straight to the full 30 s cadence after the first failure.
+		if interval < GroupDiscoveryWarmInterval {
+			interval = GroupDiscoveryWarmInterval
+		}
+		consecutiveFailures++
+		interval = interval * 2
+		if interval > MaxGroupDiscoveryBackoff {
+			interval = MaxGroupDiscoveryBackoff
+		}
+		log.Printf("[PUBSUB] Group %s: discovery still missing peers (connected=%d/%d, streak=%d), backing off to %v",
+			groupId, afterConnected, expectedConnected, consecutiveFailures, interval)
+		n.emitEvent("group:discovery", map[string]interface{}{
+			"groupId":             groupId,
+			"step":                "backoff",
+			"connectedMembers":    afterConnected,
+			"expectedMembers":     expectedConnected,
+			"consecutiveFailures": consecutiveFailures,
+			"nextInterval":        interval.String(),
+		})
 	}
 }
 

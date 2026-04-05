@@ -16,8 +16,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 ///
 /// For each group, retrieves stored messages from the relay inbox
 /// and processes them as incoming messages. Uses cursor-based pagination
-/// to ensure exactly-once delivery across pages. Errors per-group are
-/// logged and do not prevent other groups from being drained.
+/// to ensure exactly-once delivery across pages. Groups are drained in
+/// parallel so one slow relay request does not serially stall every other
+/// group on startup or resume.
 ///
 /// The first page is fetched synchronously (on the resume budget).
 /// If [drainAllPages] is true (default), remaining pages are fetched
@@ -42,41 +43,47 @@ Future<void> drainGroupOfflineInbox({
 
   final groups = await groupRepo.getAllGroups();
 
-  for (final group in groups) {
-    final groupStopwatch = Stopwatch()..start();
-    try {
-      await _drainGroupInbox(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        groupId: group.id,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        reactionRepo: reactionRepo,
-        groupMessageListener: groupMessageListener,
-        drainAllPages: drainAllPages,
-        pageSize: pageSize,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_ERROR',
-        details: {
-          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
-          'error': e.toString(),
-        },
-      );
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
-        details: {
-          'scope': 'group',
-          'elapsedMs': groupStopwatch.elapsedMilliseconds,
-          'outcome': 'error',
-          'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
-        },
-      );
-    }
-  }
+  await Future.wait(
+    groups.map((group) async {
+      final groupStopwatch = Stopwatch()..start();
+      try {
+        await _drainGroupInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: group.id,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          reactionRepo: reactionRepo,
+          groupMessageListener: groupMessageListener,
+          drainAllPages: drainAllPages,
+          pageSize: pageSize,
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_ERROR',
+          details: {
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+            'error': e.toString(),
+          },
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+          details: {
+            'scope': 'group',
+            'elapsedMs': groupStopwatch.elapsedMilliseconds,
+            'outcome': 'error',
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+          },
+        );
+      }
+    }),
+  );
 
   emitFlowEvent(
     layer: 'FL',

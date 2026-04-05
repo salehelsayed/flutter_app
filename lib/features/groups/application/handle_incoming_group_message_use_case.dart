@@ -37,6 +37,34 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     },
   );
 
+  final sanitizedText = sanitizeMessageText(text);
+
+  // Prefer messageId-based dedupe before any group/member lookups. Replay
+  // batches can contain large numbers of already-processed messages, and we do
+  // not need to re-check membership or group state just to ignore a duplicate.
+  if (messageId != null && messageId.isNotEmpty) {
+    final existsById = await msgRepo.existsByMessageId(messageId);
+    if (existsById) {
+      await _enrichExistingDuplicateMessage(
+        msgRepo: msgRepo,
+        messageId: messageId,
+        quotedMessageId: quotedMessageId,
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'dedupeBy': 'messageId',
+        },
+      );
+      return null;
+    }
+  }
+
   // 1. Load group from repo (if not found, ignore)
   final group = await groupRepo.getGroup(groupId);
   if (group == null) {
@@ -105,35 +133,6 @@ Future<GroupMessage?> handleIncomingGroupMessage({
 
     // Still process the message — member list may be stale or the message
     // crossed the accepted removal boundary before the persisted cutoff.
-  }
-
-  final sanitizedText = sanitizeMessageText(text);
-
-  // Prefer messageId-based dedupe when a wire messageId is available.
-  // This catches the case where both pubsub and group inbox deliver the
-  // same message — content-based dedupe might miss it if timestamps
-  // differ slightly.
-  if (messageId != null && messageId.isNotEmpty) {
-    final existsById = await msgRepo.existsByMessageId(messageId);
-    if (existsById) {
-      await _enrichExistingDuplicateMessage(
-        msgRepo: msgRepo,
-        messageId: messageId,
-        quotedMessageId: quotedMessageId,
-        media: media,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-      );
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'dedupeBy': 'messageId',
-        },
-      );
-      return null;
-    }
   }
 
   // Fallback: content-based dedupe for messages without a messageId.

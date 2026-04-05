@@ -303,51 +303,54 @@ void main() {
       runningP2P.dispose();
     });
 
-    test('in-place recovery without Go signal skips rejoin and ack', () async {
-      final groupRepo = InMemoryGroupRepository();
-      final groupMsgRepo = InMemoryGroupMessageRepository();
-      final now = DateTime.now().toUtc();
+    test(
+      'in-place recovery without Go signal rejoins but does not ack',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final now = DateTime.now().toUtc();
 
-      await groupRepo.saveGroup(
-        GroupModel(
-          id: 'group-skip-rejoin',
-          name: 'Skip Group',
-          type: GroupType.chat,
-          topicName: 'topic-group-skip-rejoin',
-          createdAt: now,
-          createdBy: 'admin-peer',
-          myRole: GroupRole.admin,
-        ),
-      );
-      await groupRepo.saveKey(
-        GroupKeyInfo(
-          groupId: 'group-skip-rejoin',
-          keyGeneration: 1,
-          encryptedKey: 'group-key',
-          createdAt: now,
-        ),
-      );
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'group-skip-rejoin',
+            name: 'Skip Group',
+            type: GroupType.chat,
+            topicName: 'topic-group-skip-rejoin',
+            createdAt: now,
+            createdBy: 'admin-peer',
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-skip-rejoin',
+            keyGeneration: 1,
+            encryptedKey: 'group-key',
+            createdAt: now,
+          ),
+        );
 
-      final runningP2P = FakeP2PService(
-        initialState: const NodeState(
-          isStarted: true,
-          peerId: 'my-peer-id-1234567890',
-          needsGroupRecovery: false,
-        ),
-        recoveryMethod: 'in_place',
-      );
+        final runningP2P = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-1234567890',
+            needsGroupRecovery: false,
+          ),
+          recoveryMethod: 'in_place',
+        );
 
-      await handleAppResumed(
-        bridge: bridge,
-        p2pService: runningP2P,
-        groupRepo: groupRepo,
-        groupMsgRepo: groupMsgRepo,
-      );
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: runningP2P,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
 
-      expect(bridge.commandLog, isNot(contains('group:join')));
-      expect(bridge.commandLog, isNot(contains('group:acknowledgeRecovery')));
-      runningP2P.dispose();
-    });
+        expect(bridge.commandLog, contains('group:join'));
+        expect(bridge.commandLog, isNot(contains('group:acknowledgeRecovery')));
+        runningP2P.dispose();
+      },
+    );
 
     test('skips resume group recovery when feature flag is disabled', () async {
       final groupRepo = InMemoryGroupRepository();
