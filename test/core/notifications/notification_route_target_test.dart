@@ -26,6 +26,22 @@ void main() {
     });
 
     test(
+      'fromRemoteMessageData preserves group message anchors when present',
+      () {
+        final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'group_message',
+          'groupId': 'group-123',
+          'messageId': 'msg-123',
+        });
+
+        expect(routeTarget, isNotNull);
+        expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+        expect(routeTarget.groupId, 'group-123');
+        expect(routeTarget.messageId, 'msg-123');
+      },
+    );
+
+    test(
       'fromRemoteMessageData maps contact_request to contact-request route',
       () {
         final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
@@ -57,6 +73,25 @@ void main() {
       expect(parsed!.kind, NotificationRouteTargetKind.group);
       expect(parsed.groupId, 'group-xyz');
     });
+
+    test(
+      'anchored group payload round-trips through toPayload and fromPayload',
+      () {
+        const routeTarget = NotificationRouteTarget.group(
+          'group-xyz',
+          messageId: 'msg-xyz',
+        );
+
+        final payload = routeTarget.toPayload();
+        final parsed = NotificationRouteTarget.fromPayload(payload);
+
+        expect(payload, 'group:group-xyz|message:msg-xyz');
+        expect(parsed, isNotNull);
+        expect(parsed!.kind, NotificationRouteTargetKind.group);
+        expect(parsed.groupId, 'group-xyz');
+        expect(parsed.messageId, 'msg-xyz');
+      },
+    );
 
     test(
       'contact-request payload round-trips through toPayload and fromPayload',

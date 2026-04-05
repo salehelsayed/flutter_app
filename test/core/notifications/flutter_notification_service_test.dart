@@ -176,6 +176,30 @@ void main() {
     },
   );
 
+  test(
+    'showMessageNotification forwards explicit group anchor payload overrides',
+    () async {
+      final service = FlutterNotificationService();
+
+      await service.initialize();
+      await service.showMessageNotification(
+        contactPeerId: 'group:group-789',
+        senderUsername: 'Team Chat',
+        messageText: 'Alice: Ping',
+        payload: 'group:group-789|message:msg-789',
+      );
+
+      final showCall = log.last;
+      expect(showCall.method, 'show');
+
+      final args = showCall.arguments as Map;
+      expect(args['title'], 'Team Chat');
+      expect(args['body'], 'Alice: Ping');
+      expect(args['payload'], 'group:group-789|message:msg-789');
+      expect(args['id'], 'group:group-789'.hashCode);
+    },
+  );
+
   test('clearDeliveredNotifications forwards cancelAll', () async {
     final service = FlutterNotificationService();
 

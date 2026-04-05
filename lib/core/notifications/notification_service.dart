@@ -8,6 +8,7 @@ abstract class NotificationService {
     required String contactPeerId,
     required String senderUsername,
     required String messageText,
+    String? payload,
   });
 
   /// Show a generic notification with a title, body, and optional payload.

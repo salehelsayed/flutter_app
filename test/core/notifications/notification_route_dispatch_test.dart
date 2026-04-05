@@ -38,10 +38,15 @@ void main() {
         NotificationRouteTarget? routedTarget;
 
         await routeRemoteNotificationOpen(
-          data: const {'type': 'group_message', 'groupId': 'group-123'},
+          data: const {
+            'type': 'group_message',
+            'groupId': 'group-123',
+            'messageId': 'msg-123',
+          },
           onBeforeRouteTarget: (routeTarget) async {
             callOrder.add('prepare');
             expect(routeTarget.kind, NotificationRouteTargetKind.group);
+            expect(routeTarget.messageId, 'msg-123');
           },
           onRouteTarget: (routeTarget) async {
             callOrder.add('route');
@@ -55,6 +60,7 @@ void main() {
         expect(callOrder, ['prepare', 'route']);
         expect(routedTarget, isNotNull);
         expect(routedTarget!.groupId, 'group-123');
+        expect(routedTarget!.messageId, 'msg-123');
       },
     );
 

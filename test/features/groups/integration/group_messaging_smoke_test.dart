@@ -256,6 +256,66 @@ void main() {
       },
     );
 
+    test(
+      'same sender sequential messages stay ordered for both recipients',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+
+        const groupId = 'group-same-sender-ordering';
+        await alice.createGroup(groupId: groupId, name: 'Ordering Group');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await alice.sendGroupMessage(groupId: groupId, text: 'M1');
+        await pump();
+
+        // Keep timestamps distinct so the assertion matches the repo's
+        // chronological ordering rule instead of same-millisecond luck.
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+
+        await alice.sendGroupMessage(groupId: groupId, text: 'M2');
+        await pump();
+
+        Future<void> expectOrderedIncoming(GroupTestUser user) async {
+          final incoming = (await user.loadGroupMessages(
+            groupId,
+          )).where((message) => message.isIncoming).toList();
+
+          expect(
+            incoming.map((message) => message.text).toList(),
+            ['M1', 'M2'],
+            reason:
+                '${user.username} should display same-sender messages in chronological order',
+          );
+        }
+
+        await expectOrderedIncoming(bob);
+        await expectOrderedIncoming(charlie);
+
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
     test('message to unknown group is ignored', () async {
       // -- arrange --
       final alice = GroupTestUser.create(

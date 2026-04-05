@@ -77,6 +77,7 @@ void main() {
           data: const <String, dynamic>{
             'type': 'group_message',
             'groupId': 'group-123',
+            'messageId': 'msg-123',
           },
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.handleRouteTarget,
@@ -84,9 +85,9 @@ void main() {
         );
 
         expect(harness.events, <String>[
-          'prepare:group:group-123',
+          'prepare:group:group-123|message:msg-123',
           'drain:group:group-123',
-          'route:group:group-123',
+          'route:group:group-123|message:msg-123',
         ]);
         expect(harness.routedTargets, hasLength(1));
         expect(
@@ -94,6 +95,7 @@ void main() {
           NotificationRouteTargetKind.group,
         );
         expect(harness.routedTargets.single.groupId, 'group-123');
+        expect(harness.routedTargets.single.messageId, 'msg-123');
         expect(harness.missingRouteTargetCalls, 0);
       },
     );
@@ -155,6 +157,7 @@ void main() {
             data: <String, dynamic>{
               'type': 'group_message',
               'groupId': 'group-123',
+              'messageId': 'msg-123',
             },
           ),
           onBeforeRouteTarget: harness.prepare,
@@ -163,9 +166,9 @@ void main() {
         );
 
         expect(harness.events, <String>[
-          'prepare:group:group-123',
+          'prepare:group:group-123|message:msg-123',
           'drain:group:group-123',
-          'route:group:group-123',
+          'route:group:group-123|message:msg-123',
         ]);
         expect(harness.routedTargets, hasLength(1));
         expect(
@@ -173,6 +176,7 @@ void main() {
           NotificationRouteTargetKind.group,
         );
         expect(harness.routedTargets.single.groupId, 'group-123');
+        expect(harness.routedTargets.single.messageId, 'msg-123');
         expect(harness.missingRouteTargetCalls, 0);
       },
     );

@@ -7,11 +7,13 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
@@ -25,6 +27,7 @@ class GroupInfoWired extends StatefulWidget {
   final Bridge bridge;
   final IdentityRepository identityRepo;
   final P2PService p2pService;
+  final GroupMessageRepository? msgRepo;
 
   const GroupInfoWired({
     super.key,
@@ -34,6 +37,7 @@ class GroupInfoWired extends StatefulWidget {
     required this.bridge,
     required this.identityRepo,
     required this.p2pService,
+    this.msgRepo,
   });
 
   @override
@@ -89,6 +93,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         event: 'GROUP_INFO_FL_LEAVE_ERROR',
         details: {'error': e.toString()},
       );
+      if (!mounted) return;
+      final message = e is StateError && e.message != null
+          ? e.message.toString()
+          : 'Failed to leave group';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -109,6 +120,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         final allMembers = await widget.groupRepo.getMembers(widget.group.id);
 
         if (group != null) {
+          final removedAt = DateTime.now().toUtc();
           final groupConfig = {
             'name': group.name,
             'groupType': group.type.toValue(),
@@ -132,15 +144,28 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           final sysMessage = jsonEncode({
             '__sys': 'member_removed',
             'member': {'peerId': member.peerId, 'username': member.username},
+            'removedAt': removedAt.toIso8601String(),
             'groupConfig': groupConfig,
           });
+          if (widget.msgRepo != null) {
+            await widget.msgRepo!.saveMessage(
+              buildMemberRemovedTimelineMessage(
+                groupId: widget.group.id,
+                removedPeerId: member.peerId,
+                removedUsername: member.username,
+                senderId: identity.peerId,
+                senderUsername: identity.username ?? '',
+                eventAt: removedAt,
+              ),
+            );
+          }
           final removalInboxPayload = jsonEncode({
             'groupId': widget.group.id,
             'senderId': identity.peerId,
             'senderUsername': identity.username ?? '',
             'keyEpoch': 0,
             'text': sysMessage,
-            'timestamp': DateTime.now().toUtc().toIso8601String(),
+            'timestamp': removedAt.toIso8601String(),
           });
 
           await callGroupPublish(
@@ -196,6 +221,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         event: 'GROUP_INFO_FL_REMOVE_MEMBER_ERROR',
         details: {'error': e.toString()},
       );
+      if (!mounted) return;
+      final message = e is StateError && e.message != null
+          ? e.message.toString()
+          : 'Failed to remove member';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      await _loadMembers();
     }
   }
 

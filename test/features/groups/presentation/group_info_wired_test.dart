@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
@@ -13,6 +15,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 // --- FakeIdentityRepository ---
@@ -265,6 +268,65 @@ void main() {
       // Verify popped back to first route
       expect(find.byType(GroupInfoScreen), findsNothing);
       expect(find.text('Open Info'), findsOneWidget);
+    });
+
+    testWidgets('sole admin leave stays on screen and shows an error', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+
+      final bridge = FakeBridge();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => GroupInfoWired(
+                        group: group,
+                        groupRepo: groupRepo,
+                        contactRepo: InMemoryContactRepository(),
+                        bridge: bridge,
+                        identityRepo: FakeIdentityRepository(
+                          identity: testIdentity,
+                        ),
+                        p2pService: FakeP2PService(),
+                      ),
+                    ),
+                  );
+                },
+                child: const Text('Open Info'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open Info'));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+      await tester.tap(find.text('Leave Group'));
+      await pumpFrames(tester, count: 20);
+
+      expect(bridge.commandLog, isNot(contains('group:leave')));
+      expect(find.byType(GroupInfoScreen), findsOneWidget);
+      expect(find.text('Open Info'), findsNothing);
+      expect(find.text(lastAdminLeaveBlockedMessage), findsOneWidget);
+      expect(await groupRepo.getGroup(group.id), isNotNull);
     });
 
     testWidgets('remove member updates config and refreshes member list', (
@@ -602,6 +664,7 @@ void main() {
       'remove member broadcast and replay artifact contain correct member_removed payload',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
 
@@ -652,6 +715,7 @@ void main() {
             home: GroupInfoWired(
               group: group,
               groupRepo: groupRepo,
+              msgRepo: msgRepo,
               contactRepo: InMemoryContactRepository(),
               bridge: bridge,
               identityRepo: FakeIdentityRepository(identity: testIdentity),
@@ -690,6 +754,7 @@ void main() {
         expect(sysText['__sys'], 'member_removed');
         expect(sysText['member']['peerId'], 'peer-alice');
         expect(sysText['member']['username'], 'Alice');
+        expect(sysText['removedAt'], isA<String>());
 
         // Verify groupConfig.members excludes the removed member (Alice)
         final groupConfig = sysText['groupConfig'] as Map<String, dynamic>;
@@ -717,6 +782,102 @@ void main() {
         expect(inboxEnvelope['senderUsername'], 'Admin');
         expect(inboxEnvelope['keyEpoch'], 0);
         expect(inboxEnvelope['text'], publishPayload['text']);
+        expect(inboxEnvelope['timestamp'], sysText['removedAt']);
+
+        final removedAt = DateTime.parse(sysText['removedAt'] as String);
+        final timelineMessage = buildMemberRemovedTimelineMessage(
+          groupId: 'group-1',
+          removedPeerId: 'peer-alice',
+          removedUsername: 'Alice',
+          senderId: 'peer-admin',
+          senderUsername: 'Admin',
+          eventAt: removedAt,
+        );
+        final persistedTimeline = await msgRepo.getMessage(timelineMessage.id);
+        expect(persistedTimeline, isNotNull);
+        expect(
+          persistedTimeline!.text,
+          buildMemberRemovedTimelineText('Admin', 'Alice'),
+        );
+        expect(
+          persistedTimeline.timestamp.toUtc().toIso8601String(),
+          removedAt.toUtc().toIso8601String(),
+        );
+      },
+    );
+
+    testWidgets(
+      'stale non-member removal shows error and emits no removal side effects',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final aliceRow = find.ancestor(
+          of: find.text('Alice'),
+          matching: find.byType(Row),
+        );
+        final aliceRemoveButton = find.descendant(
+          of: aliceRow,
+          matching: find.byIcon(Icons.remove_circle_outline),
+        );
+
+        await groupRepo.removeMember('group-1', 'peer-alice');
+
+        await tester.tap(aliceRemoveButton);
+        await pumpFrames(tester);
+        await confirmRemoveMemberDialog(tester);
+
+        expect(find.text('Member not found'), findsOneWidget);
+        expect(find.text('Alice'), findsNothing);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          isEmpty,
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:inboxStore'),
+          isEmpty,
+        );
+
+        final members = await groupRepo.getMembers('group-1');
+        expect(members.map((member) => member.peerId).toSet(), {
+          'peer-admin',
+          'peer-bob',
+        });
       },
     );
 

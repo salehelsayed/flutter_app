@@ -119,6 +119,25 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
   }
 }
 
+/// Loads the timestamp of the latest synthetic `member_removed` message for a
+/// removed sender in a group.
+Future<String?> dbLoadLatestGroupRemovalTimestampForSender(
+  Database db,
+  String groupId,
+  String senderPeerId,
+) async {
+  final rows = await db.query(
+    'group_messages',
+    columns: ['timestamp'],
+    where: 'group_id = ? AND id LIKE ?',
+    whereArgs: [groupId, 'sys-member_removed:$groupId:$senderPeerId:%'],
+    orderBy: 'timestamp DESC',
+    limit: 1,
+  );
+  if (rows.isEmpty) return null;
+  return rows.first['timestamp'] as String?;
+}
+
 /// Loads the latest message for a group (most recent by timestamp).
 Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
   Database db,

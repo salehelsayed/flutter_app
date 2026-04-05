@@ -145,6 +145,11 @@ Stale-but-relevant media specs that must be treated as secondary evidence only:
 - Likely direct tests/regressions:
   `test/features/groups/presentation/group_conversation_wired_test.dart`
 - Likely direct tests/regressions:
+  the same group-side attach-budget contract now also carries row-owned closure
+  proof for `Test-Flight-Improv/libp2p_group_chat_in_scope_gap_matrix.md`
+  row `UX-007` via the targeted overflow/compress regressions added on
+  `2026-04-05`
+- Likely direct tests/regressions:
   `test/features/share/integration/share_to_contact_smoke_test.dart`
 - Likely direct tests/regressions:
   `test/features/share/presentation/share_target_picker_wired_test.dart`

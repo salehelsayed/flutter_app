@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
@@ -31,6 +32,20 @@ Future<void> removeGroupMember({
     },
   );
 
+  if (isGroupRecoveryInProgress()) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REMOVE_MEMBER_USE_CASE_RECOVERY_PENDING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'peerId': memberPeerId.length > 8
+            ? memberPeerId.substring(0, 8)
+            : memberPeerId,
+      },
+    );
+    throw StateError(groupRecoveryPendingError);
+  }
+
   // 1. Load group, verify caller is admin
   final group = await groupRepo.getGroup(groupId);
   if (group == null) {
@@ -42,6 +57,19 @@ Future<void> removeGroupMember({
   }
 
   final removedMember = await groupRepo.getMember(groupId, memberPeerId);
+  if (removedMember == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REMOVE_MEMBER_USE_CASE_MEMBER_NOT_FOUND',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'peerId': memberPeerId.length > 8
+            ? memberPeerId.substring(0, 8)
+            : memberPeerId,
+      },
+    );
+    throw StateError('Member not found');
+  }
 
   // 2. Remove member from local DB
   await groupRepo.removeMember(groupId, memberPeerId);
@@ -53,13 +81,15 @@ Future<void> removeGroupMember({
     'groupType': group.type.toValue(),
     if (group.description != null) 'description': group.description,
     'members': remainingMembers
-        .map((m) => {
-              'peerId': m.peerId,
-              'username': m.username,
-              'role': m.role.toValue(),
-              'publicKey': m.publicKey,
-              if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
-            })
+        .map(
+          (m) => {
+            'peerId': m.peerId,
+            'username': m.username,
+            'role': m.role.toValue(),
+            'publicKey': m.publicKey,
+            if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
+          },
+        )
         .toList(),
     'createdBy': group.createdBy,
     'createdAt': group.createdAt.toUtc().toIso8601String(),

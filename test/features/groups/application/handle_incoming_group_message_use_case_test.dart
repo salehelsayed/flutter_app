@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
@@ -37,6 +38,27 @@ void main() {
     await groupRepo.saveGroup(testGroup);
     await groupRepo.saveMember(testMember);
   });
+
+  Future<void> saveRemovalCutoff({
+    required String removedPeerId,
+    required DateTime removedAt,
+  }) {
+    return msgRepo.saveMessage(
+      GroupMessage(
+        id:
+            'sys-member_removed:group-1:$removedPeerId:peer-admin:'
+            '${removedAt.microsecondsSinceEpoch}',
+        groupId: 'group-1',
+        senderPeerId: 'peer-admin',
+        senderUsername: 'Admin',
+        text: 'Admin removed $removedPeerId',
+        timestamp: removedAt,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: removedAt,
+      ),
+    );
+  }
 
   test('handles incoming message successfully', () async {
     final result = await handleIncomingGroupMessage(
@@ -154,6 +176,86 @@ void main() {
     expect(result!.text, 'Hello from unknown');
     expect(msgRepo.count, 1);
   });
+
+  test(
+    'accepts removed-sender message when it predates the persisted removal cutoff',
+    () async {
+      final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-removed',
+        removedAt: removedAt,
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-removed',
+        senderUsername: 'Removed',
+        keyEpoch: 0,
+        text: 'Sent before cutoff',
+        timestamp: removedAt
+            .subtract(const Duration(milliseconds: 1))
+            .toIso8601String(),
+        messageId: 'msg-before-cutoff',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.text, 'Sent before cutoff');
+      expect(result.id, 'msg-before-cutoff');
+    },
+  );
+
+  test(
+    'rejects removed-sender message when it is at the persisted removal cutoff',
+    () async {
+      final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-removed',
+        removedAt: removedAt,
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-removed',
+        senderUsername: 'Removed',
+        keyEpoch: 0,
+        text: 'Sent at cutoff',
+        timestamp: removedAt.toIso8601String(),
+        messageId: 'msg-at-cutoff',
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-at-cutoff'), isNull);
+    },
+  );
+
+  test(
+    'still processes unknown sender when persisted removal cutoff belongs to another peer',
+    () async {
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-other',
+        removedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-new',
+        senderUsername: 'New sender',
+        keyEpoch: 0,
+        text: 'Hello from future member',
+        timestamp: DateTime.utc(2026, 4, 5, 12, 0, 1).toIso8601String(),
+        messageId: 'msg-new-sender',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.id, 'msg-new-sender');
+    },
+  );
 
   test('deduplicates identical incoming messages', () async {
     final ts = DateTime.now().toUtc().toIso8601String();

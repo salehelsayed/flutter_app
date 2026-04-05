@@ -63,6 +63,7 @@ import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.
 import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
+import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -242,7 +243,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 47,
+    version: 48,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -291,6 +292,7 @@ void main() async {
       await runInboxStagingEntriesMigration(db);
       await runPendingIntroductionResponsesMigration(db);
       await runIntroductionOutboxMigration(db);
+      await runGroupsLastMembershipEventAtMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -428,6 +430,9 @@ void main() async {
       }
       if (oldVersion < 47) {
         await runIntroductionOutboxMigration(db);
+      }
+      if (oldVersion < 48) {
+        await runGroupsLastMembershipEventAtMigration(db);
       }
     },
   );
@@ -754,6 +759,8 @@ void main() async {
     dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
     dbLoadLatestGroupMessage: (groupId) =>
         dbLoadLatestGroupMessage(db, groupId),
+    dbLoadLatestRemovalTimestampForSenderFn: (groupId, senderPeerId) =>
+        dbLoadLatestGroupRemovalTimestampForSender(db, groupId, senderPeerId),
     dbUpdateGroupMessageStatus: (id, status) =>
         dbUpdateGroupMessageStatus(db, id, status),
     dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
@@ -1958,6 +1965,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               contactRepo: widget.contactRepository,
               p2pService: widget.p2pService,
               groupConversationTracker: widget.groupConversationTracker,
+              initialHighlightedMessageId: routeTarget.messageId,
               mediaAttachmentRepo: widget.mediaAttachmentRepository,
               mediaFileManager: widget.mediaFileManager,
               imageProcessor: widget.imageProcessor,

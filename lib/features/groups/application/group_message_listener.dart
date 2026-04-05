@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -15,6 +16,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
@@ -168,7 +170,13 @@ class GroupMessageListener {
 
       // Check for system message (config updates from admin)
       if (text.startsWith('{"__sys":') && _bridge != null) {
-        await _handleSystemMessage(groupId, text);
+        await _handleSystemMessage(
+          groupId,
+          text,
+          timestamp,
+          senderId: senderId,
+          senderUsername: senderUsername,
+        );
         return;
       }
 
@@ -213,6 +221,10 @@ class GroupMessageListener {
             conversationTracker: _groupConversationTracker!,
             getAppLifecycleState: _getAppLifecycleState!,
             contactPeerId: 'group:$groupId',
+            routePayload: NotificationRouteTarget.group(
+              groupId,
+              messageId: result.id,
+            ).toPayload(),
             senderUsername: groupName,
             messageText:
                 '$senderUsername: ${notificationBodyForMessage(text, notifAttachments)}',
@@ -301,26 +313,83 @@ class GroupMessageListener {
   /// System messages are published by the admin via the group pubsub topic
   /// to notify existing members of config changes. They are not displayed
   /// as regular chat messages.
-  Future<void> _handleSystemMessage(String groupId, String text) async {
+  Future<void> _handleSystemMessage(
+    String groupId,
+    String text,
+    String timestamp, {
+    required String senderId,
+    required String senderUsername,
+  }) async {
     try {
       final parsed = jsonDecode(text) as Map<String, dynamic>;
       final sysType = parsed['__sys'] as String?;
+      final envelopeEventAt = _parseMembershipEventAt(timestamp);
+      final eventAt = sysType == 'member_removed'
+          ? _parseMembershipEventAt(parsed['removedAt'] as String?) ??
+                envelopeEventAt
+          : envelopeEventAt;
+
+      if (_requiresMembershipEventAuthorization(sysType) &&
+          !await _isAuthorizedMembershipEventSender(groupId, senderId)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_UNAUTHORIZED_MEMBERSHIP_EVENT',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'type': sysType,
+            'senderId': senderId.length > 8
+                ? senderId.substring(0, 8)
+                : senderId,
+          },
+        );
+        return;
+      }
 
       if (sysType == 'member_added') {
-        await _enqueueGroupConfigWork(
-          groupId,
-          () => _handleMemberAdded(groupId, parsed),
-        );
+        await _enqueueGroupConfigWork(groupId, () async {
+          if (await _shouldIgnoreStaleMembershipEvent(
+            groupId,
+            sysType: sysType,
+            eventAt: eventAt,
+          )) {
+            return;
+          }
+          await _handleMemberAdded(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+          );
+        });
       } else if (sysType == 'members_added') {
-        await _enqueueGroupConfigWork(
-          groupId,
-          () => _handleMembersAdded(groupId, parsed),
-        );
+        await _enqueueGroupConfigWork(groupId, () async {
+          if (await _shouldIgnoreStaleMembershipEvent(
+            groupId,
+            sysType: sysType,
+            eventAt: eventAt,
+          )) {
+            return;
+          }
+          await _handleMembersAdded(groupId, parsed, eventAt: eventAt);
+        });
       } else if (sysType == 'member_removed') {
-        await _enqueueGroupConfigWork(
-          groupId,
-          () => _handleMemberRemoved(groupId, parsed),
-        );
+        await _enqueueGroupConfigWork(groupId, () async {
+          if (await _shouldIgnoreStaleMembershipEvent(
+            groupId,
+            sysType: sysType,
+            eventAt: eventAt,
+          )) {
+            return;
+          }
+          await _handleMemberRemoved(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+          );
+        });
       } else if (sysType == 'key_rotated') {
         emitFlowEvent(
           layer: 'FL',
@@ -346,16 +415,48 @@ class GroupMessageListener {
     }
   }
 
+  bool _requiresMembershipEventAuthorization(String? sysType) {
+    return sysType == 'member_added' ||
+        sysType == 'members_added' ||
+        sysType == 'member_removed';
+  }
+
+  Future<bool> _isAuthorizedMembershipEventSender(
+    String groupId,
+    String senderId,
+  ) async {
+    if (senderId.isEmpty) {
+      return false;
+    }
+
+    final group = await _groupRepo.getGroup(groupId);
+    if (group == null) {
+      return false;
+    }
+
+    if (group.createdBy == senderId) {
+      return true;
+    }
+
+    final senderMember = await _groupRepo.getMember(groupId, senderId);
+    return senderMember?.role == MemberRole.admin;
+  }
+
   /// Handles a member_added system message.
   ///
   /// Saves the new member to the local DB and updates the Go topic validator
   /// config so that messages from the new member are accepted.
   Future<void> _handleMemberAdded(
     String groupId,
-    Map<String, dynamic> parsed,
-  ) async {
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+  }) async {
     // Save new member to local DB
     final memberData = parsed['member'] as Map<String, dynamic>?;
+    final addedPeerId = memberData?['peerId'] as String?;
+    final addedUsername = memberData?['username'] as String?;
     if (memberData != null) {
       final member = GroupMember(
         groupId: groupId,
@@ -364,7 +465,7 @@ class GroupMessageListener {
         role: MemberRole.fromValue(memberData['role'] as String? ?? 'writer'),
         publicKey: memberData['publicKey'] as String?,
         mlKemPublicKey: memberData['mlKemPublicKey'] as String?,
-        joinedAt: DateTime.now().toUtc(),
+        joinedAt: eventAt ?? DateTime.now().toUtc(),
       );
       await _groupRepo.saveMember(member);
     }
@@ -374,6 +475,27 @@ class GroupMessageListener {
     if (groupConfig != null) {
       await _syncGroupConfig(groupId, groupConfig);
     }
+
+    if (addedPeerId != null && addedPeerId.isNotEmpty) {
+      _messageController.add(
+        GroupMessage(
+          id:
+              'sys-member_added:$groupId:$addedPeerId:'
+              '${senderId.isEmpty ? 'system' : senderId}:'
+              '${(eventAt ?? DateTime.now().toUtc()).microsecondsSinceEpoch}',
+          groupId: groupId,
+          senderPeerId: senderId.isEmpty ? 'system' : senderId,
+          senderUsername: senderUsername.isNotEmpty ? senderUsername : null,
+          text: _buildAddedTimelineText(senderUsername, addedUsername),
+          timestamp: eventAt ?? DateTime.now().toUtc(),
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: eventAt ?? DateTime.now().toUtc(),
+        ),
+      );
+    }
+
+    await _recordMembershipEventWatermark(groupId, eventAt);
 
     emitFlowEvent(
       layer: 'FL',
@@ -385,14 +507,25 @@ class GroupMessageListener {
     );
   }
 
+  String _buildAddedTimelineText(String senderUsername, String? addedUsername) {
+    final actor = senderUsername.trim().isNotEmpty
+        ? senderUsername.trim()
+        : 'Admin';
+    final subject = addedUsername != null && addedUsername.trim().isNotEmpty
+        ? addedUsername.trim()
+        : 'a member';
+    return '$actor added $subject';
+  }
+
   /// Handles a members_added (batch) system message.
   ///
   /// Saves all new members to the local DB and updates the Go topic validator
   /// config so that messages from the new members are accepted.
   Future<void> _handleMembersAdded(
     String groupId,
-    Map<String, dynamic> parsed,
-  ) async {
+    Map<String, dynamic> parsed, {
+    DateTime? eventAt,
+  }) async {
     final membersList = parsed['members'] as List<dynamic>?;
     if (membersList != null) {
       for (final memberData in membersList) {
@@ -404,7 +537,7 @@ class GroupMessageListener {
           role: MemberRole.fromValue(data['role'] as String? ?? 'writer'),
           publicKey: data['publicKey'] as String?,
           mlKemPublicKey: data['mlKemPublicKey'] as String?,
-          joinedAt: DateTime.now().toUtc(),
+          joinedAt: eventAt ?? DateTime.now().toUtc(),
         );
         await _groupRepo.saveMember(member);
       }
@@ -414,6 +547,8 @@ class GroupMessageListener {
     if (groupConfig != null) {
       await _syncGroupConfig(groupId, groupConfig);
     }
+
+    await _recordMembershipEventWatermark(groupId, eventAt);
 
     emitFlowEvent(
       layer: 'FL',
@@ -435,15 +570,30 @@ class GroupMessageListener {
   /// topic validator config.
   Future<void> _handleMemberRemoved(
     String groupId,
-    Map<String, dynamic> parsed,
-  ) async {
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+  }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final removedPeerId = memberData?['peerId'] as String?;
+    final removedUsername = memberData?['username'] as String?;
 
     // Check if the removed member is self
     if (removedPeerId != null && _getSelfPeerId != null && _bridge != null) {
       final selfPeerId = await _getSelfPeerId!();
       if (selfPeerId != null && selfPeerId == removedPeerId) {
+        if (await _groupRepo.getGroup(groupId) == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED_DUPLICATE_IGNORED',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            },
+          );
+          return;
+        }
+
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_SELF_REMOVED',
@@ -488,6 +638,19 @@ class GroupMessageListener {
         );
       }
     }
+
+    final timelineMessage = buildMemberRemovedTimelineMessage(
+      groupId: groupId,
+      removedPeerId: removedPeerId ?? '',
+      removedUsername: removedUsername,
+      senderId: senderId,
+      senderUsername: senderUsername,
+      eventAt: eventAt ?? DateTime.now().toUtc(),
+    );
+    await _msgRepo.saveMessage(timelineMessage);
+    _messageController.add(timelineMessage);
+
+    await _recordMembershipEventWatermark(groupId, eventAt);
 
     emitFlowEvent(
       layer: 'FL',
@@ -550,6 +713,93 @@ class GroupMessageListener {
       }
     });
     await _groupConfigWorkQueue[groupId];
+  }
+
+  DateTime? _parseMembershipEventAt(String? timestamp) {
+    if (timestamp == null || timestamp.isEmpty) {
+      return null;
+    }
+    final parsed = DateTime.tryParse(timestamp);
+    return parsed?.toUtc();
+  }
+
+  Future<bool> _shouldIgnoreStaleMembershipEvent(
+    String groupId, {
+    required String? sysType,
+    required DateTime? eventAt,
+  }) async {
+    if (eventAt == null) {
+      return false;
+    }
+
+    final watermark = await _resolveMembershipEventWatermark(groupId);
+    if (watermark == null || eventAt.isAfter(watermark)) {
+      return false;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'type': sysType ?? 'null',
+        'eventAt': eventAt.toIso8601String(),
+        'watermark': watermark.toIso8601String(),
+      },
+    );
+    return true;
+  }
+
+  Future<DateTime?> _resolveMembershipEventWatermark(String groupId) async {
+    final group = await _groupRepo.getGroup(groupId);
+    if (group == null) {
+      return null;
+    }
+
+    if (group.lastMembershipEventAt != null) {
+      return group.lastMembershipEventAt!.toUtc();
+    }
+
+    final candidates = <DateTime>[group.createdAt.toUtc()];
+    if (group.archivedAt != null) {
+      candidates.add(group.archivedAt!.toUtc());
+    }
+
+    final members = await _groupRepo.getMembers(groupId);
+    for (final member in members) {
+      candidates.add(member.joinedAt.toUtc());
+    }
+
+    final latestKey = await _groupRepo.getLatestKey(groupId);
+    if (latestKey != null) {
+      candidates.add(latestKey.createdAt.toUtc());
+    }
+
+    candidates.sort((a, b) => a.compareTo(b));
+    return candidates.last;
+  }
+
+  Future<void> _recordMembershipEventWatermark(
+    String groupId,
+    DateTime? eventAt,
+  ) async {
+    if (eventAt == null) {
+      return;
+    }
+
+    final group = await _groupRepo.getGroup(groupId);
+    if (group == null) {
+      return;
+    }
+
+    final current = group.lastMembershipEventAt?.toUtc();
+    if (current != null && !eventAt.isAfter(current)) {
+      return;
+    }
+
+    await _groupRepo.updateGroup(
+      group.copyWith(lastMembershipEventAt: eventAt.toUtc()),
+    );
   }
 
   Future<bool> _syncGroupConfig(

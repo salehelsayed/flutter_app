@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -29,6 +30,17 @@ Future<void> addGroupMember({
     },
   );
 
+  if (isGroupRecoveryInProgress()) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_USE_CASE_RECOVERY_PENDING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    throw StateError(groupRecoveryPendingError);
+  }
+
   // 1. Load group, verify caller is admin
   final group = await groupRepo.getGroup(groupId);
   if (group == null) {
@@ -42,6 +54,21 @@ Future<void> addGroupMember({
       details: {'role': group.myRole.toValue()},
     );
     throw StateError('Only admins can add members');
+  }
+
+  final existingMember = await groupRepo.getMember(groupId, newMember.peerId);
+  if (existingMember != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_USE_CASE_ALREADY_MEMBER',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'peerId': newMember.peerId.length > 8
+            ? newMember.peerId.substring(0, 8)
+            : newMember.peerId,
+      },
+    );
+    throw StateError('Member already exists');
   }
 
   // 2. Save member to repo

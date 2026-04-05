@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -176,10 +177,15 @@ void main() {
     bridge = FakeBridge();
     groupRepo = InMemoryGroupRepository();
     msgRepo = InMemoryGroupMessageRepository();
+    groupRecoveryGate.resetForTest();
 
     await groupRepo.saveGroup(testGroup);
 
     bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-123'};
+  });
+
+  tearDown(() {
+    groupRecoveryGate.resetForTest();
   });
 
   test('sends message successfully', () async {
@@ -270,6 +276,78 @@ void main() {
     expect(result, SendGroupMessageResult.unauthorized);
     expect(message, isNull);
   });
+
+  test(
+    'returns error for member when bootstrap key is still missing',
+    () async {
+      final memberGroup = GroupModel(
+        id: 'group-bootstrap-pending',
+        name: 'Bootstrap Pending',
+        type: GroupType.chat,
+        topicName: 'group-topic-bootstrap-pending',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      );
+      await groupRepo.saveGroup(memberGroup);
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-bootstrap-pending',
+        text: 'Too early',
+        senderPeerId: 'peer-member',
+        senderPublicKey: 'pk-member',
+        senderPrivateKey: 'sk-member',
+        senderUsername: 'Member',
+      );
+
+      expect(result, SendGroupMessageResult.error);
+      expect(message, isNull);
+      expect(bridge.commandLog, isEmpty);
+      expect(msgRepo.count, 0);
+    },
+  );
+
+  test(
+    'blocks announcement send while group recovery is in progress',
+    () async {
+      final announcementGroup = GroupModel(
+        id: 'group-announce-admin',
+        name: 'Announcements',
+        type: GroupType.announcement,
+        topicName: 'group-topic-announce-admin',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.admin,
+      );
+      await groupRepo.saveGroup(announcementGroup);
+
+      groupRecoveryGate.begin();
+      try {
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-announce-admin',
+          text: 'Resume blocked',
+          senderPeerId: 'peer-admin',
+          senderPublicKey: 'pk-admin',
+          senderPrivateKey: 'sk-admin',
+          senderUsername: 'Admin',
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+      } finally {
+        groupRecoveryGate.end();
+      }
+
+      expect(bridge.commandLog, isEmpty);
+      expect(msgRepo.count, 0);
+    },
+  );
 
   test('saves message to repo on success', () async {
     await sendGroupMessage(

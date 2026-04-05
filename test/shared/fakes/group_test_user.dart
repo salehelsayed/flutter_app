@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -9,6 +12,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart'
     as group_react;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -59,6 +63,9 @@ class GroupTestUser {
     required FakeGroupPubSubNetwork network,
     FakeBridge? bridge,
     ReactionRepository? reactionRepo,
+    NotificationService? notificationService,
+    ActiveConversationTracker? groupConversationTracker,
+    AppLifecycleState Function()? getAppLifecycleState,
   }) {
     final effectiveBridge = bridge ?? FakeBridge();
     final groupRepo = InMemoryGroupRepository();
@@ -73,6 +80,9 @@ class GroupTestUser {
       bridge: effectiveBridge,
       getSelfPeerId: () async => peerId,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      notificationService: notificationService,
+      groupConversationTracker: groupConversationTracker,
+      getAppLifecycleState: getAppLifecycleState,
       reactionRepo: reactionRepo,
     );
 
@@ -374,6 +384,17 @@ class GroupTestUser {
     required String memberUsername,
   }) async {
     await groupRepo.removeMember(groupId, memberPeerId);
+    final removedAt = DateTime.now().toUtc();
+    await msgRepo.saveMessage(
+      buildMemberRemovedTimelineMessage(
+        groupId: groupId,
+        removedPeerId: memberPeerId,
+        removedUsername: memberUsername,
+        senderId: peerId,
+        senderUsername: username,
+        eventAt: removedAt,
+      ),
+    );
 
     final group = await groupRepo.getGroup(groupId);
     final remainingMembers = await groupRepo.getMembers(groupId);
@@ -399,6 +420,7 @@ class GroupTestUser {
     final sysText = jsonEncode({
       '__sys': 'member_removed',
       'member': {'peerId': memberPeerId, 'username': memberUsername},
+      'removedAt': removedAt.toIso8601String(),
       'groupConfig': groupConfig,
     });
 
@@ -408,7 +430,7 @@ class GroupTestUser {
       'senderUsername': username,
       'keyEpoch': 0,
       'text': sysText,
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'timestamp': removedAt.toIso8601String(),
     };
     await _network.publish(groupId, peerId, envelope);
 

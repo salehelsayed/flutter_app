@@ -11,6 +11,7 @@ class NotificationRouteTarget {
   final NotificationRouteTargetKind kind;
   final String? peerId;
   final String? groupId;
+  final String? messageId;
   final String? postId;
   final String? commentId;
 
@@ -18,6 +19,7 @@ class NotificationRouteTarget {
     required this.kind,
     this.peerId,
     this.groupId,
+    this.messageId,
     this.postId,
     this.commentId,
   });
@@ -28,8 +30,12 @@ class NotificationRouteTarget {
   const NotificationRouteTarget.contactRequest(String peerId)
     : this._(kind: NotificationRouteTargetKind.contactRequest, peerId: peerId);
 
-  const NotificationRouteTarget.group(String groupId)
-    : this._(kind: NotificationRouteTargetKind.group, groupId: groupId);
+  const NotificationRouteTarget.group(String groupId, {String? messageId})
+    : this._(
+        kind: NotificationRouteTargetKind.group,
+        groupId: groupId,
+        messageId: messageId,
+      );
 
   const NotificationRouteTarget.intros()
     : this._(kind: NotificationRouteTargetKind.intros);
@@ -51,7 +57,10 @@ class NotificationRouteTarget {
       NotificationRouteTargetKind.conversation => peerId ?? '',
       NotificationRouteTargetKind.contactRequest =>
         'contact_request:${peerId ?? ''}',
-      NotificationRouteTargetKind.group => 'group:${groupId ?? ''}',
+      NotificationRouteTargetKind.group =>
+        messageId == null || messageId!.isEmpty
+        ? 'group:${groupId ?? ''}'
+        : 'group:${groupId ?? ''}|message:${messageId!}',
       NotificationRouteTargetKind.intros => 'intros',
       NotificationRouteTargetKind.post => 'post:${postId ?? ''}',
       NotificationRouteTargetKind.postComment =>
@@ -74,8 +83,25 @@ class NotificationRouteTarget {
           : NotificationRouteTarget.contactRequest(peerId);
     }
     if (payload.startsWith('group:')) {
-      final groupId = payload.substring('group:'.length).trim();
-      return groupId.isEmpty ? null : NotificationRouteTarget.group(groupId);
+      final remainder = payload.substring('group:'.length).trim();
+      if (remainder.isEmpty) {
+        return null;
+      }
+
+      const messageMarker = '|message:';
+      final markerIndex = remainder.indexOf(messageMarker);
+      if (markerIndex < 0) {
+        return NotificationRouteTarget.group(remainder);
+      }
+
+      final groupId = remainder.substring(0, markerIndex).trim();
+      final messageId = remainder
+          .substring(markerIndex + messageMarker.length)
+          .trim();
+      if (groupId.isEmpty || messageId.isEmpty) {
+        return null;
+      }
+      return NotificationRouteTarget.group(groupId, messageId: messageId);
     }
     if (payload.startsWith('post_comment:')) {
       final remainder = payload.substring('post_comment:'.length).trim();
@@ -125,7 +151,15 @@ class NotificationRouteTarget {
             : NotificationRouteTarget.contactRequest(peerId);
       case 'group_message':
         final groupId = _trimToNull(data['groupId']?.toString());
-        return groupId == null ? null : NotificationRouteTarget.group(groupId);
+        if (groupId == null) {
+          return null;
+        }
+        final messageId =
+            _trimToNull(data['message_id']?.toString()) ??
+            _trimToNull(data['messageId']?.toString()) ??
+            _trimToNull(data['id']?.toString()) ??
+            _trimToNull(data['msgId']?.toString());
+        return NotificationRouteTarget.group(groupId, messageId: messageId);
       case 'intros':
         return const NotificationRouteTarget.intros();
       case 'post_create':

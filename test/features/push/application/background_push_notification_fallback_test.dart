@@ -152,6 +152,7 @@ void main() {
         data: {
           'type': 'group_message',
           'groupId': 'group-abc-123',
+          'messageId': 'msg-123',
           'title': 'Team Chat',
           'body': 'New group message',
         },
@@ -162,7 +163,7 @@ void main() {
       final fallback = buildBackgroundPushFallbackNotification(message);
       expect(fallback.title, 'Team Chat');
       expect(fallback.body, 'New group message');
-      expect(fallback.payload, 'group:group-abc-123');
+      expect(fallback.payload, 'group:group-abc-123|message:msg-123');
     });
 
     test(

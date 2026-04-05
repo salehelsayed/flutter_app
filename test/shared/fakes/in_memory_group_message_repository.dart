@@ -19,9 +19,7 @@ class InMemoryGroupMessageRepository
     int limit = 50,
     int offset = 0,
   }) async {
-    var messages = _messages.values
-        .where((m) => m.groupId == groupId)
-        .toList();
+    var messages = _messages.values.where((m) => m.groupId == groupId).toList();
     messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     // Apply offset and limit, then reverse to ASC order
     final page = messages.skip(offset).take(limit).toList();
@@ -44,6 +42,24 @@ class InMemoryGroupMessageRepository
   }
 
   @override
+  Future<DateTime?> getLatestRemovalTimestampForSender(
+    String groupId,
+    String senderPeerId,
+  ) async {
+    final removalPrefix = 'sys-member_removed:$groupId:$senderPeerId:';
+    final messages = _messages.values
+        .where(
+          (message) =>
+              message.groupId == groupId &&
+              message.id.startsWith(removalPrefix),
+        )
+        .toList();
+    if (messages.isEmpty) return null;
+    messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return messages.first.timestamp.toUtc();
+  }
+
+  @override
   Future<void> updateMessageStatus(String id, String status) async {
     final msg = _messages[id];
     if (msg != null) {
@@ -59,8 +75,7 @@ class InMemoryGroupMessageRepository
   @override
   Future<int> getUnreadCount(String groupId) async {
     return _messages.values
-        .where((m) =>
-            m.groupId == groupId && m.isIncoming && m.readAt == null)
+        .where((m) => m.groupId == groupId && m.isIncoming && m.readAt == null)
         .length;
   }
 
@@ -89,12 +104,18 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<bool> existsByContent(
-      String groupId, String senderPeerId, String text, DateTime timestamp) async {
-    return _messages.values.any((m) =>
-        m.groupId == groupId &&
-        m.senderPeerId == senderPeerId &&
-        m.text == text &&
-        m.timestamp == timestamp);
+    String groupId,
+    String senderPeerId,
+    String text,
+    DateTime timestamp,
+  ) async {
+    return _messages.values.any(
+      (m) =>
+          m.groupId == groupId &&
+          m.senderPeerId == senderPeerId &&
+          m.text == text &&
+          m.timestamp == timestamp,
+    );
   }
 
   @override
@@ -112,9 +133,7 @@ class InMemoryGroupMessageRepository
   }
 
   @override
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  }) async {
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async {
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
     var count = 0;
     for (final entry in _messages.entries.toList()) {
@@ -144,8 +163,9 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<int> deleteMessagesForGroup(String groupId) async {
-    final toRemove =
-        _messages.entries.where((e) => e.value.groupId == groupId).toList();
+    final toRemove = _messages.entries
+        .where((e) => e.value.groupId == groupId)
+        .toList();
     for (final entry in toRemove) {
       _messages.remove(entry.key);
     }
@@ -154,10 +174,9 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<GroupThreadSummary> getGroupThreadSummary(String groupId) async {
-    final messages = _messages.values
-        .where((message) => message.groupId == groupId)
-        .toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final messages =
+        _messages.values.where((message) => message.groupId == groupId).toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return GroupThreadSummary(
       groupId: groupId,
       unreadCount: messages
@@ -173,10 +192,11 @@ class InMemoryGroupMessageRepository
   ) async {
     final summaries = <String, GroupThreadSummary>{};
     for (final groupId in groupIds.toSet()) {
-      final messages = _messages.values
-          .where((message) => message.groupId == groupId)
-          .toList()
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final messages =
+          _messages.values
+              .where((message) => message.groupId == groupId)
+              .toList()
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       summaries[groupId] = GroupThreadSummary(
         groupId: groupId,
         unreadCount: messages
@@ -193,11 +213,13 @@ class InMemoryGroupMessageRepository
     int limit = 20,
   }) async {
     final eligible = _messages.values
-        .where((m) =>
-            !m.isIncoming &&
-            !m.inboxStored &&
-            (m.status == 'sent' || m.status == 'pending') &&
-            m.inboxRetryPayload != null)
+        .where(
+          (m) =>
+              !m.isIncoming &&
+              !m.inboxStored &&
+              (m.status == 'sent' || m.status == 'pending') &&
+              m.inboxRetryPayload != null,
+        )
         .toList();
     eligible.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return eligible.take(limit).toList();

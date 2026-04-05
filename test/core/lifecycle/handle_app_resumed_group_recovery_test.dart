@@ -1,5 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -36,6 +42,42 @@ class _TracingBridge extends FakeBridge {
   }
 }
 
+class _BlockingDrainBridge extends FakeBridge {
+  _BlockingDrainBridge({required this.messages})
+    : super(
+        initialResponses: {
+          'group:join': {'ok': true},
+          'group:acknowledgeRecovery': {'ok': true},
+          'group:leave': {'ok': true},
+        },
+      );
+
+  final List<Map<String, dynamic>> messages;
+  final Completer<void> drainStarted = Completer<void>();
+  final Completer<void> allowDrain = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:inboxRetrieveCursor') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      if (!drainStarted.isCompleted) {
+        drainStarted.complete();
+      }
+      await allowDrain.future;
+      return jsonEncode({'ok': true, 'messages': messages, 'cursor': ''});
+    }
+
+    return super.send(message);
+  }
+}
+
 void main() {
   group('handleAppResumed group recovery', () {
     late FakeBridge bridge;
@@ -55,9 +97,11 @@ void main() {
       );
       groupRepo = InMemoryGroupRepository();
       groupMsgRepo = InMemoryGroupMessageRepository();
+      groupRecoveryGate.resetForTest();
     });
 
     tearDown(() {
+      groupRecoveryGate.resetForTest();
       p2pService.dispose();
     });
 
@@ -164,5 +208,144 @@ void main() {
       expect(retryUploadsCalled, isFalse);
       expect(retryCalled, isFalse);
     });
+
+    test(
+      'blocks admin-only group actions until replayed membership removal settles',
+      () async {
+        final now = DateTime.utc(2026, 4, 5, 12);
+        const groupId = 'group-stale-admin';
+        final bridge = _BlockingDrainBridge(
+          messages: [
+            {
+              'groupId': groupId,
+              'senderId': 'peer-other-admin',
+              'senderUsername': 'OtherAdmin',
+              'keyEpoch': 1,
+              'text': jsonEncode({
+                '__sys': 'member_removed',
+                'member': {
+                  'peerId': 'my-peer',
+                  'username': 'Self',
+                  'role': 'admin',
+                  'publicKey': 'pk-self',
+                },
+                'groupConfig': {
+                  'name': 'Recovery Group',
+                  'groupType': 'chat',
+                  'members': [
+                    {
+                      'peerId': 'peer-other-admin',
+                      'username': 'OtherAdmin',
+                      'role': 'admin',
+                      'publicKey': 'pk-other-admin',
+                    },
+                    {
+                      'peerId': 'peer-bystander',
+                      'username': 'Bystander',
+                      'role': 'writer',
+                      'publicKey': 'pk-bystander',
+                    },
+                  ],
+                  'createdBy': 'peer-other-admin',
+                  'createdAt': now.toIso8601String(),
+                },
+              }),
+              'timestamp': now.toIso8601String(),
+              'messageId': 'sys-remove-self',
+            },
+          ],
+        );
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'my-peer',
+        );
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Recovery Group',
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: now,
+            createdBy: 'my-peer',
+            myRole: GroupRole.admin,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'key-1',
+            createdAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'my-peer',
+            username: 'Self',
+            role: MemberRole.admin,
+            publicKey: 'pk-self',
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-other-admin',
+            username: 'OtherAdmin',
+            role: MemberRole.admin,
+            publicKey: 'pk-other-admin',
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-bystander',
+            username: 'Bystander',
+            role: MemberRole.writer,
+            publicKey: 'pk-bystander',
+            joinedAt: now,
+          ),
+        );
+
+        final resumeFuture = handleAppResumed(
+          bridge: bridge,
+          p2pService: p2pService,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          groupMessageListener: listener,
+        );
+
+        await bridge.drainStarted.future;
+        expect(isGroupRecoveryInProgress(), isTrue);
+
+        await expectLater(
+          removeGroupMember(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: groupId,
+            memberPeerId: 'peer-bystander',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains(groupRecoveryPendingError),
+            ),
+          ),
+        );
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+
+        bridge.allowDrain.complete();
+        await resumeFuture;
+
+        expect(await groupRepo.getGroup(groupId), isNull);
+        expect(isGroupRecoveryInProgress(), isFalse);
+      },
+    );
   });
 }

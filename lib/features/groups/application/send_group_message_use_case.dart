@@ -8,6 +8,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -201,6 +202,19 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.groupNotFound, null);
   }
 
+  if (group.type == GroupType.announcement && isGroupRecoveryInProgress()) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_RECOVERY_PENDING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'groupType': group.type.toValue(),
+      },
+    );
+    emitGroupSendTiming(outcome: 'group_recovery_pending');
+    return (SendGroupMessageResult.error, null);
+  }
+
   // 2. Check role authorization (announcement: only admin can send)
   if (group.type == GroupType.announcement && group.myRole != GroupRole.admin) {
     emitFlowEvent(
@@ -238,6 +252,21 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderPeerId: senderPeerId,
   );
   final latestKey = await latestKeyFuture;
+  if (latestKey == null && group.myRole != GroupRole.admin) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_BOOTSTRAP_PENDING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'role': group.myRole.toValue(),
+      },
+    );
+    emitGroupSendTiming(
+      outcome: 'bootstrap_pending',
+      details: {'role': group.myRole.toValue()},
+    );
+    return (SendGroupMessageResult.error, null);
+  }
   final resolvedMessageId = messageId ?? const Uuid().v4();
   final keyEpoch = latestKey?.keyGeneration ?? 0;
 

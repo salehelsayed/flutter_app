@@ -450,6 +450,7 @@ void main() {
       List<File>? initialAttachments,
       List<PendingComposerMedia>? initialPendingMedia,
       String? initialText,
+      String? initialHighlightedMessageId,
       ImageQualityPreference qualityPreference =
           ImageQualityPreference.compressed,
       ImageQualityPreference videoQualityPreference =
@@ -488,6 +489,7 @@ void main() {
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           initialText: initialText,
+          initialHighlightedMessageId: initialHighlightedMessageId,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           reactionRepo: reactionRepo,
         ),
@@ -537,6 +539,196 @@ void main() {
         await pumpFrames(tester, count: 20);
 
         expect(find.text('Media Too Large'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'oversized gallery attachment compresses under budget and stages the processed file',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_large_attachment_compress_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final oversizedFile = File('${tempDir.path}/oversized.jpg')
+          ..writeAsStringSync('123456789012');
+        final compressedFile = File('${tempDir.path}/compressed.jpg')
+          ..writeAsStringSync('1234');
+
+        final mediaPicker = FakeMediaPicker()
+          ..multipleMediaResult = [XFile(oversizedFile.path)];
+        final qualityCalls = <int>[];
+        final imageProcessor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                qualityCalls.add(quality);
+                if (quality == 100) {
+                  return XFile(oversizedFile.path);
+                }
+                return XFile(compressedFile.path);
+              },
+          compressVideo:
+              ({
+                required path,
+                required compress,
+                void Function(double progress)? onProgress,
+              }) async => null,
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            imageProcessor: imageProcessor,
+            mediaPicker: mediaPicker,
+            qualityPreference: ImageQualityPreference.original,
+            maxAttachmentBudgetBytes: 10,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await pumpUntil(
+          tester,
+          () => find.text('Media Too Large').evaluate().isNotEmpty,
+        );
+
+        expect(find.text('Media Too Large'), findsOneWidget);
+        expect(find.textContaining('12 B'), findsOneWidget);
+        expect(find.textContaining('10 B limit'), findsOneWidget);
+
+        await tester.tap(find.widgetWithText(FilledButton, 'Compress'));
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.composerStateListenable!.value.pendingAttachments
+              .isNotEmpty;
+        });
+        await pumpFrames(tester, count: 5);
+
+        expect(qualityCalls, equals([100, 85]));
+        expect(find.text('Media Too Large'), findsNothing);
+        expect(
+          find.text('The media is too large even after compression.'),
+          findsNothing,
+        );
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.composerStateListenable!.value.pendingAttachments,
+          hasLength(1),
+        );
+        expect(
+          screen.composerStateListenable!.value.pendingAttachments.single.path,
+          compressedFile.path,
+        );
+        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'oversized gallery attachment that remains over budget after compression leaves no pending state',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'group_large_attachment_reject_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final oversizedFile = File('${tempDir.path}/oversized.jpg')
+          ..writeAsStringSync('123456789012');
+        final stillOversizedFile = File('${tempDir.path}/still-oversized.jpg')
+          ..writeAsStringSync('12345678901');
+
+        final mediaPicker = FakeMediaPicker()
+          ..multipleMediaResult = [XFile(oversizedFile.path)];
+        final qualityCalls = <int>[];
+        final imageProcessor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                qualityCalls.add(quality);
+                if (quality == 100) {
+                  return XFile(oversizedFile.path);
+                }
+                return XFile(stillOversizedFile.path);
+              },
+          compressVideo:
+              ({
+                required path,
+                required compress,
+                void Function(double progress)? onProgress,
+              }) async => null,
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            imageProcessor: imageProcessor,
+            mediaPicker: mediaPicker,
+            qualityPreference: ImageQualityPreference.original,
+            maxAttachmentBudgetBytes: 10,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await pumpUntil(
+          tester,
+          () => find.text('Media Too Large').evaluate().isNotEmpty,
+        );
+
+        await tester.tap(find.widgetWithText(FilledButton, 'Compress'));
+        await pumpFrames(tester, count: 20);
+
+        expect(qualityCalls, equals([100, 85]));
+        expect(
+          find.text('The media is too large even after compression.'),
+          findsOneWidget,
+        );
+        expect(find.byType(AttachmentPreviewStrip), findsNothing);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(
+          screen.composerStateListenable!.value.pendingAttachments,
+          isEmpty,
+        );
       },
     );
 
@@ -1520,6 +1712,52 @@ void main() {
       },
     );
 
+    testWidgets('live removal timeline event from listener appears in UI', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
+
+      messageStreamController.add(
+        makeMessage(
+          id: 'sys-member-removed-1',
+          text: 'Admin removed Charlie',
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Admin removed Charlie'), findsOneWidget);
+    });
+
+    testWidgets('live re-add timeline event from listener appears in UI', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
+
+      messageStreamController.add(
+        makeMessage(
+          id: 'sys-member-added-1',
+          text: 'Admin added Charlie',
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Admin added Charlie'), findsOneWidget);
+    });
+
     testWidgets('shows loading shell until the initial group page resolves', (
       tester,
     ) async {
@@ -1546,6 +1784,57 @@ void main() {
       expect(find.byKey(const ValueKey('group-loading-shell')), findsNothing);
       expect(find.text('Loaded after delay'), findsOneWidget);
     });
+
+    testWidgets(
+      'highlights the targeted message context when opened from a notification anchor',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        final start = DateTime.utc(2026, 2, 1, 10);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-older',
+            groupId: group.id,
+            senderPeerId: 'peer-alice',
+            senderUsername: 'Alice',
+            text: 'Older message',
+            timestamp: start,
+            createdAt: start,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-targeted',
+            groupId: group.id,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'Tapped notification message',
+            timestamp: start.add(const Duration(minutes: 1)),
+            createdAt: start.add(const Duration(minutes: 1)),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            initialHighlightedMessageId: 'msg-targeted',
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Tapped notification message'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('grp-highlight-msg-targeted')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('grp-highlight-msg-older')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets(
       'incoming message preserves scroll offset when reading older messages',

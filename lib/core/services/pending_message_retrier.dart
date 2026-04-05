@@ -7,6 +7,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
@@ -192,29 +193,31 @@ class PendingMessageRetrier {
 
     _isGroupContinuitySweeping = true;
     try {
-      if (rejoinGroupTopicsFn != null) {
-        try {
-          await rejoinGroupTopicsFn!();
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
-            details: {'error': e.toString()},
-          );
+      await runWithGroupRecoveryGate(() async {
+        if (rejoinGroupTopicsFn != null) {
+          try {
+            await rejoinGroupTopicsFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
         }
-      }
 
-      if (drainGroupOfflineInboxFn != null) {
-        try {
-          await drainGroupOfflineInboxFn!();
-        } catch (e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
-            details: {'error': e.toString()},
-          );
+        if (drainGroupOfflineInboxFn != null) {
+          try {
+            await drainGroupOfflineInboxFn!();
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
         }
-      }
+      });
     } finally {
       _isGroupContinuitySweeping = false;
     }

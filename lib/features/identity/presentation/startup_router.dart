@@ -44,6 +44,7 @@ import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
@@ -471,17 +472,24 @@ class _StartupRouterState extends State<StartupRouter> {
       final groupRepo = widget.groupRepository;
       final groupMsgRepo = widget.groupMessageRepository;
       if (groupRepo != null) {
-        rejoinGroupTopics(bridge: widget.bridge, groupRepo: groupRepo);
-        if (groupMsgRepo != null) {
-          drainGroupOfflineInbox(
-            bridge: widget.bridge,
-            groupRepo: groupRepo,
-            msgRepo: groupMsgRepo,
-            groupMessageListener: widget.groupMessageListener,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            reactionRepo: widget.reactionRepository,
-          );
-        }
+        unawaited(
+          runWithGroupRecoveryGate(() async {
+            await rejoinGroupTopics(
+              bridge: widget.bridge,
+              groupRepo: groupRepo,
+            );
+            if (groupMsgRepo != null) {
+              await drainGroupOfflineInbox(
+                bridge: widget.bridge,
+                groupRepo: groupRepo,
+                msgRepo: groupMsgRepo,
+                groupMessageListener: widget.groupMessageListener,
+                mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                reactionRepo: widget.reactionRepository,
+              );
+            }
+          }),
+        );
       }
     }
   }

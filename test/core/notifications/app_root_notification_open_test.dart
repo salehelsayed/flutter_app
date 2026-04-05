@@ -42,7 +42,7 @@ void main() {
       'terminated local notification launch prepares group target before route',
       () async {
         await routeAppRootInitialLocalNotificationOpen(
-          consumeInitialPayload: () async => 'group:group-123',
+          consumeInitialPayload: () async => 'group:group-123|message:msg-123',
           onBeforeOpen: harness.clear,
           onBeforeRouteTarget: harness.prepare,
           onRouteTarget: harness.route,
@@ -50,11 +50,12 @@ void main() {
 
         expect(harness.events, <String>[
           'clear',
-          'prepare:group:group-123',
-          'route:group:group-123',
+          'prepare:group:group-123|message:msg-123',
+          'route:group:group-123|message:msg-123',
         ]);
         expect(harness.routed.single.kind, NotificationRouteTargetKind.group);
         expect(harness.routed.single.groupId, 'group-123');
+        expect(harness.routed.single.messageId, 'msg-123');
       },
     );
 

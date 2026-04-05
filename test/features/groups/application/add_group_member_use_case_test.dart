@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
@@ -34,9 +35,14 @@ void main() {
   setUp(() async {
     bridge = FakeBridge();
     groupRepo = InMemoryGroupRepository();
+    groupRecoveryGate.resetForTest();
 
     await groupRepo.saveGroup(adminGroup);
     await groupRepo.saveGroup(memberGroup);
+  });
+
+  tearDown(() {
+    groupRecoveryGate.resetForTest();
   });
 
   test('adds member successfully when caller is admin', () async {
@@ -82,6 +88,42 @@ void main() {
     );
   });
 
+  test('rejects while group recovery is in progress', () async {
+    final newMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-new',
+      username: 'NewUser',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+
+    groupRecoveryGate.begin();
+    try {
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: newMember,
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains(groupRecoveryPendingError),
+          ),
+        ),
+      );
+    } finally {
+      groupRecoveryGate.end();
+    }
+
+    expect(bridge.commandLog, isEmpty);
+    final saved = await groupRepo.getMember('group-1', 'peer-new');
+    expect(saved, isNull);
+  });
+
   test('throws when group not found', () async {
     final newMember = GroupMember(
       groupId: 'nonexistent-group',
@@ -109,8 +151,9 @@ void main() {
     );
   });
 
-  test('throws when member already exists — second add is upsert', () async {
-    final member = GroupMember(
+  test('rejects duplicate member before sync and preserves original row',
+      () async {
+    final originalMember = GroupMember(
       groupId: 'group-1',
       peerId: 'peer-duplicate',
       username: 'FirstAdd',
@@ -122,12 +165,13 @@ void main() {
       bridge: bridge,
       groupRepo: groupRepo,
       groupId: 'group-1',
-      newMember: member,
+      newMember: originalMember,
       selfPeerId: 'peer-admin',
     );
 
-    // Add the same peerId again with a different username.
-    final memberAgain = GroupMember(
+    bridge.commandLog.clear();
+
+    final duplicateAttempt = GroupMember(
       groupId: 'group-1',
       peerId: 'peer-duplicate',
       username: 'SecondAdd',
@@ -135,23 +179,31 @@ void main() {
       joinedAt: DateTime.now().toUtc(),
     );
 
-    await addGroupMember(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: 'group-1',
-      newMember: memberAgain,
-      selfPeerId: 'peer-admin',
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: duplicateAttempt,
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('already exists'),
+        ),
+      ),
     );
 
-    // InMemoryGroupRepository uses upsert semantics — the second save
-    // overwrites the first, so there is still exactly 1 member with that
-    // peerId, carrying the updated fields.
     final members = await groupRepo.getMembers('group-1');
-    final duplicates =
-        members.where((m) => m.peerId == 'peer-duplicate').toList();
+    final duplicates = members
+        .where((m) => m.peerId == 'peer-duplicate')
+        .toList();
     expect(duplicates.length, 1);
-    expect(duplicates.first.username, 'SecondAdd');
-    expect(duplicates.first.role, MemberRole.reader);
+    expect(duplicates.first.username, 'FirstAdd');
+    expect(duplicates.first.role, MemberRole.writer);
+    expect(bridge.commandLog, isEmpty);
   });
 
   test('saves member to repo', () async {

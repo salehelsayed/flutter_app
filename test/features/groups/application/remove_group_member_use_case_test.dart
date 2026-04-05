@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -26,32 +27,43 @@ void main() {
   setUp(() async {
     bridge = FakeBridge();
     groupRepo = InMemoryGroupRepository();
+    groupRecoveryGate.resetForTest();
 
     await groupRepo.saveGroup(testGroup);
-    await groupRepo.saveMember(GroupMember(
-      groupId: 'group-1',
-      peerId: 'peer-admin',
-      username: 'Admin',
-      role: MemberRole.admin,
-      publicKey: 'pk-admin',
-      joinedAt: DateTime.now().toUtc(),
-    ));
-    await groupRepo.saveMember(GroupMember(
-      groupId: 'group-1',
-      peerId: 'peer-to-remove',
-      username: 'RemoveMe',
-      role: MemberRole.writer,
-      publicKey: 'pk-remove',
-      joinedAt: DateTime.now().toUtc(),
-    ));
-    await groupRepo.saveMember(GroupMember(
-      groupId: 'group-1',
-      peerId: 'peer-bystander',
-      username: 'Bystander',
-      role: MemberRole.writer,
-      publicKey: 'pk-bystander',
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-to-remove',
+        username: 'RemoveMe',
+        role: MemberRole.writer,
+        publicKey: 'pk-remove',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-bystander',
+        username: 'Bystander',
+        role: MemberRole.writer,
+        publicKey: 'pk-bystander',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+  });
+
+  tearDown(() {
+    groupRecoveryGate.resetForTest();
   });
 
   test('removes member from DB', () async {
@@ -105,12 +117,14 @@ void main() {
       myRole: GroupRole.member,
     );
     await groupRepo.saveGroup(memberGroup);
-    await groupRepo.saveMember(GroupMember(
-      groupId: 'group-member-only',
-      peerId: 'peer-target',
-      role: MemberRole.writer,
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-member-only',
+        peerId: 'peer-target',
+        role: MemberRole.writer,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
     expect(
       () => removeGroupMember(
@@ -127,6 +141,57 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('rejects while group recovery is in progress', () async {
+    groupRecoveryGate.begin();
+    try {
+      await expectLater(
+        removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-to-remove',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains(groupRecoveryPendingError),
+          ),
+        ),
+      );
+    } finally {
+      groupRecoveryGate.end();
+    }
+
+    final member = await groupRepo.getMember('group-1', 'peer-to-remove');
+    expect(member, isNotNull);
+    expect(bridge.commandLog, isEmpty);
+  });
+
+  test('rejects non-member before sync and preserves existing members',
+      () async {
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-absent',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('Member not found'),
+        ),
+      ),
+    );
+
+    expect(bridge.commandLog, isEmpty);
+    expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+    expect(await groupRepo.getMember('group-1', 'peer-bystander'), isNotNull);
   });
 
   test('removes member from DB before calling bridge', () async {

@@ -313,6 +313,251 @@ void main() {
       expect(bridge.commandLog, contains('group:updateConfig'));
     });
 
+    test('unauthorized member_added is ignored', () async {
+      listener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'member_added',
+        'member': {
+          'peerId': 'peer-charlie',
+          'username': 'Charlie',
+          'role': 'writer',
+          'publicKey': 'pk-charlie',
+        },
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+            {
+              'peerId': 'peer-charlie',
+              'role': 'writer',
+              'publicKey': 'pk-charlie',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(msgRepo.count, 0);
+    });
+
+    test(
+      'duplicate member_added keeps one canonical member state and one UI stream event',
+      () async {
+        listener.start(sourceController.stream);
+
+        final emittedMessages = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(
+          emittedMessages.add,
+        );
+
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'admin',
+            'publicKey': 'pk-charlie',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'role': 'admin',
+                'publicKey': 'pk-charlie',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        final duplicateEvent = {
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        };
+
+        sourceController.add(duplicateEvent);
+        sourceController.add(duplicateEvent);
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final members = await groupRepo.getMembers('group-1');
+        final charlies = members
+            .where((member) => member.peerId == 'peer-charlie')
+            .toList();
+
+        expect(charlies, hasLength(1));
+        expect(charlies.single.role, MemberRole.admin);
+        expect(emittedMessages, hasLength(1));
+        expect(emittedMessages.single.text, 'Admin added Charlie');
+        expect(emittedMessages.single.senderPeerId, 'peer-admin');
+        expect(msgRepo.count, 0);
+
+        await subscription.cancel();
+      },
+    );
+
+    test(
+      'older member_removed cannot roll back a newer added admin state after restart',
+      () async {
+        final newerListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        newerListener.start(sourceController.stream);
+
+        const newerAddAt = '2026-04-05T12:00:02.000Z';
+        final newerAdd = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'admin',
+            'publicKey': 'pk-charlie',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'role': 'admin',
+                'publicKey': 'pk-charlie',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': newerAdd,
+          'timestamp': newerAddAt,
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+        newerListener.dispose();
+
+        final persistedAfterAdd = await groupRepo.getGroup('group-1');
+        expect(
+          persistedAfterAdd!.lastMembershipEventAt,
+          DateTime.parse(newerAddAt).toUtc(),
+        );
+        final charlieAfterAdd = await groupRepo.getMember(
+          'group-1',
+          'peer-charlie',
+        );
+        expect(charlieAfterAdd, isNotNull);
+        expect(charlieAfterAdd!.role, MemberRole.admin);
+
+        final restartedListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        restartedListener.start(sourceController.stream);
+
+        final olderRemove = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': olderRemove,
+          'timestamp': '2026-04-05T12:00:01.000Z',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final charlieAfterStaleRemove = await groupRepo.getMember(
+          'group-1',
+          'peer-charlie',
+        );
+        expect(charlieAfterStaleRemove, isNotNull);
+        expect(charlieAfterStaleRemove!.role, MemberRole.admin);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+
+        restartedListener.dispose();
+      },
+    );
+
     test(
       'member_added retries once using incoming groupConfig snapshot and then succeeds',
       () async {
@@ -462,6 +707,60 @@ void main() {
       expect(updateConfigCalls, 1);
 
       // Not saved as regular message
+      expect(msgRepo.count, 0);
+    });
+
+    test('unauthorized members_added is ignored', () async {
+      listener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'members_added',
+        'members': [
+          {
+            'peerId': 'peer-dave',
+            'username': 'Dave',
+            'role': 'writer',
+            'publicKey': 'pk-dave',
+          },
+          {
+            'peerId': 'peer-eve',
+            'username': 'Eve',
+            'role': 'writer',
+            'publicKey': 'pk-eve',
+          },
+        ],
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {'peerId': 'peer-admin', 'role': 'admin', 'publicKey': 'pk-admin'},
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+            {'peerId': 'peer-dave', 'role': 'writer', 'publicKey': 'pk-dave'},
+            {'peerId': 'peer-eve', 'role': 'writer', 'publicKey': 'pk-eve'},
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getMember('group-1', 'peer-dave'), isNull);
+      expect(await groupRepo.getMember('group-1', 'peer-eve'), isNull);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
       expect(msgRepo.count, 0);
     });
 
@@ -697,44 +996,51 @@ void main() {
       },
     );
 
-    test('member_added is not emitted on groupMessageStream', () async {
-      listener.start(sourceController.stream);
+    test(
+      'member_added emits readable timeline event on groupMessageStream',
+      () async {
+        listener.start(sourceController.stream);
 
-      final messages = <GroupMessage>[];
-      final subscription = listener.groupMessageStream.listen(messages.add);
+        final messages = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(messages.add);
 
-      final sysText = jsonEncode({
-        '__sys': 'member_added',
-        'member': {
-          'peerId': 'peer-charlie',
-          'username': 'Charlie',
-          'role': 'writer',
-        },
-        'groupConfig': {
-          'name': 'Test Group',
-          'groupType': 'chat',
-          'members': [],
-          'createdBy': 'peer-admin',
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      });
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'writer',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': sysText,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // No message emitted to the UI stream
-      expect(messages, isEmpty);
+        expect(messages, hasLength(1));
+        expect(messages.single.text, 'Admin added Charlie');
+        expect(messages.single.senderPeerId, 'peer-admin');
+        expect(messages.single.senderUsername, 'Admin');
+        expect(messages.single.isIncoming, isTrue);
+        expect(msgRepo.count, 0);
 
-      await subscription.cancel();
-    });
+        await subscription.cancel();
+      },
+    );
 
     test(
       'system message without bridge falls through as regular message',
@@ -810,8 +1116,14 @@ void main() {
 
         await Future.delayed(const Duration(milliseconds: 50));
 
-        // System message should NOT be saved as a regular message
-        expect(msgRepo.count, 0);
+        expect(msgRepo.count, 1);
+        final saved = await msgRepo.getLatestMessage('group-1');
+        expect(saved, isNotNull);
+        expect(saved!.text, 'Admin removed Sender');
+        expect(
+          saved.id.startsWith('sys-member_removed:group-1:peer-sender:'),
+          isTrue,
+        );
 
         // Member should be removed from the group repo
         final after = await groupRepo.getMember('group-1', 'peer-sender');
@@ -821,6 +1133,78 @@ void main() {
         expect(bridge.commandLog, contains('group:updateConfig'));
       },
     );
+
+    test('unauthorized member_removed is ignored', () async {
+      listener.start(sourceController.stream);
+
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {'peerId': 'peer-admin', 'username': 'Admin'},
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNotNull);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(msgRepo.count, 0);
+    });
+
+    test('replayed unauthorized member_removed is ignored', () async {
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {'peerId': 'peer-admin', 'username': 'Admin'},
+        'groupConfig': {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {
+              'peerId': 'peer-sender',
+              'role': 'writer',
+              'publicKey': 'pk-sender',
+            },
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      });
+
+      await listener.handleReplayEnvelope({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNotNull);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(msgRepo.count, 0);
+    });
 
     test(
       'member_removed emits CONFIG_SYNC_FAILED when both update attempts fail',
@@ -879,40 +1263,50 @@ void main() {
       },
     );
 
-    test('member_removed is not emitted on groupMessageStream', () async {
-      listener.start(sourceController.stream);
+    test(
+      'member_removed emits readable timeline event on groupMessageStream',
+      () async {
+        listener.start(sourceController.stream);
 
-      final messages = <GroupMessage>[];
-      final subscription = listener.groupMessageStream.listen(messages.add);
+        final messages = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(messages.add);
 
-      final sysText = jsonEncode({
-        '__sys': 'member_removed',
-        'member': {'peerId': 'peer-sender', 'username': 'Sender'},
-        'groupConfig': {
-          'name': 'Test Group',
-          'groupType': 'chat',
-          'members': [],
-          'createdBy': 'peer-admin',
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      });
+        final sysText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': sysText,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      // No message emitted to the UI stream
-      expect(messages, isEmpty);
+        expect(messages, hasLength(1));
+        expect(messages.single.text, 'Admin removed Sender');
+        expect(messages.single.senderPeerId, 'peer-admin');
+        expect(messages.single.senderUsername, 'Admin');
+        expect(messages.single.isIncoming, isTrue);
+        expect(msgRepo.count, 1);
+        final saved = await msgRepo.getLatestMessage('group-1');
+        expect(saved, isNotNull);
+        expect(saved!.text, 'Admin removed Sender');
 
-      await subscription.cancel();
-    });
+        await subscription.cancel();
+      },
+    );
 
     test(
       'self-removal calls leaveGroup and emits on groupRemovedStream',
@@ -981,6 +1375,176 @@ void main() {
 
         await sub.cancel();
         selfListener.dispose();
+      },
+    );
+
+    test(
+      'duplicate self-removal emits one removal signal and leaves once',
+      () async {
+        final selfListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-self',
+            username: 'Me',
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        selfListener.start(sourceController.stream);
+
+        final removedGroups = <String>[];
+        final sub = selfListener.groupRemovedStream.listen(removedGroups.add);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-self', 'username': 'Me'},
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {'peerId': 'peer-admin', 'role': 'admin'},
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        final duplicateEvent = {
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        };
+
+        sourceController.add(duplicateEvent);
+        sourceController.add(duplicateEvent);
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(removedGroups, ['group-1']);
+        expect(await groupRepo.getGroup('group-1'), isNull);
+        expect(msgRepo.count, 0);
+
+        await sub.cancel();
+        selfListener.dispose();
+      },
+    );
+
+    test(
+      'older member_added cannot revive state after a newer removal across restart',
+      () async {
+        final newerListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        newerListener.start(sourceController.stream);
+
+        const newerRemoveAt = '2026-04-05T12:00:02.000Z';
+        final newerRemove = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': newerRemove,
+          'timestamp': newerRemoveAt,
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+        newerListener.dispose();
+
+        final persistedAfterRemove = await groupRepo.getGroup('group-1');
+        expect(
+          persistedAfterRemove!.lastMembershipEventAt,
+          DateTime.parse(newerRemoveAt).toUtc(),
+        );
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+
+        final restartedListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        restartedListener.start(sourceController.stream);
+
+        final olderAdd = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-sender',
+            'username': 'Sender',
+            'role': 'writer',
+            'publicKey': 'pk-sender',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': olderAdd,
+          'timestamp': '2026-04-05T12:00:01.000Z',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+
+        restartedListener.dispose();
       },
     );
 
@@ -1264,6 +1828,58 @@ void main() {
 
       notifListener.dispose();
     });
+
+    test(
+      'replayed duplicate group message does not create a second local notification',
+      () async {
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        notifListener.start(sourceController.stream);
+
+        final message = {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'Hello group!',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'group-replay-1',
+        };
+
+        sourceController.add(message);
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(notifService.shown, hasLength(1));
+        expect(msgRepo.count, 1);
+
+        await notifListener.handleReplayEnvelope(message);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          notifService.shown,
+          hasLength(1),
+          reason: 'Replay must not create a second local notification',
+        );
+        expect(
+          msgRepo.count,
+          1,
+          reason: 'Replay must not persist a second message row',
+        );
+
+        notifListener.dispose();
+      },
+    );
 
     test(
       'suppresses local notification when a recent remote push already announced the same group message',

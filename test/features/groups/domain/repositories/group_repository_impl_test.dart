@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -25,6 +26,7 @@ void main() {
     await runGroupsTablesMigration(db);
     await runGroupMessagesTablesMigration(db);
     await runGroupQuotedMessageIdMigration(db);
+    await runGroupsLastMembershipEventAtMigration(db);
 
     repo = GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),
@@ -149,6 +151,21 @@ void main() {
 
       final result = await repo.getGroup('group-1');
       expect(result!.name, 'Updated');
+    });
+
+    test('saveGroup and getGroup round-trip membership watermark', () async {
+      await repo.saveGroup(
+        makeGroup().copyWith(
+          lastMembershipEventAt: DateTime.utc(2026, 4, 5, 12, 30),
+        ),
+      );
+
+      final result = await repo.getGroup('group-1');
+      expect(result, isNotNull);
+      expect(
+        result!.lastMembershipEventAt,
+        DateTime.utc(2026, 4, 5, 12, 30),
+      );
     });
 
     test('deleteGroup removes the group', () async {
