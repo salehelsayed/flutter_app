@@ -36,6 +36,7 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback? onCancelUpload;
   final bool initialLoadDone;
   final ScrollController? scrollController;
+  final String? highlightedMessageId;
   final Map<String, List<MediaAttachment>> mediaMap;
   final List<File> pendingAttachments;
   final bool isUploading;
@@ -79,6 +80,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onCancelUpload,
     this.initialLoadDone = false,
     this.scrollController,
+    this.highlightedMessageId,
     this.mediaMap = const {},
     this.pendingAttachments = const [],
     this.isUploading = false,
@@ -318,6 +320,7 @@ class GroupConversationScreen extends StatelessWidget {
             isSent &&
             message.status == 'failed' &&
             messageMedia.isNotEmpty;
+        final isHighlighted = highlightedMessageId == message.id;
 
         Widget bubble = Padding(
           key: ValueKey('grp-msg-${message.id}'),
@@ -362,6 +365,21 @@ class GroupConversationScreen extends StatelessWidget {
         if (!isSent && canWrite && onQuoteReply != null) {
           bubble = SwipeToQuoteBubble(
             onQuoteTriggered: () => onQuoteReply!(message.id),
+            child: bubble,
+          );
+        }
+
+        if (isHighlighted) {
+          bubble = AnimatedContainer(
+            key: ValueKey('grp-highlight-${message.id}'),
+            duration: const Duration(milliseconds: 180),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.14),
+              ),
+            ),
             child: bubble,
           );
         }

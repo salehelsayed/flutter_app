@@ -111,6 +111,14 @@ Map<String, dynamic> latestBridgePayload(FakeBridge bridge, String command) {
       as Map<String, dynamic>;
 }
 
+List<Map<String, dynamic>> bridgePayloads(FakeBridge bridge, String command) {
+  return bridge.sentMessages
+      .map((message) => jsonDecode(message) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == command)
+      .map((message) => message['payload'] as Map<String, dynamic>)
+      .toList(growable: false);
+}
+
 void _injectInboxMessageFromLatestStore({
   required FakeBridge senderBridge,
   required _CursorInboxBridge receiverBridge,
@@ -1346,6 +1354,178 @@ void main() {
     );
 
     test(
+      'offline remaining member drains remove-vs-send backlog and keeps the same before-cutoff outcome after resume',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'admin-offline-remaining-peer',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-offline-remaining-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-offline-remaining-peer',
+          username: 'Charlie',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final charlieBridge = charlie.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-offline-remaining-cutoff';
+        final joinedAt = DateTime.now().toUtc();
+
+        await admin.createGroup(groupId: groupId, name: 'Offline Remaining');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        Future<void> saveKey(GroupTestUser user) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'test-key',
+              createdAt: joinedAt,
+            ),
+          );
+        }
+
+        await saveKey(admin);
+        await saveKey(bob);
+        await saveKey(charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        network.unsubscribe(groupId, charlie.peerId);
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          memberUsername: 'Bob',
+        );
+        await pump();
+
+        expect(
+          await charlie.groupRepo.getMember(groupId, bob.peerId),
+          isNotNull,
+        );
+
+        final adminMessages = await admin.loadGroupMessages(groupId);
+        final removalEntry = adminMessages.firstWhere(
+          (message) => message.id.startsWith(
+            'sys-member_removed:$groupId:${bob.peerId}:',
+          ),
+        );
+        final removedAt = removalEntry.timestamp.toUtc();
+
+        final group = await admin.groupRepo.getGroup(groupId);
+        final remainingMembers = await admin.groupRepo.getMembers(groupId);
+        final removalSystemMessage = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': bob.peerId, 'username': 'Bob'},
+          'removedAt': removedAt.toIso8601String(),
+          'groupConfig': {
+            'name': group!.name,
+            'groupType': group.type.toValue(),
+            if (group.description != null) 'description': group.description,
+            'members': remainingMembers
+                .map(
+                  (member) => {
+                    'peerId': member.peerId,
+                    'username': member.username,
+                    'role': member.role.toValue(),
+                    'publicKey': member.publicKey,
+                  },
+                )
+                .toList(),
+            'createdBy': group.createdBy,
+            'createdAt': group.createdAt.toUtc().toIso8601String(),
+          },
+        });
+
+        charlieBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': admin.peerId,
+            'senderUsername': admin.username,
+            'keyEpoch': 0,
+            'text': removalSystemMessage,
+            'timestamp': removedAt.toIso8601String(),
+            'messageId': 'msg-remove-bob-replay',
+          },
+          {
+            'groupId': groupId,
+            'senderId': bob.peerId,
+            'senderUsername': 'Bob',
+            'keyEpoch': 1,
+            'text': 'Before cutoff replay',
+            'timestamp': removedAt
+                .subtract(const Duration(milliseconds: 1))
+                .toIso8601String(),
+            'messageId': 'msg-before-cutoff-replay',
+          },
+        ], 'cursor-after-cutoff');
+
+        charlieBridge.addPage(groupId, 'cursor-after-cutoff', [
+          {
+            'groupId': groupId,
+            'senderId': bob.peerId,
+            'senderUsername': 'Bob',
+            'keyEpoch': 1,
+            'text': 'At cutoff replay',
+            'timestamp': removedAt.toIso8601String(),
+            'messageId': 'msg-at-cutoff-replay',
+          },
+        ], '');
+
+        await rejoinGroupTopics(
+          bridge: charlie.bridge,
+          groupRepo: charlie.groupRepo,
+          reason: RejoinReason.startup,
+        );
+        network.subscribe(groupId, charlie.peerId);
+        await drainGroupOfflineInbox(
+          bridge: charlie.bridge,
+          groupRepo: charlie.groupRepo,
+          msgRepo: charlie.msgRepo,
+          groupMessageListener: charlie.groupMessageListener,
+        );
+
+        expect(await charlie.groupRepo.getMember(groupId, bob.peerId), isNull);
+
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          charlieMessages.where(
+            (message) => message.text == 'Before cutoff replay',
+          ),
+          hasLength(1),
+        );
+        expect(
+          charlieMessages.where(
+            (message) => message.text == 'At cutoff replay',
+          ),
+          isEmpty,
+        );
+        expect(
+          charlieMessages.where(
+            (message) => message.id.startsWith(
+              'sys-member_removed:$groupId:${bob.peerId}:',
+            ),
+          ),
+          hasLength(1),
+        );
+
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
       'watchdog restart rejoins topics and receives subsequent live messages',
       () async {
         final alice = GroupTestUser.create(
@@ -2447,6 +2627,188 @@ void main() {
         inboxReaderTwo.dispose();
       });
 
+      test(
+        'temporary partition replays missed backlog in cursor order and resumes live delivery after heal',
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-partition-peer',
+            username: 'Alice',
+            network: network,
+          );
+          final onlineReader = GroupTestUser.create(
+            peerId: 'reader-partition-online-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final partitionedReader = GroupTestUser.create(
+            peerId: 'reader-partition-offline-peer',
+            username: 'Carol',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final partitionBridge =
+              partitionedReader.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-partition-heal';
+          await admin.createGroup(groupId: groupId, name: 'Partition Heal');
+          await admin.addMember(groupId: groupId, invitee: onlineReader);
+          await admin.addMember(groupId: groupId, invitee: partitionedReader);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(onlineReader, groupId, 1, 'k1');
+          await _saveKey(partitionedReader, groupId, 1, 'k1');
+
+          admin.start();
+          onlineReader.start();
+          partitionedReader.start();
+
+          await admin.sendGroupMessage(groupId: groupId, text: 'Before split');
+          await pump();
+
+          var onlineTexts = (await onlineReader.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming)
+              .map((message) => message.text)
+              .toList(growable: false);
+          var partitionedTexts =
+              (await partitionedReader.loadGroupMessages(groupId))
+                  .where((message) => message.isIncoming)
+                  .map((message) => message.text)
+                  .toList(growable: false);
+          expect(onlineTexts, ['Before split']);
+          expect(partitionedTexts, ['Before split']);
+
+          network.unsubscribe(groupId, partitionedReader.peerId);
+          expect(
+            network.isSubscribed(groupId, partitionedReader.peerId),
+            isFalse,
+          );
+
+          final (firstResult, firstSent) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'During split 1',
+              );
+          final (secondResult, secondSent) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'During split 2',
+              );
+
+          expect(firstResult, SendGroupMessageResult.success);
+          expect(firstSent, isNotNull);
+          expect(firstSent!.inboxStored, isTrue);
+          expect(secondResult, SendGroupMessageResult.success);
+          expect(secondSent, isNotNull);
+          expect(secondSent!.inboxStored, isTrue);
+
+          await pump();
+
+          onlineTexts = (await onlineReader.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming)
+              .map((message) => message.text)
+              .toList(growable: false);
+          partitionedTexts =
+              (await partitionedReader.loadGroupMessages(groupId))
+                  .where((message) => message.isIncoming)
+                  .map((message) => message.text)
+                  .toList(growable: false);
+          expect(onlineTexts, [
+            'Before split',
+            'During split 1',
+            'During split 2',
+          ]);
+          expect(
+            partitionedTexts,
+            ['Before split'],
+            reason: 'Partitioned peer should miss split-window live delivery',
+          );
+
+          final inboxStores = bridgePayloads(admin.bridge, 'group:inboxStore');
+          expect(inboxStores, hasLength(2));
+          for (final payload in inboxStores) {
+            expect(
+              (payload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+              contains(partitionedReader.peerId),
+            );
+          }
+
+          final firstEnvelope =
+              jsonDecode(inboxStores[0]['message'] as String)
+                  as Map<String, dynamic>;
+          final secondEnvelope =
+              jsonDecode(inboxStores[1]['message'] as String)
+                  as Map<String, dynamic>;
+          partitionBridge.addPage(groupId, '', [
+            firstEnvelope,
+          ], 'cursor-partition-page-2');
+          partitionBridge.addPage(groupId, 'cursor-partition-page-2', [
+            secondEnvelope,
+          ], '');
+
+          await rejoinGroupTopics(
+            bridge: partitionedReader.bridge,
+            groupRepo: partitionedReader.groupRepo,
+          );
+          await drainGroupOfflineInbox(
+            bridge: partitionedReader.bridge,
+            groupRepo: partitionedReader.groupRepo,
+            msgRepo: partitionedReader.msgRepo,
+          );
+          network.subscribe(groupId, partitionedReader.peerId);
+          expect(
+            network.isSubscribed(groupId, partitionedReader.peerId),
+            isTrue,
+          );
+
+          partitionedTexts =
+              (await partitionedReader.loadGroupMessages(groupId))
+                  .where((message) => message.isIncoming)
+                  .map((message) => message.text)
+                  .toList(growable: false);
+          expect(partitionedTexts, [
+            'Before split',
+            'During split 1',
+            'During split 2',
+          ]);
+
+          await admin.sendGroupMessage(groupId: groupId, text: 'After heal');
+          await pump();
+
+          onlineTexts = (await onlineReader.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming)
+              .map((message) => message.text)
+              .toList(growable: false);
+          partitionedTexts =
+              (await partitionedReader.loadGroupMessages(groupId))
+                  .where((message) => message.isIncoming)
+                  .map((message) => message.text)
+                  .toList(growable: false);
+          expect(onlineTexts, [
+            'Before split',
+            'During split 1',
+            'During split 2',
+            'After heal',
+          ]);
+          expect(partitionedTexts, [
+            'Before split',
+            'During split 1',
+            'During split 2',
+            'After heal',
+          ]);
+
+          final cursorCmds = partitionBridge.sentMessages
+              .map((message) => jsonDecode(message) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:inboxRetrieveCursor')
+              .toList(growable: false);
+          expect(cursorCmds, hasLength(2));
+          expect(cursorCmds[0]['payload']['cursor'], '');
+          expect(cursorCmds[1]['payload']['cursor'], 'cursor-partition-page-2');
+
+          admin.dispose();
+          onlineReader.dispose();
+          partitionedReader.dispose();
+        },
+      );
+
       test('full lifecycle round-trip', () async {
         final admin = GroupTestUser.create(
           peerId: 'admin-round-trip-peer',
@@ -2608,6 +2970,306 @@ void main() {
         bob.dispose();
         charlie.dispose();
       });
+
+      test(
+        'unread count stays correct across duplicate inbox drain, retry recovery, and read clear',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-unread-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-unread-peer',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final bobBridge = bob.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-unread-005';
+          await admin.createGroup(groupId: groupId, name: 'Unread Accuracy');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+
+          final (firstResult, firstMessage) = await admin
+              .sendGroupMessageViaBridge(groupId: groupId, text: 'Live once');
+
+          expect(firstResult, SendGroupMessageResult.success);
+          expect(firstMessage, isNotNull);
+
+          await pump();
+          expect(await bob.msgRepo.getUnreadCount(groupId), 1);
+          var summary = await bob.msgRepo.getGroupThreadSummary(groupId);
+          expect(summary.unreadCount, 1);
+          expect(summary.latestMessage?.text, 'Live once');
+
+          _injectInboxMessageFromLatestStore(
+            senderBridge: admin.bridge,
+            receiverBridge: bobBridge,
+            receiverPeerId: bob.peerId,
+            groupId: groupId,
+          );
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+          );
+
+          await pump();
+          final bobAfterDuplicate = await bob.loadGroupMessages(groupId);
+          expect(
+            bobAfterDuplicate.where(
+              (message) => message.id == firstMessage!.id && message.isIncoming,
+            ),
+            hasLength(1),
+            reason: 'Duplicate inbox drain must not create a second unread row',
+          );
+          expect(
+            await bob.msgRepo.getUnreadCount(groupId),
+            1,
+            reason: 'Duplicate recovery must not double-count unread state',
+          );
+
+          adminBridge.publishFailuresRemaining = 1;
+          final (retryInitialResult, retryInitialMessage) = await admin
+              .sendGroupMessageViaBridge(groupId: groupId, text: 'Retry once');
+
+          expect(retryInitialResult, SendGroupMessageResult.error);
+          expect(retryInitialMessage, isNotNull);
+          expect(retryInitialMessage!.status, 'failed');
+          expect(
+            await bob.msgRepo.getUnreadCount(groupId),
+            1,
+            reason: 'Unread must not change until retry actually delivers',
+          );
+
+          final retried = await retryFailedGroupMessages(
+            groupMsgRepo: admin.msgRepo,
+            groupRepo: admin.groupRepo,
+            identityRepo: _Section10IdentityRepository(_identityForUser(admin)),
+            bridge: admin.bridge,
+            mediaAttachmentRepo: admin.mediaAttachmentRepo,
+          );
+
+          expect(retried, 1);
+
+          final finalMessage = await _latestOutgoingMessage(
+            admin.msgRepo,
+            groupId,
+            text: 'Retry once',
+          );
+          expect(finalMessage.id, retryInitialMessage.id);
+          expect(finalMessage.status, 'sent');
+
+          await pump();
+          final bobAfterRetry = await bob.loadGroupMessages(groupId);
+          expect(
+            bobAfterRetry.where(
+              (message) =>
+                  message.id == retryInitialMessage.id && message.isIncoming,
+            ),
+            hasLength(1),
+            reason: 'Successful retry should arrive once for the receiver',
+          );
+          expect(await bob.msgRepo.getUnreadCount(groupId), 2);
+          summary = await bob.msgRepo.getGroupThreadSummary(groupId);
+          expect(summary.unreadCount, 2);
+          expect(summary.latestMessage?.text, 'Retry once');
+
+          await bob.msgRepo.markAsRead(groupId);
+
+          expect(await bob.msgRepo.getUnreadCount(groupId), 0);
+          summary = await bob.msgRepo.getGroupThreadSummary(groupId);
+          expect(summary.unreadCount, 0);
+
+          admin.dispose();
+          bob.dispose();
+        },
+      );
+
+      test(
+        'offline member reconnects after membership churn and converges to the final member list',
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-converge-peer',
+            username: 'Admin',
+            network: network,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'bob-converge-peer',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'charlie-converge-peer',
+            username: 'Charlie',
+            network: network,
+          );
+          final diana = GroupTestUser.create(
+            peerId: 'diana-converge-peer',
+            username: 'Diana',
+            network: network,
+          );
+          final bobBridge = bob.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-member-converge-010';
+
+          Future<Map<String, dynamic>> membershipReplayEnvelope({
+            required String systemType,
+            required Map<String, dynamic> member,
+          }) async {
+            final group = await admin.groupRepo.getGroup(groupId);
+            final members = await admin.groupRepo.getMembers(groupId);
+            final groupConfig = {
+              'name': group!.name,
+              'groupType': group.type.toValue(),
+              if (group.description != null) 'description': group.description,
+              'members': members
+                  .map(
+                    (entry) => {
+                      'peerId': entry.peerId,
+                      'username': entry.username,
+                      'role': entry.role.toValue(),
+                      'publicKey': entry.publicKey,
+                    },
+                  )
+                  .toList(),
+              'createdBy': group.createdBy,
+              'createdAt': group.createdAt.toUtc().toIso8601String(),
+            };
+
+            return {
+              'groupId': groupId,
+              'senderId': admin.peerId,
+              'senderUsername': admin.username,
+              'keyEpoch': 0,
+              'text': jsonEncode({
+                '__sys': systemType,
+                'member': member,
+                'groupConfig': groupConfig,
+              }),
+              'timestamp': DateTime.now().toUtc().toIso8601String(),
+            };
+          }
+
+          Map<String, String> memberRoleMap(List<GroupMember> members) {
+            return {
+              for (final member in members)
+                member.peerId: member.role.toValue(),
+            };
+          }
+
+          await admin.createGroup(groupId: groupId, name: 'Reconnect Churn');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await admin.addMember(groupId: groupId, invitee: charlie);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+          await _saveKey(charlie, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+          charlie.start();
+          await admin.broadcastMemberAdded(
+            groupId: groupId,
+            newMember: charlie,
+          );
+          await pump();
+
+          network.unsubscribe(groupId, bob.peerId);
+
+          await admin.removeMember(
+            groupId: groupId,
+            memberPeerId: charlie.peerId,
+            memberUsername: 'Charlie',
+          );
+          final removedEnvelope = await membershipReplayEnvelope(
+            systemType: 'member_removed',
+            member: {'peerId': charlie.peerId, 'username': 'Charlie'},
+          );
+          await pump();
+
+          await admin.addMember(groupId: groupId, invitee: diana);
+          await _saveKey(diana, groupId, 1, 'k1');
+          final addedEnvelope = await membershipReplayEnvelope(
+            systemType: 'member_added',
+            member: {
+              'peerId': diana.peerId,
+              'username': 'Diana',
+              'role': 'writer',
+              'publicKey': diana.publicKey,
+            },
+          );
+          await admin.broadcastMemberAdded(groupId: groupId, newMember: diana);
+          await pump();
+
+          final staleBobMembers = await bob.groupRepo.getMembers(groupId);
+          expect(
+            staleBobMembers.map((member) => member.peerId).toSet(),
+            contains(charlie.peerId),
+          );
+          expect(
+            staleBobMembers.map((member) => member.peerId).toSet(),
+            isNot(contains(diana.peerId)),
+          );
+
+          bobBridge.addPage(groupId, '', [removedEnvelope, addedEnvelope], '');
+
+          await rejoinGroupTopics(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            reason: RejoinReason.startup,
+          );
+          network.subscribe(groupId, bob.peerId);
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+            groupMessageListener: bob.groupMessageListener,
+          );
+
+          final adminMembers = await admin.groupRepo.getMembers(groupId);
+          final bobMembers = await bob.groupRepo.getMembers(groupId);
+          final dianaMembers = await diana.groupRepo.getMembers(groupId);
+
+          expect(memberRoleMap(bobMembers), memberRoleMap(adminMembers));
+          expect(memberRoleMap(dianaMembers), memberRoleMap(adminMembers));
+          expect(memberRoleMap(adminMembers).keys.toSet(), {
+            admin.peerId,
+            bob.peerId,
+            diana.peerId,
+          });
+
+          final adminGroup = await admin.groupRepo.getGroup(groupId);
+          final bobGroup = await bob.groupRepo.getGroup(groupId);
+          final dianaGroup = await diana.groupRepo.getGroup(groupId);
+
+          expect(bobGroup, isNotNull);
+          expect(dianaGroup, isNotNull);
+          expect(bobGroup!.name, adminGroup!.name);
+          expect(bobGroup.type, adminGroup.type);
+          expect(bobGroup.createdBy, adminGroup.createdBy);
+          expect(dianaGroup!.name, adminGroup.name);
+          expect(dianaGroup.type, adminGroup.type);
+          expect(dianaGroup.createdBy, adminGroup.createdBy);
+
+          admin.dispose();
+          bob.dispose();
+          charlie.dispose();
+          diana.dispose();
+        },
+      );
 
       test("multi-group resume doesn't burst", () async {
         final user = GroupTestUser.create(

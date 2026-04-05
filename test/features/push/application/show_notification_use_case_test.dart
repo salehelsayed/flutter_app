@@ -22,6 +22,7 @@ void main() {
           conversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
           contactPeerId: 'group:group-123',
+          routePayload: 'group:group-123|message:msg-123',
           senderUsername: 'Team Chat',
           messageText: 'Alice: Hello group!',
         );
@@ -30,6 +31,10 @@ void main() {
         expect(
           notificationService.shown.first.contactPeerId,
           'group:group-123',
+        );
+        expect(
+          notificationService.shown.first.payload,
+          'group:group-123|message:msg-123',
         );
         expect(notificationService.shown.first.senderUsername, 'Team Chat');
         expect(
@@ -134,6 +139,7 @@ void main() {
         expect(notificationService.shown, hasLength(1));
         expect(notificationService.shown.first.senderUsername, sender);
         expect(notificationService.shown.first.messageText, body);
+        expect(notificationService.shown.first.payload, 'peer-123');
       },
     );
 

@@ -182,6 +182,63 @@ void main() {
       expect(find.text('Bob'), findsNothing);
     });
 
+    testWidgets(
+        'stale duplicate selection fails without config sync or members_added publish',
+        (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+
+      final bridge = FakeBridge();
+
+      await tester.pumpWidget(
+        buildDirectWiredTestWidget(
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+      expect(find.text('Send Invites'), findsOneWidget);
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-alice',
+          username: 'Alice',
+          role: MemberRole.writer,
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-pk-alice',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await tester.tap(find.text('Send Invites'));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        isEmpty,
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:publish'),
+        isEmpty,
+      );
+
+      final members = await groupRepo.getMembers('group-1');
+      final aliceRows = members.where((member) => member.peerId == 'peer-alice');
+      expect(aliceRows, hasLength(1));
+      expect(aliceRows.single.username, 'Alice');
+      expect(aliceRows.single.role, MemberRole.writer);
+    });
+
     testWidgets('excludes self from contact list', (tester) async {
       final contactRepo = InMemoryContactRepository();
       contactRepo.addTestContact(contactAlice);

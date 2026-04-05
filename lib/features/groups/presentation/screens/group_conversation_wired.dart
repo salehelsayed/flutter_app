@@ -77,6 +77,7 @@ class GroupConversationWired extends StatefulWidget {
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
   final ActiveConversationTracker? groupConversationTracker;
+  final String? initialHighlightedMessageId;
   final List<File>? initialAttachments;
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
@@ -102,6 +103,7 @@ class GroupConversationWired extends StatefulWidget {
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
     this.groupConversationTracker,
+    this.initialHighlightedMessageId,
     this.initialAttachments,
     this.initialPendingMedia,
     this.initialText,
@@ -2268,6 +2270,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         builder: (_) => GroupInfoWired(
           group: widget.group,
           groupRepo: widget.groupRepo,
+          msgRepo: widget.msgRepo,
           contactRepo: widget.contactRepo,
           bridge: widget.bridge,
           identityRepo: widget.identityRepo,
@@ -2475,6 +2478,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             : _requestCancelActiveAttachmentUpload,
         initialLoadDone: _initialLoadDone,
         scrollController: _scrollController,
+        highlightedMessageId: widget.initialHighlightedMessageId,
         mediaMap: _mediaMap,
         composerStateListenable: _composerState,
         onRemoveAttachment: _removeAttachment,

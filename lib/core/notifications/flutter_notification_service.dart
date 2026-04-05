@@ -118,16 +118,18 @@ class FlutterNotificationService implements NotificationService {
     required String contactPeerId,
     required String senderUsername,
     required String messageText,
+    String? payload,
   }) async {
     // One notification per conversation — updates on new messages
     final notificationId = contactPeerId.hashCode;
+    final resolvedPayload = payload ?? contactPeerId;
 
     await _plugin.show(
       notificationId,
       senderUsername,
       messageText,
       mknoonMessagesNotificationDetails,
-      payload: contactPeerId,
+      payload: resolvedPayload,
     );
 
     emitFlowEvent(
@@ -138,6 +140,7 @@ class FlutterNotificationService implements NotificationService {
             ? contactPeerId.substring(0, 10)
             : contactPeerId,
         'sender': senderUsername,
+        'payload': resolvedPayload,
       },
     );
   }

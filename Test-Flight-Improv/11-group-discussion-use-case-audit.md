@@ -96,7 +96,7 @@
 | 36 | **Promote/demote member** | Roles are not richly managed after creation | Medium |
 | 37 | **Mute member** | No per-member moderation mute | Low |
 | 38 | **Read receipts** | No sender-visible delivery/read tracking | Medium |
-| 39 | **Admin transfer** | Groups can become leaderless if the original admin leaves | High |
+| 39 | **Admin transfer** | No dedicated admin handoff flow exists; the repo now blocks sole-admin self-leave instead of allowing leaderless exit | High |
 | 40 | **Group dissolution** | No explicit admin-initiated dissolve workflow | Low |
 | 41 | **Invite expiry** | Invites do not have strong expiry semantics | Low |
 
@@ -107,6 +107,14 @@
 - Duplicate reaction replacement/prevention is already handled by current reaction storage/tests
 - Durable group media retry/recovery already exists
 - Core group message, invite, and resume/drain flows are already well tested
+- Duplicate group-member adds are now rejected before config sync, and stale picker selections no longer emit duplicate `members_added` side effects
+- Non-member group removals are now rejected before config sync, and stale remove attempts surface an error without removal broadcast side effects
+- Remaining members now see a readable removal timeline event on the live conversation stream while the converged member list still updates correctly
+- Group notifications now stay off while a member is removed and resume only after that member's rejoin becomes effective again
+- Remaining members now see a readable re-add timeline event on the live conversation stream while the converged member list still updates correctly
+- Offline re-invites now have an exact inbox-fallback reconnect regression proving the removed member restores rotated group state before resumed sends
+- Member-role group sends are now blocked until bootstrap key state exists locally, with direct proof in `send_group_message_use_case_test.dart` and `group_membership_smoke_test.dart`
+- Last-admin self-leave is now blocked, so the repo no longer allows groups to become leaderless through the local leave flow
 
 ---
 

@@ -6,12 +6,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
+    as group_send;
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+
+Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
+  final inboxMsg = bridge.sentMessages.lastWhere(
+    (message) =>
+        (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+        'group:inboxStore',
+  );
+  return (jsonDecode(inboxMsg) as Map<String, dynamic>)['payload']
+      as Map<String, dynamic>;
+}
 
 void main() {
   late PassthroughCryptoBridge bridge;
@@ -234,5 +248,84 @@ void main() {
 
     listener.dispose();
     controller.close();
+  });
+
+  test('first post-removal send uses the rotated epoch', () async {
+    final msgRepo = InMemoryGroupMessageRepository();
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'initial-key-epoch-1',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+    bridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'msg-post-removal',
+      'topicPeers': 1,
+    };
+
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      memberPeerId: 'peer-alice',
+    );
+
+    final rotatedKey = await rotateAndDistributeGroupKey(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      selfPeerId: adminPeerId,
+      senderPublicKey: 'pk-admin',
+      senderPrivateKey: 'sk-admin',
+      senderUsername: 'Admin',
+      sendP2PMessage: (_, __) async => true,
+    );
+
+    expect(rotatedKey, isNotNull);
+    expect(rotatedKey!.keyGeneration, 2);
+
+    final (result, message) = await group_send.sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: groupId,
+      text: 'After removal',
+      senderPeerId: adminPeerId,
+      senderPublicKey: 'pk-admin',
+      senderPrivateKey: 'sk-admin',
+      senderUsername: 'Admin',
+      messageId: 'msg-post-removal',
+    );
+
+    expect(result, group_send.SendGroupMessageResult.success);
+    expect(message, isNotNull);
+    expect(message!.keyGeneration, 2);
+    expect(message.status, 'sent');
+
+    final saved = await msgRepo.getMessage('msg-post-removal');
+    expect(saved, isNotNull);
+    expect(saved!.keyGeneration, 2);
+
+    final inboxPayload = _lastGroupInboxStorePayload(bridge);
+    final inboxEnvelope =
+        jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+    expect(inboxEnvelope['keyEpoch'], 2);
+    expect(inboxEnvelope['messageId'], 'msg-post-removal');
+
+    final publishMessages = bridge.sentMessages
+        .where(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        )
+        .toList(growable: false);
+    expect(publishMessages, hasLength(2));
+    final lastPublishPayload =
+        (jsonDecode(publishMessages.last) as Map<String, dynamic>)['payload']
+            as Map<String, dynamic>;
+    expect(lastPublishPayload['text'], 'After removal');
   });
 }

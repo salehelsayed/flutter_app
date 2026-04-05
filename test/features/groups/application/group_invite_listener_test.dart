@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -459,6 +460,72 @@ void main() {
       expect(attachments.first.id, 'blob-offline-1');
       expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
     });
+
+    test(
+      'offline-added member reconnects, bootstraps, drains inbox, and can send',
+      () async {
+        bridge.addPage('grp-abc123', '', [
+          {
+            'from': '12D3KooWAlice',
+            'message': jsonEncode({
+              'groupId': 'grp-abc123',
+              'messageId': 'offline-msg-1',
+              'senderId': '12D3KooWAlice',
+              'senderUsername': 'Alice',
+              'keyEpoch': 1,
+              'text': 'Welcome back',
+              'timestamp': '2026-03-02T13:00:00.000Z',
+            }),
+            'timestamp': 1709384400000,
+          },
+        ], '');
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'post-bootstrap-send',
+        };
+
+        listener.start();
+
+        final groups = <GroupModel>[];
+        listener.groupJoinedStream.listen(groups.add);
+
+        incomingController.add(_makeV1InviteMessage());
+
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        expect(groups, hasLength(1));
+        expect(msgRepo.count, 1);
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'grp-abc123',
+          text: 'I made it back',
+          senderPeerId: 'myPeerId',
+          senderPublicKey: 'myPubKey',
+          senderPrivateKey: 'myPrivateKey',
+          senderUsername: 'Me',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.text, 'I made it back');
+        expect(message.keyGeneration, 1);
+
+        final storedInviteGroup = await groupRepo.getGroup('grp-abc123');
+        expect(storedInviteGroup, isNotNull);
+
+        final allMessages = await msgRepo.getMessagesPage('grp-abc123');
+        expect(
+          allMessages.map((entry) => entry.text).toSet(),
+          containsAll({'Welcome back', 'I made it back'}),
+        );
+        expect(bridge.commandLog, contains('group:join'));
+        expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
+        expect(bridge.commandLog, contains('group:publish'));
+      },
+    );
 
     test(
       'drains all invite inbox cursor pages when backlog exceeds one page',

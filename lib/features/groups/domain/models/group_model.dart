@@ -77,6 +77,9 @@ class GroupModel {
   /// When the group was archived (null if not archived).
   final DateTime? archivedAt;
 
+  /// Latest applied membership-event timestamp for stale-event rejection.
+  final DateTime? lastMembershipEventAt;
+
   const GroupModel({
     required this.id,
     required this.name,
@@ -88,6 +91,7 @@ class GroupModel {
     required this.myRole,
     this.isArchived = false,
     this.archivedAt,
+    this.lastMembershipEventAt,
   });
 
   /// Creates a GroupModel from a database row map.
@@ -105,6 +109,9 @@ class GroupModel {
       archivedAt: map['archived_at'] != null
           ? DateTime.parse(map['archived_at'] as String)
           : null,
+      lastMembershipEventAt: map['last_membership_event_at'] != null
+          ? DateTime.parse(map['last_membership_event_at'] as String)
+          : null,
     );
   }
 
@@ -121,6 +128,8 @@ class GroupModel {
       'my_role': myRole.toValue(),
       'is_archived': isArchived ? 1 : 0,
       'archived_at': archivedAt?.toUtc().toIso8601String(),
+      'last_membership_event_at':
+          lastMembershipEventAt?.toUtc().toIso8601String(),
     };
   }
 
@@ -136,6 +145,7 @@ class GroupModel {
     GroupRole? myRole,
     bool? isArchived,
     Object? archivedAt = _sentinel,
+    Object? lastMembershipEventAt = _sentinel,
   }) {
     return GroupModel(
       id: id ?? this.id,
@@ -152,6 +162,9 @@ class GroupModel {
       archivedAt: archivedAt == _sentinel
           ? this.archivedAt
           : archivedAt as DateTime?,
+      lastMembershipEventAt: lastMembershipEventAt == _sentinel
+          ? this.lastMembershipEventAt
+          : lastMembershipEventAt as DateTime?,
     );
   }
 

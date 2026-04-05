@@ -333,6 +333,239 @@ void main() {
     },
   );
 
+  test(
+    'replayed self-removal cuts off later queued inbox traffic for that group',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Self',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+      final removedGroups = <String>[];
+      final sub = listener.groupRemovedStream.listen(removedGroups.add);
+      addTearDown(() async {
+        await sub.cancel();
+        listener.dispose();
+      });
+
+      final removedAt = DateTime.now().toUtc().toIso8601String();
+      final samePageQueuedAt = DateTime.now()
+          .toUtc()
+          .add(const Duration(seconds: 1))
+          .toIso8601String();
+      final nextPageQueuedAt = DateTime.now()
+          .toUtc()
+          .add(const Duration(seconds: 2))
+          .toIso8601String();
+
+      bridge.addPage('group-1', '', [
+        {
+          'message': jsonEncode({
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_removed',
+              'member': {'peerId': 'peer-self', 'username': 'Self'},
+              'groupConfig': {
+                'name': 'Test Group',
+                'groupType': 'chat',
+                'members': [
+                  {'peerId': 'peer-admin', 'role': 'admin'},
+                ],
+                'createdBy': 'peer-admin',
+                'createdAt': removedAt,
+              },
+            }),
+            'timestamp': removedAt,
+            'messageId': 'msg-remove-self',
+          }),
+        },
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Queued after removal on same page',
+          'timestamp': samePageQueuedAt,
+          'messageId': 'msg-after-removal-same-page',
+        },
+      ], 'cursor-after-removal');
+
+      bridge.addPage('group-1', 'cursor-after-removal', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Queued after removal on next page',
+          'timestamp': nextPageQueuedAt,
+          'messageId': 'msg-after-removal-next-page',
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      expect(await groupRepo.getGroup('group-1'), isNull);
+      expect(bridge.commandLog, contains('group:leave'));
+      expect(removedGroups, ['group-1']);
+      expect(
+        msgRepo.count,
+        0,
+        reason:
+            'Queued post-removal inbox traffic must not be persisted for the removed peer',
+      );
+
+      final retrieveCount = bridge.commandLog
+          .where((command) => command == 'group:inboxRetrieveCursor')
+          .length;
+      expect(
+        retrieveCount,
+        1,
+        reason:
+            'Drain should stop before later cursor pages once replayed self-removal deletes the group',
+      );
+    },
+  );
+
+  test(
+    'replayed member_removed lets remaining peers accept only removed-sender inbox messages from before removedAt',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Self',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+      addTearDown(listener.dispose);
+
+      final removedAt = DateTime.now().toUtc();
+      final beforeCutoff = removedAt
+          .subtract(const Duration(milliseconds: 1))
+          .toIso8601String();
+      final atCutoff = removedAt.toIso8601String();
+
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+            'removedAt': removedAt.toIso8601String(),
+            'groupConfig': {
+              'name': 'Test Group',
+              'groupType': 'chat',
+              'members': [
+                {'peerId': 'peer-admin', 'role': 'admin'},
+                {'peerId': 'peer-self', 'role': 'writer'},
+              ],
+              'createdBy': 'peer-admin',
+              'createdAt': removedAt.toIso8601String(),
+            },
+          }),
+          'timestamp': removedAt.toIso8601String(),
+          'messageId': 'msg-remove-sender',
+        },
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Before cutoff replay',
+          'timestamp': beforeCutoff,
+          'messageId': 'msg-before-cutoff-replay',
+        },
+      ], 'cursor-after-cutoff');
+
+      bridge.addPage('group-1', 'cursor-after-cutoff', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'At cutoff replay',
+          'timestamp': atCutoff,
+          'messageId': 'msg-at-cutoff-replay',
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+
+      final messages = await msgRepo.getMessagesPage('group-1');
+      expect(
+        messages.where((message) => message.text == 'Before cutoff replay'),
+        hasLength(1),
+      );
+      expect(
+        messages.where((message) => message.text == 'At cutoff replay'),
+        isEmpty,
+      );
+      expect(
+        messages.where(
+          (message) =>
+              message.id.startsWith('sys-member_removed:group-1:peer-sender:'),
+        ),
+        hasLength(1),
+      );
+
+      final retrieveCount = bridge.commandLog
+          .where((command) => command == 'group:inboxRetrieveCursor')
+          .length;
+      expect(
+        retrieveCount,
+        2,
+        reason:
+            'Drain should carry the persisted cutoff across later cursor pages',
+      );
+    },
+  );
+
   test('drain preserves quotedMessageId from inbox payload', () async {
     final ts = DateTime.now().toUtc().toIso8601String();
 

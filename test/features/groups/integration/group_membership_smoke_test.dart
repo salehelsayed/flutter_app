@@ -1,11 +1,19 @@
+import 'dart:convert';
+
+import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
+import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
+import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/group_test_user.dart';
 
 void main() {
@@ -82,28 +90,44 @@ void main() {
         final dianaMessages = await diana.loadGroupMessages(groupId);
 
         // Filter to incoming only
-        final bobIncoming =
-            bobMessages.where((m) => m.isIncoming).toList();
-        final charlieIncoming =
-            charlieMessages.where((m) => m.isIncoming).toList();
-        final dianaIncoming =
-            dianaMessages.where((m) => m.isIncoming).toList();
+        final bobIncoming = bobMessages.where((m) => m.isIncoming).toList();
+        final charlieIncoming = charlieMessages
+            .where((m) => m.isIncoming)
+            .toList();
+        final dianaIncoming = dianaMessages.where((m) => m.isIncoming).toList();
 
         // Bob: only 1 incoming message ("Before removal")
         expect(bobIncoming, hasLength(1));
         expect(bobIncoming[0].text, equals('Before removal'));
 
-        // Charlie: 2 incoming messages
-        expect(charlieIncoming, hasLength(2));
+        final charlieRegular = charlieIncoming
+            .where(
+              (message) =>
+                  message.text == 'Before removal' ||
+                  message.text == 'After removal',
+            )
+            .toList();
+        final dianaRegular = dianaIncoming
+            .where(
+              (message) =>
+                  message.text == 'Before removal' ||
+                  message.text == 'After removal',
+            )
+            .toList();
+
+        // Charlie: the regular before/after texts plus a persisted removal
+        // timeline entry are all allowed now; pin the ordinary chat flow
+        // explicitly.
+        expect(charlieRegular, hasLength(2));
         expect(
-          charlieIncoming.map((m) => m.text).toList(),
+          charlieRegular.map((m) => m.text).toList(),
           containsAll(['Before removal', 'After removal']),
         );
 
-        // Diana: 2 incoming messages
-        expect(dianaIncoming, hasLength(2));
+        // Diana sees the same ordinary chat flow.
+        expect(dianaRegular, hasLength(2));
         expect(
-          dianaIncoming.map((m) => m.text).toList(),
+          dianaRegular.map((m) => m.text).toList(),
           containsAll(['Before removal', 'After removal']),
         );
 
@@ -178,6 +202,79 @@ void main() {
       },
     );
 
+    test(
+      'non-admin raw membership removal event is ignored by peers',
+      () async {
+        const groupId = 'grp-auth-001';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Auth Guard');
+        await admin.addMember(groupId: groupId, invitee: bob);
+
+        admin.start();
+        bob.start();
+
+        admin.bridge.commandLog.clear();
+
+        final forgedText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': admin.peerId, 'username': admin.username},
+          'groupConfig': {
+            'name': 'Auth Guard',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': bob.peerId,
+                'username': bob.username,
+                'role': 'writer',
+                'publicKey': bob.publicKey,
+              },
+            ],
+            'createdBy': admin.peerId,
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        await network.publish(groupId, bob.peerId, {
+          'groupId': groupId,
+          'senderId': bob.peerId,
+          'senderUsername': bob.username,
+          'keyEpoch': 0,
+          'text': forgedText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+        await pump();
+
+        Future<void> expectCanonicalMembers(GroupTestUser user) async {
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            admin.peerId,
+            bob.peerId,
+          });
+        }
+
+        await expectCanonicalMembers(admin);
+        await expectCanonicalMembers(bob);
+
+        expect(await admin.groupRepo.getGroup(groupId), isNotNull);
+        expect(await admin.loadGroupMessages(groupId), isEmpty);
+        expect(admin.bridge.commandLog, isNot(contains('group:updateConfig')));
+
+        admin.dispose();
+        bob.dispose();
+      },
+    );
+
     // -----------------------------------------------------------------------
     // 3. Self-removal — removed user calls leaveGroup and cleans up.
     // -----------------------------------------------------------------------
@@ -214,8 +311,9 @@ void main() {
 
         // Listen to Bob's groupRemovedStream BEFORE the removal
         final removedGroupIds = <String>[];
-        final removedSub =
-            bob.groupMessageListener.groupRemovedStream.listen((gid) {
+        final removedSub = bob.groupMessageListener.groupRemovedStream.listen((
+          gid,
+        ) {
           removedGroupIds.add(gid);
         });
 
@@ -246,12 +344,143 @@ void main() {
     );
 
     // -----------------------------------------------------------------------
-    // 4. Removed member loses send permission after self-removal cleanup.
+    // 4. Sole admin leave is blocked while only non-admin members remain.
     // -----------------------------------------------------------------------
+    test('sole admin cannot leave while only writer members remain', () async {
+      const groupId = 'grp-admin-leave-004';
+
+      final admin = GroupTestUser.create(
+        peerId: 'peer-admin',
+        username: 'Admin',
+        network: network,
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'peer-bob',
+        username: 'Bob',
+        network: network,
+      );
+
+      await admin.createGroup(groupId: groupId, name: 'Test Group');
+      await admin.addMember(groupId: groupId, invitee: bob);
+
+      admin.start();
+      bob.start();
+
+      await expectLater(
+        leaveGroup(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          groupId: groupId,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains(lastAdminLeaveBlockedMessage),
+          ),
+        ),
+      );
+
+      expect(admin.bridge.commandLog, isNot(contains('group:leave')));
+      expect(await admin.groupRepo.getGroup(groupId), isNotNull);
+      expect(
+        (await admin.groupRepo.getMembers(
+          groupId,
+        )).map((member) => member.peerId).toSet(),
+        {'peer-admin', 'peer-bob'},
+      );
+
+      await admin.sendGroupMessage(groupId: groupId, text: 'Still here');
+      await pump();
+
+      final bobIncoming = (await bob.loadGroupMessages(
+        groupId,
+      )).where((entry) => entry.isIncoming).toList();
+      expect(
+        bobIncoming.where((entry) => entry.text == 'Still here'),
+        hasLength(1),
+      );
+
+      admin.dispose();
+      bob.dispose();
+    });
+
+    // -----------------------------------------------------------------------
+    // 5. Removed member loses send permission after self-removal cleanup.
+    // -----------------------------------------------------------------------
+    test('removed member cannot send after self-removal cleanup', () async {
+      const groupId = 'grp-remove-send-004';
+
+      final admin = GroupTestUser.create(
+        peerId: 'peer-admin',
+        username: 'Admin',
+        network: network,
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'peer-bob',
+        username: 'Bob',
+        network: network,
+      );
+      final charlie = GroupTestUser.create(
+        peerId: 'peer-charlie',
+        username: 'Charlie',
+        network: network,
+      );
+
+      await admin.createGroup(groupId: groupId, name: 'Test Group');
+      await admin.addMember(groupId: groupId, invitee: bob);
+      await admin.addMember(groupId: groupId, invitee: charlie);
+
+      admin.start();
+      bob.start();
+      charlie.start();
+
+      await admin.removeMember(
+        groupId: groupId,
+        memberPeerId: bob.peerId,
+        memberUsername: 'Bob',
+      );
+      await pump();
+
+      final (result, message) = await bob.sendGroupMessageViaBridge(
+        groupId: groupId,
+        text: 'Should not send',
+      );
+
+      expect(result, group_send.SendGroupMessageResult.groupNotFound);
+      expect(message, isNull);
+      expect(await bob.groupRepo.getGroup(groupId), isNull);
+      expect(await bob.msgRepo.getMessageCount(groupId), 0);
+      expect(
+        bob.bridge.commandLog.where((command) => command == 'group:publish'),
+        isEmpty,
+      );
+
+      final adminIncoming = (await admin.loadGroupMessages(
+        groupId,
+      )).where((entry) => entry.isIncoming).toList();
+      final charlieIncoming = (await charlie.loadGroupMessages(
+        groupId,
+      )).where((entry) => entry.isIncoming).toList();
+
+      expect(
+        adminIncoming.where((entry) => entry.text == 'Should not send'),
+        isEmpty,
+      );
+      expect(
+        charlieIncoming.where((entry) => entry.text == 'Should not send'),
+        isEmpty,
+      );
+
+      admin.dispose();
+      bob.dispose();
+      charlie.dispose();
+    });
+
     test(
-      'removed member cannot send after self-removal cleanup',
+      'remaining peers accept only delayed removed-sender envelopes from before the persisted cutoff',
       () async {
-        const groupId = 'grp-remove-send-004';
+        const groupId = 'grp-remove-boundary-005';
 
         final admin = GroupTestUser.create(
           peerId: 'peer-admin',
@@ -284,19 +513,37 @@ void main() {
         );
         await pump();
 
-        final (result, message) = await bob.sendGroupMessageViaBridge(
-          groupId: groupId,
-          text: 'Should not send',
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        final removalEntry = charlieMessages.firstWhere(
+          (entry) =>
+              entry.id.startsWith(
+                'sys-member_removed:$groupId:${bob.peerId}:',
+              ) &&
+              entry.text == 'Admin removed Bob',
         );
+        final cutoff = removalEntry.timestamp.toUtc();
 
-        expect(result, group_send.SendGroupMessageResult.groupNotFound);
-        expect(message, isNull);
-        expect(await bob.groupRepo.getGroup(groupId), isNull);
-        expect(await bob.msgRepo.getMessageCount(groupId), 0);
-        expect(
-          bob.bridge.commandLog.where((command) => command == 'group:publish'),
-          isEmpty,
-        );
+        await network.publish(groupId, bob.peerId, {
+          'groupId': groupId,
+          'senderId': bob.peerId,
+          'senderUsername': 'Bob',
+          'keyEpoch': 0,
+          'text': 'Before cutoff delayed',
+          'timestamp': cutoff
+              .subtract(const Duration(milliseconds: 1))
+              .toIso8601String(),
+          'messageId': 'msg-before-cutoff-delayed',
+        });
+        await network.publish(groupId, bob.peerId, {
+          'groupId': groupId,
+          'senderId': bob.peerId,
+          'senderUsername': 'Bob',
+          'keyEpoch': 0,
+          'text': 'At cutoff delayed',
+          'timestamp': cutoff.toIso8601String(),
+          'messageId': 'msg-at-cutoff-delayed',
+        });
+        await pump();
 
         final adminIncoming = (await admin.loadGroupMessages(
           groupId,
@@ -306,11 +553,21 @@ void main() {
         )).where((entry) => entry.isIncoming).toList();
 
         expect(
-          adminIncoming.where((entry) => entry.text == 'Should not send'),
+          adminIncoming.where((entry) => entry.text == 'Before cutoff delayed'),
+          hasLength(1),
+        );
+        expect(
+          charlieIncoming.where(
+            (entry) => entry.text == 'Before cutoff delayed',
+          ),
+          hasLength(1),
+        );
+        expect(
+          adminIncoming.where((entry) => entry.text == 'At cutoff delayed'),
           isEmpty,
         );
         expect(
-          charlieIncoming.where((entry) => entry.text == 'Should not send'),
+          charlieIncoming.where((entry) => entry.text == 'At cutoff delayed'),
           isEmpty,
         );
 
@@ -321,7 +578,7 @@ void main() {
     );
 
     // -----------------------------------------------------------------------
-    // 5. Add member success + member_added system message — existing members
+    // 6. Add member success + member_added system message — existing members
     //    update local member list and the new member can participate.
     // -----------------------------------------------------------------------
     test(
@@ -357,10 +614,7 @@ void main() {
         await admin.addMember(groupId: groupId, invitee: charlie);
 
         // Admin broadcasts member_added system message
-        await admin.broadcastMemberAdded(
-          groupId: groupId,
-          newMember: charlie,
-        );
+        await admin.broadcastMemberAdded(groupId: groupId, newMember: charlie);
         await pump();
 
         // Charlie starts after the bootstrap data is written to local repos.
@@ -368,10 +622,11 @@ void main() {
 
         Future<void> expectSyncedMembers(GroupTestUser user) async {
           final members = await user.groupRepo.getMembers(groupId);
-          expect(
-            members.map((member) => member.peerId).toSet(),
-            {'peer-admin', 'peer-bob', 'peer-charlie'},
-          );
+          expect(members.map((member) => member.peerId).toSet(), {
+            'peer-admin',
+            'peer-bob',
+            'peer-charlie',
+          });
           final rolesByPeerId = {
             for (final member in members) member.peerId: member.role,
           };
@@ -410,6 +665,247 @@ void main() {
         expect(charlieOutgoing.single.text, 'Hi team');
 
         // Cleanup
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'duplicate re-add returns error and leaves member lists unchanged',
+      () async {
+        const groupId = 'grp-add-duplicate-004';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Duplicate Add Guard');
+        await admin.addMember(groupId: groupId, invitee: bob);
+
+        admin.start();
+        bob.start();
+        await pump();
+
+        admin.bridge.commandLog.clear();
+
+        await expectLater(
+          addGroupMember(
+            bridge: admin.bridge,
+            groupRepo: admin.groupRepo,
+            groupId: groupId,
+            newMember: GroupMember(
+              groupId: groupId,
+              peerId: bob.peerId,
+              username: 'Changed Bob',
+              role: MemberRole.reader,
+              publicKey: bob.publicKey,
+              joinedAt: DateTime.now().toUtc(),
+            ),
+            selfPeerId: admin.peerId,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('already exists'),
+            ),
+          ),
+        );
+        await pump();
+
+        expect(admin.bridge.commandLog, isEmpty);
+
+        Future<void> expectStableMembers(GroupTestUser user) async {
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            'peer-admin',
+            'peer-bob',
+          });
+
+          final bobRows = members.where(
+            (member) => member.peerId == 'peer-bob',
+          );
+          expect(bobRows, hasLength(1));
+          expect(bobRows.single.username, 'Bob');
+          expect(bobRows.single.role, MemberRole.writer);
+        }
+
+        await expectStableMembers(admin);
+        await expectStableMembers(bob);
+        expect(await admin.loadGroupMessages(groupId), isEmpty);
+        expect(await bob.loadGroupMessages(groupId), isEmpty);
+
+        admin.dispose();
+        bob.dispose();
+      },
+    );
+
+    test(
+      'non-member removal returns error and leaves member lists unchanged',
+      () async {
+        const groupId = 'grp-remove-absent-008';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Absent Remove Guard');
+        await admin.addMember(groupId: groupId, invitee: bob);
+
+        admin.start();
+        bob.start();
+        await pump();
+
+        admin.bridge.commandLog.clear();
+
+        await expectLater(
+          removeGroupMember(
+            bridge: admin.bridge,
+            groupRepo: admin.groupRepo,
+            groupId: groupId,
+            memberPeerId: 'peer-charlie',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('Member not found'),
+            ),
+          ),
+        );
+        await pump();
+
+        expect(admin.bridge.commandLog, isEmpty);
+
+        Future<void> expectStableMembers(GroupTestUser user) async {
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            'peer-admin',
+            'peer-bob',
+          });
+        }
+
+        await expectStableMembers(admin);
+        await expectStableMembers(bob);
+        expect(network.isSubscribed(groupId, bob.peerId), isTrue);
+        expect(await admin.loadGroupMessages(groupId), isEmpty);
+        expect(await bob.loadGroupMessages(groupId), isEmpty);
+
+        admin.dispose();
+        bob.dispose();
+      },
+    );
+
+    test(
+      'new member cannot send before bootstrap key exists, then succeeds after bootstrap completes',
+      () async {
+        const groupId = 'grp-add-bootstrap-guard';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        Future<void> saveKey(
+          GroupTestUser user, {
+          required int epoch,
+          required String encryptedKey,
+        }) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+        }
+
+        await admin.createGroup(groupId: groupId, name: 'Bootstrap Guard');
+        await admin.addMember(groupId: groupId, invitee: bob);
+
+        admin.start();
+        bob.start();
+
+        await admin.addMember(groupId: groupId, invitee: charlie);
+        await admin.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+        charlie.start();
+
+        final (blockedResult, blockedMessage) = await charlie
+            .sendGroupMessageViaBridge(groupId: groupId, text: 'Too early');
+
+        expect(blockedResult, group_send.SendGroupMessageResult.error);
+        expect(blockedMessage, isNull);
+        expect(charlie.bridge.commandLog, isEmpty);
+        expect(await charlie.loadGroupMessages(groupId), isEmpty);
+        expect(
+          (await admin.loadGroupMessages(
+            groupId,
+          )).where((message) => message.isIncoming),
+          isEmpty,
+        );
+        expect(
+          (await bob.loadGroupMessages(
+            groupId,
+          )).where((message) => message.isIncoming),
+          isEmpty,
+        );
+
+        await saveKey(charlie, epoch: 1, encryptedKey: 'group-key-epoch-1');
+
+        final (postBootstrapResult, postBootstrapMessage) = await charlie
+            .sendGroupMessageViaBridge(groupId: groupId, text: 'Hi team');
+        await pump();
+
+        expect(postBootstrapResult, group_send.SendGroupMessageResult.success);
+        expect(postBootstrapMessage, isNotNull);
+        expect(postBootstrapMessage!.text, 'Hi team');
+        expect(postBootstrapMessage.keyGeneration, 1);
+
+        final adminIncoming = (await admin.loadGroupMessages(
+          groupId,
+        )).where((message) => message.isIncoming).toList();
+        final bobIncoming = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.isIncoming).toList();
+        final charlieOutgoing = (await charlie.loadGroupMessages(
+          groupId,
+        )).where((message) => !message.isIncoming).toList();
+
+        expect(adminIncoming, hasLength(1));
+        expect(adminIncoming.single.text, 'Hi team');
+        expect(bobIncoming, hasLength(1));
+        expect(bobIncoming.single.text, 'Hi team');
+        expect(charlieOutgoing, hasLength(1));
+        expect(charlieOutgoing.single.text, 'Hi team');
+
         admin.dispose();
         bob.dispose();
         charlie.dispose();
@@ -487,10 +983,7 @@ void main() {
         final bobIncoming = await incomingFor(bob);
 
         // Admin: has "Me too" incoming (from Charlie)
-        expect(
-          adminIncoming.map((m) => m.text).toList(),
-          contains('Me too'),
-        );
+        expect(adminIncoming.map((m) => m.text).toList(), contains('Me too'));
 
         // Charlie: has "Still here" incoming (from Admin)
         expect(
@@ -506,8 +999,7 @@ void main() {
         // Bob may still have the system message processing result but those
         // are not saved as regular messages. Check only text messages.
         final bobPostRemovalTexts = bobIncoming
-            .where((m) =>
-                m.text == 'Still here' || m.text == 'Me too')
+            .where((m) => m.text == 'Still here' || m.text == 'Me too')
             .toList();
         expect(bobPostRemovalTexts, isEmpty);
 
@@ -516,6 +1008,68 @@ void main() {
         bob.dispose();
         charlie.dispose();
         diana.dispose();
+      },
+    );
+
+    test(
+      'remaining member receives readable removal timeline event while member list updates',
+      () async {
+        const groupId = 'grp-remove-visible-013';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Visible Removal');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        final bobTimelineEvents = <GroupMessage>[];
+        final bobTimelineSub = bob.groupMessageListener.groupMessageStream
+            .listen((message) {
+              if (message.groupId == groupId) {
+                bobTimelineEvents.add(message);
+              }
+            });
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: 'Charlie',
+        );
+        await pump();
+
+        expect(
+          bobTimelineEvents.map((message) => message.text).toList(),
+          contains('Admin removed Charlie'),
+        );
+        expect(
+          (await bob.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId).toSet(),
+          {'peer-admin', 'peer-bob'},
+        );
+
+        await bobTimelineSub.cancel();
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
       },
     );
 
@@ -617,10 +1171,7 @@ void main() {
           createdAt: rotatedKeyCreatedAt,
         );
 
-        await admin.sendGroupMessage(
-          groupId: groupId,
-          text: 'During removal',
-        );
+        await admin.sendGroupMessage(groupId: groupId, text: 'During removal');
         await pump();
 
         await admin.addMember(groupId: groupId, invitee: charlie);
@@ -637,10 +1188,11 @@ void main() {
         expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
 
         final charlieMembers = await charlie.groupRepo.getMembers(groupId);
-        expect(
-          charlieMembers.map((member) => member.peerId).toSet(),
-          {'peer-admin', 'peer-bob', 'peer-charlie'},
-        );
+        expect(charlieMembers.map((member) => member.peerId).toSet(), {
+          'peer-admin',
+          'peer-bob',
+          'peer-charlie',
+        });
         final charlieRoles = {
           for (final member in charlieMembers) member.peerId: member.role,
         };
@@ -699,6 +1251,220 @@ void main() {
         expect(charlieIncomingTexts, contains('Welcome back'));
         expect(charlieIncomingTexts, isNot(contains('During removal')));
 
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'removed member notifications stay off until rejoin becomes effective',
+      () async {
+        const groupId = 'grp-rejoin-notify-005';
+        final charlieNotificationService = FakeNotificationService();
+        final charlieTracker = ActiveConversationTracker();
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+          notificationService: charlieNotificationService,
+          groupConversationTracker: charlieTracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Rejoin Notifications');
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        admin.start();
+        charlie.start();
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: 'Charlie',
+        );
+        await pump();
+
+        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+        await admin.sendGroupMessage(groupId: groupId, text: 'While removed');
+        await pump();
+
+        expect(
+          charlieNotificationService.shown,
+          isEmpty,
+          reason: 'Removed members must not receive local notifications',
+        );
+
+        await admin.addMember(groupId: groupId, invitee: charlie);
+        await admin.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
+        expect(charlieNotificationService.shown, isEmpty);
+
+        await admin.sendGroupMessage(groupId: groupId, text: 'After rejoin');
+        await pump();
+
+        expect(charlieNotificationService.shown, hasLength(1));
+        expect(
+          charlieNotificationService.shown.single.contactPeerId,
+          'group:$groupId',
+        );
+        expect(
+          charlieNotificationService.shown.single.senderUsername,
+          'Rejoin Notifications',
+        );
+        expect(
+          charlieNotificationService.shown.single.messageText,
+          'Admin: After rejoin',
+        );
+
+        final charlieIncomingTexts = (await charlie.loadGroupMessages(groupId))
+            .where((message) => message.isIncoming)
+            .map((message) => message.text)
+            .toList();
+        expect(charlieIncomingTexts, contains('After rejoin'));
+        expect(charlieIncomingTexts, isNot(contains('While removed')));
+
+        admin.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'long mixed-content group text survives delivery and notification preview',
+      () async {
+        const groupId = 'grp-mixed-text-006';
+        final bobNotificationService = FakeNotificationService();
+        final bobTracker = ActiveConversationTracker();
+        final longPrefix = List.filled(18, 'LongSegment-006').join(' ');
+        final complexText =
+            '$longPrefix 😀🚀 مرحبا بالعالم & <xml> [brackets] {curly} %25 + = ? !';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+          notificationService: bobNotificationService,
+          groupConversationTracker: bobTracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Mixed Text Group');
+        await admin.addMember(groupId: groupId, invitee: bob);
+
+        admin.start();
+        bob.start();
+
+        await admin.sendGroupMessage(groupId: groupId, text: complexText);
+        await pump();
+
+        final adminOutgoing = (await admin.loadGroupMessages(
+          groupId,
+        )).where((message) => !message.isIncoming).toList();
+        expect(adminOutgoing, hasLength(1));
+        expect(adminOutgoing.single.text, complexText);
+
+        final bobIncoming = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.isIncoming).toList();
+        expect(bobIncoming, hasLength(1));
+        expect(bobIncoming.single.text, complexText);
+        expect(bobIncoming.single.text.length, complexText.length);
+
+        expect(bobNotificationService.shown, hasLength(1));
+        expect(
+          bobNotificationService.shown.single.contactPeerId,
+          'group:$groupId',
+        );
+        expect(
+          bobNotificationService.shown.single.senderUsername,
+          'Mixed Text Group',
+        );
+        expect(
+          bobNotificationService.shown.single.messageText,
+          'Admin: $complexText',
+        );
+
+        admin.dispose();
+        bob.dispose();
+      },
+    );
+
+    test(
+      'remaining member receives readable re-add timeline event while member list updates',
+      () async {
+        const groupId = 'grp-readd-visible-007';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Re-add Visibility');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: 'Charlie',
+        );
+        await pump();
+
+        final bobTimelineEvents = <GroupMessage>[];
+        final bobTimelineSub = bob.groupMessageListener.groupMessageStream
+            .listen((message) {
+              if (message.groupId == groupId) {
+                bobTimelineEvents.add(message);
+              }
+            });
+
+        await admin.addMember(groupId: groupId, invitee: charlie);
+        await admin.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        expect(
+          bobTimelineEvents.map((message) => message.text).toList(),
+          contains('Admin added Charlie'),
+        );
+        expect(
+          (await bob.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId).toSet(),
+          {'peer-admin', 'peer-bob', 'peer-charlie'},
+        );
+
+        await bobTimelineSub.cancel();
         admin.dispose();
         bob.dispose();
         charlie.dispose();

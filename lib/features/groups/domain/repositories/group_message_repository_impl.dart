@@ -18,6 +18,8 @@ class GroupMessageRepositoryImpl
   final Future<Map<String, Object?>?> Function(String id) dbLoadGroupMessage;
   final Future<Map<String, Object?>?> Function(String groupId)
   dbLoadLatestGroupMessage;
+  final Future<String?> Function(String groupId, String senderPeerId)?
+  dbLoadLatestRemovalTimestampForSenderFn;
   final Future<void> Function(String id, String status)
   dbUpdateGroupMessageStatus;
   final Future<int> Function(String groupId) dbCountGroupMessages;
@@ -53,6 +55,7 @@ class GroupMessageRepositoryImpl
     required this.dbLoadGroupMessagesPage,
     required this.dbLoadGroupMessage,
     required this.dbLoadLatestGroupMessage,
+    this.dbLoadLatestRemovalTimestampForSenderFn,
     required this.dbUpdateGroupMessageStatus,
     required this.dbCountGroupMessages,
     required this.dbCountUnreadGroupMessages,
@@ -85,9 +88,7 @@ class GroupMessageRepositoryImpl
   }
 
   @override
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  }) async {
+  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async {
     final fn = dbRecoverStuckSendingGroupMessagesFn;
     if (fn == null) return 0;
     final cutoff = DateTime.now().toUtc().subtract(olderThan);
@@ -157,6 +158,27 @@ class GroupMessageRepositoryImpl
     final row = await dbLoadLatestGroupMessage(groupId);
     if (row == null) return null;
     return GroupMessage.fromMap(row);
+  }
+
+  @override
+  Future<DateTime?> getLatestRemovalTimestampForSender(
+    String groupId,
+    String senderPeerId,
+  ) async {
+    final dbFn = dbLoadLatestRemovalTimestampForSenderFn;
+    if (dbFn != null) {
+      final raw = await dbFn(groupId, senderPeerId);
+      return raw == null ? null : DateTime.tryParse(raw)?.toUtc();
+    }
+
+    final messages = await getMessagesPage(groupId, limit: 500);
+    final removalPrefix = 'sys-member_removed:$groupId:$senderPeerId:';
+    for (final message in messages.reversed) {
+      if (message.id.startsWith(removalPrefix)) {
+        return message.timestamp.toUtc();
+      }
+    }
+    return null;
   }
 
   @override

@@ -8,6 +8,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -123,8 +124,68 @@ Future<bool?> handleAppResumed({
 
     final resumeGroupRecoveryEnabled = _resumeGroupRecoveryEnabled(p2pService);
 
-    // 3b. Group recovery: rejoin topics if watchdog restart occurred
-    if (groupRepo != null && resumeGroupRecoveryEnabled) {
+    if (resumeGroupRecoveryEnabled &&
+        groupRepo != null &&
+        groupMsgRepo != null) {
+      await runWithGroupRecoveryGate(() async {
+        final needsGroupRecovery =
+            p2pService.currentState.needsGroupRecovery ?? false;
+        final recoveryMethod = p2pService.lastRecoveryMethod;
+        final reason = needsGroupRecovery
+            ? RejoinReason.nodeRequestedRecovery
+            : recoveryMethod == 'watchdog_restart'
+            ? RejoinReason.watchdogRestart
+            : RejoinReason.inPlaceRecovery;
+
+        debugPrint(
+          '[RESUME] Step 3b: rejoinGroupTopics(reason=$reason, '
+          'needsGroupRecovery=$needsGroupRecovery) starting...',
+        );
+        final rejoinStart = DateTime.now();
+        final rejoinResult = await rejoinGroupTopics(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          reason: reason,
+        );
+        final rejoinMs = DateTime.now().difference(rejoinStart).inMilliseconds;
+        debugPrint(
+          '[RESUME] Step 3b: rejoinGroupTopics done '
+          '(joined=${rejoinResult.joinedGroupCount}, '
+          'skippedNoKey=${rejoinResult.skippedNoKeyCount}, '
+          'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
+        );
+
+        if (needsGroupRecovery && rejoinResult.errorCount == 0) {
+          final ackStart = DateTime.now();
+          debugPrint(
+            '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() starting...',
+          );
+          await callGroupAcknowledgeRecovery(bridge);
+          final ackMs = DateTime.now().difference(ackStart).inMilliseconds;
+          debugPrint(
+            '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() done '
+            '(took ${ackMs}ms)',
+          );
+        }
+
+        final groupDrainStart = DateTime.now();
+        debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
+        await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+          groupMessageListener: groupMessageListener,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          reactionRepo: reactionRepo,
+        );
+        final groupDrainMs = DateTime.now()
+            .difference(groupDrainStart)
+            .inMilliseconds;
+        debugPrint(
+          '[RESUME] Step 3c: drainGroupOfflineInbox done (took ${groupDrainMs}ms)',
+        );
+      });
+    } else if (groupRepo != null && resumeGroupRecoveryEnabled) {
       final needsGroupRecovery =
           p2pService.currentState.needsGroupRecovery ?? false;
       final recoveryMethod = p2pService.lastRecoveryMethod;
@@ -164,28 +225,6 @@ Future<bool?> handleAppResumed({
           '(took ${ackMs}ms)',
         );
       }
-    }
-
-    // 3c. Group inbox drain: catch up on missed group messages
-    if (groupRepo != null &&
-        groupMsgRepo != null &&
-        resumeGroupRecoveryEnabled) {
-      final groupDrainStart = DateTime.now();
-      debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
-      await drainGroupOfflineInbox(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: groupMsgRepo,
-        groupMessageListener: groupMessageListener,
-        mediaAttachmentRepo: mediaAttachmentRepo,
-        reactionRepo: reactionRepo,
-      );
-      final groupDrainMs = DateTime.now()
-          .difference(groupDrainStart)
-          .inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 3c: drainGroupOfflineInbox done (took ${groupDrainMs}ms)',
-      );
     } else if (!resumeGroupRecoveryEnabled &&
         (groupRepo != null || groupMsgRepo != null)) {
       debugPrint(

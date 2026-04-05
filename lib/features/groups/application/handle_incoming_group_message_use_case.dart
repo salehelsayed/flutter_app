@@ -47,6 +47,16 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     return null;
   }
 
+  // Parse timestamp before applying membership-boundary checks.
+  final now = DateTime.now().toUtc();
+
+  DateTime parsedTimestamp;
+  try {
+    parsedTimestamp = DateTime.parse(timestamp);
+  } catch (_) {
+    parsedTimestamp = now;
+  }
+
   // 2. Check sender is a member (optional: allow messages from non-members
   //    in case member list is stale; log a warning)
   final member = await groupRepo.getMember(groupId, senderId);
@@ -58,17 +68,27 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
       },
     );
-    // Still process the message — member list may be stale
-  }
 
-  // 3. Parse timestamp and check for duplicates
-  final now = DateTime.now().toUtc();
+    final removalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
+      groupId,
+      senderId,
+    );
+    if (removalCutoff != null &&
+        !parsedTimestamp.toUtc().isBefore(removalCutoff)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'cutoffAt': removalCutoff.toIso8601String(),
+        },
+      );
+      return null;
+    }
 
-  DateTime parsedTimestamp;
-  try {
-    parsedTimestamp = DateTime.parse(timestamp);
-  } catch (_) {
-    parsedTimestamp = now;
+    // Still process the message — member list may be stale or the message
+    // crossed the accepted removal boundary before the persisted cutoff.
   }
 
   final sanitizedText = sanitizeMessageText(text);

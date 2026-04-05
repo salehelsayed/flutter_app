@@ -43,6 +43,7 @@ Future<void> maybeShowNotification({
   required ActiveConversationTracker conversationTracker,
   required AppLifecycleState Function() getAppLifecycleState,
   required String contactPeerId,
+  String? routePayload,
   required String senderUsername,
   required String messageText,
   bool suppressNotification = false,
@@ -111,5 +112,6 @@ Future<void> maybeShowNotification({
     contactPeerId: contactPeerId,
     senderUsername: senderUsername,
     messageText: messageText,
+    payload: routePayload,
   );
 }

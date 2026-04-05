@@ -44,6 +44,7 @@ import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.
 import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
+import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -108,9 +109,13 @@ void main() {
     await runGroupQuotedMessageIdMigration(db);
     await runMessagesEditedAtMigration(db);
     await runMessagesDeletedStateMigration(db);
-    await runInboxStagingEntriesMigration(db);
-    await runPendingIntroductionResponsesMigration(db);
-    await runIntroductionOutboxMigration(db);
+      await runInboxStagingEntriesMigration(db);
+      await runPendingIntroductionResponsesMigration(db);
+      await runIntroductionOutboxMigration(db);
+      await runGroupsLastMembershipEventAtMigration(db);
+
+      final groupCols48 = await getColumnNames(db, 'groups');
+      expect(groupCols48, contains('last_membership_event_at'));
   }
 
   Future<void> runUpgradePathFromV1(

@@ -46,10 +46,24 @@ abstract class GroupMessageRepository {
 
   /// Returns true if a message with the same content already exists.
   Future<bool> existsByContent(
-      String groupId, String senderPeerId, String text, DateTime timestamp);
+    String groupId,
+    String senderPeerId,
+    String text,
+    DateTime timestamp,
+  );
 
   /// Returns true if a message with the given ID already exists.
   Future<bool> existsByMessageId(String messageId);
+
+  /// Returns the latest persisted synthetic removal-event timestamp for the
+  /// given sender in this group, if one exists.
+  ///
+  /// Implementations may override this for indexed lookups. The default keeps
+  /// compatibility for lightweight test doubles that do not need this query.
+  Future<DateTime?> getLatestRemovalTimestampForSender(
+    String groupId,
+    String senderPeerId,
+  ) async => null;
 
   /// Retrieves all outgoing messages with status='failed'.
   ///
@@ -60,9 +74,7 @@ abstract class GroupMessageRepository {
   /// than [olderThan] to status='failed', so the retry service picks them up.
   ///
   /// Returns the count of rows updated.
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  });
+  Future<int> recoverStuckSendingMessages({required Duration olderThan});
 
   /// Loads outgoing messages where inbox store failed and retry payload exists.
   ///
