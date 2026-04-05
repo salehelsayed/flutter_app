@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// The reason for calling rejoinGroupTopics.
@@ -92,6 +93,33 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
   for (final group in groups) {
     final groupStopwatch = Stopwatch()..start();
     try {
+      if (group.isDissolved) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_TOPICS_SKIP_DISSOLVED',
+          details: {
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+            if (group.dissolvedAt != null)
+              'dissolvedAt': group.dissolvedAt!.toUtc().toIso8601String(),
+          },
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REJOIN_TOPICS_TIMING',
+          details: {
+            'scope': 'group',
+            'elapsedMs': groupStopwatch.elapsedMilliseconds,
+            'outcome': 'skip_dissolved',
+            'groupId': group.id.length > 8
+                ? group.id.substring(0, 8)
+                : group.id,
+          },
+        );
+        continue;
+      }
+
       final keyInfo = await groupRepo.getLatestKey(group.id);
       if (keyInfo == null) {
         skippedNoKeyCount++;
@@ -121,25 +149,7 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
 
       final members = await groupRepo.getMembers(group.id);
 
-      final groupConfig = {
-        'name': group.name,
-        'groupType': group.type.toValue(),
-        if (group.description != null) 'description': group.description,
-        'members': members
-            .map(
-              (m) => {
-                'peerId': m.peerId,
-                'username': m.username,
-                'role': m.role.toValue(),
-                'publicKey': m.publicKey,
-                if (m.mlKemPublicKey != null)
-                  'mlKemPublicKey': m.mlKemPublicKey,
-              },
-            )
-            .toList(),
-        'createdBy': group.createdBy,
-        'createdAt': group.createdAt.toUtc().toIso8601String(),
-      };
+      final groupConfig = buildGroupConfigPayload(group, members);
 
       await callGroupJoinWithConfig(
         bridge,

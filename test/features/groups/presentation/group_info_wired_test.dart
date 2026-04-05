@@ -96,6 +96,48 @@ Future<void> confirmRemoveMemberDialog(WidgetTester tester) async {
   await pumpFrames(tester, count: 30);
 }
 
+Future<void> openRoleActionMenu(WidgetTester tester, String peerId) async {
+  final actionButton = find.byKey(ValueKey('group-member-actions-$peerId'));
+  await tester.ensureVisible(actionButton);
+  await pumpFrames(tester, count: 5);
+  await tester.tap(actionButton, warnIfMissed: false);
+  await pumpFrames(tester, count: 5);
+}
+
+Future<void> confirmRoleChangeDialog(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('group-role-change-confirm')));
+  await pumpFrames(tester, count: 30);
+}
+
+Future<void> confirmDissolveGroupDialog(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('group-dissolve-confirm')));
+  await pumpFrames(tester, count: 30);
+}
+
+Future<void> tapLeaveGroupButton(
+  WidgetTester tester, {
+  int settleFrameCount = 20,
+}) async {
+  final leaveButton = find.byKey(const ValueKey('group-leave-button'));
+  await tester.scrollUntilVisible(
+    leaveButton,
+    200,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.tap(leaveButton);
+  await pumpFrames(tester, count: settleFrameCount);
+}
+
+Future<void> scrollToDissolveGroupButton(WidgetTester tester) async {
+  final dissolveButton = find.byKey(const ValueKey('group-dissolve-button'));
+  await tester.scrollUntilVisible(
+    dissolveButton,
+    200,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await pumpFrames(tester, count: 5);
+}
+
 void main() {
   group('GroupInfoWired', () {
     testWidgets('loads and displays group members on init', (tester) async {
@@ -178,6 +220,134 @@ void main() {
       expect(find.text('Add Member'), findsNothing);
     });
 
+    testWidgets(
+      'admin can dissolve a group and the screen switches to read-only state',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'msg-1'},
+            'group:inboxStore': {'ok': true},
+            'group:leave': {'ok': true},
+          },
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await scrollToDissolveGroupButton(tester);
+        expect(
+          find.byKey(const ValueKey('group-dissolve-button')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('group-dissolve-button')));
+        await pumpFrames(tester, count: 5);
+        expect(
+          find.byKey(const ValueKey('group-dissolve-confirm')),
+          findsOneWidget,
+        );
+
+        await confirmDissolveGroupDialog(tester);
+
+        final updated = await groupRepo.getGroup(group.id);
+        expect(updated, isNotNull);
+        expect(updated!.isDissolved, isTrue);
+
+        final latest = await msgRepo.getLatestMessage(group.id);
+        expect(latest, isNotNull);
+        expect(latest!.text, 'Admin dissolved the group');
+
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(bridge.commandLog, contains('group:leave'));
+
+        expect(
+          find.text(
+            'This conversation is now read-only. Previous messages stay available for reference.',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-dissolve-button')),
+          findsNothing,
+        );
+        expect(find.byKey(const ValueKey('group-leave-button')), findsNothing);
+        expect(find.text('Add Member'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-edit-details-button')),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets('toggles mute state and persists it to the repository', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        tester
+            .widget<Switch>(find.byKey(const ValueKey('group-mute-switch')))
+            .value,
+        isFalse,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('group-mute-switch')));
+      await pumpFrames(tester, count: 20);
+
+      expect(
+        tester
+            .widget<Switch>(find.byKey(const ValueKey('group-mute-switch')))
+            .value,
+        isTrue,
+      );
+      expect((await groupRepo.getGroup(group.id))?.isMuted, isTrue);
+      expect(find.text('Notifications muted for this group'), findsOneWidget);
+    });
+
     testWidgets('hides member remove controls for non-admin role', (
       tester,
     ) async {
@@ -211,7 +381,381 @@ void main() {
       await pumpFrames(tester);
 
       expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
+      expect(
+        find.byKey(const ValueKey('group-member-actions-peer-bob')),
+        findsNothing,
+      );
     });
+
+    testWidgets('uses repo myRole instead of stale navigation role on load', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final persistedGroup = makeAdminGroup();
+      await groupRepo.saveGroup(persistedGroup);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(peerId: 'peer-alice', username: 'Alice'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: makeMemberGroup(),
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Add Member'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('group-member-actions-peer-alice')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'admin metadata edit updates repo state, timeline, and bridge payloads',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-edit-details-button')),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Edit Group Details'), findsOneWidget);
+
+        await tester.enterText(
+          find.descendant(
+            of: find.byKey(const ValueKey('group-edit-name-field')),
+            matching: find.byType(TextField),
+          ),
+          'Renamed Group',
+        );
+        await tester.enterText(
+          find.descendant(
+            of: find.byKey(const ValueKey('group-edit-description-field')),
+            matching: find.byType(TextField),
+          ),
+          'Fresh description',
+        );
+
+        await tester.tap(find.byKey(const ValueKey('group-edit-save')));
+        await pumpFrames(tester, count: 30);
+
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.name, 'Renamed Group');
+        expect(updatedGroup.description, 'Fresh description');
+        expect(updatedGroup.lastMetadataEventAt, isNotNull);
+
+        expect(find.text('Renamed Group'), findsWidgets);
+        expect(find.text('Fresh description'), findsOneWidget);
+        expect(find.text('Group details updated'), findsOneWidget);
+
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+
+        final publishMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysText =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+
+        expect(sysText['__sys'], 'group_metadata_updated');
+        expect(sysText['groupConfig']['name'], 'Renamed Group');
+        expect(sysText['groupConfig']['description'], 'Fresh description');
+
+        final inboxStoreMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:inboxStore';
+        });
+        final inboxStorePayload =
+            (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(inboxStorePayload['recipientPeerIds'], ['peer-bob']);
+
+        final latestTimeline = await msgRepo.getLatestMessage('group-1');
+        expect(latestTimeline, isNotNull);
+        expect(
+          latestTimeline!.text,
+          buildGroupMetadataUpdatedTimelineText('Admin'),
+        );
+      },
+    );
+
+    testWidgets(
+      'promote member shows confirmation, updates badge, and emits member_role_updated payload',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-alice',
+            username: 'Alice',
+            role: MemberRole.writer,
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await openRoleActionMenu(tester, 'peer-alice');
+        expect(find.text('Make Admin'), findsOneWidget);
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-member-toggle-admin-peer-alice')),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Make Alice an admin?'), findsOneWidget);
+        expect(
+          find.text('They will be able to add, remove, and manage members.'),
+          findsOneWidget,
+        );
+
+        await confirmRoleChangeDialog(tester);
+
+        final aliceRow = find.ancestor(
+          of: find.text('Alice'),
+          matching: find.byType(Row),
+        );
+        expect(
+          find.descendant(of: aliceRow, matching: find.text('admin')),
+          findsOneWidget,
+        );
+        expect(find.text('Alice is now an admin'), findsOneWidget);
+
+        final updatedMember = await groupRepo.getMember(
+          'group-1',
+          'peer-alice',
+        );
+        expect(updatedMember?.role, MemberRole.admin);
+
+        expect(bridge.commandLog, contains('group:updateConfig'));
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+
+        final publishMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysText =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+
+        expect(sysText['__sys'], 'member_role_updated');
+        expect(sysText['member']['peerId'], 'peer-alice');
+        expect(sysText['member']['role'], 'admin');
+
+        final inboxStoreMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:inboxStore';
+        });
+        final inboxStorePayload =
+            (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(inboxStorePayload['recipientPeerIds'], ['peer-alice']);
+
+        final latestTimeline = await msgRepo.getLatestMessage('group-1');
+        expect(latestTimeline, isNotNull);
+        expect(
+          latestTimeline!.text,
+          buildMemberRoleUpdatedTimelineText(
+            'Admin',
+            'Alice',
+            previousRole: MemberRole.writer,
+            newRole: MemberRole.admin,
+          ),
+        );
+      },
+    );
+
+    testWidgets(
+      'demote admin shows confirmation, updates badge, and emits success feedback',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await openRoleActionMenu(tester, 'peer-alice');
+        expect(find.text('Remove Admin'), findsOneWidget);
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-member-toggle-admin-peer-alice')),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Remove admin access from Alice?'), findsOneWidget);
+        expect(
+          find.text(
+            'They will lose admin-only actions after the change syncs.',
+          ),
+          findsOneWidget,
+        );
+
+        await confirmRoleChangeDialog(tester);
+
+        final aliceRow = find.ancestor(
+          of: find.text('Alice'),
+          matching: find.byType(Row),
+        );
+        expect(
+          find.descendant(of: aliceRow, matching: find.text('writer')),
+          findsOneWidget,
+        );
+        expect(find.text('Alice is no longer an admin'), findsOneWidget);
+
+        final updatedMember = await groupRepo.getMember(
+          'group-1',
+          'peer-alice',
+        );
+        expect(updatedMember?.role, MemberRole.writer);
+
+        final publishMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysText =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        expect(sysText['member']['role'], 'writer');
+      },
+    );
 
     testWidgets('leave group calls bridge and pops to first route', (
       tester,
@@ -259,8 +803,7 @@ void main() {
       expect(find.byType(GroupInfoScreen), findsOneWidget);
 
       // Tap Leave Group
-      await tester.tap(find.text('Leave Group'));
-      await pumpFrames(tester, count: 20);
+      await tapLeaveGroupButton(tester);
 
       // Verify bridge received group:leave command
       expect(bridge.commandLog, contains('group:leave'));
@@ -319,8 +862,7 @@ void main() {
 
       expect(find.byType(GroupInfoScreen), findsOneWidget);
 
-      await tester.tap(find.text('Leave Group'));
-      await pumpFrames(tester, count: 20);
+      await tapLeaveGroupButton(tester);
 
       expect(bridge.commandLog, isNot(contains('group:leave')));
       expect(find.byType(GroupInfoScreen), findsOneWidget);
@@ -328,6 +870,131 @@ void main() {
       expect(find.text(lastAdminLeaveBlockedMessage), findsOneWidget);
       expect(await groupRepo.getGroup(group.id), isNotNull);
     });
+
+    testWidgets(
+      'multi-admin leave broadcasts self-removal, rotates key, and pops to first route',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.admin,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            mlKemPublicKey: 'mlkem-pk-charlie',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'fake-rotated-key',
+          'keyEpoch': 2,
+        };
+        bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-1'};
+        final p2pService = FakeP2PService();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: testIdentity,
+                          ),
+                          p2pService: p2pService,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 30);
+
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+        await tapLeaveGroupButton(tester, settleFrameCount: 30);
+
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(bridge.commandLog, contains('group:generateNextKey'));
+        expect(bridge.commandLog, contains('group:leave'));
+        expect(
+          bridge.commandLog.indexOf('group:leave'),
+          greaterThan(bridge.commandLog.indexOf('group:generateNextKey')),
+        );
+        expect(p2pService.sentMessageLog.length, 2);
+
+        final publishMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish' &&
+              ((parsed['payload'] as Map<String, dynamic>)['text'] as String)
+                  .contains('"__sys":"member_removed"');
+        });
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysText =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        expect(sysText['member']['peerId'], 'peer-admin');
+        expect(sysText['member']['username'], 'Admin');
+
+        final latestTimeline = await msgRepo.getLatestMessage('group-1');
+        expect(latestTimeline, isNotNull);
+        expect(
+          latestTimeline!.text,
+          buildMemberRemovedTimelineText('Admin', 'Admin'),
+        );
+
+        expect(await groupRepo.getGroup('group-1'), isNull);
+        expect(find.byType(GroupInfoScreen), findsNothing);
+        expect(find.text('Open Info'), findsOneWidget);
+      },
+    );
 
     testWidgets('remove member updates config and refreshes member list', (
       tester,
@@ -377,7 +1044,9 @@ void main() {
       final removeButtons = find.byIcon(Icons.remove_circle_outline);
       expect(removeButtons, findsWidgets);
 
-      await tester.tap(removeButtons.last);
+      await tester.ensureVisible(removeButtons.last);
+      await pumpFrames(tester, count: 5);
+      await tester.tap(removeButtons.last, warnIfMissed: false);
       await pumpFrames(tester);
 
       expect(find.text('Remove Alice from the group?'), findsOneWidget);
@@ -477,7 +1146,9 @@ void main() {
       );
       expect(aliceRemoveButton, findsOneWidget);
 
-      await tester.tap(aliceRemoveButton);
+      await tester.ensureVisible(aliceRemoveButton);
+      await pumpFrames(tester, count: 5);
+      await tester.tap(aliceRemoveButton, warnIfMissed: false);
       await pumpFrames(tester);
       await confirmRemoveMemberDialog(tester);
 
@@ -550,7 +1221,9 @@ void main() {
           of: aliceRow,
           matching: find.byIcon(Icons.remove_circle_outline),
         );
-        await tester.tap(aliceRemoveButton);
+        await tester.ensureVisible(aliceRemoveButton);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(aliceRemoveButton, warnIfMissed: false);
         await pumpFrames(tester);
         await confirmRemoveMemberDialog(tester);
 
@@ -642,7 +1315,9 @@ void main() {
           of: aliceRow,
           matching: find.byIcon(Icons.remove_circle_outline),
         );
-        await tester.tap(aliceRemoveButton);
+        await tester.ensureVisible(aliceRemoveButton);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(aliceRemoveButton, warnIfMissed: false);
         await pumpFrames(tester);
         await confirmRemoveMemberDialog(tester);
 
@@ -734,7 +1409,9 @@ void main() {
           of: aliceRow,
           matching: find.byIcon(Icons.remove_circle_outline),
         );
-        await tester.tap(aliceRemoveButton);
+        await tester.ensureVisible(aliceRemoveButton);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(aliceRemoveButton, warnIfMissed: false);
         await pumpFrames(tester);
         await confirmRemoveMemberDialog(tester);
 
@@ -854,7 +1531,9 @@ void main() {
 
         await groupRepo.removeMember('group-1', 'peer-alice');
 
-        await tester.tap(aliceRemoveButton);
+        await tester.ensureVisible(aliceRemoveButton);
+        await pumpFrames(tester, count: 5);
+        await tester.tap(aliceRemoveButton, warnIfMissed: false);
         await pumpFrames(tester);
         await confirmRemoveMemberDialog(tester);
 
@@ -924,7 +1603,9 @@ void main() {
         matching: find.byIcon(Icons.remove_circle_outline),
       );
 
-      await tester.tap(aliceRemoveButton);
+      await tester.ensureVisible(aliceRemoveButton);
+      await pumpFrames(tester, count: 5);
+      await tester.tap(aliceRemoveButton, warnIfMissed: false);
       await pumpFrames(tester);
 
       expect(find.text('Remove Alice from the group?'), findsOneWidget);

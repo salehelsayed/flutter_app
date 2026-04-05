@@ -455,6 +455,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get group_invite_failed => 'Failed to invite members';
 
   @override
+  String group_create_member_limit_reached(int maxMembers, int overflowCount) {
+    return 'Groups can have up to $maxMembers members including you. Reduce your selection by $overflowCount and try again.';
+  }
+
+  @override
+  String group_invite_member_limit_reached(int maxMembers, int overflowCount) {
+    return 'Groups can have up to $maxMembers members. Reduce your selection by $overflowCount and try again.';
+  }
+
+  @override
   String picker_introduce_to(String username) {
     return 'Introduce to $username';
   }

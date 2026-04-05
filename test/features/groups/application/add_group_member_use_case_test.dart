@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -45,6 +46,23 @@ void main() {
     groupRecoveryGate.resetForTest();
   });
 
+  Future<void> seedGroupMembers({
+    required String groupId,
+    required int totalMembers,
+  }) async {
+    for (var index = 0; index < totalMembers; index++) {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: index == 0 ? 'peer-admin' : 'peer-seed-$index',
+          username: index == 0 ? 'Admin' : 'Seed $index',
+          role: index == 0 ? MemberRole.admin : MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+    }
+  }
+
   test('adds member successfully when caller is admin', () async {
     final newMember = GroupMember(
       groupId: 'group-1',
@@ -65,6 +83,34 @@ void main() {
     final members = await groupRepo.getMembers('group-1');
     expect(members.length, 1);
     expect(members.first.peerId, 'peer-new');
+  });
+
+  test('allows adding the 50th member under the shared contract', () async {
+    await seedGroupMembers(
+      groupId: 'group-1',
+      totalMembers: groupMembershipLimit - 1,
+    );
+
+    final newMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-50',
+      username: 'Member Fifty',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+
+    await addGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      newMember: newMember,
+      selfPeerId: 'peer-admin',
+    );
+
+    final saved = await groupRepo.getMember('group-1', 'peer-50');
+    expect(saved, isNotNull);
+    final members = await groupRepo.getMembers('group-1');
+    expect(members.length, groupMembershipLimit);
   });
 
   test('rejects when caller is not admin', () async {
@@ -151,31 +197,75 @@ void main() {
     );
   });
 
-  test('rejects duplicate member before sync and preserves original row',
-      () async {
-    final originalMember = GroupMember(
-      groupId: 'group-1',
-      peerId: 'peer-duplicate',
-      username: 'FirstAdd',
-      role: MemberRole.writer,
-      joinedAt: DateTime.now().toUtc(),
-    );
+  test(
+    'rejects duplicate member before sync and preserves original row',
+    () async {
+      final originalMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-duplicate',
+        username: 'FirstAdd',
+        role: MemberRole.writer,
+        joinedAt: DateTime.now().toUtc(),
+      );
 
-    await addGroupMember(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: 'group-1',
-      newMember: originalMember,
-      selfPeerId: 'peer-admin',
-    );
+      await addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: originalMember,
+        selfPeerId: 'peer-admin',
+      );
 
+      bridge.commandLog.clear();
+
+      final duplicateAttempt = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-duplicate',
+        username: 'SecondAdd',
+        role: MemberRole.reader,
+        joinedAt: DateTime.now().toUtc(),
+      );
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: duplicateAttempt,
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('already exists'),
+          ),
+        ),
+      );
+
+      final members = await groupRepo.getMembers('group-1');
+      final duplicates = members
+          .where((m) => m.peerId == 'peer-duplicate')
+          .toList();
+      expect(duplicates.length, 1);
+      expect(duplicates.first.username, 'FirstAdd');
+      expect(duplicates.first.role, MemberRole.writer);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
+
+  test('rejects adding a 51st member before config sync', () async {
+    await seedGroupMembers(
+      groupId: 'group-1',
+      totalMembers: groupMembershipLimit,
+    );
     bridge.commandLog.clear();
 
-    final duplicateAttempt = GroupMember(
+    final newMember = GroupMember(
       groupId: 'group-1',
-      peerId: 'peer-duplicate',
-      username: 'SecondAdd',
-      role: MemberRole.reader,
+      peerId: 'peer-over-limit',
+      username: 'Overflow',
+      role: MemberRole.writer,
       joinedAt: DateTime.now().toUtc(),
     );
 
@@ -184,25 +274,26 @@ void main() {
         bridge: bridge,
         groupRepo: groupRepo,
         groupId: 'group-1',
-        newMember: duplicateAttempt,
+        newMember: newMember,
         selfPeerId: 'peer-admin',
       ),
       throwsA(
-        isA<StateError>().having(
-          (e) => e.message,
-          'message',
-          contains('already exists'),
-        ),
+        isA<GroupMembershipLimitException>()
+            .having((e) => e.maxMembers, 'maxMembers', groupMembershipLimit)
+            .having(
+              (e) => e.currentMemberCount,
+              'currentMemberCount',
+              groupMembershipLimit,
+            )
+            .having(
+              (e) => e.requestedAdditionalMembers,
+              'requestedAdditionalMembers',
+              1,
+            ),
       ),
     );
 
-    final members = await groupRepo.getMembers('group-1');
-    final duplicates = members
-        .where((m) => m.peerId == 'peer-duplicate')
-        .toList();
-    expect(duplicates.length, 1);
-    expect(duplicates.first.username, 'FirstAdd');
-    expect(duplicates.first.role, MemberRole.writer);
+    expect(await groupRepo.getMember('group-1', 'peer-over-limit'), isNull);
     expect(bridge.commandLog, isEmpty);
   });
 

@@ -618,7 +618,10 @@ void main() {
           final screen = tester.widget<GroupConversationScreen>(
             find.byType(GroupConversationScreen),
           );
-          return screen.composerStateListenable!.value.pendingAttachments
+          return screen
+              .composerStateListenable!
+              .value
+              .pendingAttachments
               .isNotEmpty;
         });
         await pumpFrames(tester, count: 5);
@@ -2002,6 +2005,36 @@ void main() {
       expect(find.byType(GroupInfoScreen), findsOneWidget);
     });
 
+    testWidgets('returning from group info reloads the latest group name', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Test Group'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.info_outline));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+      await groupRepo.updateGroup(
+        group.copyWith(
+          name: 'Renamed Group',
+          description: 'Updated description',
+        ),
+      );
+
+      await tester.tap(find.byIcon(Icons.arrow_back_ios_new).first);
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(GroupInfoScreen), findsNothing);
+      expect(find.text('Renamed Group'), findsOneWidget);
+    });
+
     testWidgets('non-admin in announcement group cannot write', (tester) async {
       final group = makeAnnouncementGroup(role: GroupRole.member);
       await groupRepo.saveGroup(group);
@@ -2016,6 +2049,41 @@ void main() {
       );
 
       // TextField should not be present (canWrite=false hides it)
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byIcon(Icons.add_rounded), findsNothing);
+      expect(find.byIcon(Icons.mic_rounded), findsNothing);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsNothing);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.onAttach, isNull);
+      expect(screen.onRecordStart, isNull);
+      expect(screen.onRecordStop, isNull);
+      expect(screen.onRecordCancel, isNull);
+      expect(screen.onQuoteReply, isNull);
+    });
+
+    testWidgets('dissolved groups show read-only copy and no send controls', (
+      tester,
+    ) async {
+      final group = makeChatGroup().copyWith(
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+        dissolvedBy: 'peer-admin',
+      );
+      await groupRepo.saveGroup(group);
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
+
+      expect(find.text('Dissolved'), findsOneWidget);
+      expect(
+        find.text(
+          'This group has been dissolved. History stays available, but new messages are disabled.',
+        ),
+        findsOneWidget,
+      );
       expect(find.byType(TextField), findsNothing);
       expect(find.byIcon(Icons.add_rounded), findsNothing);
       expect(find.byIcon(Icons.mic_rounded), findsNothing);

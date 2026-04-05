@@ -12,10 +12,13 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
@@ -67,14 +70,18 @@ class GroupListWired extends StatefulWidget {
   State<GroupListWired> createState() => _GroupListWiredState();
 }
 
-class _GroupListWiredState extends State<GroupListWired> {
+class _GroupListWiredState extends State<GroupListWired>
+    with WidgetsBindingObserver {
   List<GroupModel> _groups = [];
   Map<String, GroupMessage?> _latestMessages = {};
   Map<String, int> _unreadCounts = {};
+  List<PendingGroupInvite> _pendingInvites = [];
   bool _isLoading = true;
   StreamSubscription<GroupMessage>? _messageSubscription;
-  StreamSubscription<GroupModel>? _inviteSubscription;
+  StreamSubscription<GroupModel>? _joinedInviteSubscription;
+  StreamSubscription<PendingGroupInvite>? _pendingInviteSubscription;
   final Set<String> _changedGroupIds = <String>{};
+  final Set<String> _processingInviteIds = <String>{};
 
   FeedRouteChanges? _buildRouteChanges() {
     final changes = FeedRouteChanges(
@@ -86,9 +93,17 @@ class _GroupListWiredState extends State<GroupListWired> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     emitFlowEvent(layer: 'FL', event: 'GROUP_LIST_FL_SCREEN_INIT', details: {});
     _loadGroups();
     _startListening();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_loadGroups());
+    }
   }
 
   Future<void> _loadGroups() async {
@@ -96,6 +111,7 @@ class _GroupListWiredState extends State<GroupListWired> {
       final groups = await widget.groupRepo.getActiveGroups();
       final latestMessages = <String, GroupMessage?>{};
       final unreadCounts = <String, int>{};
+      final pendingInvites = await _loadPendingInvites();
 
       for (final group in groups) {
         latestMessages[group.id] = await widget.msgRepo.getLatestMessage(
@@ -109,6 +125,7 @@ class _GroupListWiredState extends State<GroupListWired> {
         _groups = groups;
         _latestMessages = latestMessages;
         _unreadCounts = unreadCounts;
+        _pendingInvites = pendingInvites;
         _isLoading = false;
       });
     } catch (e) {
@@ -121,6 +138,14 @@ class _GroupListWiredState extends State<GroupListWired> {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<List<PendingGroupInvite>> _loadPendingInvites() async {
+    final inviteListener = widget.groupInviteListener;
+    if (inviteListener == null) {
+      return const [];
+    }
+    return inviteListener.pendingInviteRepo.getPendingInvites();
   }
 
   void _startListening() {
@@ -136,16 +161,29 @@ class _GroupListWiredState extends State<GroupListWired> {
           },
         );
 
-    _inviteSubscription = widget.groupInviteListener?.groupJoinedStream.listen(
-      (_) => _loadGroups(),
-      onError: (error) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_LIST_FL_INVITE_STREAM_ERROR',
-          details: {'error': error.toString()},
+    _joinedInviteSubscription = widget.groupInviteListener?.groupJoinedStream
+        .listen(
+          (_) => _loadGroups(),
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_LIST_FL_INVITE_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
         );
-      },
-    );
+
+    _pendingInviteSubscription = widget.groupInviteListener?.pendingInviteStream
+        .listen(
+          (_) => _loadGroups(),
+          onError: (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_LIST_FL_PENDING_INVITE_STREAM_ERROR',
+              details: {'error': error.toString()},
+            );
+          },
+        );
   }
 
   void _onGroupTap(GroupModel group) {
@@ -182,10 +220,141 @@ class _GroupListWiredState extends State<GroupListWired> {
     Navigator.of(context).pop(_buildRouteChanges());
   }
 
+  Future<void> _onAcceptPendingInvite(PendingGroupInvite invite) async {
+    final inviteListener = widget.groupInviteListener;
+    if (inviteListener == null ||
+        _processingInviteIds.contains(invite.groupId)) {
+      return;
+    }
+
+    setState(() => _processingInviteIds.add(invite.groupId));
+    try {
+      final (result, group) = await acceptPendingGroupInvite(
+        pendingInviteRepo: inviteListener.pendingInviteRepo,
+        groupRepo: widget.groupRepo,
+        msgRepo: widget.msgRepo,
+        bridge: widget.bridge,
+        groupId: invite.groupId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        groupMessageListener: widget.groupMessageListener,
+      );
+      if (group != null) {
+        _changedGroupIds.add(group.id);
+      }
+      await _loadGroups();
+      if (!mounted) {
+        return;
+      }
+
+      switch (result) {
+        case AcceptPendingGroupInviteResult.success:
+          _showSnackBar('Joined ${group?.name ?? invite.groupName}');
+          break;
+        case AcceptPendingGroupInviteResult.notFound:
+          _showSnackBar('Invite no longer available');
+          break;
+        case AcceptPendingGroupInviteResult.expired:
+          _showSnackBar('Invite expired');
+          break;
+        case AcceptPendingGroupInviteResult.invalidPayload:
+          _showSnackBar('Invite is no longer valid');
+          break;
+        case AcceptPendingGroupInviteResult.duplicateGroup:
+          _showSnackBar('Group already added');
+          break;
+        case AcceptPendingGroupInviteResult.bridgeError:
+          _showSnackBar(
+            group != null
+                ? 'Joined ${group.name}, but recovery is still catching up'
+                : 'Invite accepted, but recovery is still catching up',
+          );
+          break;
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_LIST_FL_ACCEPT_PENDING_INVITE_ERROR',
+        details: {
+          'groupId': invite.groupId.length > 8
+              ? invite.groupId.substring(0, 8)
+              : invite.groupId,
+          'error': e.toString(),
+        },
+      );
+      await _loadGroups();
+      if (mounted) {
+        _showSnackBar('Failed to accept invite');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _processingInviteIds.remove(invite.groupId));
+      }
+    }
+  }
+
+  Future<void> _onDeclinePendingInvite(PendingGroupInvite invite) async {
+    final inviteListener = widget.groupInviteListener;
+    if (inviteListener == null ||
+        _processingInviteIds.contains(invite.groupId)) {
+      return;
+    }
+
+    setState(() => _processingInviteIds.add(invite.groupId));
+    try {
+      final result = await declinePendingGroupInvite(
+        pendingInviteRepo: inviteListener.pendingInviteRepo,
+        groupId: invite.groupId,
+      );
+      await _loadGroups();
+      if (!mounted) {
+        return;
+      }
+
+      switch (result) {
+        case DeclinePendingGroupInviteResult.success:
+          _showSnackBar('Invite declined');
+          break;
+        case DeclinePendingGroupInviteResult.notFound:
+          _showSnackBar('Invite no longer available');
+          break;
+        case DeclinePendingGroupInviteResult.expired:
+          _showSnackBar('Invite expired');
+          break;
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_LIST_FL_DECLINE_PENDING_INVITE_ERROR',
+        details: {
+          'groupId': invite.groupId.length > 8
+              ? invite.groupId.substring(0, 8)
+              : invite.groupId,
+          'error': e.toString(),
+        },
+      );
+      await _loadGroups();
+      if (mounted) {
+        _showSnackBar('Failed to decline invite');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _processingInviteIds.remove(invite.groupId));
+      }
+    }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _messageSubscription?.cancel();
-    _inviteSubscription?.cancel();
+    _joinedInviteSubscription?.cancel();
+    _pendingInviteSubscription?.cancel();
     super.dispose();
   }
 
@@ -195,8 +364,12 @@ class _GroupListWiredState extends State<GroupListWired> {
       groups: _groups,
       latestMessages: _latestMessages,
       unreadCounts: _unreadCounts,
+      pendingInvites: _pendingInvites,
+      processingInviteIds: _processingInviteIds,
       isLoading: _isLoading,
       onGroupTap: _onGroupTap,
+      onAcceptPendingInvite: _onAcceptPendingInvite,
+      onDeclinePendingInvite: _onDeclinePendingInvite,
       onBack: _onBack,
     );
   }

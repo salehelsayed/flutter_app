@@ -8,7 +8,9 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -566,6 +568,286 @@ void main() {
     },
   );
 
+  test(
+    'within-window backlog is retained and records the retained timestamp',
+    () async {
+      final retainedAt = groupBacklogRetentionCutoff(
+        DateTime.now().toUtc(),
+      ).add(const Duration(hours: 1));
+
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Retained backlog',
+          'timestamp': retainedAt.toIso8601String(),
+          'messageId': 'msg-retained-backlog',
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      final messages = await msgRepo.getMessagesPage('group-1');
+      final group = await groupRepo.getGroup('group-1');
+
+      expect(messages, hasLength(1));
+      expect(messages.single.id, 'msg-retained-backlog');
+      expect(group, isNotNull);
+      expect(group!.lastBacklogExpiredAt, isNull);
+      expect(group.lastBacklogRetainedAt, retainedAt);
+    },
+  );
+
+  test(
+    'beyond-window backlog is skipped and records the expired timestamp',
+    () async {
+      final expiredAt = groupBacklogRetentionCutoff(
+        DateTime.now().toUtc(),
+      ).subtract(const Duration(hours: 1));
+
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Expired backlog',
+          'timestamp': expiredAt.toIso8601String(),
+          'messageId': 'msg-expired-backlog',
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      final group = await groupRepo.getGroup('group-1');
+
+      expect(await msgRepo.getMessagesPage('group-1'), isEmpty);
+      expect(group, isNotNull);
+      expect(group!.lastBacklogExpiredAt, expiredAt);
+      expect(group.lastBacklogRetainedAt, isNull);
+    },
+  );
+
+  test(
+    'mixed old and new cursor pages keep retained backlog and record both boundaries',
+    () async {
+      final cutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
+      final expiredAt = cutoff.subtract(const Duration(hours: 1));
+      final retainedAt = cutoff.add(const Duration(hours: 1));
+
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Expired page',
+          'timestamp': expiredAt.toIso8601String(),
+          'messageId': 'msg-expired-page',
+        },
+      ], 'cursor-retained');
+
+      bridge.addPage('group-1', 'cursor-retained', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Retained page',
+          'timestamp': retainedAt.toIso8601String(),
+          'messageId': 'msg-retained-page',
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      final messages = await msgRepo.getMessagesPage('group-1');
+      final group = await groupRepo.getGroup('group-1');
+      final retrieveCount = bridge.commandLog
+          .where((command) => command == 'group:inboxRetrieveCursor')
+          .length;
+
+      expect(messages, hasLength(1));
+      expect(messages.single.id, 'msg-retained-page');
+      expect(group, isNotNull);
+      expect(group!.lastBacklogExpiredAt, expiredAt);
+      expect(group.lastBacklogRetainedAt, retainedAt);
+      expect(
+        retrieveCount,
+        2,
+        reason:
+            'Expired cursor pages must not stop continuation when later retained backlog still exists',
+      );
+    },
+  );
+
+  test('repeated drains do not resurrect expired backlog', () async {
+    final cutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
+    final expiredAt = cutoff.subtract(const Duration(hours: 1));
+    final retainedAt = cutoff.add(const Duration(hours: 1));
+
+    bridge.addPage('group-1', '', [
+      {
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'Expired replay',
+        'timestamp': expiredAt.toIso8601String(),
+        'messageId': 'msg-expired-replay',
+      },
+    ], 'cursor-retained');
+
+    bridge.addPage('group-1', 'cursor-retained', [
+      {
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'Retained replay',
+        'timestamp': retainedAt.toIso8601String(),
+        'messageId': 'msg-retained-replay',
+      },
+    ], '');
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+    );
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+    );
+
+    final messages = await msgRepo.getMessagesPage('group-1');
+    final group = await groupRepo.getGroup('group-1');
+
+    expect(messages, hasLength(1));
+    expect(messages.single.id, 'msg-retained-replay');
+    expect(
+      messages.where((message) => message.id == 'msg-expired-replay'),
+      isEmpty,
+    );
+    expect(group, isNotNull);
+    expect(group!.lastBacklogExpiredAt, expiredAt);
+    expect(group.lastBacklogRetainedAt, retainedAt);
+  });
+
+  test(
+    'system envelopes older than the retention cutoff still converge membership',
+    () async {
+      final initialJoinedAt = groupBacklogRetentionCutoff(
+        DateTime.now().toUtc(),
+      ).subtract(const Duration(days: 2));
+      final removedAt = initialJoinedAt.add(const Duration(days: 1));
+
+      await groupRepo.updateGroup(
+        testGroup.copyWith(createdAt: initialJoinedAt),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          joinedAt: initialJoinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-self',
+          username: 'Self',
+          role: MemberRole.writer,
+          joinedAt: initialJoinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          joinedAt: initialJoinedAt,
+        ),
+      );
+
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+      addTearDown(listener.dispose);
+
+      bridge.addPage('group-1', '', [
+        {
+          'message': jsonEncode({
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_removed',
+              'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+              'removedAt': removedAt.toIso8601String(),
+              'groupConfig': {
+                'name': 'Test Group',
+                'groupType': 'chat',
+                'members': [
+                  {'peerId': 'peer-admin', 'role': 'admin'},
+                  {'peerId': 'peer-self', 'role': 'writer'},
+                ],
+                'createdBy': 'peer-admin',
+                'createdAt': removedAt.toIso8601String(),
+              },
+            }),
+            'timestamp': removedAt.toIso8601String(),
+            'messageId': 'msg-old-member-removed',
+          }),
+        },
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      final group = await groupRepo.getGroup('group-1');
+      final messages = await msgRepo.getMessagesPage('group-1');
+
+      expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+      expect(
+        messages.where(
+          (message) =>
+              message.id.startsWith('sys-member_removed:group-1:peer-sender:'),
+        ),
+        hasLength(1),
+      );
+      expect(group, isNotNull);
+      expect(group!.lastBacklogExpiredAt, isNull);
+      expect(group.lastBacklogRetainedAt, isNull);
+    },
+  );
+
   test('drain preserves quotedMessageId from inbox payload', () async {
     final ts = DateTime.now().toUtc().toIso8601String();
 
@@ -1044,6 +1326,49 @@ void main() {
     expect(msgRepo.count, 2);
     expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
   });
+
+  test(
+    'replayed group messages emit on the listener stream when provided',
+    () async {
+      final ts = DateTime.now().toUtc().toIso8601String();
+      bridge.addPage('group-1', '', [
+        {
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Replay me into Feed',
+          'timestamp': ts,
+          'messageId': 'msg-replay-stream-1',
+        },
+      ], '');
+
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+      final replayedMessages = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(
+        replayedMessages.add,
+      );
+      addTearDown(() async {
+        await subscription.cancel();
+        listener.dispose();
+      });
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      expect(msgRepo.count, 1);
+      expect(replayedMessages, hasLength(1));
+      expect(replayedMessages.single.id, 'msg-replay-stream-1');
+      expect(replayedMessages.single.text, 'Replay me into Feed');
+    },
+  );
 
   test('does not crash on empty inbox', () async {
     bridge.addPage('group-1', '', [], '');

@@ -15,6 +15,9 @@ import 'package:flutter_app/features/conversation/presentation/widgets/upload_pr
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
@@ -65,6 +68,7 @@ class GroupConversationScreen extends StatelessWidget {
   final String? activeQuoteText;
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
+  final GroupBacklogRetentionNotice? backlogRetentionNotice;
 
   const GroupConversationScreen({
     super.key,
@@ -109,6 +113,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.activeQuoteText,
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
+    this.backlogRetentionNotice,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -136,6 +141,8 @@ class GroupConversationScreen extends StatelessWidget {
         child: Column(
           children: [
             _buildHeader(context),
+            if (backlogRetentionNotice != null)
+              _buildBacklogRetentionBanner(backlogRetentionNotice!),
             if (uploadProgress != null)
               UploadProgressBanner(
                 state: uploadProgress!,
@@ -221,6 +228,14 @@ class GroupConversationScreen extends StatelessWidget {
               onPressed: onBack,
             ),
             const SizedBox(width: 4),
+            GroupAvatar(
+              groupId: group.id,
+              name: group.name,
+              avatarPath: group.avatarPath,
+              size: 40,
+              cacheBustKey: group.lastMetadataEventAt?.toIso8601String(),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -241,6 +256,10 @@ class GroupConversationScreen extends StatelessWidget {
                       ),
                       const SizedBox(width: 6),
                       GroupTypeBadge(type: group.type),
+                      if (group.isDissolved) ...[
+                        const SizedBox(width: 6),
+                        const GroupDissolvedBadge(dense: true),
+                      ],
                     ],
                   ),
                 ],
@@ -269,6 +288,17 @@ class GroupConversationScreen extends StatelessWidget {
   }
 
   Widget _buildEmptyState() {
+    final notice = backlogRetentionNotice;
+    final emptyTitle = group.isDissolved
+        ? 'No messages yet'
+        : (notice?.emptyTitle ?? 'No messages yet');
+    final emptySubtitle = group.isDissolved
+        ? 'This group has been dissolved. New messages are disabled.'
+        : (notice?.emptySubtitle ??
+              (canWrite
+                  ? 'Send a message to start the conversation'
+                  : 'Waiting for messages'));
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -280,7 +310,7 @@ class GroupConversationScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'No messages yet',
+            emptyTitle,
             style: TextStyle(
               fontSize: 14,
               color: Colors.white.withValues(alpha: 0.3),
@@ -288,12 +318,45 @@ class GroupConversationScreen extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            canWrite
-                ? 'Send a message to start the conversation'
-                : 'Waiting for messages',
+            emptySubtitle,
             style: TextStyle(
               fontSize: 12,
               color: Colors.white.withValues(alpha: 0.2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBacklogRetentionBanner(GroupBacklogRetentionNotice notice) {
+    final icon = notice.kind == GroupBacklogRetentionNoticeKind.mixedWindow
+        ? Icons.history_rounded
+        : Icons.history_toggle_off_rounded;
+
+    return Container(
+      key: const ValueKey('group-backlog-retention-banner'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0x16D9B96E),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0x33D9B96E)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: const Color(0xFFE6C36A)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              notice.bannerText,
+              style: const TextStyle(
+                fontSize: 13,
+                height: 1.35,
+                color: Colors.white70,
+              ),
             ),
           ),
         ],
@@ -376,9 +439,7 @@ class GroupConversationScreen extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white.withValues(alpha: 0.07),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: Colors.white.withValues(alpha: 0.14),
-              ),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
             ),
             child: bubble,
           );
@@ -417,6 +478,7 @@ class GroupConversationScreen extends StatelessWidget {
 
   Widget _buildReadOnlyBanner() {
     return Container(
+      key: const ValueKey('group-read-only-banner'),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         border: Border(
@@ -427,7 +489,9 @@ class GroupConversationScreen extends StatelessWidget {
         ),
       ),
       child: Text(
-        'Only admins can send messages in this group',
+        group.isDissolved
+            ? 'This group has been dissolved. History stays available, but new messages are disabled.'
+            : 'Only admins can send messages in this group',
         textAlign: TextAlign.center,
         style: TextStyle(
           fontSize: 13,

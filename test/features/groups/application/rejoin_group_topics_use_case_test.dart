@@ -938,5 +938,73 @@ void main() {
           .toSet();
       expect(groupIds, {'group-active', 'group-archived'});
     });
+
+    test('skips dissolved groups', () async {
+      final now = DateTime.now().toUtc();
+
+      await seedGroup(
+        groupId: 'group-active',
+        name: 'Active',
+        members: [
+          GroupMember(
+            groupId: 'group-active',
+            peerId: 'alice',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-alice',
+            joinedAt: now,
+          ),
+        ],
+        keyInfo: GroupKeyInfo(
+          groupId: 'group-active',
+          keyGeneration: 1,
+          encryptedKey: 'key-active',
+          createdAt: now,
+        ),
+      );
+
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-dissolved',
+          name: 'Dissolved',
+          type: GroupType.chat,
+          topicName: 'topic-group-dissolved',
+          createdAt: now,
+          createdBy: 'admin-peer',
+          myRole: GroupRole.admin,
+          isDissolved: true,
+          dissolvedAt: now,
+          dissolvedBy: 'admin-peer',
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-dissolved',
+          peerId: 'alice',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-alice',
+          joinedAt: now,
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-dissolved',
+          keyGeneration: 1,
+          encryptedKey: 'key-dissolved',
+          createdAt: now,
+        ),
+      );
+
+      await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+
+      final joinCommands = bridge.sentMessages
+          .map((m) => jsonDecode(m) as Map<String, dynamic>)
+          .where((m) => m['cmd'] == 'group:join')
+          .toList();
+
+      expect(joinCommands, hasLength(1));
+      expect(joinCommands.first['payload']['groupId'], 'group-active');
+    });
   });
 }

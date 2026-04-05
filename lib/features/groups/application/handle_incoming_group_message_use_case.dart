@@ -22,6 +22,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   required int keyEpoch,
   required String text,
   required String timestamp,
+  String? selfPeerId,
   String? messageId,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
@@ -56,6 +57,22 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   } catch (_) {
     parsedTimestamp = now;
   }
+  final normalizedTimestamp = parsedTimestamp.toUtc();
+
+  final dissolvedAt = group.dissolvedAt?.toUtc();
+  if (group.isDissolved &&
+      (dissolvedAt == null || !normalizedTimestamp.isBefore(dissolvedAt))) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_HANDLE_INCOMING_MSG_DISSOLVED_AFTER_CUTOFF',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        if (dissolvedAt != null) 'dissolvedAt': dissolvedAt.toIso8601String(),
+      },
+    );
+    return null;
+  }
 
   // 2. Check sender is a member (optional: allow messages from non-members
   //    in case member list is stale; log a warning)
@@ -73,8 +90,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       groupId,
       senderId,
     );
-    if (removalCutoff != null &&
-        !parsedTimestamp.toUtc().isBefore(removalCutoff)) {
+    if (removalCutoff != null && !normalizedTimestamp.isBefore(removalCutoff)) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
@@ -144,6 +160,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   final resolvedMessageId = (messageId != null && messageId.isNotEmpty)
       ? messageId
       : const Uuid().v4();
+  final isSelfDelivery = selfPeerId != null && senderId == selfPeerId;
 
   // 5. Create GroupMessage (isIncoming: true)
   final message = GroupMessage(
@@ -155,8 +172,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     timestamp: parsedTimestamp,
     quotedMessageId: quotedMessageId,
     keyGeneration: keyEpoch,
-    status: 'delivered',
-    isIncoming: true,
+    status: isSelfDelivery ? 'sent' : 'delivered',
+    isIncoming: !isSelfDelivery,
     createdAt: now,
   );
 

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
@@ -22,6 +23,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
+import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 // ---------------------------------------------------------------------------
@@ -1212,7 +1214,7 @@ void main() {
     // 6. GroupInviteListener processes invite from router stream end-to-end.
     // -----------------------------------------------------------------------
     test(
-      'GroupInviteListener processes invite from router stream end-to-end',
+      'GroupInviteListener stores pending invite and explicit accept completes the join flow',
       () async {
         // We simulate the IncomingMessageRouter's groupInviteStream
         // by using a StreamController directly.
@@ -1221,19 +1223,23 @@ void main() {
 
         final receiverBridge = PassthroughCryptoBridge();
         final receiverGroupRepo = InMemoryGroupRepository();
+        final receiverPendingInviteRepo =
+            InMemoryPendingGroupInviteRepository();
+        final receiverMsgRepo = InMemoryGroupMessageRepository();
         final receiverContactRepo = FakeContactRepository();
         receiverContactRepo.seed([_adminContact()]);
 
         final listener = GroupInviteListener(
           groupInviteStream: groupInviteStreamController.stream,
           groupRepo: receiverGroupRepo,
+          pendingInviteRepo: receiverPendingInviteRepo,
           contactRepo: receiverContactRepo,
           bridge: receiverBridge,
+          msgRepo: receiverMsgRepo,
           getOwnMlKemSecretKey: () async => _receiverMlKemSecretKey,
         );
 
-        // Listen for the group joined event
-        final groupJoinedFuture = listener.groupJoinedStream.first;
+        final pendingInviteFuture = listener.pendingInviteStream.first;
 
         listener.start();
 
@@ -1270,12 +1276,25 @@ void main() {
         );
         groupInviteStreamController.add(incomingMessage);
 
-        // Wait for the listener to process and emit the joined group
-        final joinedGroup = await groupJoinedFuture.timeout(
+        final pendingInvite = await pendingInviteFuture.timeout(
           const Duration(seconds: 5),
         );
 
-        expect(joinedGroup.id, equals(_groupId));
+        expect(pendingInvite.groupId, equals(_groupId));
+        expect(pendingInvite.groupName, equals('Test Group'));
+        expect(await receiverGroupRepo.getGroup(_groupId), isNull);
+
+        final (acceptResult, joinedGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: receiverPendingInviteRepo,
+          groupRepo: receiverGroupRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          groupId: _groupId,
+        );
+
+        expect(acceptResult, AcceptPendingGroupInviteResult.success);
+        expect(joinedGroup, isNotNull);
+        expect(joinedGroup!.id, equals(_groupId));
         expect(joinedGroup.name, equals('Test Group'));
         expect(joinedGroup.myRole, equals(GroupRole.member));
 
@@ -1292,6 +1311,10 @@ void main() {
         final key = await receiverGroupRepo.getLatestKey(_groupId);
         expect(key, isNotNull);
         expect(key!.encryptedKey, equals(_groupKey));
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNull,
+        );
 
         // Cleanup
         listener.dispose();

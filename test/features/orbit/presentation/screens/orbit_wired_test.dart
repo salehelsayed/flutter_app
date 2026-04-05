@@ -18,9 +18,12 @@ import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -44,6 +47,7 @@ import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
+import '../../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
@@ -88,7 +92,10 @@ void main() {
   late ImageProcessor imageProcessor;
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository groupMsgRepo;
+  late InMemoryPendingGroupInviteRepository pendingInviteRepo;
   late StreamController<GroupMessage> groupMessageStreamController;
+  late StreamController<GroupModel> joinedGroupInviteController;
+  late StreamController<PendingGroupInvite> pendingInviteController;
   late InMemoryPostsPrivacySettingsRepository postsPrivacySettingsRepository;
 
   final testIdentity = IdentityModel(
@@ -122,7 +129,10 @@ void main() {
     mediaFileManager = FakeMediaFileManager();
     groupRepo = InMemoryGroupRepository();
     groupMsgRepo = InMemoryGroupMessageRepository();
+    pendingInviteRepo = InMemoryPendingGroupInviteRepository();
     groupMessageStreamController = StreamController<GroupMessage>.broadcast();
+    joinedGroupInviteController = StreamController<GroupModel>.broadcast();
+    pendingInviteController = StreamController<PendingGroupInvite>.broadcast();
     postsPrivacySettingsRepository = InMemoryPostsPrivacySettingsRepository();
     imageProcessor = ImageProcessor(
       compressFile:
@@ -152,6 +162,8 @@ void main() {
 
   tearDown(() {
     groupMessageStreamController.close();
+    joinedGroupInviteController.close();
+    pendingInviteController.close();
     postsPrivacySettingsRepository.dispose();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
@@ -206,6 +218,7 @@ void main() {
     _FakeGroupMessageListener? groupMessageListener,
     IntroductionListener? introductionListener,
     InMemoryIntroductionRepository? introductionRepository,
+    GroupInviteListener? groupInviteListener,
     FakeContactRepository? contactRepository,
     InMemoryMessageRepository? messageRepository,
     InMemoryGroupRepository? groupRepository,
@@ -263,6 +276,7 @@ void main() {
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
+      groupInviteListener: groupInviteListener,
       introductionRepository: introductionRepository,
       introductionListener: introductionListener,
       appShellController: appShellController,
@@ -314,6 +328,43 @@ void main() {
   }
 
   group('OrbitWired', () {
+    PendingGroupInvite makePendingInvite({
+      String groupId = 'grp-abc123',
+      String groupName = 'Book Club',
+      DateTime? receivedAt,
+    }) {
+      final payload = GroupInvitePayload(
+        id: 'invite-$groupId',
+        groupId: groupId,
+        groupKey: 'base64-key',
+        keyEpoch: 1,
+        groupConfig: {
+          'name': groupName,
+          'groupType': 'chat',
+          'description': 'Invite description',
+          'members': [
+            {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+            },
+          ],
+          'createdBy': '12D3KooWAlice',
+          'createdAt': '2026-03-02T00:00:00.000Z',
+        },
+        senderPeerId: '12D3KooWAlice',
+        senderUsername: 'Alice',
+        timestamp: '2026-03-02T12:00:00.000Z',
+      );
+
+      return PendingGroupInvite.fromPayload(
+        payload,
+        receivedAt: receivedAt ?? DateTime.utc(2026, 4, 5, 12),
+      );
+    }
+
     testWidgets('loads and displays identity in orbit header', (tester) async {
       setLargeTestSurface(tester);
       suppressOverflowErrors();
@@ -1668,6 +1719,111 @@ void main() {
     });
 
     testWidgets(
+      'pending group invites are visible from the Intros tab and counted in the Orbit badge',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final invite = makePendingInvite(
+          groupId: 'grp-intros',
+          groupName: 'My Group - 1',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Pending Group Invites'), findsOneWidget);
+        expect(find.text('My Group - 1'), findsOneWidget);
+        expect(find.text('Invited by Alice'), findsOneWidget);
+
+        final buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[1].badgeCount, 1);
+      },
+    );
+
+    testWidgets('accepting a pending group invite from Intros joins the group', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+
+      final invite = makePendingInvite(
+        groupId: 'grp-accept',
+        groupName: 'Writers Room',
+      );
+      await pendingInviteRepo.savePendingInvite(invite);
+      bridge.responses['group:inboxRetrieveCursor'] = {
+        'ok': true,
+        'messages': [
+          {
+            'from': '12D3KooWAlice',
+            'message':
+                '{"groupId":"grp-accept","messageId":"offline-msg-1","senderId":"12D3KooWAlice","senderUsername":"Alice","keyEpoch":1,"text":"Welcome back","timestamp":"2026-03-02T13:00:00.000Z"}',
+          },
+        ],
+        'cursor': '',
+      };
+
+      final groupInviteListener = _FakeGroupInviteListener(
+        joinedStream: joinedGroupInviteController.stream,
+        pendingStream: pendingInviteController.stream,
+        pendingInviteRepo: pendingInviteRepo,
+      );
+      final feedUnreadCountListenable = ValueNotifier<int>(0);
+      addTearDown(feedUnreadCountListenable.dispose);
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          groupInviteListener: groupInviteListener,
+          initialFilterTab: 'intros',
+          appShellController: AppShellController(initialTab: AppShellTab.orbit),
+          feedUnreadCountListenable: feedUnreadCountListenable,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 6);
+
+      await tester.tap(
+        find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+      );
+      await pumpOrbitFrames(tester, count: 12);
+
+      expect(await pendingInviteRepo.getPendingInvite(invite.groupId), isNull);
+      expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+      expect(
+        find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+        findsNothing,
+      );
+      expect(find.text('Joined Writers Room'), findsOneWidget);
+
+      await tester.tap(find.text('All'));
+      await pumpOrbitFrames(tester, count: 4);
+
+      expect(find.text('Writers Room'), findsOneWidget);
+    });
+
+    testWidgets(
       'pushed conversation route shows loading shell before delayed initial page resolves',
       (tester) async {
         setLargeTestSurface(tester);
@@ -1872,6 +2028,32 @@ void main() {
       },
     );
   });
+}
+
+class _FakeGroupInviteListener extends GroupInviteListener {
+  final Stream<GroupModel> _joinedStream;
+  final Stream<PendingGroupInvite> _pendingStream;
+
+  _FakeGroupInviteListener({
+    required Stream<GroupModel> joinedStream,
+    required Stream<PendingGroupInvite> pendingStream,
+    required InMemoryPendingGroupInviteRepository pendingInviteRepo,
+  }) : _joinedStream = joinedStream,
+       _pendingStream = pendingStream,
+       super(
+         groupInviteStream: const Stream.empty(),
+         groupRepo: _NoOpGroupRepo(),
+         pendingInviteRepo: pendingInviteRepo,
+         contactRepo: FakeContactRepository(),
+         bridge: FakeBridge(),
+         getOwnMlKemSecretKey: () async => null,
+       );
+
+  @override
+  Stream<GroupModel> get groupJoinedStream => _joinedStream;
+
+  @override
+  Stream<PendingGroupInvite> get pendingInviteStream => _pendingStream;
 }
 
 class _RecordingNavigatorObserver extends NavigatorObserver {

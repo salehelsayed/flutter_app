@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
@@ -28,22 +30,35 @@ class OrbitIntrosViewData {
   final Map<String, List<IntroductionModel>> groupedIntros;
   final Map<String, String> introducerUsernames;
   final String ownPeerId;
+  final List<PendingGroupInvite> pendingGroupInvites;
+  final Set<String> processingPendingInviteIds;
   final void Function(String introductionId) onAccept;
   final void Function(String introductionId) onPass;
   final void Function(String introductionId)? onDelete;
   final void Function(String peerId)? onSendMessage;
+  final void Function(PendingGroupInvite invite)? onAcceptPendingInvite;
+  final void Function(PendingGroupInvite invite)? onDeclinePendingInvite;
   final Set<String> blockedPeerIds;
 
   const OrbitIntrosViewData({
     required this.groupedIntros,
     required this.introducerUsernames,
     required this.ownPeerId,
+    this.pendingGroupInvites = const [],
+    this.processingPendingInviteIds = const {},
     required this.onAccept,
     required this.onPass,
     this.onDelete,
     this.onSendMessage,
+    this.onAcceptPendingInvite,
+    this.onDeclinePendingInvite,
     this.blockedPeerIds = const {},
   });
+
+  int get introCount =>
+      groupedIntros.values.fold(0, (sum, entries) => sum + entries.length);
+
+  int get reviewCount => introCount + pendingGroupInvites.length;
 }
 
 @immutable
@@ -67,7 +82,9 @@ class OrbitViewProjection {
   final List<OrbitItem> mergedItems;
   final int activeCount;
   final int archivedCount;
-  final int introsCount;
+  final int introCount;
+  final int pendingGroupInviteCount;
+  final int reviewCount;
   final OrbitIntrosViewData? introsData;
   final bool searchActive;
   final String searchQuery;
@@ -81,7 +98,9 @@ class OrbitViewProjection {
     this.mergedItems = const [],
     this.activeCount = 0,
     this.archivedCount = 0,
-    this.introsCount = 0,
+    this.introCount = 0,
+    this.pendingGroupInviteCount = 0,
+    this.reviewCount = 0,
     this.introsData,
     this.searchActive = false,
     this.searchQuery = '',
@@ -90,29 +109,44 @@ class OrbitViewProjection {
   });
 }
 
-enum _OrbitIntroEntryType { context, header, row, spacer }
+enum _OrbitIntroEntryType {
+  context,
+  pendingInviteHeader,
+  pendingInvite,
+  introHeader,
+  introRow,
+  spacer,
+}
 
 class _OrbitIntroEntry {
   final _OrbitIntroEntryType type;
   final String? introducerUsername;
   final IntroductionModel? introduction;
+  final PendingGroupInvite? pendingInvite;
 
   const _OrbitIntroEntry._(
     this.type, {
     this.introducerUsername,
     this.introduction,
+    this.pendingInvite,
   });
 
   const _OrbitIntroEntry.context() : this._(_OrbitIntroEntryType.context);
 
   const _OrbitIntroEntry.header(String introducerUsername)
     : this._(
-        _OrbitIntroEntryType.header,
+        _OrbitIntroEntryType.introHeader,
         introducerUsername: introducerUsername,
       );
 
   const _OrbitIntroEntry.row(IntroductionModel introduction)
-    : this._(_OrbitIntroEntryType.row, introduction: introduction);
+    : this._(_OrbitIntroEntryType.introRow, introduction: introduction);
+
+  const _OrbitIntroEntry.pendingInviteHeader()
+    : this._(_OrbitIntroEntryType.pendingInviteHeader);
+
+  const _OrbitIntroEntry.pendingInvite(PendingGroupInvite invite)
+    : this._(_OrbitIntroEntryType.pendingInvite, pendingInvite: invite);
 
   const _OrbitIntroEntry.spacer() : this._(_OrbitIntroEntryType.spacer);
 }
@@ -258,7 +292,7 @@ class OrbitScreen extends StatelessWidget {
           return FeedNavigationBar(
             activeTab: activeTab,
             onSwitchView: onSwitchView,
-            orbitBadgeCount: projection.introsCount,
+            orbitBadgeCount: projection.reviewCount,
           );
         }
 
@@ -268,7 +302,7 @@ class OrbitScreen extends StatelessWidget {
             activeTab: activeTab,
             onSwitchView: onSwitchView,
             feedBadgeCount: unreadCount,
-            orbitBadgeCount: projection.introsCount,
+            orbitBadgeCount: projection.reviewCount,
           ),
         );
       },
@@ -371,12 +405,12 @@ class OrbitScreen extends StatelessWidget {
                                         activeFilter: projection.filterTab,
                                         activeCount: projection.activeCount,
                                         archivedCount: projection.archivedCount,
-                                        introsCount: projection.introsCount,
+                                        introsCount: projection.reviewCount,
                                         onFilterChanged: onFilterChanged,
                                       ),
                                     ],
                                     const SizedBox(height: 8),
-                                    if (projection.introsCount > 0 &&
+                                    if (projection.reviewCount > 0 &&
                                         projection.filterTab != 'intros')
                                       _buildIntroBanner(projection),
                                   ],
@@ -522,15 +556,15 @@ class OrbitScreen extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${projection.introsCount} introduction${projection.introsCount == 1 ? '' : 's'} pending',
+                    '${projection.reviewCount} item${projection.reviewCount == 1 ? '' : 's'} pending',
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                       color: Color(0xF2FFFFFF),
                     ),
                   ),
-                  const Text(
-                    'Review and accept to start chatting',
+                  Text(
+                    _buildIntroBannerSubtitle(projection),
                     style: TextStyle(fontSize: 11, color: Color(0x66FFFFFF)),
                   ),
                 ],
@@ -541,6 +575,18 @@ class OrbitScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _buildIntroBannerSubtitle(OrbitViewProjection projection) {
+    final inviteCount = projection.pendingGroupInviteCount;
+    final introCount = projection.introCount;
+    if (inviteCount > 0 && introCount > 0) {
+      return '$inviteCount group invite${inviteCount == 1 ? '' : 's'} and $introCount introduction${introCount == 1 ? '' : 's'} waiting';
+    }
+    if (inviteCount > 0) {
+      return 'Review group invite${inviteCount == 1 ? '' : 's'} and join from Intros';
+    }
+    return 'Review and accept introductions to start chatting';
   }
 
   Widget _buildContentSliver(OrbitViewProjection projection) {
@@ -619,11 +665,18 @@ class OrbitScreen extends StatelessWidget {
   }
 
   List<_OrbitIntroEntry> _buildIntroEntries(OrbitIntrosViewData data) {
-    if (data.groupedIntros.isEmpty) {
+    if (data.groupedIntros.isEmpty && data.pendingGroupInvites.isEmpty) {
       return const [_OrbitIntroEntry.context()];
     }
 
     final entries = <_OrbitIntroEntry>[const _OrbitIntroEntry.context()];
+    if (data.pendingGroupInvites.isNotEmpty) {
+      entries.add(const _OrbitIntroEntry.pendingInviteHeader());
+      entries.addAll(
+        data.pendingGroupInvites.map(_OrbitIntroEntry.pendingInvite),
+      );
+    }
+
     final introducerIds = data.groupedIntros.keys.toList();
     for (var groupIndex = 0; groupIndex < introducerIds.length; groupIndex++) {
       final introducerId = introducerIds[groupIndex];
@@ -631,7 +684,7 @@ class OrbitScreen extends StatelessWidget {
       final introducerName =
           data.introducerUsernames[introducerId] ?? 'Unknown';
 
-      if (groupIndex > 0) {
+      if (groupIndex > 0 || data.pendingGroupInvites.isNotEmpty) {
         entries.add(const _OrbitIntroEntry.spacer());
       }
       entries.add(_OrbitIntroEntry.header(introducerName));
@@ -643,7 +696,7 @@ class OrbitScreen extends StatelessWidget {
   Widget _buildIntroEntry(OrbitIntrosViewData data, _OrbitIntroEntry entry) {
     switch (entry.type) {
       case _OrbitIntroEntryType.context:
-        if (data.groupedIntros.isEmpty) {
+        if (data.groupedIntros.isEmpty && data.pendingGroupInvites.isEmpty) {
           return const Padding(
             padding: EdgeInsets.all(32),
             child: Center(
@@ -657,7 +710,9 @@ class OrbitScreen extends StatelessWidget {
         return Padding(
           padding: const EdgeInsets.only(bottom: 16),
           child: Text(
-            'These are people your friends know well. Once you both accept, you can start chatting.',
+            data.pendingGroupInvites.isNotEmpty
+                ? 'Review pending group invites here, then check introductions below. Once you accept, the group appears in Orbit and catches up from offline inbox.'
+                : 'These are people your friends know well. Once you both accept, you can start chatting.',
             style: TextStyle(
               fontSize: 13,
               color: Colors.white.withValues(alpha: 0.4),
@@ -665,7 +720,37 @@ class OrbitScreen extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
         );
-      case _OrbitIntroEntryType.header:
+      case _OrbitIntroEntryType.pendingInviteHeader:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Pending Group Invites',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Colors.white.withValues(alpha: 0.5),
+              letterSpacing: 0.8,
+            ),
+          ),
+        );
+      case _OrbitIntroEntryType.pendingInvite:
+        final invite = entry.pendingInvite!;
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: PendingGroupInviteCard(
+            invite: invite,
+            isProcessing: data.processingPendingInviteIds.contains(
+              invite.groupId,
+            ),
+            onAccept: data.onAcceptPendingInvite != null
+                ? () => data.onAcceptPendingInvite!(invite)
+                : null,
+            onDecline: data.onDeclinePendingInvite != null
+                ? () => data.onDeclinePendingInvite!(invite)
+                : null,
+          ),
+        );
+      case _OrbitIntroEntryType.introHeader:
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -673,7 +758,7 @@ class OrbitScreen extends StatelessWidget {
             const SizedBox(height: 8),
           ],
         );
-      case _OrbitIntroEntryType.row:
+      case _OrbitIntroEntryType.introRow:
         final intro = entry.introduction!;
         final amRecipient = intro.recipientId == data.ownPeerId;
         final displayUsername = amRecipient

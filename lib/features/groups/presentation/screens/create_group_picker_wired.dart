@@ -14,6 +14,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -96,9 +97,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
 
       if (!mounted) return;
       setState(() {
-        _contacts = allContacts
-            .where((c) => c.peerId != selfPeerId)
-            .toList()
+        _contacts = allContacts.where((c) => c.peerId != selfPeerId).toList()
           ..sort((a, b) => a.username.compareTo(b.username));
       });
     } catch (e) {
@@ -175,11 +174,23 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       );
       if (mounted) {
         setState(() => _isCreating = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppLocalizations.of(context)!.group_create_failed)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_buildCreateErrorMessage(e))));
       }
     }
+  }
+
+  String _buildCreateErrorMessage(Object error) {
+    final l10n = AppLocalizations.of(context)!;
+    if (error is GroupMembershipLimitException) {
+      return l10n.group_create_member_limit_reached(
+        error.maxMembers,
+        error.overflowCount,
+      );
+    }
+
+    return l10n.group_create_failed;
   }
 
   void _onBack() {

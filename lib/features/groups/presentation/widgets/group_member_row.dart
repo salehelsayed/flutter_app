@@ -7,6 +7,7 @@ class GroupMemberRow extends StatelessWidget {
   final GroupMember member;
   final bool isAdmin;
   final bool isSelf;
+  final VoidCallback? onToggleAdminRole;
   final VoidCallback? onRemove;
 
   const GroupMemberRow({
@@ -14,6 +15,7 @@ class GroupMemberRow extends StatelessWidget {
     required this.member,
     this.isAdmin = false,
     this.isSelf = false,
+    this.onToggleAdminRole,
     this.onRemove,
   });
 
@@ -52,9 +54,9 @@ class GroupMemberRow extends StatelessWidget {
                   isSelf
                       ? 'You'
                       : (member.username ??
-                          (member.peerId.length > 12
-                              ? '${member.peerId.substring(0, 12)}...'
-                              : member.peerId)),
+                            (member.peerId.length > 12
+                                ? '${member.peerId.substring(0, 12)}...'
+                                : member.peerId)),
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
@@ -66,15 +68,52 @@ class GroupMemberRow extends StatelessWidget {
               ],
             ),
           ),
-          // Admin action: remove member
-          if (isAdmin && onRemove != null)
-            IconButton(
-              icon: Icon(
-                Icons.remove_circle_outline,
-                color: Colors.white.withOpacity(0.4),
-                size: 20,
-              ),
-              onPressed: onRemove,
+          if (isAdmin &&
+              !isSelf &&
+              (onToggleAdminRole != null || onRemove != null))
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (onToggleAdminRole != null)
+                  PopupMenuButton<_GroupMemberAction>(
+                    key: ValueKey('group-member-actions-${member.peerId}'),
+                    tooltip: 'Manage role',
+                    color: const Color(0xFF141A24),
+                    onSelected: (action) {
+                      if (action == _GroupMemberAction.toggleAdminRole) {
+                        onToggleAdminRole?.call();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem<_GroupMemberAction>(
+                        key: ValueKey(
+                          'group-member-toggle-admin-${member.peerId}',
+                        ),
+                        value: _GroupMemberAction.toggleAdminRole,
+                        child: Text(
+                          member.role == MemberRole.admin
+                              ? 'Remove Admin'
+                              : 'Make Admin',
+                        ),
+                      ),
+                    ],
+                    icon: Icon(
+                      Icons.admin_panel_settings_outlined,
+                      color: Colors.white.withOpacity(0.5),
+                      size: 20,
+                    ),
+                  ),
+                if (onRemove != null)
+                  IconButton(
+                    key: ValueKey('group-member-remove-${member.peerId}'),
+                    icon: Icon(
+                      Icons.remove_circle_outline,
+                      color: Colors.white.withOpacity(0.4),
+                      size: 20,
+                    ),
+                    onPressed: onRemove,
+                  ),
+              ],
             ),
         ],
       ),
@@ -86,6 +125,8 @@ class GroupMemberRow extends StatelessWidget {
     return name[0].toUpperCase();
   }
 }
+
+enum _GroupMemberAction { toggleAdminRole }
 
 class _RoleBadge extends StatelessWidget {
   final MemberRole role;

@@ -436,3 +436,27 @@ Source-of-truth conflicts that materially affected decomposition:
   did not need refreshes.
 - Report `55` is now closed, and this breakdown plus
   `Test-Flight-Improv/00-INDEX.md` carry the maintenance-time meaning.
+
+## Final program acceptance
+
+- Final program verdict:
+  `closed`
+- Final acceptance sanity check:
+  - `2026-04-05` controller rerun confirmed the accepted session ledger still
+    matches the on-disk session plans, the landed share picker/coordinator
+    seams, and the stable `Test-Flight-Improv/00-INDEX.md` maintenance entry
+  - `flutter test test/core/services/share_intent_ios_test.dart` reran
+    successfully on `2026-04-05`
+  - no reopened session, stale ledger row, or missing closure artifact was
+    found during the rerun
+- What is now considered closed:
+  - the iOS external-share entry no longer relies on the native `Post` gate
+  - the Flutter share picker now supports truthful multi-recipient selection
+    plus explicit send
+  - share fanout remains share-entry-local and does not reopen shared 1:1 or
+    group send-semantics docs
+- Residual-only items:
+  - none beyond the already accepted scope limits in this breakdown
+- Stable closure references for future maintenance:
+  - `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md`
+  - `Test-Flight-Improv/00-INDEX.md`

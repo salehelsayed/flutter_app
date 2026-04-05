@@ -7,8 +7,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -53,6 +55,11 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
 
   // 1. Resolve name: use provided or auto-generate from usernames
   final resolvedName = _resolveName(name, selectedContacts);
+
+  ensureWithinGroupMembershipLimit(
+    currentMemberCount: 1,
+    requestedAdditionalMembers: selectedContacts.length,
+  );
 
   // 2. Create the group (saves group + self as admin + key)
   final group = await createGroup(
@@ -99,22 +106,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
 
   // 4. Build full GroupConfig and update Go topic validator
   final allMembers = await groupRepo.getMembers(group.id);
-  final groupConfig = {
-    'name': group.name,
-    'groupType': group.type.toValue(),
-    if (group.description != null) 'description': group.description,
-    'members': allMembers
-        .map((m) => {
-              'peerId': m.peerId,
-              'username': m.username,
-              'role': m.role.toValue(),
-              'publicKey': m.publicKey,
-              if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
-            })
-        .toList(),
-    'createdBy': group.createdBy,
-    'createdAt': group.createdAt.toUtc().toIso8601String(),
-  };
+  final groupConfig = buildGroupConfigPayload(group, allMembers);
 
   await callGroupUpdateConfig(
     bridge,
@@ -126,13 +118,15 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   final sysMessage = jsonEncode({
     '__sys': 'members_added',
     'members': addedMembers
-        .map((m) => {
-              'peerId': m.peerId,
-              'username': m.username,
-              'role': m.role.toValue(),
-              'publicKey': m.publicKey,
-              if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
-            })
+        .map(
+          (m) => {
+            'peerId': m.peerId,
+            'username': m.username,
+            'role': m.role.toValue(),
+            'publicKey': m.publicKey,
+            if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
+          },
+        )
         .toList(),
     'groupConfig': groupConfig,
   });

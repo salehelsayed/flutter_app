@@ -16,12 +16,15 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
@@ -51,6 +54,7 @@ class GroupMessageListener {
   final AppLifecycleState Function()? _getAppLifecycleState;
   final RecentRemoteNotificationGate _remoteNotificationGate;
   final ReactionRepository? _reactionRepo;
+  final DownloadGroupAvatarFn _downloadGroupAvatarFn;
 
   StreamSubscription<Map<String, dynamic>>? _subscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
@@ -72,6 +76,7 @@ class GroupMessageListener {
     AppLifecycleState Function()? getAppLifecycleState,
     RecentRemoteNotificationGate? remoteNotificationGate,
     ReactionRepository? reactionRepo,
+    DownloadGroupAvatarFn? downloadGroupAvatarFn,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -83,7 +88,8 @@ class GroupMessageListener {
        _getAppLifecycleState = getAppLifecycleState,
        _remoteNotificationGate =
            remoteNotificationGate ?? recentRemoteNotificationGate,
-       _reactionRepo = reactionRepo;
+       _reactionRepo = reactionRepo,
+       _downloadGroupAvatarFn = downloadGroupAvatarFn ?? downloadGroupAvatar;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -184,6 +190,7 @@ class GroupMessageListener {
       final media = mediaRaw?.cast<Map<String, dynamic>>();
       final wireMessageId = data['messageId'] as String?;
       final wireQuotedMessageId = data['quotedMessageId'] as String?;
+      final selfPeerId = _getSelfPeerId != null ? await _getSelfPeerId!() : null;
 
       final result = await handleIncomingGroupMessage(
         groupRepo: _groupRepo,
@@ -194,6 +201,7 @@ class GroupMessageListener {
         keyEpoch: keyEpoch,
         text: text,
         timestamp: timestamp,
+        selfPeerId: selfPeerId,
         messageId: wireMessageId,
         quotedMessageId: wireQuotedMessageId,
         media: media,
@@ -204,39 +212,39 @@ class GroupMessageListener {
         _messageController.add(result);
 
         // Show notification for incoming group messages (skip own messages)
-        final selfPeerId = _getSelfPeerId != null
-            ? await _getSelfPeerId!()
-            : null;
         if (senderId != selfPeerId &&
             _notificationService != null &&
             _groupConversationTracker != null &&
             _getAppLifecycleState != null) {
           final group = await _groupRepo.getGroup(groupId);
+          final isMuted = group?.isMuted ?? false;
           final groupName = group?.name ?? 'Group';
           final notifAttachments =
               media?.map((m) => MediaAttachment.fromJson(m)).toList() ??
               <MediaAttachment>[];
-          maybeShowNotification(
-            notificationService: _notificationService!,
-            conversationTracker: _groupConversationTracker!,
-            getAppLifecycleState: _getAppLifecycleState!,
-            contactPeerId: 'group:$groupId',
-            routePayload: NotificationRouteTarget.group(
-              groupId,
+          if (!isMuted) {
+            maybeShowNotification(
+              notificationService: _notificationService!,
+              conversationTracker: _groupConversationTracker!,
+              getAppLifecycleState: _getAppLifecycleState!,
+              contactPeerId: 'group:$groupId',
+              routePayload: NotificationRouteTarget.group(
+                groupId,
+                messageId: result.id,
+              ).toPayload(),
+              senderUsername: groupName,
+              messageText:
+                  '$senderUsername: ${notificationBodyForMessage(text, notifAttachments)}',
               messageId: result.id,
-            ).toPayload(),
-            senderUsername: groupName,
-            messageText:
-                '$senderUsername: ${notificationBodyForMessage(text, notifAttachments)}',
-            messageId: result.id,
-            consumeRecentRemoteNotificationAnnouncement:
-                ({required payload, String? messageId}) =>
-                    _remoteNotificationGate.consumeIfRecentAnnouncement(
-                      payload: payload,
-                      messageId: messageId,
-                    ),
-            backgroundDuplicateGuardDelay: Duration.zero,
-          );
+              consumeRecentRemoteNotificationAnnouncement:
+                  ({required payload, String? messageId}) =>
+                      _remoteNotificationGate.consumeIfRecentAnnouncement(
+                        payload: payload,
+                        messageId: messageId,
+                      ),
+              backgroundDuplicateGuardDelay: Duration.zero,
+            );
+          }
         }
 
         // Fire-and-forget: auto-download media attachments
@@ -324,10 +332,22 @@ class GroupMessageListener {
       final parsed = jsonDecode(text) as Map<String, dynamic>;
       final sysType = parsed['__sys'] as String?;
       final envelopeEventAt = _parseMembershipEventAt(timestamp);
-      final eventAt = sysType == 'member_removed'
-          ? _parseMembershipEventAt(parsed['removedAt'] as String?) ??
-                envelopeEventAt
-          : envelopeEventAt;
+      final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+      final eventAt = switch (sysType) {
+        'member_removed' =>
+          _parseMembershipEventAt(parsed['removedAt'] as String?) ??
+              envelopeEventAt,
+        'group_dissolved' =>
+          _parseMembershipEventAt(parsed['dissolvedAt'] as String?) ??
+              envelopeEventAt,
+        'group_metadata_updated' =>
+          _parseMembershipEventAt(parsed['updatedAt'] as String?) ??
+              _parseMembershipEventAt(
+                groupConfig?['metadataUpdatedAt'] as String?,
+              ) ??
+              envelopeEventAt,
+        _ => envelopeEventAt,
+      };
 
       if (_requiresMembershipEventAuthorization(sysType) &&
           !await _isAuthorizedMembershipEventSender(groupId, senderId)) {
@@ -340,6 +360,19 @@ class GroupMessageListener {
             'senderId': senderId.length > 8
                 ? senderId.substring(0, 8)
                 : senderId,
+          },
+        );
+        return;
+      }
+
+      final group = await _groupRepo.getGroup(groupId);
+      if (group?.isDissolved == true && sysType != 'group_dissolved') {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_IGNORED_AFTER_DISSOLVE',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'type': sysType,
           },
         );
         return;
@@ -390,6 +423,56 @@ class GroupMessageListener {
             eventAt: eventAt,
           );
         });
+      } else if (sysType == 'member_role_updated') {
+        await _enqueueGroupConfigWork(groupId, () async {
+          if (await _shouldIgnoreStaleMembershipEvent(
+            groupId,
+            sysType: sysType,
+            eventAt: eventAt,
+          )) {
+            return;
+          }
+          await _handleMemberRoleUpdated(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+          );
+        });
+      } else if (sysType == 'group_dissolved') {
+        await _enqueueGroupConfigWork(groupId, () async {
+          if (await _shouldIgnoreStaleMembershipEvent(
+            groupId,
+            sysType: sysType,
+            eventAt: eventAt,
+          )) {
+            return;
+          }
+          await _handleGroupDissolved(
+            groupId,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+          );
+        });
+      } else if (sysType == 'group_metadata_updated') {
+        await _enqueueGroupConfigWork(groupId, () async {
+          if (await _shouldIgnoreStaleMetadataEvent(
+            groupId,
+            sysType: sysType,
+            eventAt: eventAt,
+          )) {
+            return;
+          }
+          await _handleGroupMetadataUpdated(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+          );
+        });
       } else if (sysType == 'key_rotated') {
         emitFlowEvent(
           layer: 'FL',
@@ -418,7 +501,10 @@ class GroupMessageListener {
   bool _requiresMembershipEventAuthorization(String? sysType) {
     return sysType == 'member_added' ||
         sysType == 'members_added' ||
-        sysType == 'member_removed';
+        sysType == 'member_removed' ||
+        sysType == 'member_role_updated' ||
+        sysType == 'group_dissolved' ||
+        sysType == 'group_metadata_updated';
   }
 
   Future<bool> _isAuthorizedMembershipEventSender(
@@ -473,6 +559,11 @@ class GroupMessageListener {
     // Update Go topic validator config
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig != null) {
+      await _applyAuthoritativeGroupConfigSnapshot(
+        groupId,
+        groupConfig,
+        eventAt: eventAt,
+      );
       await _syncGroupConfig(groupId, groupConfig);
     }
 
@@ -545,6 +636,11 @@ class GroupMessageListener {
 
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig != null) {
+      await _applyAuthoritativeGroupConfigSnapshot(
+        groupId,
+        groupConfig,
+        eventAt: eventAt,
+      );
       await _syncGroupConfig(groupId, groupConfig);
     }
 
@@ -623,6 +719,11 @@ class GroupMessageListener {
     // Update Go topic validator config
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig != null) {
+      await _applyAuthoritativeGroupConfigSnapshot(
+        groupId,
+        groupConfig,
+        eventAt: eventAt,
+      );
       final synced = await _syncGroupConfig(
         groupId,
         groupConfig,
@@ -658,6 +759,224 @@ class GroupMessageListener {
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'removedPeerId': removedPeerId ?? '?',
+      },
+    );
+  }
+
+  Future<void> _handleMemberRoleUpdated(
+    String groupId,
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+  }) async {
+    final memberData = parsed['member'] as Map<String, dynamic>?;
+    final updatedPeerId = memberData?['peerId'] as String?;
+    final updatedUsername = memberData?['username'] as String?;
+    final newRole = MemberRole.fromValue(
+      memberData?['role'] as String? ?? 'writer',
+    );
+    final existingMember = updatedPeerId == null
+        ? null
+        : await _groupRepo.getMember(groupId, updatedPeerId);
+
+    if (updatedPeerId != null && updatedPeerId.isNotEmpty) {
+      await _groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: updatedPeerId,
+          username: updatedUsername ?? existingMember?.username,
+          role: newRole,
+          publicKey:
+              memberData?['publicKey'] as String? ?? existingMember?.publicKey,
+          mlKemPublicKey:
+              memberData?['mlKemPublicKey'] as String? ??
+              existingMember?.mlKemPublicKey,
+          joinedAt:
+              existingMember?.joinedAt ?? eventAt ?? DateTime.now().toUtc(),
+        ),
+      );
+    }
+
+    if (_getSelfPeerId != null &&
+        updatedPeerId != null &&
+        updatedPeerId.isNotEmpty) {
+      final selfPeerId = await _getSelfPeerId!();
+      final group = await _groupRepo.getGroup(groupId);
+      if (group != null && selfPeerId == updatedPeerId) {
+        final updatedMyRole = newRole == MemberRole.admin
+            ? GroupRole.admin
+            : GroupRole.member;
+        if (group.myRole != updatedMyRole) {
+          await _groupRepo.updateGroup(group.copyWith(myRole: updatedMyRole));
+        }
+      }
+    }
+
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (groupConfig != null) {
+      await _applyAuthoritativeGroupConfigSnapshot(
+        groupId,
+        groupConfig,
+        eventAt: eventAt,
+      );
+      final synced = await _syncGroupConfig(
+        groupId,
+        groupConfig,
+        emitFailureEvent: true,
+      );
+      if (!synced) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONFIG_SYNC_FAILED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+      }
+    }
+
+    if (updatedPeerId != null && updatedPeerId.isNotEmpty) {
+      final timelineMessage = buildMemberRoleUpdatedTimelineMessage(
+        groupId: groupId,
+        updatedPeerId: updatedPeerId,
+        updatedUsername: updatedUsername,
+        previousRole: existingMember?.role,
+        newRole: newRole,
+        senderId: senderId,
+        senderUsername: senderUsername,
+        eventAt: eventAt ?? DateTime.now().toUtc(),
+      );
+      await _msgRepo.saveMessage(timelineMessage);
+      _messageController.add(timelineMessage);
+    }
+
+    await _recordMembershipEventWatermark(groupId, eventAt);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_MEMBER_ROLE_UPDATED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'memberPeerId': updatedPeerId ?? '?',
+        'role': newRole.toValue(),
+      },
+    );
+  }
+
+  Future<void> _handleGroupMetadataUpdated(
+    String groupId,
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+  }) async {
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (groupConfig == null) {
+      return;
+    }
+
+    await _applyAuthoritativeGroupConfigSnapshot(groupId, groupConfig);
+    final synced = await _syncGroupConfig(
+      groupId,
+      groupConfig,
+      emitFailureEvent: true,
+    );
+    if (!synced) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONFIG_SYNC_FAILED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+    }
+
+    final timelineMessage = GroupMessage(
+      id:
+          'sys-group_metadata_updated:$groupId:${senderId.isEmpty ? 'system' : senderId}:'
+          '${(eventAt ?? DateTime.now().toUtc()).microsecondsSinceEpoch}',
+      groupId: groupId,
+      senderPeerId: senderId.isEmpty ? 'system' : senderId,
+      senderUsername: senderUsername.isNotEmpty ? senderUsername : null,
+      text: _buildMetadataTimelineText(senderUsername),
+      timestamp: eventAt ?? DateTime.now().toUtc(),
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: eventAt ?? DateTime.now().toUtc(),
+    );
+    await _msgRepo.saveMessage(timelineMessage);
+    _messageController.add(timelineMessage);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_GROUP_METADATA_UPDATED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+  }
+
+  String _buildMetadataTimelineText(String senderUsername) {
+    final actor = senderUsername.trim().isNotEmpty
+        ? senderUsername.trim()
+        : 'Admin';
+    return '$actor updated the group details';
+  }
+
+  Future<void> _handleGroupDissolved(
+    String groupId, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+  }) async {
+    final group = await _groupRepo.getGroup(groupId);
+    if (group == null) {
+      return;
+    }
+
+    final resolvedEventAt = (eventAt ?? DateTime.now().toUtc()).toUtc();
+    await _groupRepo.updateGroup(
+      group.copyWith(
+        isDissolved: true,
+        dissolvedAt: resolvedEventAt,
+        dissolvedBy: senderId.isEmpty ? group.dissolvedBy : senderId,
+        lastMembershipEventAt: resolvedEventAt,
+      ),
+    );
+
+    final timelineMessage = buildGroupDissolvedTimelineMessage(
+      groupId: groupId,
+      senderId: senderId,
+      senderUsername: senderUsername,
+      eventAt: resolvedEventAt,
+    );
+    await _msgRepo.saveMessage(timelineMessage);
+    _messageController.add(timelineMessage);
+
+    await _recordMembershipEventWatermark(groupId, resolvedEventAt);
+
+    if (_bridge != null) {
+      try {
+        await callGroupLeave(_bridge!, groupId);
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_DISSOLVE_LEAVE_ERROR',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'error': e.toString(),
+          },
+        );
+      }
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_GROUP_DISSOLVED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
       },
     );
   }
@@ -779,26 +1098,192 @@ class GroupMessageListener {
     return candidates.last;
   }
 
-  Future<void> _recordMembershipEventWatermark(
-    String groupId,
-    DateTime? eventAt,
-  ) async {
+  Future<bool> _shouldIgnoreStaleMetadataEvent(
+    String groupId, {
+    required String? sysType,
+    required DateTime? eventAt,
+  }) async {
     if (eventAt == null) {
-      return;
+      return false;
     }
 
+    final watermark = await _resolveMetadataEventWatermark(groupId);
+    if (watermark == null || eventAt.isAfter(watermark)) {
+      return false;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_STALE_METADATA_EVENT_IGNORED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'type': sysType ?? 'null',
+        'eventAt': eventAt.toIso8601String(),
+        'watermark': watermark.toIso8601String(),
+      },
+    );
+    return true;
+  }
+
+  Future<DateTime?> _resolveMetadataEventWatermark(String groupId) async {
+    final group = await _groupRepo.getGroup(groupId);
+    return group?.lastMetadataEventAt?.toUtc();
+  }
+
+  Future<void> _applyAuthoritativeGroupConfigSnapshot(
+    String groupId,
+    Map<String, dynamic> groupConfig, {
+    DateTime? eventAt,
+  }) async {
     final group = await _groupRepo.getGroup(groupId);
     if (group == null) {
       return;
     }
 
-    final current = group.lastMembershipEventAt?.toUtc();
-    if (current != null && !eventAt.isAfter(current)) {
+    final membersList = groupConfig['members'] as List<dynamic>?;
+    if (membersList == null) {
       return;
     }
 
+    final existingMembers = await _groupRepo.getMembers(groupId);
+    final existingByPeerId = {
+      for (final member in existingMembers) member.peerId: member,
+    };
+    final snapshotPeerIds = <String>{};
+    MemberRole? selfSnapshotRole;
+    final selfPeerId = _getSelfPeerId != null ? await _getSelfPeerId!() : null;
+
+    for (final rawMember in membersList) {
+      final memberData = rawMember as Map<String, dynamic>;
+      final peerId = memberData['peerId'] as String?;
+      if (peerId == null || peerId.isEmpty) {
+        continue;
+      }
+
+      final existingMember = existingByPeerId[peerId];
+      final role = MemberRole.fromValue(
+        memberData['role'] as String? ?? 'writer',
+      );
+      snapshotPeerIds.add(peerId);
+
+      if (selfPeerId != null && selfPeerId == peerId) {
+        selfSnapshotRole = role;
+      }
+
+      await _groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: peerId,
+          username:
+              memberData['username'] as String? ?? existingMember?.username,
+          role: role,
+          publicKey:
+              memberData['publicKey'] as String? ?? existingMember?.publicKey,
+          mlKemPublicKey:
+              memberData['mlKemPublicKey'] as String? ??
+              existingMember?.mlKemPublicKey,
+          joinedAt:
+              existingMember?.joinedAt ?? eventAt ?? group.createdAt.toUtc(),
+        ),
+      );
+    }
+
+    for (final existingMember in existingMembers) {
+      if (!snapshotPeerIds.contains(existingMember.peerId)) {
+        await _groupRepo.removeMember(groupId, existingMember.peerId);
+      }
+    }
+
+    var resolvedType = group.type;
+    final groupTypeValue = groupConfig['groupType'] as String?;
+    if (groupTypeValue != null && groupTypeValue.isNotEmpty) {
+      try {
+        resolvedType = GroupType.fromValue(groupTypeValue);
+      } on ArgumentError {
+        resolvedType = group.type;
+      }
+    }
+
+    final createdAtValue = groupConfig['createdAt'] as String?;
+    final resolvedCreatedAt =
+        DateTime.tryParse(createdAtValue ?? '')?.toUtc() ?? group.createdAt;
+    final metadataUpdatedAtValue = groupConfig['metadataUpdatedAt'] as String?;
+    final resolvedMetadataUpdatedAt = DateTime.tryParse(
+      metadataUpdatedAtValue ?? '',
+    )?.toUtc();
+    final containsAvatarBlobId = groupConfig.containsKey('avatarBlobId');
+    final containsAvatarMime = groupConfig.containsKey('avatarMime');
+    final resolvedAvatarBlobId = containsAvatarBlobId
+        ? groupConfig['avatarBlobId'] as String?
+        : group.avatarBlobId;
+    final resolvedAvatarMime = containsAvatarMime
+        ? groupConfig['avatarMime'] as String?
+        : group.avatarMime;
+    final avatarChanged =
+        resolvedAvatarBlobId != group.avatarBlobId ||
+        resolvedAvatarMime != group.avatarMime;
+    final shouldClearAvatar =
+        (containsAvatarBlobId || containsAvatarMime) &&
+        (resolvedAvatarBlobId == null || resolvedAvatarMime == null);
+    final nextAvatarPath = shouldClearAvatar || avatarChanged
+        ? null
+        : group.avatarPath;
+
+    if ((avatarChanged || shouldClearAvatar) && group.avatarPath != null) {
+      await deleteGroupAvatar(storedPath: group.avatarPath);
+    }
+
     await _groupRepo.updateGroup(
-      group.copyWith(lastMembershipEventAt: eventAt.toUtc()),
+      group.copyWith(
+        name: groupConfig['name'] as String? ?? group.name,
+        type: resolvedType,
+        description: groupConfig.containsKey('description')
+            ? groupConfig['description'] as String?
+            : group.description,
+        avatarBlobId: resolvedAvatarBlobId,
+        avatarMime: resolvedAvatarMime,
+        avatarPath: nextAvatarPath,
+        createdAt: resolvedCreatedAt,
+        createdBy: groupConfig['createdBy'] as String? ?? group.createdBy,
+        myRole: selfSnapshotRole == null
+            ? group.myRole
+            : (selfSnapshotRole == MemberRole.admin
+                  ? GroupRole.admin
+                  : GroupRole.member),
+        lastMetadataEventAt:
+            resolvedMetadataUpdatedAt ?? group.lastMetadataEventAt,
+      ),
+    );
+
+    if (_bridge != null &&
+        resolvedAvatarBlobId != null &&
+        resolvedAvatarMime != null &&
+        (avatarChanged || nextAvatarPath == null)) {
+      final avatarPath = await _downloadGroupAvatarFn(
+        bridge: _bridge!,
+        groupId: groupId,
+        blobId: resolvedAvatarBlobId,
+      );
+      if (avatarPath != null) {
+        final refreshedGroup = await _groupRepo.getGroup(groupId);
+        if (refreshedGroup != null &&
+            refreshedGroup.avatarBlobId == resolvedAvatarBlobId) {
+          await _groupRepo.updateGroup(
+            refreshedGroup.copyWith(avatarPath: avatarPath),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _recordMembershipEventWatermark(
+    String groupId,
+    DateTime? eventAt,
+  ) async {
+    await recordGroupMembershipEventWatermark(
+      groupRepo: _groupRepo,
+      groupId: groupId,
+      eventAt: eventAt,
     );
   }
 

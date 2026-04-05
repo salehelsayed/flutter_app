@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -241,6 +242,41 @@ void main() {
       );
 
       expect(result.group.name, 'Custom Name');
+    });
+
+    test('rejects over-limit selection before creating a group', () async {
+      final tooManyContacts = List.generate(
+        groupMembershipLimit,
+        (index) =>
+            makeContact(peerId: 'peer-over-$index', username: 'User $index'),
+      );
+
+      await expectLater(
+        createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: tooManyContacts,
+          type: GroupType.chat,
+          name: 'Too Large',
+        ),
+        throwsA(
+          isA<GroupMembershipLimitException>()
+              .having((e) => e.maxMembers, 'maxMembers', groupMembershipLimit)
+              .having((e) => e.currentMemberCount, 'currentMemberCount', 1)
+              .having(
+                (e) => e.requestedAdditionalMembers,
+                'requestedAdditionalMembers',
+                groupMembershipLimit,
+              ),
+        ),
+      );
+
+      expect(bridge.commandLog, isEmpty);
+      expect(await groupRepo.getGroup('test-group-id'), isNull);
+      expect(await groupRepo.getMembers('test-group-id'), isEmpty);
+      expect(await groupRepo.getLatestKey('test-group-id'), isNull);
     });
 
     test('succeeds locally even when P2P invite fails', () async {

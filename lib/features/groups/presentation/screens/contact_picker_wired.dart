@@ -10,8 +10,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -68,10 +70,9 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
     // 4. Filter: only contacts NOT already in the group and not self
     if (!mounted) return;
     setState(() {
-      _availableContacts = allContacts
-          .where((c) => !excludePeerIds.contains(c.peerId))
-          .toList()
-        ..sort((a, b) => a.username.compareTo(b.username));
+      _availableContacts =
+          allContacts.where((c) => !excludePeerIds.contains(c.peerId)).toList()
+            ..sort((a, b) => a.username.compareTo(b.username));
     });
   }
 
@@ -95,6 +96,12 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       final selectedContacts = _availableContacts
           .where((c) => _selectedPeerIds.contains(c.peerId))
           .toList();
+
+      final currentMembers = await widget.groupRepo.getMembers(widget.groupId);
+      ensureWithinGroupMembershipLimit(
+        currentMemberCount: currentMembers.length,
+        requestedAdditionalMembers: selectedContacts.length,
+      );
 
       // 1. Add all members locally (continue on individual errors)
       final addedMembers = <GroupMember>[];
@@ -133,23 +140,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       final allMembers = await widget.groupRepo.getMembers(widget.groupId);
       if (group == null) throw StateError('Group not found');
 
-      final groupConfig = {
-        'name': group.name,
-        'groupType': group.type.toValue(),
-        if (group.description != null) 'description': group.description,
-        'members': allMembers
-            .map((m) => {
-                  'peerId': m.peerId,
-                  'username': m.username,
-                  'role': m.role.toValue(),
-                  'publicKey': m.publicKey,
-                  if (m.mlKemPublicKey != null)
-                    'mlKemPublicKey': m.mlKemPublicKey,
-                })
-            .toList(),
-        'createdBy': group.createdBy,
-        'createdAt': group.createdAt.toUtc().toIso8601String(),
-      };
+      final groupConfig = buildGroupConfigPayload(group, allMembers);
 
       await callGroupUpdateConfig(
         widget.bridge,
@@ -161,14 +152,16 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       final sysMessage = jsonEncode({
         '__sys': 'members_added',
         'members': addedMembers
-            .map((m) => {
-                  'peerId': m.peerId,
-                  'username': m.username,
-                  'role': m.role.toValue(),
-                  'publicKey': m.publicKey,
-                  if (m.mlKemPublicKey != null)
-                    'mlKemPublicKey': m.mlKemPublicKey,
-                })
+            .map(
+              (m) => {
+                'peerId': m.peerId,
+                'username': m.username,
+                'role': m.role.toValue(),
+                'publicKey': m.publicKey,
+                if (m.mlKemPublicKey != null)
+                  'mlKemPublicKey': m.mlKemPublicKey,
+              },
+            )
             .toList(),
         'groupConfig': groupConfig,
       });
@@ -235,11 +228,23 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       );
       if (mounted) {
         setState(() => _isInviting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AppLocalizations.of(context)!.group_invite_failed)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_buildInviteErrorMessage(e))));
       }
     }
+  }
+
+  String _buildInviteErrorMessage(Object error) {
+    final l10n = AppLocalizations.of(context)!;
+    if (error is GroupMembershipLimitException) {
+      return l10n.group_invite_member_limit_reached(
+        error.maxMembers,
+        error.overflowCount,
+      );
+    }
+
+    return l10n.group_invite_failed;
   }
 
   void _onBack() {

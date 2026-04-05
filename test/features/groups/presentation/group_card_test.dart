@@ -15,16 +15,10 @@ void main() {
     myRole: GroupRole.admin,
   );
 
-  Widget buildTestWidget({
-    GroupModel? group,
-    int unreadCount = 0,
-  }) {
+  Widget buildTestWidget({GroupModel? group, int unreadCount = 0}) {
     return MaterialApp(
       home: Scaffold(
-        body: GroupCard(
-          group: group ?? testGroup,
-          unreadCount: unreadCount,
-        ),
+        body: GroupCard(group: group ?? testGroup, unreadCount: unreadCount),
       ),
     );
   }

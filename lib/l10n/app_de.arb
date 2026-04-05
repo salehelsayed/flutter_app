@@ -195,6 +195,28 @@
   "group_message_hint": "Nachricht",
   "group_create_failed": "Gruppe konnte nicht erstellt werden",
   "group_invite_failed": "Mitglieder konnten nicht eingeladen werden",
+  "group_create_member_limit_reached": "Gruppen können bis zu {maxMembers} Mitglieder einschließlich dir haben. Verringere deine Auswahl um {overflowCount} und versuche es erneut.",
+  "@group_create_member_limit_reached": {
+    "placeholders": {
+      "maxMembers": {
+        "type": "int"
+      },
+      "overflowCount": {
+        "type": "int"
+      }
+    }
+  },
+  "group_invite_member_limit_reached": "Gruppen können bis zu {maxMembers} Mitglieder haben. Verringere deine Auswahl um {overflowCount} und versuche es erneut.",
+  "@group_invite_member_limit_reached": {
+    "placeholders": {
+      "maxMembers": {
+        "type": "int"
+      },
+      "overflowCount": {
+        "type": "int"
+      }
+    }
+  },
   "picker_introduce_to": "An {username} vorstellen",
   "@picker_introduce_to": {
     "placeholders": {

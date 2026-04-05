@@ -467,6 +467,16 @@ class AppLocalizationsDe extends AppLocalizations {
       'Mitglieder konnten nicht eingeladen werden';
 
   @override
+  String group_create_member_limit_reached(int maxMembers, int overflowCount) {
+    return 'Gruppen können bis zu $maxMembers Mitglieder einschließlich dir haben. Verringere deine Auswahl um $overflowCount und versuche es erneut.';
+  }
+
+  @override
+  String group_invite_member_limit_reached(int maxMembers, int overflowCount) {
+    return 'Gruppen können bis zu $maxMembers Mitglieder haben. Verringere deine Auswahl um $overflowCount und versuche es erneut.';
+  }
+
+  @override
   String picker_introduce_to(String username) {
     return 'An $username vorstellen';
   }

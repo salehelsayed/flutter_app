@@ -1,16 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
-import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 /// Listener service that monitors P2P messages for group invites.
@@ -21,6 +20,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 class GroupInviteListener {
   final Stream<ChatMessage> groupInviteStream;
   final GroupRepository groupRepo;
+  final PendingGroupInviteRepository pendingInviteRepo;
   final ContactRepository contactRepo;
   final Bridge bridge;
   final Future<String?> Function() getOwnMlKemSecretKey;
@@ -29,10 +29,13 @@ class GroupInviteListener {
 
   StreamSubscription<ChatMessage>? _subscription;
   final _groupJoinedController = StreamController<GroupModel>.broadcast();
+  final _pendingInviteController =
+      StreamController<PendingGroupInvite>.broadcast();
 
   GroupInviteListener({
     required this.groupInviteStream,
     required this.groupRepo,
+    required this.pendingInviteRepo,
     required this.contactRepo,
     required this.bridge,
     required this.getOwnMlKemSecretKey,
@@ -42,6 +45,10 @@ class GroupInviteListener {
 
   /// Stream of groups that the user has joined via invite.
   Stream<GroupModel> get groupJoinedStream => _groupJoinedController.stream;
+
+  /// Stream of newly received pending invites for UI refresh.
+  Stream<PendingGroupInvite> get pendingInviteStream =>
+      _pendingInviteController.stream;
 
   /// Starts listening for incoming group invites.
   void start() {
@@ -88,96 +95,7 @@ class GroupInviteListener {
   void dispose() {
     stop();
     _groupJoinedController.close();
-  }
-
-  /// Decodes an inbox message from the relay's envelope format.
-  static Map<String, dynamic> _decodeInboxMessage(
-    Map<String, dynamic> envelope,
-    String fallbackGroupId,
-  ) {
-    final messageStr = envelope['message'];
-    if (messageStr is String && messageStr.isNotEmpty) {
-      try {
-        return jsonDecode(messageStr) as Map<String, dynamic>;
-      } catch (_) {}
-    }
-    if (envelope.containsKey('senderId')) {
-      return envelope;
-    }
-    return {
-      'groupId': fallbackGroupId,
-      'senderId': envelope['from'] as String? ?? '',
-      'senderUsername': '',
-      'keyEpoch': 0,
-      'text': messageStr?.toString() ?? '',
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
-    };
-  }
-
-  /// Drains offline inbox for a single group after joining via invite.
-  Future<void> _drainGroupInbox(String groupId) async {
-    final repo = msgRepo;
-    if (repo == null) return;
-
-    try {
-      const pageSize = 50;
-      var cursor = '';
-      var totalMessages = 0;
-
-      do {
-        final page = await callGroupInboxRetrieveWithCursor(
-          bridge,
-          groupId,
-          cursor,
-          pageSize,
-        );
-
-        for (final msg in page.messages) {
-          // The relay returns {from, message, timestamp} where `message`
-          // is a JSON-encoded string with the actual message payload.
-          final payload = _decodeInboxMessage(msg, groupId);
-          final mediaRaw = payload['media'] as List<dynamic>?;
-          final media = mediaRaw?.cast<Map<String, dynamic>>();
-          await handleIncomingGroupMessage(
-            groupRepo: groupRepo,
-            msgRepo: repo,
-            groupId: payload['groupId'] as String? ?? groupId,
-            senderId: payload['senderId'] as String? ?? '',
-            senderUsername: payload['senderUsername'] as String? ?? '',
-            keyEpoch: payload['keyEpoch'] as int? ?? 0,
-            text: payload['text'] as String? ?? '',
-            timestamp:
-                payload['timestamp'] as String? ??
-                DateTime.now().toUtc().toIso8601String(),
-            messageId: payload['messageId'] as String?,
-            quotedMessageId: payload['quotedMessageId'] as String?,
-            media: media,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-          );
-        }
-
-        totalMessages += page.messages.length;
-        cursor = page.cursor;
-      } while (cursor.isNotEmpty);
-
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_INVITE_DRAIN_INBOX_DONE',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'messageCount': totalMessages,
-        },
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_INVITE_DRAIN_INBOX_ERROR',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'error': e.toString(),
-        },
-      );
-    }
+    _pendingInviteController.close();
   }
 
   Future<void> _onMessage(ChatMessage message) async {
@@ -211,34 +129,31 @@ class GroupInviteListener {
 
       final ownSecretKey = await getOwnMlKemSecretKey();
 
-      final (result, groupId) = await handleIncomingGroupInvite(
+      final (result, pendingInvite) = await storeIncomingPendingGroupInvite(
         message: message,
         groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
         contactRepo: contactRepo,
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
+        receivedAt:
+            DateTime.tryParse(message.timestamp)?.toUtc() ??
+            DateTime.now().toUtc(),
       );
 
-      if (result == HandleGroupInviteResult.success && groupId != null) {
-        // Drain offline inbox for this group — retrieves messages sent while
-        // we were offline. Must happen AFTER callGroupJoinWithConfig so the
-        // Go node has already joined the topic.
-        await _drainGroupInbox(groupId);
-
-        final group = await groupRepo.getGroup(groupId);
-        if (group != null) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'GROUP_INVITE_LISTENER_NEW_GROUP',
-            details: {
-              'groupId': group.id.length > 8
-                  ? group.id.substring(0, 8)
-                  : group.id,
-              'name': group.name,
-            },
-          );
-          _groupJoinedController.add(group);
-        }
+      if (result == StorePendingGroupInviteResult.storedPending &&
+          pendingInvite != null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INVITE_LISTENER_PENDING_STORED',
+          details: {
+            'groupId': pendingInvite.groupId.length > 8
+                ? pendingInvite.groupId.substring(0, 8)
+                : pendingInvite.groupId,
+            'name': pendingInvite.groupName,
+          },
+        );
+        _pendingInviteController.add(pendingInvite);
       }
     } catch (e) {
       emitFlowEvent(

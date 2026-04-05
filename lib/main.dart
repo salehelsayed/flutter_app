@@ -35,6 +35,7 @@ import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
 import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
 import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
@@ -64,6 +65,11 @@ import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.d
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
 import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
+import 'package:flutter_app/core/database/migrations/049_groups_metadata_columns.dart';
+import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart';
+import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
+import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
+import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -117,6 +123,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
@@ -243,7 +250,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 48,
+    version: 53,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -293,6 +300,11 @@ void main() async {
       await runPendingIntroductionResponsesMigration(db);
       await runIntroductionOutboxMigration(db);
       await runGroupsLastMembershipEventAtMigration(db);
+      await runGroupsMetadataColumnsMigration(db);
+      await runGroupsMuteColumnMigration(db);
+      await runPendingGroupInvitesMigration(db);
+      await runGroupsDissolveColumnsMigration(db);
+      await runGroupsBacklogRetentionColumnsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -433,6 +445,21 @@ void main() async {
       }
       if (oldVersion < 48) {
         await runGroupsLastMembershipEventAtMigration(db);
+      }
+      if (oldVersion < 49) {
+        await runGroupsMetadataColumnsMigration(db);
+      }
+      if (oldVersion < 50) {
+        await runGroupsMuteColumnMigration(db);
+      }
+      if (oldVersion < 51) {
+        await runPendingGroupInvitesMigration(db);
+      }
+      if (oldVersion < 52) {
+        await runGroupsDissolveColumnsMigration(db);
+      }
+      if (oldVersion < 53) {
+        await runGroupsBacklogRetentionColumnsMigration(db);
       }
     },
   );
@@ -749,6 +776,17 @@ void main() async {
     dbLoadGroupKeyByGeneration: (groupId, generation) =>
         dbLoadGroupKeyByGeneration(db, groupId, generation),
     dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
+  );
+
+  final pendingGroupInviteRepository = PendingGroupInviteRepositoryImpl(
+    dbUpsertPendingGroupInvite: (row) => dbUpsertPendingGroupInvite(db, row),
+    dbLoadPendingGroupInvites: () => dbLoadPendingGroupInvites(db),
+    dbLoadPendingGroupInvite: (groupId) =>
+        dbLoadPendingGroupInvite(db, groupId),
+    dbDeletePendingGroupInvite: (groupId) =>
+        dbDeletePendingGroupInvite(db, groupId),
+    dbDeleteExpiredPendingGroupInvites: (cutoff) =>
+        dbDeleteExpiredPendingGroupInvites(db, cutoff),
   );
 
   // Create group message repository
@@ -1266,6 +1304,7 @@ void main() async {
   final groupInviteListener = GroupInviteListener(
     groupInviteStream: messageRouter.groupInviteStream,
     groupRepo: groupRepository,
+    pendingInviteRepo: pendingGroupInviteRepository,
     contactRepo: contactRepository,
     bridge: bridge,
     msgRepo: groupMessageRepository,

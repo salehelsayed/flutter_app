@@ -125,6 +125,7 @@ void main() {
 
     test('buildEncryptedEnvelope creates v2 envelope', () {
       final envelope = IntroductionPayload.buildEncryptedEnvelope(
+        introductionId: 'intro-1',
         senderPeerId: 'peer-A',
         kem: 'test-kem-data',
         ciphertext: 'test-ciphertext',
@@ -135,6 +136,7 @@ void main() {
 
       expect(map['type'], equals('introduction'));
       expect(map['version'], equals('2'));
+      expect(map['messageId'], equals('intro-1'));
       expect(map['encrypted'], isA<Map<String, dynamic>>());
       expect(map['encrypted']['kem'], equals('test-kem-data'));
       expect(map['encrypted']['ciphertext'], equals('test-ciphertext'));
