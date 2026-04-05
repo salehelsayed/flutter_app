@@ -38,8 +38,12 @@ void main() {
     List<ContactModel> contacts = const [],
     List<GroupModel> groups = const [],
     bool isLoading = false,
-    ValueChanged<ContactModel>? onContactSelected,
-    ValueChanged<GroupModel>? onGroupSelected,
+    bool isSending = false,
+    Set<String> selectedContactPeerIds = const {},
+    Set<String> selectedGroupIds = const {},
+    ValueChanged<ContactModel>? onToggleContact,
+    ValueChanged<GroupModel>? onToggleGroup,
+    VoidCallback? onSend,
     VoidCallback? onCancel,
   }) {
     return MaterialApp(
@@ -52,8 +56,12 @@ void main() {
         contacts: contacts,
         groups: groups,
         isLoading: isLoading,
-        onContactSelected: onContactSelected ?? (_) {},
-        onGroupSelected: onGroupSelected ?? (_) {},
+        isSending: isSending,
+        selectedContactPeerIds: selectedContactPeerIds,
+        selectedGroupIds: selectedGroupIds,
+        onToggleContact: onToggleContact ?? (_) {},
+        onToggleGroup: onToggleGroup ?? (_) {},
+        onSend: onSend,
         onCancel: onCancel ?? () {},
       ),
     );
@@ -117,14 +125,14 @@ void main() {
     expect(find.text('Friends'), findsOneWidget);
   });
 
-  testWidgets('2e: tapping contact calls onContactSelected', (tester) async {
-    ContactModel? selected;
+  testWidgets('tapping contact toggles selection via callback', (tester) async {
+    ContactModel? toggled;
     final contact = makeContact(peerId: 'alice', username: 'Alice');
 
     await tester.pumpWidget(
       buildScreen(
         contacts: [contact],
-        onContactSelected: (value) => selected = value,
+        onToggleContact: (value) => toggled = value,
       ),
     );
     await tester.pump();
@@ -132,25 +140,109 @@ void main() {
     await tester.tap(find.text('Alice'));
     await tester.pump();
 
-    expect(selected?.peerId, contact.peerId);
+    expect(toggled?.peerId, contact.peerId);
   });
 
-  testWidgets('2f: tapping group calls onGroupSelected', (tester) async {
-    GroupModel? selected;
+  testWidgets('tapping group toggles selection via callback', (tester) async {
+    GroupModel? toggled;
     final group = makeGroup(id: 'friends', name: 'Friends');
 
     await tester.pumpWidget(
-      buildScreen(
-        groups: [group],
-        onGroupSelected: (value) => selected = value,
-      ),
+      buildScreen(groups: [group], onToggleGroup: (value) => toggled = value),
     );
     await tester.pump();
 
     await tester.tap(find.text('Friends'));
     await tester.pump();
 
-    expect(selected?.id, group.id);
+    expect(toggled?.id, group.id);
+  });
+
+  testWidgets('selected rows show count-aware header and send CTA', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildScreen(
+        contacts: [makeContact(peerId: 'alice', username: 'Alice')],
+        groups: [makeGroup(id: 'friends', name: 'Friends')],
+        selectedContactPeerIds: const {'alice'},
+        selectedGroupIds: const {'friends'},
+        onSend: () {},
+      ),
+    );
+
+    expect(find.text('Share with (2)'), findsOneWidget);
+    expect(find.text('Send'), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsNWidgets(2));
+  });
+
+  testWidgets('send CTA stays hidden until at least one target is selected', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildScreen(
+        contacts: [makeContact(peerId: 'alice', username: 'Alice')],
+        onSend: () {},
+      ),
+    );
+
+    expect(find.text('Send'), findsNothing);
+  });
+
+  testWidgets('send CTA invokes onSend when tapped', (tester) async {
+    var sendCount = 0;
+
+    await tester.pumpWidget(
+      buildScreen(
+        contacts: [makeContact(peerId: 'alice', username: 'Alice')],
+        selectedContactPeerIds: const {'alice'},
+        onSend: () => sendCount++,
+      ),
+    );
+
+    await tester.tap(find.text('Send'));
+    await tester.pump();
+
+    expect(sendCount, 1);
+  });
+
+  testWidgets('sending state disables actions and shows progress copy', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildScreen(
+        contacts: [makeContact(peerId: 'alice', username: 'Alice')],
+        selectedContactPeerIds: const {'alice'},
+        isSending: true,
+        onToggleContact: (_) {},
+        onSend: () {},
+        onCancel: () {},
+      ),
+    );
+
+    expect(find.text('Sending...'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      tester
+          .widget<ListTile>(find.byKey(const ValueKey('share-contact-alice')))
+          .enabled,
+      isFalse,
+    );
+    expect(
+      tester.widget<IconButton>(find.byType(IconButton)).onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<GestureDetector>(
+            find.ancestor(
+              of: find.text('Sending...'),
+              matching: find.byType(GestureDetector),
+            ),
+          )
+          .onTap,
+      isNull,
+    );
   });
 
   testWidgets('2g: search filters both contacts and groups', (tester) async {

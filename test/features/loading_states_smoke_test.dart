@@ -74,8 +74,8 @@ void main() {
             contacts: [],
             groups: [],
             isLoading: true,
-            onContactSelected: (_) {},
-            onGroupSelected: (_) {},
+            onToggleContact: (_) {},
+            onToggleGroup: (_) {},
             onCancel: () {},
           ),
         ),
@@ -87,9 +87,7 @@ void main() {
     testWidgets('QR shimmer renders and animates without overflow', (
       tester,
     ) async {
-      await tester.pumpWidget(
-        buildTestApp(QRCodeSection(qrData: null)),
-      );
+      await tester.pumpWidget(buildTestApp(QRCodeSection(qrData: null)));
       await tester.pump(const Duration(seconds: 2));
       expect(tester.takeException(), isNull);
     });
@@ -126,8 +124,8 @@ void main() {
             contacts: [],
             groups: [],
             isLoading: false,
-            onContactSelected: (_) {},
-            onGroupSelected: (_) {},
+            onToggleContact: (_) {},
+            onToggleGroup: (_) {},
             onCancel: () {},
           ),
         ),

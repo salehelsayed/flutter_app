@@ -12,12 +12,9 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
-import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
-import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
@@ -25,6 +22,8 @@ import 'package:flutter_app/features/identity/presentation/startup_router.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
+import 'package:flutter_app/features/share/application/share_target_selection.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -167,7 +166,10 @@ void main() {
     }
   }
 
-  Widget buildSharePickerApp({required ShareIntent shareIntent}) {
+  Widget buildSharePickerApp({
+    required ShareIntent shareIntent,
+    ShareBatchDeliveryCoordinator? batchShareCoordinator,
+  }) {
     return MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -186,6 +188,7 @@ void main() {
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
+        batchShareCoordinator: batchShareCoordinator,
       ),
     );
   }
@@ -218,129 +221,86 @@ void main() {
     );
   }
 
-  testWidgets('6a: share text to 1:1 contact shows text in compose area', (
+  testWidgets(
+    '6a: share text can target multiple selected recipients from the picker',
+    (tester) async {
+      identityRepository.seed(identityWithContacts);
+      contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
+      await groupRepository.saveGroup(
+        _makeGroup('group-chat', 'Writers', GroupType.chat, GroupRole.admin),
+      );
+      final coordinator = _RecordingBatchCoordinator.failAll();
+
+      await tester.pumpWidget(
+        buildSharePickerApp(
+          shareIntent: const ShareIntent(
+            type: ShareIntentType.text,
+            text: 'share this',
+          ),
+          batchShareCoordinator: coordinator,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.byKey(const ValueKey('share-contact-peer-alice')));
+      await tester.tap(find.byKey(const ValueKey('share-group-group-chat')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await pumpFrames(tester);
+
+      expect(coordinator.deliverCallCount, 1);
+      expect(coordinator.lastShareIntent?.text, 'share this');
+      expect(coordinator.lastTargets.map((target) => target.key).toList(), [
+        ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')).key,
+        ShareTargetSelection.group(
+          _makeGroup('group-chat', 'Writers', GroupType.chat, GroupRole.admin),
+        ).key,
+      ]);
+    },
+  );
+
+  testWidgets(
+    '6b: share image keeps file payload when send is confirmed from the picker',
+    (tester) async {
+      identityRepository.seed(identityWithContacts);
+      contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
+      final coordinator = _RecordingBatchCoordinator.failAll();
+      final tempDir = Directory.systemTemp.createTempSync('share_smoke_image_');
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final sharedFile = File('${tempDir.path}/shared.jpg')
+        ..writeAsStringSync('image');
+
+      await tester.pumpWidget(
+        buildSharePickerApp(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: [sharedFile.path],
+          ),
+          batchShareCoordinator: coordinator,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.byKey(const ValueKey('share-contact-peer-alice')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await pumpFrames(tester);
+
+      expect(coordinator.deliverCallCount, 1);
+      expect(coordinator.lastShareIntent?.filePaths, [sharedFile.path]);
+    },
+  );
+
+  testWidgets('6e: share URL keeps URL text in the picker delivery request', (
     tester,
   ) async {
     identityRepository.seed(identityWithContacts);
     contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
-
-    await tester.pumpWidget(
-      buildSharePickerApp(
-        shareIntent: const ShareIntent(
-          type: ShareIntentType.text,
-          text: 'share this',
-        ),
-      ),
-    );
-    await pumpFrames(tester);
-
-    await tester.tap(find.byKey(const ValueKey('share-contact-peer-alice')));
-    await pumpFrames(tester, count: 20);
-
-    final textField = tester.widget<TextField>(find.byType(TextField));
-    expect(textField.controller?.text, 'share this');
-  });
-
-  testWidgets('6b: share image to 1:1 contact shows pending attachment', (
-    tester,
-  ) async {
-    identityRepository.seed(identityWithContacts);
-    contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
-    final tempDir = Directory.systemTemp.createTempSync('share_smoke_image_');
-    addTearDown(() {
-      if (tempDir.existsSync()) {
-        tempDir.deleteSync(recursive: true);
-      }
-    });
-    final sharedFile = File('${tempDir.path}/shared.jpg')
-      ..writeAsStringSync('image');
-
-    await tester.pumpWidget(
-      buildSharePickerApp(
-        shareIntent: ShareIntent(
-          type: ShareIntentType.files,
-          filePaths: [sharedFile.path],
-        ),
-      ),
-    );
-    await pumpFrames(tester);
-
-    await tester.tap(find.byKey(const ValueKey('share-contact-peer-alice')));
-    await pumpFrames(tester, count: 20);
-
-    expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
-    final conversation = tester.widget<ConversationWired>(
-      find.byType(ConversationWired),
-    );
-    expect(conversation.initialAttachments, hasLength(1));
-    expect(conversation.initialPendingMedia, hasLength(1));
-  });
-
-  testWidgets('6c: share text to group shows text in compose area', (
-    tester,
-  ) async {
-    identityRepository.seed(identityWithContacts);
-    await groupRepository.saveGroup(
-      _makeGroup('group-chat', 'Writers', GroupType.chat, GroupRole.admin),
-    );
-
-    await tester.pumpWidget(
-      buildSharePickerApp(
-        shareIntent: const ShareIntent(
-          type: ShareIntentType.text,
-          text: 'group text',
-        ),
-      ),
-    );
-    await pumpFrames(tester);
-
-    await tester.tap(find.byKey(const ValueKey('share-group-group-chat')));
-    await pumpFrames(tester, count: 20);
-
-    final textField = tester.widget<TextField>(find.byType(TextField));
-    expect(textField.controller?.text, 'group text');
-  });
-
-  testWidgets('6d: share image to group shows pending attachment', (
-    tester,
-  ) async {
-    identityRepository.seed(identityWithContacts);
-    await groupRepository.saveGroup(
-      _makeGroup('group-chat', 'Writers', GroupType.chat, GroupRole.admin),
-    );
-    final tempDir = Directory.systemTemp.createTempSync('share_smoke_group_');
-    addTearDown(() {
-      if (tempDir.existsSync()) {
-        tempDir.deleteSync(recursive: true);
-      }
-    });
-    final sharedFile = File('${tempDir.path}/shared.jpg')
-      ..writeAsStringSync('image');
-
-    await tester.pumpWidget(
-      buildSharePickerApp(
-        shareIntent: ShareIntent(
-          type: ShareIntentType.files,
-          filePaths: [sharedFile.path],
-        ),
-      ),
-    );
-    await pumpFrames(tester);
-
-    await tester.tap(find.byKey(const ValueKey('share-group-group-chat')));
-    await pumpFrames(tester, count: 20);
-
-    expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
-    final conversation = tester.widget<GroupConversationWired>(
-      find.byType(GroupConversationWired),
-    );
-    expect(conversation.initialAttachments, hasLength(1));
-    expect(conversation.initialPendingMedia, hasLength(1));
-  });
-
-  testWidgets('6e: share URL keeps URL text in compose area', (tester) async {
-    identityRepository.seed(identityWithContacts);
-    contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
+    final coordinator = _RecordingBatchCoordinator.failAll();
 
     await tester.pumpWidget(
       buildSharePickerApp(
@@ -348,22 +308,25 @@ void main() {
           type: ShareIntentType.text,
           text: 'https://mknoon.app/post/123',
         ),
+        batchShareCoordinator: coordinator,
       ),
     );
     await pumpFrames(tester);
 
     await tester.tap(find.byKey(const ValueKey('share-contact-peer-alice')));
-    await pumpFrames(tester, count: 20);
+    await tester.pump();
+    await tester.tap(find.text('Send'));
+    await pumpFrames(tester);
 
-    final textField = tester.widget<TextField>(find.byType(TextField));
-    expect(textField.controller?.text, 'https://mknoon.app/post/123');
+    expect(coordinator.lastShareIntent?.text, 'https://mknoon.app/post/123');
   });
 
-  testWidgets('6f: share multiple images attaches all pending files', (
+  testWidgets('6f: share multiple images preserves all file paths', (
     tester,
   ) async {
     identityRepository.seed(identityWithContacts);
     contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
+    final coordinator = _RecordingBatchCoordinator.failAll();
     final tempDir = Directory.systemTemp.createTempSync('share_smoke_multi_');
     addTearDown(() {
       if (tempDir.existsSync()) {
@@ -379,18 +342,17 @@ void main() {
           type: ShareIntentType.files,
           filePaths: [first.path, second.path],
         ),
+        batchShareCoordinator: coordinator,
       ),
     );
     await pumpFrames(tester);
 
     await tester.tap(find.byKey(const ValueKey('share-contact-peer-alice')));
-    await pumpFrames(tester, count: 20);
+    await tester.pump();
+    await tester.tap(find.text('Send'));
+    await pumpFrames(tester);
 
-    final conversation = tester.widget<ConversationWired>(
-      find.byType(ConversationWired),
-    );
-    expect(conversation.initialAttachments, hasLength(2));
-    expect(conversation.initialPendingMedia, hasLength(2));
+    expect(coordinator.lastShareIntent?.filePaths, [first.path, second.path]);
   });
 
   testWidgets(
@@ -618,6 +580,42 @@ GroupModel _makeGroup(String id, String name, GroupType type, GroupRole role) {
     createdBy: 'me',
     myRole: role,
   );
+}
+
+class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
+  final ShareBatchDeliveryResult Function(List<ShareTargetSelection>) _builder;
+  int deliverCallCount = 0;
+  ShareIntent? lastShareIntent;
+  List<ShareTargetSelection> lastTargets = const [];
+
+  _RecordingBatchCoordinator({required ShareBatchDeliveryResult result})
+    : _builder = ((_) => result);
+
+  _RecordingBatchCoordinator.failAll()
+    : _builder = ((targets) {
+        return ShareBatchDeliveryResult(
+          results: targets
+              .map(
+                (target) => ShareBatchTargetResult(
+                  target: target,
+                  status: ShareBatchTargetStatus.failed,
+                  detail: 'Share failed.',
+                ),
+              )
+              .toList(growable: false),
+        );
+      });
+
+  @override
+  Future<ShareBatchDeliveryResult> deliver({
+    required ShareIntent shareIntent,
+    required List<ShareTargetSelection> targets,
+  }) async {
+    deliverCallCount++;
+    lastShareIntent = shareIntent;
+    lastTargets = List<ShareTargetSelection>.from(targets);
+    return _builder(targets);
+  }
 }
 
 class _FakeContactRequestListener extends ContactRequestListener {

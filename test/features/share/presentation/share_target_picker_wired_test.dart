@@ -1,21 +1,16 @@
-import 'dart:async';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
-import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
-import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
-import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
+import 'package:flutter_app/features/share/application/share_target_selection.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -44,11 +39,7 @@ void main() {
     required InMemoryGroupMessageRepository groupMessageRepository,
     required GroupMessageListener groupMessageListener,
     required ShareIntent shareIntent,
-    ImageProcessor? imageProcessor,
-    ImageQualityPreference qualityPreference =
-        ImageQualityPreference.compressed,
-    ImageQualityPreference videoQualityPreference =
-        ImageQualityPreference.compressed,
+    ShareBatchDeliveryCoordinator? batchShareCoordinator,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -64,26 +55,22 @@ void main() {
         bridge: FakeBridge(),
         p2pService: FakeP2PService(),
         mediaFileManager: FakeMediaFileManager(),
-        imageProcessor:
-            imageProcessor ??
-            ImageProcessor(
-              compressFile:
-                  ({
-                    required path,
-                    required quality,
-                    required keepExif,
-                    minWidth = 1920,
-                    minHeight = 1080,
-                  }) async => null,
-              compressVideo:
-                  ({required path, required compress, onProgress}) async =>
-                      null,
-            ),
-        qualityPreference: qualityPreference,
-        videoQualityPreference: videoQualityPreference,
+        imageProcessor: ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async => null,
+          compressVideo:
+              ({required path, required compress, onProgress}) async => null,
+        ),
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
+        batchShareCoordinator: batchShareCoordinator,
       ),
     );
   }
@@ -99,11 +86,7 @@ void main() {
     required InMemoryGroupMessageRepository groupMessageRepository,
     required GroupMessageListener groupMessageListener,
     required ShareIntent shareIntent,
-    ImageProcessor? imageProcessor,
-    ImageQualityPreference qualityPreference =
-        ImageQualityPreference.compressed,
-    ImageQualityPreference videoQualityPreference =
-        ImageQualityPreference.compressed,
+    ShareBatchDeliveryCoordinator? batchShareCoordinator,
   }) async {
     await tester.pumpWidget(
       buildWidget(
@@ -116,36 +99,11 @@ void main() {
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
         shareIntent: shareIntent,
-        imageProcessor: imageProcessor,
-        qualityPreference: qualityPreference,
-        videoQualityPreference: videoQualityPreference,
+        batchShareCoordinator: batchShareCoordinator,
       ),
     );
     await tester.pump();
     await tester.pump();
-  }
-
-  Future<void> tapAndAwaitRoute(
-    WidgetTester tester, {
-    required Finder tapTarget,
-    required Finder routeTarget,
-    int maxFrames = 30,
-  }) async {
-    await tester.tap(tapTarget);
-    Object? exception;
-    for (var i = 0; i < maxFrames; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-      exception ??= tester.takeException();
-      if (routeTarget.evaluate().isNotEmpty) {
-        return;
-      }
-    }
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
-    fail(
-      'Route target did not appear within ${maxFrames * 50}ms'
-      '; canPop=${navigator.canPop()}'
-      '${exception != null ? '; pending exception: $exception' : ''}',
-    );
   }
 
   testWidgets(
@@ -228,371 +186,105 @@ void main() {
     },
   );
 
-  testWidgets(
-    '2k and 2m: selecting a contact navigates to ConversationWired with shared files and text',
-    (tester) async {
-      final contactRepository = InMemoryContactRepository();
-      final groupRepository = InMemoryGroupRepository();
-      final messageRepository = InMemoryMessageRepository();
-      final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-      final identityRepository = FakeIdentityRepository();
-      final groupMessageRepository = InMemoryGroupMessageRepository();
-      identityRepository.seed(_makeIdentity());
-      final chatMessageListener = ChatMessageListener(
-        chatMessageStream: const Stream<ChatMessage>.empty(),
-        messageRepo: messageRepository,
-        contactRepo: contactRepository,
-      );
-      final groupMessageListener = GroupMessageListener(
-        groupRepo: groupRepository,
-        msgRepo: groupMessageRepository,
-      );
-      final tempDir = Directory.systemTemp.createTempSync(
-        'share_picker_image_',
-      );
-      addTearDown(() {
-        if (tempDir.existsSync()) {
-          tempDir.deleteSync(recursive: true);
-        }
-      });
-      final sourceImage = File('${tempDir.path}/shared.jpg')
-        ..writeAsStringSync('image');
+  testWidgets('first tap selects a contact without navigating', (tester) async {
+    final harness = _buildHarness();
+    final coordinator = _RecordingBatchCoordinator(
+      result: const ShareBatchDeliveryResult(results: []),
+    );
 
-      contactRepository.addTestContact(activeContact);
-      final processor = ImageProcessor(
-        compressFile:
-            ({
-              required path,
-              required quality,
-              required keepExif,
-              minWidth = 1920,
-              minHeight = 1080,
-            }) async {
-              final processed = File('$path.processed.jpg')
-                ..writeAsStringSync('12');
-              return XFile(processed.path);
-            },
-        compressVideo: ({required path, required compress, onProgress}) async =>
-            null,
-      );
+    harness.contactRepository.addTestContact(activeContact);
+    await pumpPicker(
+      tester,
+      contactRepository: harness.contactRepository,
+      groupRepository: harness.groupRepository,
+      messageRepository: harness.messageRepository,
+      mediaAttachmentRepository: harness.mediaAttachmentRepository,
+      identityRepository: harness.identityRepository,
+      chatMessageListener: harness.chatMessageListener,
+      groupMessageRepository: harness.groupMessageRepository,
+      groupMessageListener: harness.groupMessageListener,
+      shareIntent: const ShareIntent(
+        type: ShareIntentType.text,
+        text: 'Shared hello',
+      ),
+      batchShareCoordinator: coordinator,
+    );
 
-      await pumpPicker(
-        tester,
-        contactRepository: contactRepository,
-        groupRepository: groupRepository,
-        messageRepository: messageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        identityRepository: identityRepository,
-        chatMessageListener: chatMessageListener,
-        groupMessageRepository: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        shareIntent: ShareIntent(
-          type: ShareIntentType.mixed,
-          text: 'Shared hello',
-          filePaths: [sourceImage.path],
-        ),
-        imageProcessor: processor,
-      );
+    await tester.tap(
+      find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+    );
+    await tester.pump();
 
-      await tapAndAwaitRoute(
-        tester,
-        tapTarget: find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
-        routeTarget: find.byType(ConversationWired, skipOffstage: false),
-      );
-
-      final conversation = tester.widget<ConversationWired>(
-        find.byType(ConversationWired, skipOffstage: false),
-      );
-      expect(conversation.initialText, 'Shared hello');
-      expect(conversation.initialAttachments, isNotNull);
-      expect(conversation.initialAttachments, hasLength(1));
-      expect(conversation.initialPendingMedia, isNotNull);
-      expect(conversation.initialPendingMedia, hasLength(1));
-      expect(
-        conversation.initialAttachments!.first.path,
-        '${sourceImage.path}.processed.jpg',
-      );
-      expect(
-        conversation.initialPendingMedia!.first.file.path,
-        '${sourceImage.path}.processed.jpg',
-      );
-      expect(conversation.initialPendingMedia!.first.budgetBytes, 2);
-    },
-  );
+    expect(find.text('Share with (1)'), findsOneWidget);
+    expect(find.text('Send'), findsOneWidget);
+    expect(coordinator.deliverCallCount, 0);
+  });
 
   testWidgets(
-    '2l and 2n: selecting a group navigates to GroupConversationWired with shared files and URL text',
+    'send invokes the coordinator exactly once with selected targets',
     (tester) async {
-      final contactRepository = InMemoryContactRepository();
-      final groupRepository = InMemoryGroupRepository();
-      final messageRepository = InMemoryMessageRepository();
-      final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-      final identityRepository = FakeIdentityRepository();
-      final groupMessageRepository = InMemoryGroupMessageRepository();
-      identityRepository.seed(_makeIdentity());
-      final chatMessageListener = ChatMessageListener(
-        chatMessageStream: const Stream<ChatMessage>.empty(),
-        messageRepo: messageRepository,
-        contactRepo: contactRepository,
-      );
-      final groupMessageListener = GroupMessageListener(
-        groupRepo: groupRepository,
-        msgRepo: groupMessageRepository,
-      );
-      final tempDir = Directory.systemTemp.createTempSync(
-        'share_picker_video_',
-      );
-      addTearDown(() {
-        if (tempDir.existsSync()) {
-          tempDir.deleteSync(recursive: true);
-        }
-      });
-      final sourceVideo = File('${tempDir.path}/shared.mp4')
-        ..writeAsStringSync('video');
+      final harness = _buildHarness();
       final group = _makeGroup(
         'group-1',
         'Writers',
         GroupType.chat,
         GroupRole.admin,
       );
-      await groupRepository.saveGroup(group);
-      final processor = ImageProcessor(
-        compressFile:
-            ({
-              required path,
-              required quality,
-              required keepExif,
-              minWidth = 1920,
-              minHeight = 1080,
-            }) async => null,
-        compressVideo: ({required path, required compress, onProgress}) async {
-          final processed = File('$path.processed.mp4')
-            ..writeAsStringSync('1234');
-          return VideoProcessResult(path: processed.path);
-        },
+      final coordinator = _RecordingBatchCoordinator(
+        result: const ShareBatchDeliveryResult(results: []),
       );
+
+      harness.contactRepository.addTestContact(activeContact);
+      await harness.groupRepository.saveGroup(group);
 
       await pumpPicker(
         tester,
-        contactRepository: contactRepository,
-        groupRepository: groupRepository,
-        messageRepository: messageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        identityRepository: identityRepository,
-        chatMessageListener: chatMessageListener,
-        groupMessageRepository: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        shareIntent: ShareIntent(
-          type: ShareIntentType.mixed,
-          text: 'https://mknoon.app/share',
-          filePaths: [sourceVideo.path],
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'Shared hello',
         ),
-        imageProcessor: processor,
+        batchShareCoordinator: coordinator,
       );
 
-      await tapAndAwaitRoute(
-        tester,
-        tapTarget: find.byKey(ValueKey('share-group-${group.id}')),
-        routeTarget: find.byType(GroupConversationWired, skipOffstage: false),
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
       );
+      await tester.tap(find.byKey(ValueKey('share-group-${group.id}')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
 
-      final conversation = tester.widget<GroupConversationWired>(
-        find.byType(GroupConversationWired, skipOffstage: false),
-      );
-      expect(conversation.initialText, 'https://mknoon.app/share');
-      expect(conversation.initialAttachments, isNotNull);
-      expect(conversation.initialAttachments, hasLength(1));
-      expect(conversation.initialPendingMedia, isNotNull);
-      expect(conversation.initialPendingMedia, hasLength(1));
-      expect(
-        conversation.initialAttachments!.first.path,
-        '${sourceVideo.path}.processed.mp4',
-      );
-      expect(
-        conversation.initialPendingMedia!.first.file.path,
-        '${sourceVideo.path}.processed.mp4',
-      );
-      expect(conversation.initialPendingMedia!.first.budgetBytes, 4);
+      expect(coordinator.deliverCallCount, 1);
+      expect(coordinator.lastShareIntent?.text, 'Shared hello');
+      expect(coordinator.lastTargets.map((target) => target.key).toList(), [
+        ShareTargetSelection.contact(activeContact).key,
+        ShareTargetSelection.group(group).key,
+      ]);
     },
   );
 
-  testWidgets(
-    '2o: shared images are processed via ImageProcessor on target selection',
-    (tester) async {
-      final contactRepository = InMemoryContactRepository();
-      final groupRepository = InMemoryGroupRepository();
-      final messageRepository = InMemoryMessageRepository();
-      final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-      final identityRepository = FakeIdentityRepository();
-      final groupMessageRepository = InMemoryGroupMessageRepository();
-      identityRepository.seed(_makeIdentity());
-      final chatMessageListener = ChatMessageListener(
-        chatMessageStream: const Stream<ChatMessage>.empty(),
-        messageRepo: messageRepository,
-        contactRepo: contactRepository,
-      );
-      final groupMessageListener = GroupMessageListener(
-        groupRepo: groupRepository,
-        msgRepo: groupMessageRepository,
-      );
-      final tempDir = Directory.systemTemp.createTempSync(
-        'share_picker_process_',
-      );
-      addTearDown(() {
-        if (tempDir.existsSync()) {
-          tempDir.deleteSync(recursive: true);
-        }
-      });
-      final sourceImage = File('${tempDir.path}/shared.jpg')
-        ..writeAsStringSync('image');
-      final processedPaths = <String>[];
-
-      contactRepository.addTestContact(activeContact);
-      final processor = ImageProcessor(
-        compressFile:
-            ({
-              required path,
-              required quality,
-              required keepExif,
-              minWidth = 1920,
-              minHeight = 1080,
-            }) async {
-              processedPaths.add(path);
-              return XFile('$path.processed.jpg');
-            },
-        compressVideo: ({required path, required compress, onProgress}) async =>
-            null,
-      );
-
-      await pumpPicker(
-        tester,
-        contactRepository: contactRepository,
-        groupRepository: groupRepository,
-        messageRepository: messageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        identityRepository: identityRepository,
-        chatMessageListener: chatMessageListener,
-        groupMessageRepository: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        shareIntent: ShareIntent(
-          type: ShareIntentType.files,
-          filePaths: [sourceImage.path],
-        ),
-        imageProcessor: processor,
-      );
-
-      await tapAndAwaitRoute(
-        tester,
-        tapTarget: find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
-        routeTarget: find.byType(ConversationWired, skipOffstage: false),
-      );
-
-      expect(processedPaths, [sourceImage.path]);
-    },
-  );
-
-  testWidgets(
-    'share target selection preserves raw budget bytes for original-quality media',
-    (tester) async {
-      final contactRepository = InMemoryContactRepository();
-      final groupRepository = InMemoryGroupRepository();
-      final messageRepository = InMemoryMessageRepository();
-      final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-      final identityRepository = FakeIdentityRepository();
-      final groupMessageRepository = InMemoryGroupMessageRepository();
-      identityRepository.seed(_makeIdentity());
-      final chatMessageListener = ChatMessageListener(
-        chatMessageStream: const Stream<ChatMessage>.empty(),
-        messageRepo: messageRepository,
-        contactRepo: contactRepository,
-      );
-      final groupMessageListener = GroupMessageListener(
-        groupRepo: groupRepository,
-        msgRepo: groupMessageRepository,
-      );
-      final tempDir = Directory.systemTemp.createTempSync(
-        'share_picker_original_budget_',
-      );
-      addTearDown(() {
-        if (tempDir.existsSync()) {
-          tempDir.deleteSync(recursive: true);
-        }
-      });
-      final sourceImage = File('${tempDir.path}/shared.jpg')
-        ..writeAsStringSync('1234567890');
-
-      contactRepository.addTestContact(activeContact);
-      final processor = ImageProcessor(
-        compressFile:
-            ({
-              required path,
-              required quality,
-              required keepExif,
-              minWidth = 1920,
-              minHeight = 1080,
-            }) async {
-              final processed = File('$path.processed.jpg')
-                ..writeAsStringSync('12');
-              return XFile(processed.path);
-            },
-        compressVideo: ({required path, required compress, onProgress}) async =>
-            null,
-      );
-
-      await pumpPicker(
-        tester,
-        contactRepository: contactRepository,
-        groupRepository: groupRepository,
-        messageRepository: messageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        identityRepository: identityRepository,
-        chatMessageListener: chatMessageListener,
-        groupMessageRepository: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        shareIntent: ShareIntent(
-          type: ShareIntentType.files,
-          filePaths: [sourceImage.path],
-        ),
-        imageProcessor: processor,
-        qualityPreference: ImageQualityPreference.original,
-      );
-
-      await tapAndAwaitRoute(
-        tester,
-        tapTarget: find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
-        routeTarget: find.byType(ConversationWired, skipOffstage: false),
-      );
-
-      final conversation = tester.widget<ConversationWired>(
-        find.byType(ConversationWired, skipOffstage: false),
-      );
-      expect(conversation.initialPendingMedia, isNotNull);
-      expect(conversation.initialPendingMedia, hasLength(1));
-      expect(
-        conversation.initialPendingMedia!.first.file.path,
-        '${sourceImage.path}.processed.jpg',
-      );
-      expect(conversation.initialPendingMedia!.first.budgetBytes, 10);
-    },
-  );
-
-  testWidgets('2p: cancel pops back to the previous screen', (tester) async {
-    final contactRepository = InMemoryContactRepository();
-    final groupRepository = InMemoryGroupRepository();
-    final messageRepository = InMemoryMessageRepository();
-    final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-    final identityRepository = FakeIdentityRepository();
-    final groupMessageRepository = InMemoryGroupMessageRepository();
-    identityRepository.seed(_makeIdentity());
-    final chatMessageListener = ChatMessageListener(
-      chatMessageStream: const Stream<ChatMessage>.empty(),
-      messageRepo: messageRepository,
-      contactRepo: contactRepository,
+  testWidgets('successful send dismisses the picker', (tester) async {
+    final harness = _buildHarness();
+    final coordinator = _RecordingBatchCoordinator(
+      result: ShareBatchDeliveryResult(
+        results: [
+          ShareBatchTargetResult(
+            target: ShareTargetSelection.contact(activeContact),
+            status: ShareBatchTargetStatus.sent,
+            detail: 'Sent.',
+          ),
+        ],
+      ),
     );
-    final groupMessageListener = GroupMessageListener(
-      groupRepo: groupRepository,
-      msgRepo: groupMessageRepository,
-    );
+    harness.contactRepository.addTestContact(activeContact);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -613,11 +305,12 @@ void main() {
                             type: ShareIntentType.text,
                             text: 'Shared hello',
                           ),
-                          identityRepo: identityRepository,
-                          contactRepository: contactRepository,
-                          messageRepository: messageRepository,
-                          mediaAttachmentRepository: mediaAttachmentRepository,
-                          chatMessageListener: chatMessageListener,
+                          identityRepo: harness.identityRepository,
+                          contactRepository: harness.contactRepository,
+                          messageRepository: harness.messageRepository,
+                          mediaAttachmentRepository:
+                              harness.mediaAttachmentRepository,
+                          chatMessageListener: harness.chatMessageListener,
                           bridge: FakeBridge(),
                           p2pService: FakeP2PService(),
                           mediaFileManager: FakeMediaFileManager(),
@@ -637,9 +330,11 @@ void main() {
                                   onProgress,
                                 }) async => null,
                           ),
-                          groupRepository: groupRepository,
-                          groupMessageRepository: groupMessageRepository,
-                          groupMessageListener: groupMessageListener,
+                          groupRepository: harness.groupRepository,
+                          groupMessageRepository:
+                              harness.groupMessageRepository,
+                          groupMessageListener: harness.groupMessageListener,
+                          batchShareCoordinator: coordinator,
                         ),
                       ),
                     );
@@ -654,161 +349,227 @@ void main() {
     );
 
     await tester.tap(find.text('open'));
+    await pumpPickerFrames(tester);
+    await tester.tap(
+      find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+    );
     await tester.pump();
-    await tester.pump();
-    expect(find.text('Share with...'), findsOneWidget);
-
-    await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send'));
+    await pumpPickerFrames(tester);
 
     expect(find.text('launcher'), findsOneWidget);
     expect(find.text('Share with...'), findsNothing);
   });
 
-  testWidgets('shows loading indicator before targets finish loading', (
+  testWidgets('partial failure keeps only failed targets selected', (
     tester,
   ) async {
-    final contactRepository = _SlowContactRepository();
-    final groupRepository = InMemoryGroupRepository();
-    final messageRepository = InMemoryMessageRepository();
-    final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-    final identityRepository = FakeIdentityRepository();
-    final groupMessageRepository = InMemoryGroupMessageRepository();
-    identityRepository.seed(_makeIdentity());
-    contactRepository.addTestContact(activeContact);
-
-    final chatMessageListener = ChatMessageListener(
-      chatMessageStream: const Stream<ChatMessage>.empty(),
-      messageRepo: messageRepository,
-      contactRepo: contactRepository,
+    final harness = _buildHarness();
+    final group = _makeGroup(
+      'group-1',
+      'Writers',
+      GroupType.chat,
+      GroupRole.admin,
     );
-    final groupMessageListener = GroupMessageListener(
-      groupRepo: groupRepository,
-      msgRepo: groupMessageRepository,
-    );
-
-    await tester.pumpWidget(
-      buildWidget(
-        contactRepository: contactRepository,
-        groupRepository: groupRepository,
-        messageRepository: messageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        identityRepository: identityRepository,
-        chatMessageListener: chatMessageListener,
-        groupMessageRepository: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        shareIntent: const ShareIntent(
-          type: ShareIntentType.text,
-          text: 'Shared hello',
-        ),
+    final coordinator = _RecordingBatchCoordinator(
+      result: ShareBatchDeliveryResult(
+        results: [
+          ShareBatchTargetResult(
+            target: ShareTargetSelection.contact(activeContact),
+            status: ShareBatchTargetStatus.sent,
+            detail: 'Sent.',
+          ),
+          ShareBatchTargetResult(
+            target: ShareTargetSelection.group(group),
+            status: ShareBatchTargetStatus.failed,
+            detail: 'Share failed.',
+          ),
+        ],
       ),
     );
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.text('Alice'), findsNothing);
+    harness.contactRepository.addTestContact(activeContact);
+    await harness.groupRepository.saveGroup(group);
 
-    contactRepository.release();
+    await pumpPicker(
+      tester,
+      contactRepository: harness.contactRepository,
+      groupRepository: harness.groupRepository,
+      messageRepository: harness.messageRepository,
+      mediaAttachmentRepository: harness.mediaAttachmentRepository,
+      identityRepository: harness.identityRepository,
+      chatMessageListener: harness.chatMessageListener,
+      groupMessageRepository: harness.groupMessageRepository,
+      groupMessageListener: harness.groupMessageListener,
+      shareIntent: const ShareIntent(
+        type: ShareIntentType.text,
+        text: 'Shared hello',
+      ),
+      batchShareCoordinator: coordinator,
+    );
+
+    await tester.tap(
+      find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+    );
+    await tester.tap(find.byKey(ValueKey('share-group-${group.id}')));
     await tester.pump();
+    await tester.tap(find.text('Send'));
     await tester.pump();
 
-    expect(find.text('Alice'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Share with (1)'), findsOneWidget);
+    expect(find.text('Sent to 1 target, failed for 1 target.'), findsOneWidget);
   });
 
-  testWidgets(
-    'loading indicator replaced by empty state when no contacts exist',
-    (tester) async {
-      final contactRepository = InMemoryContactRepository();
-      final groupRepository = InMemoryGroupRepository();
-      final messageRepository = InMemoryMessageRepository();
-      final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-      final identityRepository = FakeIdentityRepository();
-      final groupMessageRepository = InMemoryGroupMessageRepository();
-      identityRepository.seed(_makeIdentity());
+  testWidgets('2p: cancel pops back to the previous screen', (tester) async {
+    final harness = _buildHarness();
 
-      final chatMessageListener = ChatMessageListener(
-        chatMessageStream: const Stream<ChatMessage>.empty(),
-        messageRepo: messageRepository,
-        contactRepo: contactRepository,
-      );
-      final groupMessageListener = GroupMessageListener(
-        groupRepo: groupRepository,
-        msgRepo: groupMessageRepository,
-      );
-
-      await tester.pumpWidget(
-        buildWidget(
-          contactRepository: contactRepository,
-          groupRepository: groupRepository,
-          messageRepository: messageRepository,
-          mediaAttachmentRepository: mediaAttachmentRepository,
-          identityRepository: identityRepository,
-          chatMessageListener: chatMessageListener,
-          groupMessageRepository: groupMessageRepository,
-          groupMessageListener: groupMessageListener,
-          shareIntent: const ShareIntent(
-            type: ShareIntentType.text,
-            text: 'Shared hello',
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Column(
+              children: [
+                const Text('launcher'),
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => ShareTargetPickerWired(
+                          shareIntent: const ShareIntent(
+                            type: ShareIntentType.text,
+                            text: 'Shared hello',
+                          ),
+                          identityRepo: harness.identityRepository,
+                          contactRepository: harness.contactRepository,
+                          messageRepository: harness.messageRepository,
+                          mediaAttachmentRepository:
+                              harness.mediaAttachmentRepository,
+                          chatMessageListener: harness.chatMessageListener,
+                          bridge: FakeBridge(),
+                          p2pService: FakeP2PService(),
+                          mediaFileManager: FakeMediaFileManager(),
+                          imageProcessor: ImageProcessor(
+                            compressFile:
+                                ({
+                                  required path,
+                                  required quality,
+                                  required keepExif,
+                                  minWidth = 1920,
+                                  minHeight = 1080,
+                                }) async => null,
+                            compressVideo:
+                                ({
+                                  required path,
+                                  required compress,
+                                  onProgress,
+                                }) async => null,
+                          ),
+                          groupRepository: harness.groupRepository,
+                          groupMessageRepository:
+                              harness.groupMessageRepository,
+                          groupMessageListener: harness.groupMessageListener,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('open'),
+                ),
+              ],
+            ),
           ),
         ),
-      );
-
-      // Initially shows loading
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-
-      // Pump to allow _loadTargets to complete
-      await tester.pump();
-      await tester.pump();
-
-      // Empty state shown, no spinner
-      expect(find.text('No contacts or groups yet'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
-    },
-  );
-
-  testWidgets('loading indicator clears on error', (tester) async {
-    final contactRepository = _ThrowingContactRepository();
-    final groupRepository = InMemoryGroupRepository();
-    final messageRepository = InMemoryMessageRepository();
-    final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
-    final identityRepository = FakeIdentityRepository();
-    final groupMessageRepository = InMemoryGroupMessageRepository();
-    identityRepository.seed(_makeIdentity());
-
-    final chatMessageListener = ChatMessageListener(
-      chatMessageStream: const Stream<ChatMessage>.empty(),
-      messageRepo: messageRepository,
-      contactRepo: contactRepository,
-    );
-    final groupMessageListener = GroupMessageListener(
-      groupRepo: groupRepository,
-      msgRepo: groupMessageRepository,
-    );
-
-    await tester.pumpWidget(
-      buildWidget(
-        contactRepository: contactRepository,
-        groupRepository: groupRepository,
-        messageRepository: messageRepository,
-        mediaAttachmentRepository: mediaAttachmentRepository,
-        identityRepository: identityRepository,
-        chatMessageListener: chatMessageListener,
-        groupMessageRepository: groupMessageRepository,
-        groupMessageListener: groupMessageListener,
-        shareIntent: const ShareIntent(
-          type: ShareIntentType.text,
-          text: 'Shared hello',
-        ),
       ),
     );
 
-    await tester.pump();
-    await tester.pump();
+    await tester.tap(find.text('open'));
+    await pumpPickerFrames(tester);
+    await tester.tap(find.byIcon(Icons.close));
+    await pumpPickerFrames(tester);
 
-    // No spinner stuck — empty state shown instead
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.text('No contacts or groups yet'), findsOneWidget);
+    expect(find.text('launcher'), findsOneWidget);
+    expect(find.text('Share with...'), findsNothing);
   });
+}
+
+_Harness _buildHarness() {
+  final contactRepository = InMemoryContactRepository();
+  final groupRepository = InMemoryGroupRepository();
+  final messageRepository = InMemoryMessageRepository();
+  final mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
+  final identityRepository = FakeIdentityRepository();
+  final groupMessageRepository = InMemoryGroupMessageRepository();
+  identityRepository.seed(_makeIdentity());
+  final chatMessageListener = ChatMessageListener(
+    chatMessageStream: const Stream<ChatMessage>.empty(),
+    messageRepo: messageRepository,
+    contactRepo: contactRepository,
+  );
+  final groupMessageListener = GroupMessageListener(
+    groupRepo: groupRepository,
+    msgRepo: groupMessageRepository,
+  );
+
+  return _Harness(
+    contactRepository: contactRepository,
+    groupRepository: groupRepository,
+    messageRepository: messageRepository,
+    mediaAttachmentRepository: mediaAttachmentRepository,
+    identityRepository: identityRepository,
+    groupMessageRepository: groupMessageRepository,
+    chatMessageListener: chatMessageListener,
+    groupMessageListener: groupMessageListener,
+  );
+}
+
+class _Harness {
+  final InMemoryContactRepository contactRepository;
+  final InMemoryGroupRepository groupRepository;
+  final InMemoryMessageRepository messageRepository;
+  final InMemoryMediaAttachmentRepository mediaAttachmentRepository;
+  final FakeIdentityRepository identityRepository;
+  final InMemoryGroupMessageRepository groupMessageRepository;
+  final ChatMessageListener chatMessageListener;
+  final GroupMessageListener groupMessageListener;
+
+  const _Harness({
+    required this.contactRepository,
+    required this.groupRepository,
+    required this.messageRepository,
+    required this.mediaAttachmentRepository,
+    required this.identityRepository,
+    required this.groupMessageRepository,
+    required this.chatMessageListener,
+    required this.groupMessageListener,
+  });
+}
+
+Future<void> pumpPickerFrames(WidgetTester tester, {int count = 20}) async {
+  for (var i = 0; i < count; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
+class _RecordingBatchCoordinator implements ShareBatchDeliveryCoordinator {
+  final ShareBatchDeliveryResult result;
+  int deliverCallCount = 0;
+  ShareIntent? lastShareIntent;
+  List<ShareTargetSelection> lastTargets = const [];
+
+  _RecordingBatchCoordinator({required this.result});
+
+  @override
+  Future<ShareBatchDeliveryResult> deliver({
+    required ShareIntent shareIntent,
+    required List<ShareTargetSelection> targets,
+  }) async {
+    deliverCallCount++;
+    lastShareIntent = shareIntent;
+    lastTargets = List<ShareTargetSelection>.from(targets);
+    return result;
+  }
 }
 
 ContactModel _makeContact(String peerId, String username) {
@@ -836,36 +597,15 @@ GroupModel _makeGroup(String id, String name, GroupType type, GroupRole role) {
 
 IdentityModel _makeIdentity() {
   return IdentityModel(
-    peerId: 'me',
+    peerId: 'my-peer-id-12345',
     publicKey: 'my-public-key',
     privateKey: 'my-private-key',
     mnemonic12:
         'one two three four five six seven eight nine ten eleven twelve',
+    mlKemPublicKey: 'mlkem-public',
+    mlKemSecretKey: 'mlkem-secret',
     username: 'Me',
     createdAt: '2026-03-09T08:00:00.000Z',
     updatedAt: '2026-03-09T08:00:00.000Z',
   );
-}
-
-class _SlowContactRepository extends InMemoryContactRepository {
-  final Completer<void> _gate = Completer<void>();
-
-  void release() {
-    if (!_gate.isCompleted) {
-      _gate.complete();
-    }
-  }
-
-  @override
-  Future<List<ContactModel>> getActiveContacts() async {
-    await _gate.future;
-    return super.getActiveContacts();
-  }
-}
-
-class _ThrowingContactRepository extends InMemoryContactRepository {
-  @override
-  Future<List<ContactModel>> getActiveContacts() async {
-    throw Exception('Simulated contact loading error');
-  }
 }

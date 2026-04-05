@@ -1,13 +1,10 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
-import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
-import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -18,23 +15,22 @@ import 'package:flutter_app/features/conversation/application/reaction_listener.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
-import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
-import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
-import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
+import 'package:flutter_app/features/share/application/share_target_selection.dart';
 
 import 'share_target_picker_screen.dart';
 
 /// Wired widget connecting ShareTargetPickerScreen to business logic.
 ///
-/// Loads active contacts and writable groups, processes shared media on
-/// target selection, and navigates to the appropriate conversation screen.
+/// Loads active contacts and writable groups, allows multi-selection, and
+/// delivers the pending share through the bounded batch coordinator.
 class ShareTargetPickerWired extends StatefulWidget {
   final ShareIntent shareIntent;
   final IdentityRepository identityRepo;
@@ -57,6 +53,7 @@ class ShareTargetPickerWired extends StatefulWidget {
   final GroupMessageListener? groupMessageListener;
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
+  final ShareBatchDeliveryCoordinator? batchShareCoordinator;
 
   const ShareTargetPickerWired({
     super.key,
@@ -81,6 +78,7 @@ class ShareTargetPickerWired extends StatefulWidget {
     this.groupMessageListener,
     this.groupConversationTracker,
     this.introductionRepository,
+    this.batchShareCoordinator,
   });
 
   @override
@@ -88,10 +86,29 @@ class ShareTargetPickerWired extends StatefulWidget {
 }
 
 class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
+  late final ShareBatchDeliveryCoordinator _batchShareCoordinator =
+      widget.batchShareCoordinator ??
+      DefaultShareBatchDeliveryCoordinator(
+        identityRepository: widget.identityRepo,
+        contactRepository: widget.contactRepository,
+        messageRepository: widget.messageRepository,
+        mediaAttachmentRepository: widget.mediaAttachmentRepository,
+        groupRepository: widget.groupRepository,
+        groupMessageRepository: widget.groupMessageRepository,
+        bridge: widget.bridge,
+        p2pService: widget.p2pService,
+        mediaFileManager: widget.mediaFileManager,
+        imageProcessor: widget.imageProcessor,
+        qualityPreference: widget.qualityPreference,
+        videoQualityPreference: widget.videoQualityPreference,
+      );
+
   List<ContactModel> _contacts = [];
   List<GroupModel> _groups = [];
+  final Set<String> _selectedContactPeerIds = <String>{};
+  final Set<String> _selectedGroupIds = <String>{};
   bool _isLoading = true;
-  bool _isProcessing = false;
+  bool _isSending = false;
 
   @override
   void initState() {
@@ -106,17 +123,18 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       List<GroupModel> groups = [];
       if (widget.groupRepository != null) {
         final allGroups = await widget.groupRepository!.getActiveGroups();
-        // Filter out announcement groups where user is not admin
         groups = allGroups
             .where(
-              (g) =>
-                  g.type != GroupType.announcement ||
-                  g.myRole == GroupRole.admin,
+              (group) =>
+                  group.type != GroupType.announcement ||
+                  group.myRole == GroupRole.admin,
             )
             .toList();
       }
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _contacts = contacts;
         _groups = groups;
@@ -134,127 +152,152 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     }
   }
 
-  Future<void> _onContactSelected(ContactModel contact) async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
-
-    try {
-      final pendingMedia = await _processSharedFiles();
-      final files = pendingMedia
-          .map((media) => media.file)
-          .toList(growable: false);
-
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        buildConversationSlideUpRoute(
-          builder: (_) => ConversationWired(
-            contact: contact,
-            identityRepo: widget.identityRepo,
-            messageRepo: widget.messageRepository,
-            chatMessageListener: widget.chatMessageListener,
-            p2pService: widget.p2pService,
-            bridge: widget.bridge,
-            contactRepo: widget.contactRepository,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            mediaFileManager: widget.mediaFileManager,
-            initialAttachments: files.isNotEmpty ? files : null,
-            initialPendingMedia: pendingMedia.isNotEmpty ? pendingMedia : null,
-            initialText: widget.shareIntent.text,
-            imageProcessor: widget.imageProcessor,
-            qualityPreference: widget.qualityPreference,
-            videoQualityPreference: widget.videoQualityPreference,
-            conversationTracker: widget.conversationTracker,
-            audioRecorderService: widget.audioRecorderService,
-            reactionRepo: widget.reactionRepository,
-            reactionListener: widget.reactionListener,
-            introductionRepository: widget.introductionRepository,
-          ),
-        ),
-      );
-    } catch (e) {
-      if (mounted) setState(() => _isProcessing = false);
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'SHARE_PICKER_CONTACT_ERROR',
-        details: {'error': e.toString()},
-      );
+  void _toggleContact(ContactModel contact) {
+    if (_isSending) {
+      return;
     }
-  }
-
-  Future<void> _onGroupSelected(GroupModel group) async {
-    if (_isProcessing) return;
-    setState(() => _isProcessing = true);
-
-    try {
-      final pendingMedia = await _processSharedFiles();
-      final files = pendingMedia
-          .map((media) => media.file)
-          .toList(growable: false);
-
-      if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => GroupConversationWired(
-            group: group,
-            groupRepo: widget.groupRepository!,
-            msgRepo: widget.groupMessageRepository!,
-            groupMessageListener: widget.groupMessageListener!,
-            bridge: widget.bridge,
-            identityRepo: widget.identityRepo,
-            contactRepo: widget.contactRepository,
-            p2pService: widget.p2pService,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            mediaFileManager: widget.mediaFileManager,
-            initialAttachments: files.isNotEmpty ? files : null,
-            initialPendingMedia: pendingMedia.isNotEmpty ? pendingMedia : null,
-            initialText: widget.shareIntent.text,
-            imageProcessor: widget.imageProcessor,
-            qualityPreference: widget.qualityPreference,
-            videoQualityPreference: widget.videoQualityPreference,
-            audioRecorderService: widget.audioRecorderService,
-            groupConversationTracker: widget.groupConversationTracker,
-            reactionRepo: widget.reactionRepository,
-          ),
-        ),
-      );
-    } catch (e) {
-      if (mounted) setState(() => _isProcessing = false);
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'SHARE_PICKER_GROUP_ERROR',
-        details: {'error': e.toString()},
-      );
-    }
-  }
-
-  /// Process shared media files (EXIF strip, compress) once on target selection.
-  Future<List<PendingComposerMedia>> _processSharedFiles() async {
-    if (!widget.shareIntent.hasFiles) return [];
-
-    final processed = <PendingComposerMedia>[];
-    for (final path in widget.shareIntent.filePaths) {
-      try {
-        final file = File(path);
-        if (!file.existsSync()) continue;
-
-        processed.add(
-          await preparePendingComposerMedia(
-            inputPath: path,
-            imageProcessor: widget.imageProcessor,
-            imageQualityPreference: widget.qualityPreference,
-            videoQualityPreference: widget.videoQualityPreference,
-          ),
-        );
-      } catch (e) {
-        // Fallback: use original file
-        final file = File(path);
-        if (!file.existsSync()) continue;
-        processed.add(
-          PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
-        );
+    setState(() {
+      if (_selectedContactPeerIds.contains(contact.peerId)) {
+        _selectedContactPeerIds.remove(contact.peerId);
+      } else {
+        _selectedContactPeerIds.add(contact.peerId);
       }
+    });
+  }
+
+  void _toggleGroup(GroupModel group) {
+    if (_isSending) {
+      return;
     }
-    return processed;
+    setState(() {
+      if (_selectedGroupIds.contains(group.id)) {
+        _selectedGroupIds.remove(group.id);
+      } else {
+        _selectedGroupIds.add(group.id);
+      }
+    });
+  }
+
+  List<ShareTargetSelection> get _selectedTargets {
+    return [
+      ..._contacts
+          .where((contact) => _selectedContactPeerIds.contains(contact.peerId))
+          .map(ShareTargetSelection.contact),
+      ..._groups
+          .where((group) => _selectedGroupIds.contains(group.id))
+          .map(ShareTargetSelection.group),
+    ];
+  }
+
+  Future<void> _sendSelectedTargets() async {
+    if (_isSending) {
+      return;
+    }
+    final targets = _selectedTargets;
+    if (targets.isEmpty) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    setState(() => _isSending = true);
+
+    try {
+      final result = await _batchShareCoordinator.deliver(
+        shareIntent: widget.shareIntent,
+        targets: targets,
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      final summary = _buildSummary(result);
+
+      if (result.hasFailures) {
+        setState(() {
+          _selectedContactPeerIds
+            ..clear()
+            ..addAll(
+              result.results
+                  .where(
+                    (item) =>
+                        item.status == ShareBatchTargetStatus.failed &&
+                        item.target.kind == ShareTargetSelectionKind.contact,
+                  )
+                  .map((item) => item.target.requireContact.peerId),
+            );
+          _selectedGroupIds
+            ..clear()
+            ..addAll(
+              result.results
+                  .where(
+                    (item) =>
+                        item.status == ShareBatchTargetStatus.failed &&
+                        item.target.kind == ShareTargetSelectionKind.group,
+                  )
+                  .map((item) => item.target.requireGroup.id),
+            );
+          _isSending = false;
+        });
+        messenger
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(summary),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        return;
+      }
+
+      setState(() => _isSending = false);
+      Navigator.of(context).pop(result);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(summary), behavior: SnackBarBehavior.floating),
+        );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'SHARE_PICKER_SEND_ERROR',
+        details: {'error': e.toString()},
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() => _isSending = false);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Could not share to the selected targets.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
+  }
+
+  String _buildSummary(ShareBatchDeliveryResult result) {
+    final parts = <String>[];
+    if (result.sentCount > 0) {
+      parts.add('Sent to ${_formatTargetCount(result.sentCount)}');
+    }
+    if (result.queuedCount > 0) {
+      parts.add('saved ${_formatTargetCount(result.queuedCount)} for retry');
+    }
+    if (result.failureCount > 0) {
+      parts.add('failed for ${_formatTargetCount(result.failureCount)}');
+    }
+    if (parts.isEmpty) {
+      return 'Nothing was shared.';
+    }
+    final sentence = parts.join(', ');
+    return '${sentence[0].toUpperCase()}${sentence.substring(1)}.';
+  }
+
+  String _formatTargetCount(int count) {
+    return '$count target${count == 1 ? '' : 's'}';
   }
 
   @override
@@ -265,9 +308,13 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       contacts: _contacts,
       groups: _groups,
       isLoading: _isLoading,
-      onContactSelected: _onContactSelected,
-      onGroupSelected: _onGroupSelected,
-      onCancel: () => Navigator.of(context).pop(),
+      isSending: _isSending,
+      selectedContactPeerIds: _selectedContactPeerIds,
+      selectedGroupIds: _selectedGroupIds,
+      onToggleContact: _toggleContact,
+      onToggleGroup: _toggleGroup,
+      onSend: _selectedTargets.isNotEmpty ? _sendSelectedTargets : null,
+      onCancel: _isSending ? null : () => Navigator.of(context).pop(),
     );
   }
 }
