@@ -1732,6 +1732,44 @@ void main() {
       },
     );
 
+    test(
+      'publish timeout + inbox OK surfaces durable success instead of failed',
+      () async {
+        final timeoutPublishBridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+          },
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: timeoutPublishBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Publish timed out, inbox stored',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-publish-timeout-inbox-ok',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message.inboxStored, isTrue);
+        expect(message.wireEnvelope, isNull);
+        expect(message.inboxRetryPayload, isNull);
+
+        final saved = await msgRepo.getMessage('msg-publish-timeout-inbox-ok');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'sent');
+        expect(saved.inboxStored, isTrue);
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxRetryPayload, isNull);
+      },
+    );
+
     test('inbox store ok:false is treated as inbox failure', () async {
       final okFalseBridge = _InboxStoreOkFalseBridge();
       okFalseBridge.responses['group:publish'] = {

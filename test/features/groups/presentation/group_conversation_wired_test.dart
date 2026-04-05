@@ -2694,6 +2694,41 @@ void main() {
       expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
     });
 
+    testWidgets(
+      'publish timeout with inbox success keeps the message successful in UI',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+          },
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        await tester.enterText(find.byType(TextField), 'Timeout but stored');
+        await pumpFrames(tester);
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Timeout but stored'), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          isEmpty,
+        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+
+        final saved = (await msgRepo.getMessagesPage(
+          group.id,
+        )).firstWhere((message) => message.text == 'Timeout but stored');
+        expect(saved.status, 'sent');
+        expect(saved.inboxStored, isTrue);
+      },
+    );
+
     testWidgets('upload failure restores quote draft and attachments', (
       tester,
     ) async {

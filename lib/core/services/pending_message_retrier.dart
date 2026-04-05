@@ -33,6 +33,8 @@ class PendingMessageRetrier {
 
   // Injectable recovery callbacks for correct ordering
   final Future<void> Function()? rejoinGroupTopicsFn;
+  final Future<bool> Function()? rejoinGroupTopicsWithRecoveryAckEligibilityFn;
+  final Future<void> Function()? acknowledgeGroupRecoveryFn;
   final Future<void> Function()? drainGroupOfflineInboxFn;
   final Future<int> Function()? recoverStuckSendingMessagesFn; // Part A
   final Future<int> Function()? retryIncompleteUploadsFn; // Part G -- NEW
@@ -54,6 +56,7 @@ class PendingMessageRetrier {
   Timer? _periodicTimer;
   Timer? _groupContinuityTimer;
   bool _wasOnline = false;
+  bool _needsGroupRecovery = false;
   bool _isRetrying = false;
   bool _isGroupContinuitySweeping = false;
 
@@ -65,6 +68,8 @@ class PendingMessageRetrier {
     required this.bridge,
     this.mediaAttachmentRepo,
     this.rejoinGroupTopicsFn,
+    this.rejoinGroupTopicsWithRecoveryAckEligibilityFn,
+    this.acknowledgeGroupRecoveryFn,
     this.drainGroupOfflineInboxFn,
     this.recoverStuckSendingMessagesFn, // Part A
     this.retryIncompleteUploadsFn, // Part G -- NEW
@@ -90,20 +95,28 @@ class PendingMessageRetrier {
     emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_START', details: {});
 
     _wasOnline = _isOnline(p2pService.currentState);
+    _needsGroupRecovery = p2pService.currentState.needsGroupRecovery ?? false;
 
     _stateSubscription = p2pService.stateStream.listen((state) {
       final nowOnline = _isOnline(state);
+      final nowNeedsGroupRecovery = state.needsGroupRecovery ?? false;
 
       if (nowOnline && !_wasOnline) {
         // Transition to online — schedule retry with debounce and
         // keep group continuity catch-up on a shorter cadence.
         _startOnlineTimers();
+      } else if (nowOnline &&
+          _wasOnline &&
+          nowNeedsGroupRecovery &&
+          !_needsGroupRecovery) {
+        unawaited(_runGroupContinuitySweepIfNeeded());
       } else if (!nowOnline && _wasOnline) {
         // Went offline — stop background sweeps.
         _stopRecurringOnlineTimers();
       }
 
       _wasOnline = nowOnline;
+      _needsGroupRecovery = nowNeedsGroupRecovery;
     });
 
     // If already online when start() is called, schedule an initial sweep.
@@ -176,10 +189,37 @@ class PendingMessageRetrier {
     _stopRecurringOnlineTimers();
   }
 
+  Future<void> _runGroupRejoinIfNeeded() async {
+    var shouldAcknowledgeRecovery = false;
+
+    if (rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
+      shouldAcknowledgeRecovery =
+          await rejoinGroupTopicsWithRecoveryAckEligibilityFn!();
+    } else if (rejoinGroupTopicsFn != null) {
+      await rejoinGroupTopicsFn!();
+    }
+
+    if (!shouldAcknowledgeRecovery || acknowledgeGroupRecoveryFn == null) {
+      return;
+    }
+
+    try {
+      await acknowledgeGroupRecoveryFn!();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_GROUP_ACK_RECOVERY_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   Future<void> _runGroupContinuitySweepIfNeeded() async {
     if (_isGroupContinuitySweeping || _isRetrying) return;
     if (!_isGroupRecoveryEnabled()) return;
-    if (rejoinGroupTopicsFn == null && drainGroupOfflineInboxFn == null) {
+    if (rejoinGroupTopicsFn == null &&
+        rejoinGroupTopicsWithRecoveryAckEligibilityFn == null &&
+        drainGroupOfflineInboxFn == null) {
       return;
     }
     if (_isExternalRecoveryInProgressFn?.call() == true) {
@@ -194,9 +234,10 @@ class PendingMessageRetrier {
     _isGroupContinuitySweeping = true;
     try {
       await runWithGroupRecoveryGate(() async {
-        if (rejoinGroupTopicsFn != null) {
+        if (rejoinGroupTopicsFn != null ||
+            rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
           try {
-            await rejoinGroupTopicsFn!();
+            await _runGroupRejoinIfNeeded();
           } catch (e) {
             emitFlowEvent(
               layer: 'FL',
@@ -252,9 +293,10 @@ class PendingMessageRetrier {
       //  11. group retry failed inbox stores
 
       if (groupRecoveryEnabled) {
-        if (rejoinGroupTopicsFn != null) {
+        if (rejoinGroupTopicsFn != null ||
+            rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
           try {
-            await rejoinGroupTopicsFn!();
+            await _runGroupRejoinIfNeeded();
           } catch (e) {
             emitFlowEvent(
               layer: 'FL',

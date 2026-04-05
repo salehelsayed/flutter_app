@@ -373,16 +373,18 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   // 6. Await publish — determines success/failure
   Map<String, dynamic>? publishResult;
   bool publishOk = false;
+  String? publishErrorCode;
 
   try {
     publishResult = await publishFuture;
     publishOk = publishResult['ok'] == true;
+    publishErrorCode = publishResult['errorCode']?.toString();
 
     if (!publishOk) {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_SEND_MSG_USE_CASE_PUBLISH_ERROR',
-        details: {'errorCode': publishResult['errorCode']},
+        details: {'errorCode': publishErrorCode},
       );
     }
   } catch (e) {
@@ -398,6 +400,46 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   // 8. Apply 4-way result matrix
   if (!publishOk) {
+    if (publishErrorCode == 'BRIDGE_TIMEOUT' && inboxOk) {
+      // The foreground publish confirmation timed out, but the relay inbox
+      // accepted custody for delivery. Surface this as a successful durable
+      // send instead of a false failure on the sender.
+      final sentMessage = prePersistMessage.copyWith(
+        status: 'sent',
+        wireEnvelope: null,
+        inboxStored: true,
+        inboxRetryPayload: null,
+      );
+      await msgRepo.saveMessage(sentMessage);
+
+      await _persistOutgoingMedia(
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        attachments: mediaAttachments
+            ?.map(
+              (attachment) => attachment.copyWith(messageId: resolvedMessageId),
+            )
+            .toList(growable: false),
+      );
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_USE_CASE_TIMEOUT_INBOX_FALLBACK',
+        details: {
+          'messageId': resolvedMessageId.length > 8
+              ? resolvedMessageId.substring(0, 8)
+              : resolvedMessageId,
+        },
+      );
+      emitGroupSendTiming(
+        outcome: 'success',
+        details: {
+          'status': sentMessage.status,
+          'via': 'inbox_timeout_fallback',
+        },
+      );
+      return (SendGroupMessageResult.success, sentMessage);
+    }
+
     // Publish failed — preserve publish retry inputs while persisting the
     // observed inbox outcome from the same in-flight inbox future.
     final failedMessage = prePersistMessage.copyWith(

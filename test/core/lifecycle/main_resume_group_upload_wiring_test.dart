@@ -70,7 +70,16 @@ void main() {
       expect(end, greaterThan(start));
 
       final retrierBlock = mainSource.substring(start, end);
-      expect(retrierBlock, contains('rejoinGroupTopicsFn: () async {'));
+      expect(
+        retrierBlock,
+        contains('rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {'),
+      );
+      expect(
+        retrierBlock,
+        contains(
+          'acknowledgeGroupRecoveryFn: () => callGroupAcknowledgeRecovery(bridge),',
+        ),
+      );
       expect(
         retrierBlock,
         contains('drainGroupOfflineInboxFn: () => drainGroupOfflineInbox('),
