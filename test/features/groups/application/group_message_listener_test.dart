@@ -186,6 +186,45 @@ void main() {
     expect(latest!.quotedMessageId, 'msg-parent-1');
   });
 
+  test('caches self peer id across multiple handled messages', () async {
+    var selfPeerIdCalls = 0;
+    listener = GroupMessageListener(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      bridge: bridge,
+      getSelfPeerId: () async {
+        selfPeerIdCalls++;
+        return 'peer-self';
+      },
+    );
+
+    listener.start(sourceController.stream);
+
+    sourceController.add({
+      'groupId': 'group-1',
+      'senderId': 'peer-sender',
+      'senderUsername': 'Sender',
+      'keyEpoch': 0,
+      'text': 'First message',
+      'messageId': 'msg-self-cache-1',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+    });
+    sourceController.add({
+      'groupId': 'group-1',
+      'senderId': 'peer-sender',
+      'senderUsername': 'Sender',
+      'keyEpoch': 0,
+      'text': 'Second message',
+      'messageId': 'msg-self-cache-2',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    expect(msgRepo.count, 2);
+    expect(selfPeerIdCalls, 1);
+  });
+
   test('ignores message for unknown group', () async {
     listener.start(sourceController.stream);
 

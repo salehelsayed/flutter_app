@@ -63,6 +63,9 @@ class GroupMessageListener {
   final _reactionChangeController =
       StreamController<ReactionChange>.broadcast();
   final Map<String, Future<void>> _groupConfigWorkQueue = {};
+  String? _cachedSelfPeerId;
+  var _hasResolvedSelfPeerId = false;
+  Future<String?>? _selfPeerIdLoadFuture;
 
   GroupMessageListener({
     required GroupRepository groupRepo,
@@ -107,6 +110,32 @@ class GroupMessageListener {
   /// the same cleanup and UI streams as live listener traffic.
   Future<void> handleReplayEnvelope(Map<String, dynamic> data) {
     return _handleMessage(data);
+  }
+
+  Future<String?> _resolveSelfPeerId() {
+    if (_hasResolvedSelfPeerId) {
+      return Future<String?>.value(_cachedSelfPeerId);
+    }
+    if (_selfPeerIdLoadFuture != null) {
+      return _selfPeerIdLoadFuture!;
+    }
+
+    final loader = _getSelfPeerId == null
+        ? Future<String?>.value(null)
+        : _getSelfPeerId!();
+    _selfPeerIdLoadFuture = loader.then(
+      (value) {
+        _cachedSelfPeerId = value;
+        _hasResolvedSelfPeerId = true;
+        _selfPeerIdLoadFuture = null;
+        return value;
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _selfPeerIdLoadFuture = null;
+        throw error;
+      },
+    );
+    return _selfPeerIdLoadFuture!;
   }
 
   /// Starts listening for incoming group messages and optionally reactions.
@@ -190,9 +219,7 @@ class GroupMessageListener {
       final media = mediaRaw?.cast<Map<String, dynamic>>();
       final wireMessageId = data['messageId'] as String?;
       final wireQuotedMessageId = data['quotedMessageId'] as String?;
-      final selfPeerId = _getSelfPeerId != null
-          ? await _getSelfPeerId!()
-          : null;
+      final selfPeerId = await _resolveSelfPeerId();
 
       final result = await handleIncomingGroupMessage(
         groupRepo: _groupRepo,

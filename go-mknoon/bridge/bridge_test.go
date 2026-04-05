@@ -1872,6 +1872,55 @@ func TestGroupJoinTopic_WithInviteData(t *testing.T) {
 	assertOk(t, joinMap)
 }
 
+func TestGroupJoinTopic_AlreadyJoinedIsIdempotent(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	keyHex := generateTestKeyHex(t)
+	input := startNodeJSON(t, keyHex)
+	startResult := StartNode(input)
+	assertOk(t, parseJSON(t, startResult))
+
+	keyResult := GenerateGroupKey()
+	keyMap := parseJSON(t, keyResult)
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+
+	inviteConfig := map[string]interface{}{
+		"name":      "Invite Group",
+		"groupType": "chat",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    "peer-admin",
+				"role":      "admin",
+				"publicKey": "adminPubKey",
+			},
+			{
+				"peerId":    "peer-invitee",
+				"role":      "writer",
+				"publicKey": "inviteePubKey",
+			},
+		},
+		"createdBy": "peer-admin",
+		"createdAt": "2026-01-01T00:00:00Z",
+	}
+
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     "invite-group-already-joined",
+		"groupConfig": inviteConfig,
+		"groupKey":    groupKey,
+		"keyEpoch":    1,
+	})
+
+	firstJoin := parseJSON(t, GroupJoinTopic(string(joinInput)))
+	assertOk(t, firstJoin)
+
+	secondJoin := parseJSON(t, GroupJoinTopic(string(joinInput)))
+	assertOk(t, secondJoin)
+	if note, _ := secondJoin["note"].(string); note != "ALREADY_JOINED" {
+		t.Fatalf("expected ALREADY_JOINED note on idempotent rejoin, got %v", secondJoin["note"])
+	}
+}
+
 // ===========================================================================
 // Phase 6: Bridge-level GroupRotateKey for post-invite key distribution
 // ===========================================================================

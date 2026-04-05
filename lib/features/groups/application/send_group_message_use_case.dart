@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:uuid/uuid.dart';
@@ -131,6 +132,44 @@ Future<void> _persistOutgoingMedia({
   for (final attachment in attachments) {
     await mediaAttachmentRepo.saveAttachment(attachment);
   }
+}
+
+void _finalizeSuccessfulPublishInboxStoreInBackground({
+  required Future<bool> inboxFuture,
+  required GroupMessageRepository msgRepo,
+  required String messageId,
+}) {
+  unawaited(() async {
+    try {
+      final inboxOk = await inboxFuture;
+      await msgRepo.updateInboxStored(messageId, stored: inboxOk);
+      if (inboxOk) {
+        await msgRepo.updateInboxRetryPayload(messageId, null);
+      }
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_USE_CASE_INBOX_STORE_BACKGROUND_RESULT',
+        details: {
+          'messageId': messageId.length > 8
+              ? messageId.substring(0, 8)
+              : messageId,
+          'inboxOk': inboxOk,
+        },
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_USE_CASE_INBOX_STORE_BACKGROUND_ERROR',
+        details: {
+          'messageId': messageId.length > 8
+              ? messageId.substring(0, 8)
+              : messageId,
+          'error': e.toString(),
+        },
+      );
+    }
+  }());
 }
 
 /// Sends a message to a group.
@@ -361,14 +400,19 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     quotedMessageId: quotedMessageId,
     media: mediaJson,
   );
-  final inboxFuture = _tryInboxStore(
-    bridge: bridge,
-    groupId: groupId,
-    inboxPayload: inboxPayload,
-    recipientPeerIds: recipientPeerIds.isNotEmpty ? recipientPeerIds : null,
-    pushTitle: pushTitle,
-    pushBody: pushBody,
-  );
+  bool? inboxResult;
+  final inboxFuture =
+      _tryInboxStore(
+        bridge: bridge,
+        groupId: groupId,
+        inboxPayload: inboxPayload,
+        recipientPeerIds: recipientPeerIds.isNotEmpty ? recipientPeerIds : null,
+        pushTitle: pushTitle,
+        pushBody: pushBody,
+      ).then((value) {
+        inboxResult = value;
+        return value;
+      });
 
   // 6. Await publish — determines success/failure
   Map<String, dynamic>? publishResult;
@@ -395,11 +439,10 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
   }
 
-  // 7. Await inbox result
-  final inboxOk = await inboxFuture;
-
-  // 8. Apply 4-way result matrix
+  // 7. Apply result matrix. Only block on durable inbox when live publish
+  // cannot confirm delivery.
   if (!publishOk) {
+    final inboxOk = await inboxFuture;
     if (publishErrorCode == 'BRIDGE_TIMEOUT' && inboxOk) {
       // The foreground publish confirmation timed out, but the relay inbox
       // accepted custody for delivery. Surface this as a successful durable
@@ -476,11 +519,17 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   if (topicPeers == null) {
     // Missing topicPeers key — legacy success (backward compat, assume peers > 0)
+    if (inboxResult == null) {
+      await Future<void>.value();
+    }
+    final resolvedInboxOk = inboxResult;
     final finalMessage = prePersistMessage.copyWith(
       status: 'sent',
       wireEnvelope: null,
-      inboxStored: inboxOk,
-      inboxRetryPayload: inboxOk ? null : prePersistMessage.inboxRetryPayload,
+      inboxStored: resolvedInboxOk ?? false,
+      inboxRetryPayload: resolvedInboxOk == true
+          ? null
+          : prePersistMessage.inboxRetryPayload,
     );
     await msgRepo.saveMessage(finalMessage);
 
@@ -492,6 +541,14 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
           )
           .toList(growable: false),
     );
+
+    if (resolvedInboxOk == null) {
+      _finalizeSuccessfulPublishInboxStoreInBackground(
+        inboxFuture: inboxFuture,
+        msgRepo: msgRepo,
+        messageId: resolvedMessageId,
+      );
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -505,18 +562,29 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     emitGroupSendTiming(
       outcome: 'success',
-      details: {'status': finalMessage.status, 'legacy': true},
+      details: {
+        'status': finalMessage.status,
+        'legacy': true,
+        'inboxStored': resolvedInboxOk ?? false,
+        'inboxPending': resolvedInboxOk == null,
+      },
     );
     return (SendGroupMessageResult.success, finalMessage);
   }
 
   if (topicPeers > 0) {
     // Normal success: peers > 0
+    if (inboxResult == null) {
+      await Future<void>.value();
+    }
+    final resolvedInboxOk = inboxResult;
     final finalMessage = prePersistMessage.copyWith(
       status: 'sent',
       wireEnvelope: null,
-      inboxStored: inboxOk,
-      inboxRetryPayload: inboxOk ? null : prePersistMessage.inboxRetryPayload,
+      inboxStored: resolvedInboxOk ?? false,
+      inboxRetryPayload: resolvedInboxOk == true
+          ? null
+          : prePersistMessage.inboxRetryPayload,
     );
     await msgRepo.saveMessage(finalMessage);
 
@@ -529,6 +597,14 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
           .toList(growable: false),
     );
 
+    if (resolvedInboxOk == null) {
+      _finalizeSuccessfulPublishInboxStoreInBackground(
+        inboxFuture: inboxFuture,
+        msgRepo: msgRepo,
+        messageId: resolvedMessageId,
+      );
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
@@ -537,7 +613,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
             ? resolvedMessageId.substring(0, 8)
             : resolvedMessageId,
         'topicPeers': topicPeers,
-        'inboxOk': inboxOk,
+        'inboxOk': resolvedInboxOk,
+        'inboxPending': resolvedInboxOk == null,
       },
     );
     emitGroupSendTiming(
@@ -545,13 +622,15 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       details: {
         'status': finalMessage.status,
         'topicPeers': topicPeers,
-        'inboxStored': inboxOk,
+        'inboxStored': resolvedInboxOk ?? false,
+        'inboxPending': resolvedInboxOk == null,
       },
     );
     return (SendGroupMessageResult.success, finalMessage);
   }
 
   // topicPeers == 0
+  final inboxOk = await inboxFuture;
   if (inboxOk) {
     // 0-peer + inbox OK → successNoPeers, but persist as a successful send.
     // The relay inbox has already accepted durable delivery for offline peers,

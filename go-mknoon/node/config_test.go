@@ -2,6 +2,7 @@ package node
 
 import (
 	"testing"
+	"time"
 )
 
 func TestInteractiveAndBackgroundTimeoutProfilesRemainDistinct(t *testing.T) {
@@ -53,6 +54,41 @@ func TestDirectConfirmTimeout_StaysWithinInteractiveSendBudget(t *testing.T) {
 		t.Fatalf(
 			"DirectConfirmTimeout (%v) must stay below InteractiveSendTimeout (%v)",
 			DirectConfirmTimeout,
+			InteractiveSendTimeout,
+		)
+	}
+}
+
+func TestGroupPublishPeerSettleWindows_StayShortForForegroundSend(t *testing.T) {
+	if GroupPublishZeroPeerSettleWait <= 0 {
+		t.Fatal("GroupPublishZeroPeerSettleWait must be positive")
+	}
+	if GroupPublishPartialPeerSettleWait <= 0 {
+		t.Fatal("GroupPublishPartialPeerSettleWait must be positive")
+	}
+	if GroupPublishZeroPeerSettleWait >= GroupPublishPartialPeerSettleWait {
+		t.Fatalf(
+			"zero-peer settle wait (%v) must stay below partial-peer settle wait (%v)",
+			GroupPublishZeroPeerSettleWait,
+			GroupPublishPartialPeerSettleWait,
+		)
+	}
+	if GroupPublishZeroPeerSettleWait > 250*time.Millisecond {
+		t.Fatalf(
+			"zero-peer settle wait (%v) is too slow for the foreground durable-send race",
+			GroupPublishZeroPeerSettleWait,
+		)
+	}
+	if GroupPublishPartialPeerSettleWait > time.Second {
+		t.Fatalf(
+			"partial-peer settle wait (%v) should stay sub-second for foreground sends",
+			GroupPublishPartialPeerSettleWait,
+		)
+	}
+	if GroupPublishPartialPeerSettleWait >= InteractiveSendTimeout {
+		t.Fatalf(
+			"partial-peer settle wait (%v) must stay below InteractiveSendTimeout (%v)",
+			GroupPublishPartialPeerSettleWait,
 			InteractiveSendTimeout,
 		)
 	}

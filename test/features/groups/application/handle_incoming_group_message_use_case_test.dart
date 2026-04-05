@@ -9,6 +9,23 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
+class _CountingGroupRepository extends InMemoryGroupRepository {
+  var getGroupCalls = 0;
+  var getMemberCalls = 0;
+
+  @override
+  Future<GroupModel?> getGroup(String id) async {
+    getGroupCalls++;
+    return super.getGroup(id);
+  }
+
+  @override
+  Future<GroupMember?> getMember(String groupId, String peerId) async {
+    getMemberCalls++;
+    return super.getMember(groupId, peerId);
+  }
+}
+
 void main() {
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
@@ -156,6 +173,44 @@ void main() {
     expect(latest, isNotNull);
     expect(latest!.text, 'Test message');
   });
+
+  test(
+    'duplicate by messageId skips repeated group and member lookups',
+    () async {
+      final countingRepo = _CountingGroupRepository();
+      await countingRepo.saveGroup(testGroup);
+      await countingRepo.saveMember(testMember);
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-duplicate-fast-path',
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          senderUsername: 'Sender',
+          text: 'Existing message',
+          timestamp: DateTime.now().toUtc(),
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: countingRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Existing message',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-duplicate-fast-path',
+      );
+
+      expect(result, isNull);
+      expect(countingRepo.getGroupCalls, 0);
+      expect(countingRepo.getMemberCalls, 0);
+    },
+  );
 
   test('persists quotedMessageId from incoming payload', () async {
     final result = await handleIncomingGroupMessage(

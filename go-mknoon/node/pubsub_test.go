@@ -72,6 +72,19 @@ func TestGroupDiscoveryInterval_Is30Seconds(t *testing.T) {
 	}
 }
 
+func TestGroupDiscoveryWarmInterval_IsForegroundFriendly(t *testing.T) {
+	if GroupDiscoveryWarmInterval <= 0 {
+		t.Fatalf("expected warm interval > 0, got %v", GroupDiscoveryWarmInterval)
+	}
+	if GroupDiscoveryWarmInterval >= GroupDiscoveryInterval {
+		t.Fatalf(
+			"expected warm interval %v to stay below background interval %v",
+			GroupDiscoveryWarmInterval,
+			GroupDiscoveryInterval,
+		)
+	}
+}
+
 // --- filterDiscoveredPeers tests ---
 
 func TestFilterDiscoveredPeers_ExcludesSelf(t *testing.T) {
@@ -156,6 +169,48 @@ func TestFilterDiscoveredPeers_AllFiltered(t *testing.T) {
 	result := filterDiscoveredPeers(discovered, selfId, connectedPeers)
 	if len(result) != 0 {
 		t.Errorf("expected 0 peers, got %d", len(result))
+	}
+}
+
+func TestFilterDiscoveredGroupMembers_ExcludesNonMembers(t *testing.T) {
+	memberID, _ := peer.Decode("12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g")
+	nonMemberID, _ := peer.Decode("12D3KooWRby3kFPcEJBxLFasMBr1Y5sTpBLTpfhCoVkdCquN4CY1")
+
+	discovered := []peer.AddrInfo{
+		{ID: memberID},
+		{ID: nonMemberID},
+	}
+	allowed := map[peer.ID]struct{}{
+		memberID: {},
+	}
+
+	filtered, ignored := filterDiscoveredGroupMembers(discovered, allowed)
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 allowed peer, got %d", len(filtered))
+	}
+	if filtered[0].ID != memberID {
+		t.Fatalf("expected member peer %s, got %s", memberID, filtered[0].ID)
+	}
+	if ignored != 1 {
+		t.Fatalf("expected 1 ignored non-member, got %d", ignored)
+	}
+}
+
+func TestFilterDiscoveredGroupMembers_AllowsAllWhenMemberSetEmpty(t *testing.T) {
+	peer1, _ := peer.Decode("12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g")
+	peer2, _ := peer.Decode("12D3KooWRby3kFPcEJBxLFasMBr1Y5sTpBLTpfhCoVkdCquN4CY1")
+
+	discovered := []peer.AddrInfo{
+		{ID: peer1},
+		{ID: peer2},
+	}
+
+	filtered, ignored := filterDiscoveredGroupMembers(discovered, nil)
+	if len(filtered) != len(discovered) {
+		t.Fatalf("expected all peers to remain discoverable, got %d", len(filtered))
+	}
+	if ignored != 0 {
+		t.Fatalf("expected 0 ignored peers, got %d", ignored)
 	}
 }
 
@@ -1970,7 +2025,7 @@ func TestGroupDiscovery_UsesDiscoveredAddressesBeforeRelayFallback(t *testing.T)
 		t.Fatalf("decode target peer ID: %v", err)
 	}
 
-	result, err := dialer.connectGroupPeerPreferDirect(target.PeerId(), target.Host().Addrs())
+	result, err := dialer.connectGroupPeerPreferDirect(target.PeerId(), target.Host().Addrs(), true)
 	if err != nil {
 		t.Fatalf("connectGroupPeerPreferDirect: %v", err)
 	}
@@ -2012,7 +2067,7 @@ func TestKnownGroupMemberDial_PrefersExistingOrDirectPathBeforeRelay(t *testing.
 	}
 
 	dialer.groupConfigs = map[string]*GroupConfig{"group-direct": config}
-	dialer.dialKnownGroupMembers("group-direct")
+	dialer.dialKnownGroupMembers("group-direct", false)
 
 	if dialer.Host().Network().Connectedness(targetID) != network.Connected {
 		t.Fatalf("expected peerstore direct dial to connect to %s before relay fallback", target.PeerId())
@@ -2116,32 +2171,68 @@ func TestGroupDiscoveryLoop_BacksOffRepeatedDialFailures(t *testing.T) {
 	now := time.Unix(1700000000, 0)
 	const peerID = "peer-offline"
 
-	if allowed, _ := n.allowGroupPeerDial(peerID, now); !allowed {
+	if allowed, _, blockedByInFlight := n.beginGroupPeerDial(peerID, now); !allowed || blockedByInFlight {
 		t.Fatal("first dial should be allowed")
 	}
 
-	n.recordGroupPeerDialResult(peerID, false, now)
-	if allowed, retryIn := n.allowGroupPeerDial(peerID, now.Add(time.Second)); allowed {
+	n.finishGroupPeerDial(peerID, false, now)
+	if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDial(peerID, now.Add(time.Second)); allowed || blockedByInFlight {
 		t.Fatal("dial should be blocked during first cooldown")
-	} else if retryIn <= 0 || retryIn > GroupDiscoveryInterval {
-		t.Fatalf("first cooldown retryIn = %v, want within (0, %v]", retryIn, GroupDiscoveryInterval)
+	} else if retryIn <= 0 || retryIn > GroupDiscoveryWarmInterval {
+		t.Fatalf("first cooldown retryIn = %v, want within (0, %v]", retryIn, GroupDiscoveryWarmInterval)
 	}
 
-	afterFirstCooldown := now.Add(GroupDiscoveryInterval)
-	if allowed, _ := n.allowGroupPeerDial(peerID, afterFirstCooldown); !allowed {
+	afterFirstCooldown := now.Add(GroupDiscoveryWarmInterval)
+	if allowed, _, blockedByInFlight := n.beginGroupPeerDial(peerID, afterFirstCooldown); !allowed || blockedByInFlight {
 		t.Fatal("dial should be allowed after first cooldown expires")
 	}
 
-	n.recordGroupPeerDialResult(peerID, false, afterFirstCooldown)
-	if allowed, retryIn := n.allowGroupPeerDial(peerID, afterFirstCooldown.Add(time.Second)); allowed {
+	n.finishGroupPeerDial(peerID, false, afterFirstCooldown)
+	if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDial(peerID, afterFirstCooldown.Add(time.Second)); allowed || blockedByInFlight {
 		t.Fatal("dial should be blocked during second cooldown")
-	} else if retryIn <= GroupDiscoveryInterval {
-		t.Fatalf("second cooldown retryIn = %v, want > %v", retryIn, GroupDiscoveryInterval)
+	} else if retryIn <= 0 || retryIn > GroupDiscoveryWarmInterval {
+		t.Fatalf("second cooldown retryIn = %v, want within (0, %v]", retryIn, GroupDiscoveryWarmInterval)
 	}
 
-	n.recordGroupPeerDialResult(peerID, true, afterFirstCooldown.Add(2*time.Second))
-	if allowed, _ := n.allowGroupPeerDial(peerID, afterFirstCooldown.Add(2*time.Second)); !allowed {
+	afterSecondCooldown := afterFirstCooldown.Add(GroupDiscoveryWarmInterval)
+	if allowed, _, blockedByInFlight := n.beginGroupPeerDial(peerID, afterSecondCooldown); !allowed || blockedByInFlight {
+		t.Fatal("dial should be allowed after second cooldown expires")
+	}
+
+	n.finishGroupPeerDial(peerID, false, afterSecondCooldown)
+	if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDial(peerID, afterSecondCooldown.Add(time.Second)); allowed || blockedByInFlight {
+		t.Fatal("dial should be blocked during third cooldown")
+	} else if retryIn <= GroupDiscoveryWarmInterval {
+		t.Fatalf("third cooldown retryIn = %v, want > %v", retryIn, GroupDiscoveryWarmInterval)
+	}
+
+	n.finishGroupPeerDial(peerID, true, afterSecondCooldown.Add(2*time.Second))
+	if allowed, _, blockedByInFlight := n.beginGroupPeerDial(peerID, afterSecondCooldown.Add(2*time.Second)); !allowed || blockedByInFlight {
 		t.Fatal("successful dial should clear cooldown state")
+	}
+}
+
+// Test: Group discovery does not start a second dial for the same peer while one is active.
+func TestGroupDiscoveryLoop_DedupesConcurrentPeerDials(t *testing.T) {
+	n := NewNode()
+	now := time.Unix(1700000000, 0)
+	const peerID = "peer-shared-across-groups"
+
+	if allowed, _, blockedByInFlight := n.beginGroupPeerDial(peerID, now); !allowed || blockedByInFlight {
+		t.Fatal("first dial should be allowed")
+	}
+
+	if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDial(peerID, now.Add(time.Millisecond)); allowed {
+		t.Fatal("second dial should be blocked while the first is in flight")
+	} else if retryIn != 0 {
+		t.Fatalf("in-flight block retryIn = %v, want 0", retryIn)
+	} else if !blockedByInFlight {
+		t.Fatal("second dial should report in-flight blocking")
+	}
+
+	n.finishGroupPeerDial(peerID, true, now.Add(2*time.Second))
+	if allowed, _, blockedByInFlight := n.beginGroupPeerDial(peerID, now.Add(2*time.Second)); !allowed || blockedByInFlight {
+		t.Fatal("dial should be allowed again once the in-flight attempt completes successfully")
 	}
 }
 

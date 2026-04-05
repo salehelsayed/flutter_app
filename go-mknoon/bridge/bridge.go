@@ -1484,6 +1484,12 @@ func GroupJoinTopic(paramsJSON string) (result string) {
 	}
 
 	if err := n.JoinGroupTopic(params.GroupId, &params.GroupConfig, keyInfo); err != nil {
+		if strings.Contains(err.Error(), "already joined group topic:") {
+			return okJSON(map[string]interface{}{
+				"ok":   true,
+				"note": "ALREADY_JOINED",
+			})
+		}
 		return errJSON("GROUP_ERROR", err.Error())
 	}
 
