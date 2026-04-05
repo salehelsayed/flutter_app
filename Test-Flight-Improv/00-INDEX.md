@@ -1,6 +1,6 @@
 # Test-Flight-1 Improvement Reports
 
-Generated: 2026-04-03
+Generated: 2026-04-04
 
 **Closure note:** Sessions `1` through `29` are closed execution artifacts.
 `session-30-plan.md` is a plan-only narrow reopen artifact and should not be
@@ -48,7 +48,11 @@ refreshed 1:1 closure reference carrying the maintenance-time meaning. The
 doc-scoped Sessions `1` through `10` for Report `50` are the completed
 two-simulator coverage-refresh artifacts, with
 `50-two-simulator-user-journey-tests-todo-session-breakdown.md` plus the
-refreshed audit/journey docs carrying the maintenance-time meaning.
+refreshed audit/journey docs carrying the maintenance-time meaning. The
+doc-scoped Sessions `1` and `2` for Report `55` are the completed Report `55`
+execution/closure artifacts, with
+`55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md`
+carrying the maintenance-time meaning.
 Roadmaps `15` and `16` plus the residual reliability/measurement sessions `24`
 through `29` remain historical execution artifacts. Reports `01` through `14`
 remain the rationale archive. The current closure state lives in Sections `8`,
@@ -208,6 +212,9 @@ conversation/group/intros routing contract.
 | [48-gap3-remove-destructive-inbox-fallback-plan-session-1-plan.md](48-gap3-remove-destructive-inbox-fallback-plan-session-1-plan.md) | Historical automatic 1:1 inbox-drain fallback removal and closure session artifact for Report `48` |
 | [50-two-simulator-user-journey-tests-todo-session-breakdown.md](50-two-simulator-user-journey-tests-todo-session-breakdown.md) | Closed doc-scoped controller for Report `50` manual-journey coverage refresh |
 | [50-two-simulator-user-journey-tests-todo-session-10-plan.md](50-two-simulator-user-journey-tests-todo-session-10-plan.md) | Historical closure-only matrix refresh and accepted-difference session artifact for Report `50` |
+| [55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md](55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md) | Closed doc-scoped controller for Report `55` iOS share handoff plus multi-recipient picker/batch-send rollout |
+| [55-external-share-skip-post-and-multi-recipient-plan-session-1-plan.md](55-external-share-skip-post-and-multi-recipient-plan-session-1-plan.md) | Historical iOS auto-redirect handoff proof session artifact for Report `55` |
+| [55-external-share-skip-post-and-multi-recipient-plan-session-2-plan.md](55-external-share-skip-post-and-multi-recipient-plan-session-2-plan.md) | Historical picker multi-select batch-send and closure session artifact for Report `55` |
 | [17-roadmap-closure-audit.md](17-roadmap-closure-audit.md) | Post-execution closure audit and current reading order for the folder |
 
 **Top finding:** The folder has now moved from backlog mode into closure mode.
@@ -241,8 +248,10 @@ from durable `retrieve_pending` back to destructive `inbox:retrieve`,
 refreshed the stable 1:1 closure wording without widening into public
 inbox-API removal, the doc-scoped Sessions `1` through `10` for Report `50`
 closed the manual-journey coverage backlog plus the stale notification-open
-assumption, and Session `30` remains a plan-only residual artifact rather than
-executed work.
+assumption, the doc-scoped Sessions `1` and `2` for Report `55` closed the
+external-share iOS handoff plus truthful multi-recipient picker/batch-send
+rollout without widening into Android entry or composer redesign, and Session
+`30` remains a plan-only residual artifact rather than executed work.
 The closure audit now describes what is historical rationale, what remains
 open, and what should only be reopened if a real residual gap appears.
 
@@ -263,6 +272,7 @@ open, and what should only be reopened if a real residual gap appears.
 | Maintain | Use `27-persistent-nav-bar-orbit-session-breakdown.md`, `intro_notification_orbit_route_test.dart`, the direct Orbit/Feed nav suites, and `baseline` when app-root intro-open wiring changes | Session `55` closed the notification-opened Orbit persistent-nav seam without widening into sibling-tab hosting, keep-alive, or swipe navigation scope | 27 / 54 / 55 |
 | Maintain | Use `28-orbit-intro-badge-session-breakdown.md`, the direct Feed/Orbit intro badge suites, `intro_notification_orbit_route_test.dart`, and `baseline` when shared Orbit pending-intro badge truth changes | Session `56` closed shared badge coexistence, expiry-aware load, live refresh, route-return freshness, and persistent-nav Orbit parity without widening into a second unread system or root-owned badge controller | 28 / 56 |
 | Maintain | Use `29-batch-parallel-intro-sending-session-breakdown.md`, the direct intro application/picker/integration suites, and rerun `baseline` only when broader conversation or banner entry wiring changes | Sessions `58` and `59` closed capped batch intro sending plus truthful picker progress without widening into Go/bridge batch APIs or new named-gate ownership | 29 / 58 / 59 |
+| Maintain | Use `55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md`, the direct share picker/coordinator/integration suites, `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline`, `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1`, and `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` when shared external-share picker or share fanout wiring changes | The doc-scoped Sessions `1` and `2` for Report `55` closed the iOS share-entry handoff plus truthful multi-recipient picker/batch-send slice without widening into Android entry, composer redesign, or shared 1:1/group send semantics | 55 / test-gate-definitions |
 | Maintain | Use `30-swipe-nav-feed-orbit-session-breakdown.md`, the direct Feed/Orbit swipe and local-gesture suites, and `baseline` when the shared Feed/Orbit navigation seam changes | The doc-scoped Sessions `59` and `60` closed the shared-host plus horizontal-swipe rollout without widening into notification-opened Orbit routing parity, a broader app-root tab shell, or unread/badge architecture work | 30 / 59 / 60 |
 | Maintain | Use `44-feed-orbit-notification-desync-session-breakdown.md`, the direct `feed_wired_test.dart` and `orbit_wired_test.dart` suites, plus `./scripts/run_test_gates.sh feed`, `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1`, and `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` when shared Feed/Orbit handled-notification truth changes | The doc-scoped Session `1` for Report `44` closed the mounted Orbit stale-unread contradiction after Feed collapse or successful inline reply without widening into app-root notification routing, group sync, or unread-architecture redesign | 30 / 40 / 44 / test-gate-definitions |
 | Maintain | Use `45-feed-stack-card-does-not-reorient-after-inline-reply-session-breakdown.md`, the direct `feed_wired_test.dart` and `feed_screen_test.dart` suites, plus `./scripts/run_test_gates.sh feed`, `./scripts/run_test_gates.sh 1to1`, and `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` when Feed inline-reply viewport continuity changes | The doc-scoped Session `1` for Report `45` closed the stale same-card viewport continuity seam after successful inline reply without widening into unread-truth redesign, group parity, or broader Feed/Orbit navigation architecture | 40 / 44 / 45 / test-gate-definitions |
@@ -312,6 +322,7 @@ open, and what should only be reopened if a real residual gap appears.
 | [33-delete-message-for-me-everyone.md](33-delete-message-for-me-everyone.md) | Delete messages with "Delete for Me" and "Delete for Everyone" via long-press context menu |
 | [34-orbit-intros-swipe-delete-missing.md](34-orbit-intros-swipe-delete-missing.md) | Live Orbit intros are missing the existing swipe-to-delete affordance and confirmation flow |
 | [35-cancelled-video-upload-still-sends.md](35-cancelled-video-upload-still-sends.md) | Accepted cancel on a 1:1 video upload can still fall through into failure/send; cancel should stop delivery for that attempt |
+| [55-external-share-skip-post-and-multi-recipient-plan.md](55-external-share-skip-post-and-multi-recipient-plan.md) | Skip the extra native iOS Post screen on external share and support truthful multi-recipient share delivery from the picker |
 
 **Context:** These specs address user-facing gaps discovered during TestFlight
 usage. Report `24` directly relates to the upload reliability path covered by
@@ -337,4 +348,8 @@ refreshed closure docs rather than in the proposal alone. Report `35` directly
 relates to the Report `24` 1:1 cancel seam, and its landed maintenance-time
 meaning now lives in
 `35-cancelled-video-upload-still-sends-session-breakdown.md` plus the
-refreshed 1:1 closure docs rather than in the proposal alone.
+refreshed 1:1 closure docs rather than in the proposal alone. Report `55`
+directly relates to the external-share entry and delivery seam, and its landed
+maintenance-time meaning now lives in
+`55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md`
+rather than in the proposal alone.

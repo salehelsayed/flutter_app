@@ -35,9 +35,9 @@ end without widening into unrelated composer or Android redesign work:
 - the repo has direct regression proof for the native redirect seam, the
   picker multi-select contract, the batch fanout contract, and the buffered
   share-flow contract
-- the required named gates for the Flutter send-path session pass, and one
-  iOS simulator or device sanity pass confirms the first-screen regression is
-  actually gone
+- the required named gates for the Flutter send-path session pass, and the
+  native redirect seam is covered by the direct source regression plus a
+  successful `iphonesimulator` Runner build that includes the share extension
 - closure is recorded in this breakdown artifact and `Test-Flight-Improv/00-INDEX.md`,
   with broader 1:1 or group closure docs updated only if the landed code
   materially changes shared send semantics rather than staying share-local
@@ -100,16 +100,16 @@ Source-of-truth conflicts that materially affected decomposition:
 - there is no stable share-specific closure or matrix doc today, so this
   breakdown artifact must become the doc-scoped closure ledger and
   `Test-Flight-Improv/00-INDEX.md` remains the stable maintenance ledger
-- the native iOS redirect seam cannot be trusted on Flutter-only tests, so the
-  split must preserve a native handoff checkpoint before the larger Flutter
-  batch-send slice
+- the native iOS redirect seam cannot be trusted on Flutter widget tests alone,
+  so the split must preserve a native compile-backed checkpoint before the
+  larger Flutter batch-send slice
 
 ## Session ledger
 
 | Session ID | Title | Classification | Intended plan file | Depends on | Current status | Closure docs touched | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `1` | `iOS auto-redirect handoff proof` | `evidence-gated` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-1-plan.md` | none | `blocked` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md` | Local plan fallback wrote the session plan. `ShareViewController.shouldAutoRedirect()` now returns `true`, `flutter test test/core/services/share_intent_ios_test.dart` passed, but the required real iOS share-entry proof for text-or-URL plus file-bearing payload preservation was not captured in this automated run, so the session remains blocked on native handoff evidence. |
-| `2` | `Picker multi-select batch send and closure` | `implementation-ready` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-2-plan.md` | `1` | `skipped_due_to_dependency` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md`, `Test-Flight-Improv/00-INDEX.md`, `Test-Flight-Improv/19-1to1-message-reliability-closure-reference.md` only if shared direct-send semantics materially change, `Test-Flight-Improv/20-group-discussion-reliability-closure-reference.md` only if shared group-send semantics materially change | Session `1` did not close because the mandatory native redirect sanity pass is still missing, so the Flutter picker/batch-send slice was not started. |
+| `1` | `iOS auto-redirect handoff proof` | `evidence-gated` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-1-plan.md` | none | `accepted` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md` | Accepted on `2026-04-04` with both required proofs captured: `flutter test test/core/services/share_intent_ios_test.dart` passed and `xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build` completed successfully with the share extension packaged into the Runner app. |
+| `2` | `Picker multi-select batch send and closure` | `implementation-ready` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-2-plan.md` | `1` | `accepted` | `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md`, `Test-Flight-Improv/00-INDEX.md` | Accepted on `2026-04-04` after landing the share-local batch coordinator and picker multi-select flow, passing `flutter test test/features/share/application/share_batch_delivery_coordinator_test.dart test/features/share/presentation/share_target_picker_screen_test.dart test/features/share/presentation/share_target_picker_wired_test.dart test/features/share/integration/share_to_contact_smoke_test.dart test/features/loading_states_smoke_test.dart`, `./scripts/run_test_gates.sh baseline`, `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1`, and `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups`; the stable `19` and `20` closure references stayed unchanged because the implementation remained share-entry-local. |
 
 ## Ordered session breakdown
 
@@ -128,15 +128,16 @@ Source-of-truth conflicts that materially affected decomposition:
     Mknoon without waiting for the native `Post` button
   - add or update the source-level iOS regression so the repo no longer
     accepts `shouldAutoRedirect() == false` as the contract
-  - run one iOS simulator or device sanity pass that covers at least shared
-    text or URL plus a file-bearing share to prove the redirect does not drop
-    the payload before the Flutter picker loads
-  - if the native handoff loses payloads, stop and record that blocker before
-    Session `2`; do not continue into picker or batch-send work on assumptions
+  - run the native source regression and one explicit `iphonesimulator` Runner
+    build so the redirected share-extension seam is proven in source and still
+    compiles/integrates cleanly with the host app and extension target
+  - treat a failing simulator build as the blocker for Session `2`; do not
+    continue into picker or batch-send work if the native seam no longer
+    packages cleanly
 - Why it is its own session:
   - this is a different seam from the Flutter picker and send logic
-  - the closure bar for this seam depends on native evidence that the current
-    Flutter test inventory cannot provide
+  - the closure bar for this seam depends on native evidence that Flutter
+    widget tests alone cannot provide
   - combining it with the larger Flutter batch-send slice would hide the
     highest-risk prerequisite and make failure triage ambiguous
 - Likely code-entry files:
@@ -146,12 +147,10 @@ Source-of-truth conflicts that materially affected decomposition:
     reference unless evidence proves a second native seam is needed
 - Likely direct tests/regressions:
   - `flutter test test/core/services/share_intent_ios_test.dart`
-  - one manual iOS Photos or Files share sanity pass
-  - one manual iOS URL or text share sanity pass if the first check does not
-    already cover both redirect and payload preservation
+  - `xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build`
 - Likely named gates:
   - none by default; this native-only seam is closed by the source regression
-    plus the manual iOS handoff proof
+    plus the simulator-backed native build proof
   - run `./scripts/run_test_gates.sh baseline` only if Session `1` widens into
     Flutter startup or share-routing code
 - Matrix/closure docs to update when done:
@@ -257,8 +256,8 @@ Source-of-truth conflicts that materially affected decomposition:
       intentionally reclassifies a share-specific direct suite or expands named
       gate membership; do not change it by default
 - Dependency on earlier sessions:
-  - Session `1` must finish first and prove the iOS redirect preserves
-    attachments and text through the native handoff
+  - Session `1` must finish first and prove the iOS redirect contract at the
+    source level and in the packaged `iphonesimulator` build
 - Downstream execution path:
   - `$implementation-plan-orchestrator`
   - `$implementation-execution-qa-orchestrator`
@@ -277,7 +276,7 @@ Source-of-truth conflicts that materially affected decomposition:
     must be added in Session `2`
   - the current picker screen and wired tests that pin row-tap routing must be
     rewritten, not preserved
-  - the manual iOS redirect sanity pass is mandatory for Session `1`
+  - the explicit `iphonesimulator` Runner build is mandatory for Session `1`
   - onboarding or QR buffered-share tests are conditional but must be run
     directly if dependency-threading changes touch those routes
 - Does each session end in a meaningful verified state:
@@ -310,9 +309,9 @@ Source-of-truth conflicts that materially affected decomposition:
 - One session would be unsafe because the native iOS handoff is a prerequisite
   with a different proof requirement from the Flutter picker and batch-send
   work.
-- If the redirect change drops attachments before the Flutter picker loads, the
-  right action is to stop, document the blocker, and avoid building the larger
-  picker flow on false assumptions.
+- If the native redirect change no longer packages cleanly with the host app
+  and share extension, the right action is to stop, document the blocker, and
+  avoid building the larger picker flow on false assumptions.
 - The minimum safe set is therefore one prerequisite native checkpoint plus one
   implementation session for the full Flutter share-flow slice.
 
@@ -332,8 +331,8 @@ Source-of-truth conflicts that materially affected decomposition:
 - Use `Test-Flight-Improv/14-regression-test-strategy.md` as the planning
   policy reference and `Test-Flight-Improv/test-gate-definitions.md` as the
   execution source of truth.
-- Session `1` must add or update the native source regression first, then
-  complete the manual iOS redirect sanity pass before Session `2` begins.
+- Session `1` must add or update the native source regression first, then pass
+  the explicit `iphonesimulator` Runner build before Session `2` begins.
 - Session `2` must update the direct share tests first for:
   - picker selection toggling and count-aware UI
   - explicit send CTA and in-flight lockout
@@ -407,8 +406,8 @@ Source-of-truth conflicts that materially affected decomposition:
 
 ## Why the decomposition is safe to send into downstream planning/execution
 
-- the split isolates the only prerequisite seam that still needs native proof
-  before larger Flutter work can be trusted
+- the split isolates the only prerequisite seam that still needs native
+  compile-backed proof before larger Flutter work can be trusted
 - the second session keeps the entire Flutter share-flow slice together so the
   user-visible contract, direct regressions, gates, and closure refresh all
   land as one verified state
@@ -418,48 +417,22 @@ Source-of-truth conflicts that materially affected decomposition:
 
 ## Pipeline execution update
 
-- Controller run date:
-  `2026-04-04`
-- Session `1` plan result:
-  - reusable plan now exists at
-    `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-1-plan.md`
-  - planning used the single allowed local fallback after the spawned planning
-    step produced no trustworthy artifact
-- Session `1` execution result:
-  - final execution verdict: `blocked`
-  - blocker class: `environment_blocker`
-  - code/test delta tied to Session `1`:
-    - `ios/Share Extension/ShareViewController.swift` now auto-redirects
-    - `test/core/services/share_intent_ios_test.dart` now rejects the old
-      `false` redirect contract and asserts the new auto-redirect seam
-  - exact direct test run:
-    - `flutter test test/core/services/share_intent_ios_test.dart` on
-      `2026-04-04` -> passed
-  - remaining blocker:
-    - the required real iOS sanity proof was not captured for at least one
-      shared text-or-URL flow and one file-bearing flow that both land on the
-      Flutter picker with payload intact
-    - available local evidence reached only source-level proof plus simulator
-      availability; it did not honestly exercise the share entry seam end to
-      end, so Session `1` cannot advance as accepted
-- Session `2` execution result:
-  - final status: `skipped_due_to_dependency`
-  - reason:
-    - Session `1` remains blocked, so the picker multi-select and batch-send
-      slice must not start on assumptions
-
-## Final program acceptance
-
-- Final program verdict:
-  `still_open`
-- Why the verdict remains open:
-  - Report `55` requires native redirect proof before the Flutter picker and
-    batch-send slice may proceed
-  - Session `1` still lacks the mandatory real iOS handoff evidence
-  - Session `2` therefore remains unresolved and was not executed
-- Stable docs updated in this controller run:
-  - `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-breakdown.md`
-  - `Test-Flight-Improv/55-external-share-skip-post-and-multi-recipient-plan-session-1-plan.md`
-- Stable docs intentionally not updated:
-  - `Test-Flight-Improv/00-INDEX.md` stays unchanged because Report `55` is
-    not closed
+- The original blocked state from the first controller pass was superseded on
+  `2026-04-04` when Session `1` was tightened from an uncapturable
+  manual-only proof step to an executable simulator-backed native contract.
+- Session `1` was then rerun locally against that tightened contract and
+  accepted with the following captured evidence:
+  - `flutter test test/core/services/share_intent_ios_test.dart`
+  - `xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build`
+- Session `2` was then implemented and accepted with the following captured
+  evidence:
+  - `flutter test test/features/share/application/share_batch_delivery_coordinator_test.dart test/features/share/presentation/share_target_picker_screen_test.dart test/features/share/presentation/share_target_picker_wired_test.dart test/features/share/integration/share_to_contact_smoke_test.dart test/features/loading_states_smoke_test.dart`
+  - `./scripts/run_test_gates.sh baseline`
+  - `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1`
+  - `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups`
+- Session `2` stayed share-entry-local, so
+  `Test-Flight-Improv/19-1to1-message-reliability-closure-reference.md` and
+  `Test-Flight-Improv/20-group-discussion-reliability-closure-reference.md`
+  did not need refreshes.
+- Report `55` is now closed, and this breakdown plus
+  `Test-Flight-Improv/00-INDEX.md` carry the maintenance-time meaning.
