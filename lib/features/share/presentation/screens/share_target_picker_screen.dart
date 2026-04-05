@@ -16,6 +16,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 class ShareTargetPickerScreen extends StatefulWidget {
   final String? sharedText;
   final List<String> sharedFilePaths;
+  final TextEditingController? captionController;
   final List<ContactModel> contacts;
   final List<GroupModel> groups;
   final bool isLoading;
@@ -31,6 +32,7 @@ class ShareTargetPickerScreen extends StatefulWidget {
     super.key,
     this.sharedText,
     this.sharedFilePaths = const [],
+    this.captionController,
     required this.contacts,
     required this.groups,
     this.isLoading = false,
@@ -51,6 +53,11 @@ class ShareTargetPickerScreen extends StatefulWidget {
 class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
+  bool _showPreviewImage = false;
+
+  bool get _showsCaptionField => widget.captionController != null;
+  String get _draftFieldLabel =>
+      widget.sharedFilePaths.isNotEmpty ? 'Caption' : 'Message';
 
   int get _selectionCount =>
       widget.selectedContactPeerIds.length + widget.selectedGroupIds.length;
@@ -59,6 +66,14 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    if (widget.sharedFilePaths.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        setState(() => _showPreviewImage = true);
+      });
+    }
   }
 
   void _onSearchChanged() {
@@ -103,9 +118,10 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
               Column(
                 children: [
                   _buildHeader(),
-                  if (widget.sharedText != null ||
-                      widget.sharedFilePaths.isNotEmpty)
+                  if (widget.sharedFilePaths.isNotEmpty ||
+                      (!_showsCaptionField && widget.sharedText != null))
                     _buildPreviewStrip(),
+                  if (_showsCaptionField) _buildCaptionField(),
                   _buildSearchField(),
                   Expanded(child: _buildTargetList()),
                   if (_selectionCount > 0) _buildSendButton(),
@@ -116,7 +132,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                   child: IgnorePointer(
                     ignoring: false,
                     child: Container(
-                      color: Colors.black.withOpacity(0.18),
+                      color: Colors.black.withValues(alpha: 0.18),
                       alignment: Alignment.center,
                       child: const CircularProgressIndicator(
                         color: Colors.white,
@@ -178,14 +194,24 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
               height: 48,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.file(
-                  File(widget.sharedFilePaths.first),
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => Container(
-                    color: const Color.fromRGBO(255, 255, 255, 0.1),
-                    child: const Icon(Icons.image, color: Colors.white38),
-                  ),
-                ),
+                child: _showPreviewImage
+                    ? Image.file(
+                        File(widget.sharedFilePaths.first),
+                        key: const ValueKey('share-preview-image'),
+                        fit: BoxFit.cover,
+                        cacheWidth: 144,
+                        cacheHeight: 144,
+                        filterQuality: FilterQuality.low,
+                        errorBuilder: (context, error, stackTrace) => Container(
+                          color: const Color.fromRGBO(255, 255, 255, 0.1),
+                          child: const Icon(Icons.image, color: Colors.white38),
+                        ),
+                      )
+                    : Container(
+                        key: const ValueKey('share-preview-placeholder'),
+                        color: const Color.fromRGBO(255, 255, 255, 0.1),
+                        child: const Icon(Icons.image, color: Colors.white38),
+                      ),
               ),
             ),
             if (widget.sharedFilePaths.length > 1)
@@ -198,7 +224,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
               ),
             const SizedBox(width: 12),
           ],
-          if (widget.sharedText != null)
+          if (!_showsCaptionField && widget.sharedText != null)
             Expanded(
               child: Text(
                 widget.sharedText!,
@@ -213,10 +239,55 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
     );
   }
 
+  Widget _buildCaptionField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _draftFieldLabel,
+            key: const ValueKey('share-caption-label'),
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.3,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            key: const ValueKey('share-caption-field'),
+            controller: widget.captionController,
+            enabled: !widget.isSending,
+            minLines: 1,
+            maxLines: 4,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: _draftFieldLabel,
+              hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
+              filled: true,
+              fillColor: const Color.fromRGBO(255, 255, 255, 0.06),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildSearchField() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: TextField(
+        key: const ValueKey('share-search-field'),
         controller: _searchController,
         enabled: !widget.isSending,
         style: const TextStyle(color: Colors.white, fontSize: 14),
@@ -262,18 +333,34 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       );
     }
 
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      children: [
-        if (contacts.isNotEmpty) ...[
-          _buildSectionHeader('Contacts'),
-          ...contacts.map(_buildContactRow),
-        ],
-        if (groups.isNotEmpty) ...[
-          _buildSectionHeader('Groups'),
-          ...groups.map(_buildGroupRow),
-        ],
+    final entries = <_TargetListEntry>[
+      if (contacts.isNotEmpty) ...[
+        const _SectionHeaderEntry('Contacts'),
+        ...contacts.map(_ContactEntry.new),
       ],
+      if (groups.isNotEmpty) ...[
+        const _SectionHeaderEntry('Groups'),
+        ...groups.map(_GroupEntry.new),
+      ],
+    ];
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      itemCount: entries.length,
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        if (entry is _SectionHeaderEntry) {
+          return _buildSectionHeader(entry.title);
+        }
+        if (entry is _ContactEntry) {
+          return _buildContactRow(entry.contact);
+        }
+        if (entry is _GroupEntry) {
+          return _buildGroupRow(entry.group);
+        }
+        return const SizedBox.shrink();
+      },
     );
   }
 
@@ -366,4 +453,26 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       ),
     );
   }
+}
+
+sealed class _TargetListEntry {
+  const _TargetListEntry();
+}
+
+final class _SectionHeaderEntry extends _TargetListEntry {
+  final String title;
+
+  const _SectionHeaderEntry(this.title);
+}
+
+final class _ContactEntry extends _TargetListEntry {
+  final ContactModel contact;
+
+  const _ContactEntry(this.contact);
+}
+
+final class _GroupEntry extends _TargetListEntry {
+  final GroupModel group;
+
+  const _GroupEntry(this.group);
 }

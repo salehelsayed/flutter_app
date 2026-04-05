@@ -196,6 +196,7 @@ void main() {
   StartupRouter buildStartupRouter({
     required ContactRequestListener contactRequestListener,
     ShareIntentService? shareIntentService,
+    Future<void> Function()? ensureRuntimeServicesReady,
   }) {
     return StartupRouter(
       repository: identityRepository,
@@ -212,6 +213,7 @@ void main() {
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
       shareIntentService: shareIntentService,
+      ensureRuntimeServicesReady: ensureRuntimeServicesReady,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
       groupMessageListener: groupMessageListener,
@@ -356,7 +358,7 @@ void main() {
   });
 
   testWidgets(
-    '6g: cold start with identity and contacts shows picker after FeedWired mounts',
+    '6g: cold start with identity and contacts opens the picker directly',
     (tester) async {
       identityRepository.seed(identityWithContacts);
       contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
@@ -387,6 +389,55 @@ void main() {
 
       expect(find.text('Share with...'), findsOneWidget);
       expect(find.text('cold start'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '6g1: cold start share opens picker without waiting for deferred runtime startup',
+    (tester) async {
+      identityRepository.seed(
+        IdentityModel(
+          peerId: identityWithContacts.peerId,
+          publicKey: identityWithContacts.publicKey,
+          privateKey: identityWithContacts.privateKey,
+          mnemonic12: identityWithContacts.mnemonic12,
+          mlKemPublicKey: null,
+          mlKemSecretKey: null,
+          username: identityWithContacts.username,
+          createdAt: identityWithContacts.createdAt,
+          updatedAt: identityWithContacts.updatedAt,
+        ),
+      );
+      contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
+      final runtimeReady = Completer<void>();
+      final shareIntentService = ShareIntentService(resetShareIntent: () {});
+      await shareIntentService.bufferIntent(
+        const ShareIntent(type: ShareIntentType.text, text: 'direct share'),
+      );
+      final requestListener = ContactRequestListener(
+        contactRequestStream: const Stream<ChatMessage>.empty(),
+        requestRepo: contactRequestRepository,
+        contactRepo: contactRepository,
+        bridge: bridge,
+        getOwnPeerId: () => identityWithContacts.peerId,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: buildStartupRouter(
+            contactRequestListener: requestListener,
+            shareIntentService: shareIntentService,
+            ensureRuntimeServicesReady: () => runtimeReady.future,
+          ),
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Share with...'), findsOneWidget);
+      expect(find.text('direct share'), findsOneWidget);
     },
   );
 

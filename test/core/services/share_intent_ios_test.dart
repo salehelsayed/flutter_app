@@ -21,6 +21,9 @@ void main() {
         final fallback = File(
           'ios/Share Extension/RSIShareFallback.swift',
         ).readAsStringSync();
+        final storyboard = File(
+          'ios/Share Extension/Base.lproj/MainInterface.storyboard',
+        );
         final runnerEntitlements = File(
           'ios/Runner/Runner.entitlements',
         ).readAsStringSync();
@@ -42,18 +45,29 @@ void main() {
           extensionInfo,
           contains('NSExtensionActivationSupportsWebURLWithMaxCount'),
         );
+        expect(extensionInfo, contains('<key>NSExtensionPrincipalClass</key>'));
+        expect(
+          extensionInfo,
+          contains(
+            '<string>\$(PRODUCT_MODULE_NAME).ShareViewController</string>',
+          ),
+        );
+        expect(extensionInfo, isNot(contains('NSExtensionMainStoryboard')));
         expect(podfile, isNot(contains("target 'Share Extension' do")));
         expect(controller, contains('canImport(receive_sharing_intent)'));
         expect(
           controller,
-          contains('class ShareViewController: RSIShareViewController'),
+          contains('class ShareViewController: UIViewController'),
         );
-        expect(
-          controller,
-          contains('override func shouldAutoRedirect() -> Bool'),
-        );
-        expect(controller, contains('true'));
-        expect(controller, isNot(contains('false')));
+        expect(controller, contains('configureLoadingView()'));
+        expect(controller, contains('beginProcessingShare()'));
+        expect(controller, contains('processIncomingItems()'));
+        expect(controller, contains('loadInPlaceFileRepresentation'));
+        expect(controller, contains('loadFileRepresentation'));
+        expect(controller, contains('saveAndRedirect()'));
+        expect(controller, isNot(contains('getVideoInfo(')));
+        expect(controller, isNot(contains('RSIShareViewController')));
+        expect(controller, isNot(contains('shouldAutoRedirect')));
         expect(fallback, contains('#if !canImport(receive_sharing_intent)'));
         expect(fallback, contains('open class RSIShareViewController'));
         expect(
@@ -75,13 +89,17 @@ void main() {
         );
         expect(
           project,
-          contains('PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;'),
+          contains(
+            'PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.ShareExtension;',
+          ),
         );
         expect(project, isNot(contains('com.example.makerGenerated')));
         expect(
           project,
           contains('Share Extension/Share Extension.entitlements'),
         );
+        expect(storyboard.existsSync(), isFalse);
+        expect(project, isNot(contains('MainInterface.storyboard')));
       },
     );
   });
@@ -183,6 +201,5 @@ void main() {
         expect(intent.filePaths, ['/tmp/ios-photo.jpg']);
       },
     );
-
   });
 }

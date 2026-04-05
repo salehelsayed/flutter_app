@@ -1358,6 +1358,81 @@ void main() {
       },
     );
 
+    test(
+      'equal-watermark group_metadata_updated retries avatar recovery when avatarPath is still missing',
+      () async {
+        const updatedAt = '2026-04-05T12:20:00.000Z';
+        await groupRepo.updateGroup(
+          testGroup.copyWith(
+            avatarBlobId: 'blob-1',
+            avatarMime: 'image/jpeg',
+            avatarPath: null,
+            lastMetadataEventAt: DateTime.parse(updatedAt).toUtc(),
+          ),
+        );
+
+        var downloadCalls = 0;
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          downloadGroupAvatarFn:
+              ({
+                required dynamic bridge,
+                required String groupId,
+                required String blobId,
+              }) async {
+                downloadCalls++;
+                return 'media/group_avatars/$groupId.jpg';
+              },
+        );
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'group_metadata_updated',
+          'updatedAt': updatedAt,
+          'groupConfig': {
+            'name': 'Recovered Avatar Group',
+            'groupType': 'chat',
+            'description': 'Fresh description',
+            'avatarBlobId': 'blob-1',
+            'avatarMime': 'image/jpeg',
+            'metadataUpdatedAt': updatedAt,
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T12:00:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': updatedAt,
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.avatarPath, 'media/group_avatars/group-1.jpg');
+        expect(downloadCalls, 1);
+      },
+    );
+
     test('unauthorized member_removed is ignored', () async {
       listener.start(sourceController.stream);
 

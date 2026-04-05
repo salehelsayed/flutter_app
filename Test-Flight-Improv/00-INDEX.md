@@ -67,11 +67,13 @@ remain the rationale archive. The current closure state lives in Sections `8`,
 | [01-unit-test-coverage.md](01-unit-test-coverage.md) | Corrected module-by-module unit test picture — broad coverage, narrower remaining gaps |
 | [02-integration-test-coverage.md](02-integration-test-coverage.md) | Cross-feature flows, integration quality, and remaining boundary gaps |
 | [50-two-simulator-user-journey-tests-coverage-audit.md](50-two-simulator-user-journey-tests-coverage-audit.md) | Refreshed manual-journey coverage matrix plus accepted notification-open contract for the current app |
+| [_current-test-map.md](_current-test-map.md) | Compact operator runbook for which tests exist, what they protect, and how to run them now |
 
 **Top finding:** Test coverage is materially stronger than the first pass
 suggested. Report `50` is now the folder-local matrix for manual
-two/three-simulator journey confidence, and it retires the old stale
-Feed-expanded-card notification-open assumption in favor of the current
+two/three-simulator journey confidence, `67` is the compact current runbook
+for day-to-day test selection, and the old stale Feed-expanded-card
+notification-open assumption is retired in favor of the current
 conversation/group/intros routing contract.
 
 ---

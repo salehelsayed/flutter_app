@@ -937,6 +937,10 @@ class _FeedWiredState extends State<FeedWired>
       groupName: group.name,
       groupType: group.type,
       myRole: group.myRole,
+      avatarPath: group.avatarPath,
+      avatarCacheBustKey:
+          group.lastMetadataEventAt?.toUtc().toIso8601String() ??
+          group.avatarBlobId,
       messages: messages,
       unreadCount: messages.where((message) => message.isUnread).length,
       conversationState: state,

@@ -37,6 +37,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bu
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -3265,6 +3266,105 @@ void main() {
           <String>{'g1'},
         );
         expect(spyGroupMessageRepo.getMessagesPageCallCountByGroupId['g1'], 1);
+      },
+    );
+
+    testWidgets(
+      'changed group snapshot refresh updates the feed group avatar metadata',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final spyGroupRepo = _SpyGroupRepository();
+        final spyGroupMessageRepo = _SpyGroupMessageRepository();
+
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g-avatar',
+            name: 'Avatar Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g-avatar',
+            createdAt: DateTime.utc(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await spyGroupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-avatar-1',
+            groupId: 'g-avatar',
+            senderPeerId: 'peer-a',
+            senderUsername: 'Peer A',
+            text: 'Avatar seed message',
+            timestamp: DateTime.utc(2026, 2, 1, 10),
+            readAt: DateTime.utc(2026, 2, 1, 10, 30),
+            createdAt: DateTime.utc(2026, 2, 1, 10),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: spyGroupRepo,
+            groupMessageRepository: spyGroupMessageRepo,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        GroupAvatar avatar = tester.widget<GroupAvatar>(
+          find.byType(GroupAvatar),
+        );
+        expect(avatar.groupId, 'g-avatar');
+        expect(avatar.avatarPath, isNull);
+        expect(avatar.cacheBustKey, isNull);
+
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester);
+
+        spyGroupRepo.resetTracking();
+        spyGroupMessageRepo.resetTracking();
+
+        final refreshedAt = DateTime.utc(2026, 2, 1, 11, 45);
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g-avatar',
+            name: 'Avatar Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g-avatar',
+            avatarBlobId: 'blob-2',
+            avatarMime: 'image/jpeg',
+            avatarPath: 'media/group_avatars/g-avatar.jpg',
+            createdAt: DateTime.utc(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+            lastMetadataEventAt: refreshedAt,
+          ),
+        );
+
+        await emitInlineOrbitExit(
+          tester,
+          const FeedRouteChanges(changedGroupIds: {'g-avatar'}),
+        );
+
+        avatar = tester.widget<GroupAvatar>(find.byType(GroupAvatar));
+        expect(avatar.groupId, 'g-avatar');
+        expect(avatar.avatarPath, 'media/group_avatars/g-avatar.jpg');
+        expect(avatar.cacheBustKey, refreshedAt.toIso8601String());
+        expect(spyGroupRepo.getGroupCallCountById.keys, <String>{'g-avatar'});
+        expect(spyGroupRepo.getGroupCallCountById['g-avatar'], 1);
+        expect(
+          spyGroupMessageRepo.getMessagesPageCallCountByGroupId.keys,
+          <String>{'g-avatar'},
+        );
+        expect(
+          spyGroupMessageRepo.getMessagesPageCallCountByGroupId['g-avatar'],
+          1,
+        );
       },
     );
 

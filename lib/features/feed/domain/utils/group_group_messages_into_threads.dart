@@ -82,6 +82,10 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
       groupName: group.name,
       groupType: group.type,
       myRole: group.myRole,
+      avatarPath: group.avatarPath,
+      avatarCacheBustKey:
+          group.lastMetadataEventAt?.toUtc().toIso8601String() ??
+          group.avatarBlobId,
       messages: threadMessages,
       unreadCount: unreadIncomingCount,
       conversationState: state,

@@ -84,6 +84,11 @@ class ShareIntentService {
       return;
     }
 
+    if (intent.filePaths.every(_isSharedAppGroupPath)) {
+      _pendingIntent = intent;
+      return;
+    }
+
     final cacheDir = await _getCacheDirectory();
     final shareCache = Directory(p.join(cacheDir.path, 'share_cache'));
     if (!shareCache.existsSync()) {
@@ -93,6 +98,13 @@ class ShareIntentService {
     final cachedPaths = <String>[];
     for (final originalPath in intent.filePaths) {
       try {
+        if (_shouldPreserveOriginalPath(
+          originalPath: originalPath,
+          shareCachePath: shareCache.path,
+        )) {
+          cachedPaths.add(originalPath);
+          continue;
+        }
         final fileName = p.basename(originalPath);
         final destPath = p.join(shareCache.path, fileName);
         await File(originalPath).copy(destPath);
@@ -103,6 +115,27 @@ class ShareIntentService {
     }
 
     _pendingIntent = intent.copyWith(filePaths: cachedPaths);
+  }
+
+  bool _isSharedAppGroupPath(String originalPath) {
+    final normalizedPath = p.normalize(originalPath).replaceAll('\\', '/');
+    return normalizedPath.contains('/Containers/Shared/AppGroup/');
+  }
+
+  bool _shouldPreserveOriginalPath({
+    required String originalPath,
+    required String shareCachePath,
+  }) {
+    final normalizedPath = p.normalize(originalPath).replaceAll('\\', '/');
+    final normalizedShareCache = p
+        .normalize(shareCachePath)
+        .replaceAll('\\', '/');
+    if (normalizedPath == normalizedShareCache ||
+        p.isWithin(normalizedShareCache, normalizedPath)) {
+      return true;
+    }
+
+    return _isSharedAppGroupPath(normalizedPath);
   }
 
   /// Consume and clear the buffered intent (one-shot).

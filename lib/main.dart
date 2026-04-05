@@ -212,28 +212,48 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   StartupTiming.instance.mark('app_start');
+  final shareIntentService = ShareIntentService();
+  StartupTiming.instance.mark('share_launch_probe_begin');
+  final initialShareIntent = await shareIntentService.captureInitialIntent();
+  final isShareLaunch = initialShareIntent != null;
+  StartupTiming.instance.mark('share_launch_probe_complete');
 
   // Initialize Firebase (mobile only — not available on desktop)
   final bool isDesktop =
       !kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS);
-  if (!isDesktop) {
-    try {
-      await Firebase.initializeApp();
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-      await FirebaseMessaging.instance
-          .setForegroundNotificationPresentationOptions(
-            alert: false,
-            badge: false,
-            sound: false,
-          );
-    } catch (e) {
-      debugPrint('Firebase init skipped: $e');
+  var firebaseInitialized = false;
+  Future<void> ensureFirebaseReady() async {
+    if (firebaseInitialized) {
+      return;
     }
+    firebaseInitialized = true;
+    if (!isDesktop) {
+      try {
+        await Firebase.initializeApp();
+        FirebaseMessaging.onBackgroundMessage(
+          firebaseMessagingBackgroundHandler,
+        );
+        await FirebaseMessaging.instance
+            .setForegroundNotificationPresentationOptions(
+              alert: false,
+              badge: false,
+              sound: false,
+            );
+      } catch (e) {
+        debugPrint('Firebase init skipped: $e');
+      }
+    }
+    StartupTiming.instance.mark('firebase_ready');
+  }
+
+  if (!isShareLaunch) {
+    await ensureFirebaseReady();
   }
 
   // Initialize UserAvatar documents directory for file-based avatar loading
   final appDocDir = await getApplicationDocumentsDirectory();
   UserAvatar.setDocumentsDir(appDocDir.path);
+  StartupTiming.instance.mark('documents_dir_ready');
 
   // Initialize database based on platform
   if (isDesktop) {
@@ -463,6 +483,7 @@ void main() async {
       }
     },
   );
+  StartupTiming.instance.mark('database_ready');
 
   // 3. Run one-time secrets migration (DB → secure storage)
   //    Must run BEFORE migration 005 so CHECK constraints don't reject
@@ -471,6 +492,7 @@ void main() async {
 
   // 4. Apply CHECK constraints now that secret columns are guaranteed NULL
   await runSecretNullChecksMigration(db);
+  StartupTiming.instance.mark('identity_store_ready');
 
   // 5. Create repository with database helpers + secure key store
   final repository = IdentityRepositoryImpl(
@@ -895,8 +917,6 @@ void main() async {
 
   // Create and initialize the bridge (Go native)
   final Bridge bridge = GoBridgeClient();
-  await bridge.initialize();
-  StartupTiming.instance.mark('bridge_initialized');
 
   // ── Auto-setup for simulator scripts (dart-define only, dead-code in release) ──
   const autoSetupUsername = String.fromEnvironment('AUTO_SETUP_USERNAME');
@@ -1140,7 +1160,6 @@ void main() async {
   final notificationService = FlutterNotificationService(
     requestApplePermissions: !kE2ETestMode,
   );
-  await notificationService.initialize();
   final PushRegistrationCoordinator? pushRegistrationCoordinator =
       !isDesktop && Firebase.apps.isNotEmpty && !kE2ETestMode
       ? PushRegistrationCoordinator(
@@ -1443,59 +1462,70 @@ void main() async {
     bridge: bridge,
   );
 
-  // Start router first, then listeners, then retriers
-  messageRouter.start();
-  contactRequestListener.start();
-  chatMessageListener.start();
-  postListener.start();
-  postCommentListener.start();
-  postReactionListener.start();
-  postPresenceListener.start();
-  postPassListener.start();
-  postPinListener.start();
-  reactionListener.start();
-  messageDeletionListener.start();
-  profileUpdateListener.start();
-  groupMessageListener.start(
-    groupMessageStreamController.stream,
-    incomingGroupReactions: groupReactionStreamController.stream,
-  );
-  groupInviteListener.start();
-  groupKeyUpdateListener.start();
+  var liveServicesStarted = false;
+  Future<void> startLiveServices() async {
+    if (liveServicesStarted) {
+      return;
+    }
+    liveServicesStarted = true;
 
-  introductionListener.start();
+    await ensureFirebaseReady();
+    await bridge.initialize();
+    StartupTiming.instance.mark('bridge_initialized');
+    await notificationService.initialize();
+    StartupTiming.instance.mark('notification_service_ready');
 
-  // NOTE: rejoinGroupTopics and drainGroupOfflineInbox are called in
-  // StartupRouter._doStartP2P() AFTER node:start completes. They require
-  // the Go node to be running (pubsub must be initialized).
-  pendingMessageRetrier.start();
-  pendingPostMediaUploadRetrier.start();
-  pendingPostDeliveryRetrier.start();
-  pendingPostFollowOnRetrier.start();
-  keyExchangeRetrier.start();
+    // Start router first, then listeners, then retriers.
+    messageRouter.start();
+    contactRequestListener.start();
+    chatMessageListener.start();
+    postListener.start();
+    postCommentListener.start();
+    postReactionListener.start();
+    postPresenceListener.start();
+    postPassListener.start();
+    postPinListener.start();
+    reactionListener.start();
+    messageDeletionListener.start();
+    profileUpdateListener.start();
+    groupMessageListener.start(
+      groupMessageStreamController.stream,
+      incomingGroupReactions: groupReactionStreamController.stream,
+    );
+    groupInviteListener.start();
+    groupKeyUpdateListener.start();
+    introductionListener.start();
 
-  // Forward profile avatar updates through chatMessageListener so
-  // FeedWired/OrbitWired (which subscribe to contactUpdatedStream) refresh.
-  profileUpdateListener.contactUpdatedStream.listen((contact) {
-    chatMessageListener.emitContactUpdate(contact);
-  });
+    // NOTE: rejoinGroupTopics and drainGroupOfflineInbox are called in
+    // StartupRouter._doStartP2P() AFTER node:start completes. They require
+    // the Go node to be running (pubsub must be initialized).
+    pendingMessageRetrier.start();
+    pendingPostMediaUploadRetrier.start();
+    pendingPostDeliveryRetrier.start();
+    pendingPostFollowOnRetrier.start();
+    keyExchangeRetrier.start();
 
-  // Forward ML-KEM key updates from reciprocal contact requests so
-  // ConversationWired/FeedWired pick up the new encryption key.
-  contactRequestListener.contactKeyUpdatedStream.listen((contact) {
-    chatMessageListener.emitContactUpdate(contact);
-  });
+    // Forward profile avatar updates through chatMessageListener so
+    // FeedWired/OrbitWired (which subscribe to contactUpdatedStream) refresh.
+    profileUpdateListener.contactUpdatedStream.listen((contact) {
+      chatMessageListener.emitContactUpdate(contact);
+    });
 
-  final shareIntentService = ShareIntentService();
-  await shareIntentService.captureInitialIntent();
-  await sweepExpiredPosts(
-    postRepo: postRepository,
-    mediaFileManager: mediaFileManager,
-  );
+    // Forward ML-KEM key updates from reciprocal contact requests so
+    // ConversationWired/FeedWired pick up the new encryption key.
+    contactRequestListener.contactKeyUpdatedStream.listen((contact) {
+      chatMessageListener.emitContactUpdate(contact);
+    });
+    StartupTiming.instance.mark('runtime_services_ready');
+  }
+
+  if (!isShareLaunch) {
+    await startLiveServices();
+  }
 
   // ── Smoke test Phase 1: pre-populate contacts before UI renders ──
   // This ensures StartupRouter sees contacts and routes to Feed, not FTE.
-  if (kDebugMode) {
+  if (kDebugMode && !isShareLaunch) {
     await prePopulateContactsFromIntroE2EConfig(contactRepo: contactRepository);
   }
 
@@ -1550,9 +1580,23 @@ void main() async {
       introductionListener: introductionListener,
       shareIntentService: shareIntentService,
       pushRegistrationCoordinator: pushRegistrationCoordinator,
+      deferredRuntimeStartup: isShareLaunch ? startLiveServices : null,
     ),
   );
   StartupTiming.instance.mark('run_app_called');
+  unawaited(
+    sweepExpiredPosts(
+      postRepo: postRepository,
+      mediaFileManager: mediaFileManager,
+    ).catchError((Object error, StackTrace stackTrace) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_SWEEP_STARTUP_ERROR',
+        details: {'error': error.toString()},
+      );
+      return <String>[];
+    }),
+  );
 
   // Keep polling for intro E2E config files in explicit test mode so
   // simulator relaunch timing does not race a single startup timer.
@@ -1679,6 +1723,7 @@ class MyApp extends StatefulWidget {
   final IntroductionListener introductionListener;
   final ShareIntentService shareIntentService;
   final PushRegistrationCoordinator? pushRegistrationCoordinator;
+  final Future<void> Function()? deferredRuntimeStartup;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -1733,6 +1778,7 @@ class MyApp extends StatefulWidget {
     required this.introductionListener,
     required this.shareIntentService,
     this.pushRegistrationCoordinator,
+    this.deferredRuntimeStartup,
   });
 
   @override
@@ -1745,6 +1791,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final PostNotificationOpenCoordinator _postNotificationOpenCoordinator;
   late final ContactRequestNotificationMaterializer
   _contactRequestNotificationMaterializer;
+  late final Future<void> _initialShareIntentCapture;
+  Future<void>? _runtimeServicesReady;
 
   @override
   void initState() {
@@ -1802,10 +1850,31 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _setupPushListeners();
     _setupNotificationTapHandler();
     _setupShareIntentHandling();
+    _initialShareIntentCapture = _captureInitialShareIntent();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_flushDeferredNotificationRouteTarget());
     });
-    unawaited(_handleInitialLocalNotificationLaunch());
+    unawaited(_handleInitialLocalNotificationLaunchWhenReady());
+  }
+
+  Future<void> _ensureRuntimeServicesReady() {
+    final existingFuture = _runtimeServicesReady;
+    if (existingFuture != null) {
+      return existingFuture;
+    }
+
+    final deferredRuntimeStartup = widget.deferredRuntimeStartup;
+    if (deferredRuntimeStartup == null) {
+      return _runtimeServicesReady = Future.value();
+    }
+
+    final startup = () async {
+      StartupTiming.instance.mark('deferred_runtime_start_begin');
+      await deferredRuntimeStartup();
+      StartupTiming.instance.mark('deferred_runtime_start_complete');
+    }();
+    _runtimeServicesReady = startup;
+    return startup;
   }
 
   void _setupShareIntentHandling() {
@@ -1822,6 +1891,37 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _captureInitialShareIntent() async {
+    if (widget.shareIntentService.hasPendingIntent) {
+      _routeBufferedShareIfSettled();
+      return;
+    }
+
+    final intent = await widget.shareIntentService.captureInitialIntent();
+    if (intent == null || !mounted) {
+      return;
+    }
+
+    _routeBufferedShareIfSettled();
+  }
+
+  void _routeBufferedShareIfSettled() {
+    final navigator = MyApp.navigatorKey.currentState;
+    if (!widget.shareIntentService.isSettled ||
+        navigator == null ||
+        !widget.shareIntentService.hasPendingIntent) {
+      return;
+    }
+
+    final pendingIntent = widget.shareIntentService.consumePendingIntent();
+    if (pendingIntent == null) {
+      return;
+    }
+
+    widget.shareIntentService.reset();
+    navigator.push(_buildSharePickerRoute(pendingIntent));
+  }
+
   Route<void> _buildSharePickerRoute(ShareIntent intent) {
     return buildShareTargetPickerRoute(
       shareIntent: intent,
@@ -1834,6 +1934,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       p2pService: widget.p2pService,
       mediaFileManager: widget.mediaFileManager,
       imageProcessor: widget.imageProcessor,
+      secureKeyStore: widget.secureKeyStore,
       conversationTracker: widget.conversationTracker,
       audioRecorderService: widget.audioRecorderService,
       reactionRepository: widget.reactionRepository,
@@ -1843,6 +1944,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       groupMessageListener: widget.groupMessageListener,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
+      preSendReady: _ensureRuntimeServicesReady,
     );
   }
 
@@ -1882,6 +1984,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         widget.contactRequestPresentationGate.release(peerId);
       }
     }
+  }
+
+  Future<void> _handleInitialLocalNotificationLaunchWhenReady() async {
+    await _ensureRuntimeServicesReady();
+    await _handleInitialLocalNotificationLaunch();
   }
 
   Future<void> _handleInitialLocalNotificationLaunch() async {
@@ -2353,6 +2460,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         introductionRepository: widget.introductionRepository,
         introductionListener: widget.introductionListener,
         shareIntentService: widget.shareIntentService,
+        initialShareIntentCapture: _initialShareIntentCapture,
+        ensureRuntimeServicesReady: _ensureRuntimeServicesReady,
         appShellController: widget.appShellController,
         pendingPostTargetStore: widget.pendingPostTargetStore,
         postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,

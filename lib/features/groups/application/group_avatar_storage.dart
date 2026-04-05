@@ -73,8 +73,9 @@ Future<String?> downloadGroupAvatar({
 
   try {
     final canonicalPath = await groupAvatarCanonicalPath(groupId);
-    final tempPath = '$canonicalPath.download';
+    final tempPath = '$canonicalPath.download.jpg';
     final tempFile = File(tempPath);
+    await tempFile.parent.create(recursive: true);
     if (await tempFile.exists()) {
       await tempFile.delete();
     }

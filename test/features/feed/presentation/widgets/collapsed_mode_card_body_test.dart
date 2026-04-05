@@ -11,6 +11,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/collapsed_mode_ca
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -426,13 +427,15 @@ void main() {
   });
 
   group('CollapsedModeCardBody group support', () {
-    testWidgets('renders group icon for GroupThreadFeedItem', (tester) async {
+    testWidgets('renders group avatar for GroupThreadFeedItem', (tester) async {
       final groupThread = GroupThreadFeedItem(
         id: 'g1',
         timestamp: DateTime(2026, 2, 9, 15, 0),
         groupId: 'group-abc',
         groupName: 'Test Group',
         groupType: GroupType.chat,
+        avatarPath: 'media/group_avatars/group-abc.jpg',
+        avatarCacheBustKey: '2026-02-09T15:00:00.000Z',
         messages: [
           ThreadMessage(
             id: 'gm1',
@@ -448,7 +451,10 @@ void main() {
       );
 
       await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
-      expect(find.byIcon(Icons.group_rounded), findsOneWidget);
+      final avatar = tester.widget<GroupAvatar>(find.byType(GroupAvatar));
+      expect(avatar.groupId, 'group-abc');
+      expect(avatar.avatarPath, 'media/group_avatars/group-abc.jpg');
+      expect(avatar.cacheBustKey, '2026-02-09T15:00:00.000Z');
       expect(find.text('Test Group'), findsOneWidget);
     });
 
@@ -1203,7 +1209,7 @@ void main() {
       expect(expandTapped, isTrue);
     });
 
-    testWidgets('group thread collapsed: tapping icon navigates', (
+    testWidgets('group thread collapsed: tapping avatar navigates', (
       tester,
     ) async {
       var navigated = false;
@@ -1238,7 +1244,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byIcon(Icons.group_rounded));
+      await tester.tap(find.byType(GroupAvatar));
       expect(navigated, isTrue);
       expect(expandTapped, isFalse);
     });

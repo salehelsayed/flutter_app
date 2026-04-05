@@ -190,7 +190,9 @@ class GroupMessageListener {
       final media = mediaRaw?.cast<Map<String, dynamic>>();
       final wireMessageId = data['messageId'] as String?;
       final wireQuotedMessageId = data['quotedMessageId'] as String?;
-      final selfPeerId = _getSelfPeerId != null ? await _getSelfPeerId!() : null;
+      final selfPeerId = _getSelfPeerId != null
+          ? await _getSelfPeerId!()
+          : null;
 
       final result = await handleIncomingGroupMessage(
         groupRepo: _groupRepo,
@@ -1107,8 +1109,29 @@ class GroupMessageListener {
       return false;
     }
 
-    final watermark = await _resolveMetadataEventWatermark(groupId);
+    final group = await _groupRepo.getGroup(groupId);
+    final watermark = group?.lastMetadataEventAt?.toUtc();
     if (watermark == null || eventAt.isAfter(watermark)) {
+      return false;
+    }
+
+    final shouldRetryAvatarRecovery =
+        group != null &&
+        eventAt.isAtSameMomentAs(watermark) &&
+        group.avatarBlobId != null &&
+        group.avatarMime != null &&
+        (group.avatarPath == null || group.avatarPath!.isEmpty);
+    if (shouldRetryAvatarRecovery) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_METADATA_EVENT_RETRYING_AVATAR_DOWNLOAD',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'type': sysType ?? 'null',
+          'eventAt': eventAt.toIso8601String(),
+          'watermark': watermark.toIso8601String(),
+        },
+      );
       return false;
     }
 

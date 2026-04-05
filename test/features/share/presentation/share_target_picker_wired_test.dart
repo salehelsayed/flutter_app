@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -40,6 +42,7 @@ void main() {
     required GroupMessageListener groupMessageListener,
     required ShareIntent shareIntent,
     ShareBatchDeliveryCoordinator? batchShareCoordinator,
+    Future<void> Function()? preSendReady,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -71,6 +74,7 @@ void main() {
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
         batchShareCoordinator: batchShareCoordinator,
+        preSendReady: preSendReady,
       ),
     );
   }
@@ -87,6 +91,7 @@ void main() {
     required GroupMessageListener groupMessageListener,
     required ShareIntent shareIntent,
     ShareBatchDeliveryCoordinator? batchShareCoordinator,
+    Future<void> Function()? preSendReady,
   }) async {
     await tester.pumpWidget(
       buildWidget(
@@ -100,6 +105,7 @@ void main() {
         groupMessageListener: groupMessageListener,
         shareIntent: shareIntent,
         batchShareCoordinator: batchShareCoordinator,
+        preSendReady: preSendReady,
       ),
     );
     await tester.pump();
@@ -270,6 +276,98 @@ void main() {
       ]);
     },
   );
+
+  testWidgets('send waits for runtime readiness before delivery', (
+    tester,
+  ) async {
+    final harness = _buildHarness();
+    final coordinator = _RecordingBatchCoordinator(
+      result: const ShareBatchDeliveryResult(results: []),
+    );
+    final runtimeReady = Completer<void>();
+
+    harness.contactRepository.addTestContact(activeContact);
+
+    await pumpPicker(
+      tester,
+      contactRepository: harness.contactRepository,
+      groupRepository: harness.groupRepository,
+      messageRepository: harness.messageRepository,
+      mediaAttachmentRepository: harness.mediaAttachmentRepository,
+      identityRepository: harness.identityRepository,
+      chatMessageListener: harness.chatMessageListener,
+      groupMessageRepository: harness.groupMessageRepository,
+      groupMessageListener: harness.groupMessageListener,
+      shareIntent: const ShareIntent(
+        type: ShareIntentType.text,
+        text: 'Shared hello',
+      ),
+      batchShareCoordinator: coordinator,
+      preSendReady: () => runtimeReady.future,
+    );
+
+    await tester.tap(
+      find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Send'));
+    await tester.pump();
+
+    expect(coordinator.deliverCallCount, 0);
+
+    runtimeReady.complete();
+    await tester.pump();
+    await tester.pump();
+
+    expect(coordinator.deliverCallCount, 1);
+  });
+
+  testWidgets('edited caption is sent from the recipient picker', (
+    tester,
+  ) async {
+    final harness = _buildHarness();
+    final coordinator = _RecordingBatchCoordinator(
+      result: const ShareBatchDeliveryResult(results: []),
+    );
+
+    harness.contactRepository.addTestContact(activeContact);
+
+    await pumpPicker(
+      tester,
+      contactRepository: harness.contactRepository,
+      groupRepository: harness.groupRepository,
+      messageRepository: harness.messageRepository,
+      mediaAttachmentRepository: harness.mediaAttachmentRepository,
+      identityRepository: harness.identityRepository,
+      chatMessageListener: harness.chatMessageListener,
+      groupMessageRepository: harness.groupMessageRepository,
+      groupMessageListener: harness.groupMessageListener,
+      shareIntent: const ShareIntent(
+        type: ShareIntentType.mixed,
+        text: 'Old caption',
+        filePaths: ['/tmp/shared-photo.jpg'],
+      ),
+      batchShareCoordinator: coordinator,
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('share-caption-field')),
+      'New caption',
+    );
+    await tester.tap(
+      find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Send'));
+    await tester.pump();
+
+    expect(coordinator.deliverCallCount, 1);
+    expect(coordinator.lastShareIntent?.text, 'New caption');
+    expect(coordinator.lastShareIntent?.type, ShareIntentType.mixed);
+    expect(coordinator.lastShareIntent?.filePaths, const [
+      '/tmp/shared-photo.jpg',
+    ]);
+  });
 
   testWidgets('successful send dismisses the picker', (tester) async {
     final harness = _buildHarness();

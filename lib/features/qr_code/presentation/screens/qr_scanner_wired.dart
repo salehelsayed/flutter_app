@@ -470,6 +470,7 @@ class QRScannerWired extends StatelessWidget {
       p2pService: p2pService,
       mediaFileManager: mediaFileManager,
       imageProcessor: imageProcessor,
+      secureKeyStore: secureKeyStore,
       conversationTracker: conversationTracker,
       audioRecorderService: audioRecorderService,
       reactionRepository: reactionRepository,

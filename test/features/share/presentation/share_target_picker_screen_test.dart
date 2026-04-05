@@ -1,5 +1,3 @@
-import 'dart:ui' show TextDirection;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -35,6 +33,7 @@ void main() {
   Widget buildScreen({
     String? sharedText,
     List<String> sharedFilePaths = const [],
+    TextEditingController? captionController,
     List<ContactModel> contacts = const [],
     List<GroupModel> groups = const [],
     bool isLoading = false,
@@ -53,6 +52,7 @@ void main() {
       home: ShareTargetPickerScreen(
         sharedText: sharedText,
         sharedFilePaths: sharedFilePaths,
+        captionController: captionController,
         contacts: contacts,
         groups: groups,
         isLoading: isLoading,
@@ -104,10 +104,37 @@ void main() {
     await tester.pumpWidget(
       buildScreen(sharedFilePaths: const ['/tmp/shared-photo.jpg']),
     );
+    await tester.pump();
 
-    final image = tester.widget<Image>(find.byType(Image));
-    final provider = image.image as FileImage;
-    expect(provider.file.path, '/tmp/shared-photo.jpg');
+    final image = tester.widget<Image>(
+      find.byKey(const ValueKey('share-preview-image')),
+    );
+    final provider = image.image as ResizeImage;
+    expect(provider.width, 144);
+    expect(provider.height, 144);
+    expect(
+      (provider.imageProvider as FileImage).file.path,
+      '/tmp/shared-photo.jpg',
+    );
+  });
+
+  testWidgets('shows caption field for media shares on the picker screen', (
+    tester,
+  ) async {
+    final captionController = TextEditingController(text: 'Initial caption');
+    addTearDown(captionController.dispose);
+
+    await tester.pumpWidget(
+      buildScreen(
+        sharedText: 'Initial caption',
+        sharedFilePaths: const ['/tmp/shared-photo.jpg'],
+        captionController: captionController,
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('share-caption-label')), findsOneWidget);
+    expect(find.byKey(const ValueKey('share-caption-field')), findsOneWidget);
+    expect(find.text('Initial caption'), findsOneWidget);
   });
 
   testWidgets('2c and 2d: renders contact and group sections', (tester) async {

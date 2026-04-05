@@ -8,6 +8,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.da
 import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_body.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -206,7 +207,7 @@ void main() {
       expect(textWidget(tester, groupName).textDirection, TextDirection.rtl);
     });
 
-    testWidgets('renders group icon and group name for GroupThreadFeedItem', (
+    testWidgets('renders group avatar and group name for GroupThreadFeedItem', (
       tester,
     ) async {
       final groupThread = GroupThreadFeedItem(
@@ -215,6 +216,8 @@ void main() {
         groupId: 'group-abc',
         groupName: 'Test Group',
         groupType: GroupType.chat,
+        avatarPath: 'media/group_avatars/group-abc.jpg',
+        avatarCacheBustKey: '2026-02-09T15:05:00.000Z',
         messages: [
           ThreadMessage(
             id: 'gm1',
@@ -232,9 +235,10 @@ void main() {
       );
 
       await tester.pumpWidget(wrap(OpenModeCardBody(thread: groupThread)));
-      // Group icon should be present
-      expect(find.byIcon(Icons.group_rounded), findsOneWidget);
-      // Group name should be shown
+      final avatar = tester.widget<GroupAvatar>(find.byType(GroupAvatar));
+      expect(avatar.groupId, 'group-abc');
+      expect(avatar.avatarPath, 'media/group_avatars/group-abc.jpg');
+      expect(avatar.cacheBustKey, '2026-02-09T15:05:00.000Z');
       expect(find.text('Test Group'), findsOneWidget);
     });
 
@@ -331,7 +335,7 @@ void main() {
       },
     );
 
-    testWidgets('group thread: tapping group icon fires onViewEarlier', (
+    testWidgets('group thread: tapping group avatar fires onViewEarlier', (
       tester,
     ) async {
       var tapped = false;
@@ -368,7 +372,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byIcon(Icons.group_rounded));
+      await tester.tap(find.byType(GroupAvatar));
       expect(tapped, isTrue);
       expect(collapsed, isFalse);
     });
