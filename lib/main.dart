@@ -127,6 +127,7 @@ import 'package:flutter_app/features/groups/domain/repositories/pending_group_in
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
@@ -1371,7 +1372,7 @@ void main() async {
     contactRepo: contactRepository,
     bridge: bridge,
     mediaAttachmentRepo: mediaAttachmentRepository,
-    rejoinGroupTopicsFn: () async {
+    rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
       final needsGroupRecovery =
           p2pService.currentState.needsGroupRecovery ?? false;
       final recoveryMethod = p2pService.lastRecoveryMethod;
@@ -1380,12 +1381,16 @@ void main() async {
           : recoveryMethod == 'watchdog_restart'
           ? RejoinReason.watchdogRestart
           : RejoinReason.inPlaceRecovery;
-      await rejoinGroupTopics(
+      final rejoinResult = await rejoinGroupTopics(
         bridge: bridge,
         groupRepo: groupRepository,
         reason: reason,
       );
+
+      return reason == RejoinReason.nodeRequestedRecovery &&
+          rejoinResult.errorCount == 0;
     },
+    acknowledgeGroupRecoveryFn: () => callGroupAcknowledgeRecovery(bridge),
     drainGroupOfflineInboxFn: () => drainGroupOfflineInbox(
       bridge: bridge,
       groupRepo: groupRepository,

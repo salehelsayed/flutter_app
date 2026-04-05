@@ -306,5 +306,336 @@ void main() {
         });
       },
     );
+
+    test(
+      'needsGroupRecovery false-to-true while online triggers immediate continuity sweep',
+      () {
+        fakeAsync((async) {
+          final callOrder = <String>[];
+
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: false,
+            ),
+          );
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsFn: () async {
+              callOrder.add('rejoinGroupTopics');
+            },
+            drainGroupOfflineInboxFn: () async {
+              callOrder.add('drainGroupOfflineInbox');
+            },
+            retryFailedMessagesOverride: () async {
+              callOrder.add('retryFailedMessages');
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async {
+              callOrder.add('retryUnackedMessages');
+              return 0;
+            },
+          );
+          retrier.start();
+
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+
+          callOrder.clear();
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: true,
+            ),
+          );
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+          ]);
+        });
+      },
+    );
+
+    test(
+      'immediate group recovery does not reset the 30-second fallback timer',
+      () {
+        fakeAsync((async) {
+          final callOrder = <String>[];
+
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: false,
+            ),
+          );
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsFn: () async {
+              callOrder.add('rejoinGroupTopics');
+            },
+            drainGroupOfflineInboxFn: () async {
+              callOrder.add('drainGroupOfflineInbox');
+            },
+            retryFailedMessagesOverride: () async {
+              callOrder.add('retryFailedMessages');
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async {
+              callOrder.add('retryUnackedMessages');
+              return 0;
+            },
+          );
+          retrier.start();
+
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+            'retryFailedMessages',
+            'retryUnackedMessages',
+          ]);
+
+          async.elapse(const Duration(seconds: 5));
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: true,
+            ),
+          );
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+            'retryFailedMessages',
+            'retryUnackedMessages',
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+          ]);
+
+          async.elapse(const Duration(seconds: 19));
+          async.flushMicrotasks();
+
+          expect(callOrder, hasLength(6));
+
+          async.elapse(const Duration(seconds: 1));
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+            'retryFailedMessages',
+            'retryUnackedMessages',
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+            'rejoinGroupTopics',
+            'drainGroupOfflineInbox',
+          ]);
+        });
+      },
+    );
+
+    test(
+      'successful retrier-owned nodeRequestedRecovery sends ack on immediate recovery',
+      () {
+        fakeAsync((async) {
+          final callOrder = <String>[];
+
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: false,
+            ),
+          );
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
+              callOrder.add('rejoinGroupTopics');
+              return p2pService.currentState.needsGroupRecovery ?? false;
+            },
+            acknowledgeGroupRecoveryFn: () async {
+              callOrder.add('acknowledgeRecovery');
+            },
+            drainGroupOfflineInboxFn: () async {
+              callOrder.add('drainGroupOfflineInbox');
+            },
+            retryFailedMessagesOverride: () async {
+              callOrder.add('retryFailedMessages');
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async {
+              callOrder.add('retryUnackedMessages');
+              return 0;
+            },
+          );
+          retrier.start();
+
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+
+          callOrder.clear();
+
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: true,
+            ),
+          );
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'acknowledgeRecovery',
+            'drainGroupOfflineInbox',
+          ]);
+        });
+      },
+    );
+
+    test(
+      'successful retrier-owned recovery sends ack on the retry sweep path',
+      () {
+        fakeAsync((async) {
+          final callOrder = <String>[];
+
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer',
+              circuitAddresses: ['/addr'],
+              needsGroupRecovery: true,
+            ),
+          );
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
+              callOrder.add('rejoinGroupTopics');
+              return true;
+            },
+            acknowledgeGroupRecoveryFn: () async {
+              callOrder.add('acknowledgeRecovery');
+            },
+            drainGroupOfflineInboxFn: () async {
+              callOrder.add('drainGroupOfflineInbox');
+            },
+            retryFailedMessagesOverride: () async {
+              callOrder.add('retryFailedMessages');
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async {
+              callOrder.add('retryUnackedMessages');
+              return 0;
+            },
+          );
+          retrier.start();
+
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+
+          expect(callOrder, <String>[
+            'rejoinGroupTopics',
+            'acknowledgeRecovery',
+            'drainGroupOfflineInbox',
+            'retryFailedMessages',
+            'retryUnackedMessages',
+          ]);
+        });
+      },
+    );
+
+    test('failed retrier-owned recovery does not send ack', () {
+      fakeAsync((async) {
+        final callOrder = <String>[];
+
+        p2pService = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/addr'],
+            needsGroupRecovery: false,
+          ),
+        );
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
+            callOrder.add('rejoinGroupTopics');
+            return false;
+          },
+          acknowledgeGroupRecoveryFn: () async {
+            callOrder.add('acknowledgeRecovery');
+          },
+          drainGroupOfflineInboxFn: () async {
+            callOrder.add('drainGroupOfflineInbox');
+          },
+          retryFailedMessagesOverride: () async {
+            callOrder.add('retryFailedMessages');
+            return 0;
+          },
+          retryUnackedMessagesOverride: () async {
+            callOrder.add('retryUnackedMessages');
+            return 0;
+          },
+        );
+        retrier.start();
+
+        async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+        async.flushMicrotasks();
+
+        callOrder.clear();
+
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/addr'],
+            needsGroupRecovery: true,
+          ),
+        );
+        async.flushMicrotasks();
+
+        expect(callOrder, <String>[
+          'rejoinGroupTopics',
+          'drainGroupOfflineInbox',
+        ]);
+        expect(callOrder, isNot(contains('acknowledgeRecovery')));
+      });
+    });
   });
 }
