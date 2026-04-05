@@ -282,6 +282,8 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
   final String groupName;
   final GroupType groupType;
   final GroupRole myRole;
+  final String? avatarPath;
+  final String? avatarCacheBustKey;
   @override
   final List<ThreadMessage> messages;
   @override
@@ -296,6 +298,8 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
     required this.groupName,
     required this.groupType,
     this.myRole = GroupRole.member,
+    this.avatarPath,
+    this.avatarCacheBustKey,
     required this.messages,
     this.unreadCount = 0,
     this.conversationState = ConversationState.read,

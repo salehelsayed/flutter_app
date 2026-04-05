@@ -581,6 +581,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       p2pService: widget.p2pService,
       mediaFileManager: widget.mediaFileManager,
       imageProcessor: widget.imageProcessor,
+      secureKeyStore: widget.secureKeyStore,
       conversationTracker: widget.conversationTracker,
       audioRecorderService: widget.audioRecorderService,
       reactionRepository: widget.reactionRepository,

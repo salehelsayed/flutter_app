@@ -23,10 +23,36 @@ class ShareIntent {
   /// Whether this intent contains file attachments.
   bool get hasFiles => filePaths.isNotEmpty;
 
-  /// Returns a copy with updated filePaths (used after cache-dir copy).
-  ShareIntent copyWith({List<String>? filePaths}) => ShareIntent(
-    type: type,
-    text: text,
-    filePaths: filePaths ?? this.filePaths,
-  );
+  /// Returns a copy with updated fields while keeping the type in sync.
+  ShareIntent copyWith({
+    Object? text = _shareIntentTextUnchanged,
+    List<String>? filePaths,
+  }) {
+    final nextText = identical(text, _shareIntentTextUnchanged)
+        ? this.text
+        : text as String?;
+    final nextFilePaths = filePaths ?? this.filePaths;
+    return ShareIntent(
+      type: _resolveType(text: nextText, filePaths: nextFilePaths),
+      text: nextText,
+      filePaths: nextFilePaths,
+    );
+  }
+
+  static ShareIntentType _resolveType({
+    required String? text,
+    required List<String> filePaths,
+  }) {
+    final hasText = text != null && text.isNotEmpty;
+    final hasFiles = filePaths.isNotEmpty;
+    if (hasText && hasFiles) {
+      return ShareIntentType.mixed;
+    }
+    if (hasFiles) {
+      return ShareIntentType.files;
+    }
+    return ShareIntentType.text;
+  }
 }
+
+const Object _shareIntentTextUnchanged = Object();

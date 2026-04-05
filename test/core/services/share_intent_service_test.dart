@@ -107,6 +107,32 @@ void main() {
     });
 
     test(
+      '1i3b: bufferIntent preserves app-group staged file paths without copying again',
+      () async {
+        final srcFile = File(
+          '${tempDir.path}/Containers/Shared/AppGroup/group.com.mknoon.app.share/photo_2026.png',
+        );
+        srcFile.parent.createSync(recursive: true);
+        srcFile.writeAsStringSync('fake png');
+
+        final intent = ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [srcFile.path],
+        );
+
+        await service.bufferIntent(intent);
+
+        final buffered = service.consumePendingIntent();
+        expect(buffered, isNotNull);
+        expect(buffered!.filePaths, [srcFile.path]);
+        expect(
+          File('${tempDir.path}/share_cache/photo_2026.png').existsSync(),
+          isFalse,
+        );
+      },
+    );
+
+    test(
       '1i4: bufferIntent falls back to original path if copy fails',
       () async {
         const intent = ShareIntent(

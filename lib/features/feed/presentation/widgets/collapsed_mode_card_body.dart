@@ -11,6 +11,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_inpu
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/replied_indicator.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
@@ -120,6 +121,7 @@ class CollapsedModeCardBody extends StatelessWidget {
 
   Widget _buildHeader() {
     final displayNameDirection = detectTextDirection(thread.displayName);
+    final groupThread = thread.isGroup ? thread as GroupThreadFeedItem : null;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
@@ -128,18 +130,13 @@ class CollapsedModeCardBody extends StatelessWidget {
           GestureDetector(
             onTap: onViewFullConversation,
             child: thread.isGroup
-                ? Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: FeedColors.accentPurple.withValues(alpha: 0.15),
-                    ),
-                    child: const Icon(
-                      Icons.group_rounded,
-                      size: 20,
-                      color: FeedColors.accentPurple,
-                    ),
+                ? GroupAvatar(
+                    groupId: groupThread!.groupId,
+                    name: groupThread.groupName,
+                    avatarPath: groupThread.avatarPath,
+                    cacheBustKey: groupThread.avatarCacheBustKey,
+                    size: 42,
+                    borderRadius: BorderRadius.circular(21),
                   )
                 : UserAvatar(peerId: thread.displayId, size: 42),
           ),

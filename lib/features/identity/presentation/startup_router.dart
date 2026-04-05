@@ -51,6 +51,7 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/settle_share_intent_flow.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
+import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -142,6 +143,8 @@ class StartupRouter extends StatefulWidget {
 
   /// The share intent service for handling shared content from external apps.
   final ShareIntentService? shareIntentService;
+  final Future<void>? initialShareIntentCapture;
+  final Future<void> Function()? ensureRuntimeServicesReady;
 
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
@@ -183,6 +186,8 @@ class StartupRouter extends StatefulWidget {
     this.introductionRepository,
     this.introductionListener,
     this.shareIntentService,
+    this.initialShareIntentCapture,
+    this.ensureRuntimeServicesReady,
     required this.appShellController,
     required this.pendingPostTargetStore,
     required this.postsPrivacySettingsRepository,
@@ -217,6 +222,8 @@ class _StartupRouterState extends State<StartupRouter> {
     try {
       _setStartupStage(startupStageCheckingIdentity);
 
+      await widget.initialShareIntentCapture;
+
       final decision = await decideStartupRoute(
         identityRepo: widget.repository,
         contactRepo: widget.contactRepository,
@@ -239,6 +246,84 @@ class _StartupRouterState extends State<StartupRouter> {
       switch (decision) {
         case StartupDecision.hasIdentityWithContacts:
           _setStartupStage(startupStageOpeningFeed);
+          final navigator = Navigator.of(context);
+          Widget buildFeed(BuildContext _) => FeedWired(
+            repository: repository,
+            contactRepository: contactRepository,
+            contactRequestRepository: contactRequestRepository,
+            contactRequestListener: contactRequestListener,
+            messageRepository: messageRepository,
+            postRepository: postRepository,
+            mediaAttachmentRepository: mediaAttachmentRepository,
+            chatMessageListener: chatMessageListener,
+            bridge: bridge,
+            p2pService: p2pService,
+            mediaFileManager: widget.mediaFileManager,
+            secureKeyStore: widget.secureKeyStore,
+            imageProcessor: widget.imageProcessor,
+            conversationTracker: widget.conversationTracker,
+            audioRecorderService: widget.audioRecorderService,
+            reactionRepository: widget.reactionRepository,
+            reactionListener: widget.reactionListener,
+            groupRepository: widget.groupRepository,
+            groupMessageRepository: widget.groupMessageRepository,
+            groupMessageListener: widget.groupMessageListener,
+            groupInviteListener: widget.groupInviteListener,
+            groupConversationTracker: widget.groupConversationTracker,
+            introductionRepository: widget.introductionRepository,
+            introductionListener: widget.introductionListener,
+            appShellController: widget.appShellController,
+            pendingPostTargetStore: widget.pendingPostTargetStore,
+            postsPrivacySettingsRepository:
+                widget.postsPrivacySettingsRepository,
+            contactPresenceSnapshotRepository:
+                widget.contactPresenceSnapshotRepository,
+            nearbyLocationService: widget.nearbyLocationService,
+          );
+
+          final pendingIntent = widget.shareIntentService
+              ?.consumePendingIntent();
+          if (pendingIntent != null) {
+            widget.shareIntentService?.reset();
+            widget.shareIntentService?.isSettled = true;
+
+            await _pushStartupReplacement(
+              builder: (routeContext) => ShareTargetPickerWired(
+                shareIntent: pendingIntent,
+                identityRepo: repository,
+                contactRepository: contactRepository,
+                messageRepository: messageRepository,
+                mediaAttachmentRepository: mediaAttachmentRepository,
+                chatMessageListener: chatMessageListener,
+                bridge: bridge,
+                p2pService: p2pService,
+                mediaFileManager: widget.mediaFileManager,
+                imageProcessor: widget.imageProcessor,
+                secureKeyStore: widget.secureKeyStore,
+                conversationTracker: widget.conversationTracker,
+                audioRecorderService: widget.audioRecorderService,
+                reactionRepository: widget.reactionRepository,
+                reactionListener: widget.reactionListener,
+                groupRepository: widget.groupRepository,
+                groupMessageRepository: widget.groupMessageRepository,
+                groupMessageListener: widget.groupMessageListener,
+                groupConversationTracker: widget.groupConversationTracker,
+                introductionRepository: widget.introductionRepository,
+                preSendReady: widget.ensureRuntimeServicesReady,
+                onClose: (_) async {
+                  await Navigator.of(routeContext).pushReplacement(
+                    buildStartupReplacementRoute(builder: buildFeed),
+                  );
+                },
+              ),
+            );
+
+            unawaited(widget.ensureRuntimeServicesReady?.call());
+            unawaited(_ensureMlKemKeys());
+            _startP2PInBackground();
+            break;
+          }
+
           await _ensureMlKemKeys();
           final contactCount = await contactRepository.getContactCount();
           if (!mounted) return;
@@ -253,42 +338,8 @@ class _StartupRouterState extends State<StartupRouter> {
             event: 'ID_STARTUP_ROUTE_FEED',
             details: {'contactCount': contactCount},
           );
-          final navigator = Navigator.of(context);
-          await _pushStartupReplacement(
-            builder: (_) => FeedWired(
-              repository: repository,
-              contactRepository: contactRepository,
-              contactRequestRepository: contactRequestRepository,
-              contactRequestListener: contactRequestListener,
-              messageRepository: messageRepository,
-              postRepository: postRepository,
-              mediaAttachmentRepository: mediaAttachmentRepository,
-              chatMessageListener: chatMessageListener,
-              bridge: bridge,
-              p2pService: p2pService,
-              mediaFileManager: widget.mediaFileManager,
-              secureKeyStore: widget.secureKeyStore,
-              imageProcessor: widget.imageProcessor,
-              conversationTracker: widget.conversationTracker,
-              audioRecorderService: widget.audioRecorderService,
-              reactionRepository: widget.reactionRepository,
-              reactionListener: widget.reactionListener,
-              groupRepository: widget.groupRepository,
-              groupMessageRepository: widget.groupMessageRepository,
-              groupMessageListener: widget.groupMessageListener,
-              groupInviteListener: widget.groupInviteListener,
-              groupConversationTracker: widget.groupConversationTracker,
-              introductionRepository: widget.introductionRepository,
-              introductionListener: widget.introductionListener,
-              appShellController: widget.appShellController,
-              pendingPostTargetStore: widget.pendingPostTargetStore,
-              postsPrivacySettingsRepository:
-                  widget.postsPrivacySettingsRepository,
-              contactPresenceSnapshotRepository:
-                  widget.contactPresenceSnapshotRepository,
-              nearbyLocationService: widget.nearbyLocationService,
-            ),
-          );
+
+          await _pushStartupReplacement(builder: buildFeed);
 
           // Start P2P node in background after navigation
           _startP2PInBackground();
@@ -438,6 +489,11 @@ class _StartupRouterState extends State<StartupRouter> {
   }
 
   Future<void> _doStartP2P() async {
+    final ensureRuntimeServicesReady = widget.ensureRuntimeServicesReady;
+    if (ensureRuntimeServicesReady != null) {
+      await ensureRuntimeServicesReady();
+    }
+
     StartupTiming.instance.mark('p2p_startup_begin');
     emitFlowEvent(layer: 'FL', event: 'P2P_STARTUP_BEGIN', details: {});
 
@@ -584,6 +640,11 @@ class _StartupRouterState extends State<StartupRouter> {
   /// continues with plaintext messaging.
   Future<void> _ensureMlKemKeys() async {
     try {
+      final ensureRuntimeServicesReady = widget.ensureRuntimeServicesReady;
+      if (ensureRuntimeServicesReady != null) {
+        await ensureRuntimeServicesReady();
+      }
+
       final identity = await widget.repository.loadIdentity();
       if (identity == null || identity.mlKemPublicKey != null) return;
 
@@ -732,6 +793,7 @@ class _StartupRouterState extends State<StartupRouter> {
       p2pService: widget.p2pService,
       mediaFileManager: widget.mediaFileManager,
       imageProcessor: widget.imageProcessor,
+      secureKeyStore: widget.secureKeyStore,
       conversationTracker: widget.conversationTracker,
       audioRecorderService: widget.audioRecorderService,
       reactionRepository: widget.reactionRepository,
@@ -741,6 +803,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupMessageListener: widget.groupMessageListener,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
+      preSendReady: widget.ensureRuntimeServicesReady,
     );
   }
 
