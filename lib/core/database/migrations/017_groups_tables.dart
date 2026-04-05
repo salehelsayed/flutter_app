@@ -10,11 +10,21 @@ CREATE TABLE IF NOT EXISTS groups (
   type TEXT NOT NULL CHECK(type IN ('chat','announcement','qa')),
   topic_name TEXT NOT NULL UNIQUE,
   description TEXT,
+  avatar_blob_id TEXT,
+  avatar_mime TEXT,
+  avatar_path TEXT,
   created_at TEXT NOT NULL,
   created_by TEXT NOT NULL,
   my_role TEXT NOT NULL CHECK(my_role IN ('admin','member')),
+  is_muted INTEGER NOT NULL DEFAULT 0,
+  is_dissolved INTEGER NOT NULL DEFAULT 0,
+  dissolved_at TEXT,
+  dissolved_by TEXT,
   is_archived INTEGER NOT NULL DEFAULT 0,
-  archived_at TEXT
+  archived_at TEXT,
+  last_metadata_event_at TEXT,
+  last_backlog_expired_at TEXT,
+  last_backlog_retained_at TEXT
 );
 ''';
 

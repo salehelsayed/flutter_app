@@ -195,6 +195,28 @@
   "group_message_hint": "Message",
   "group_create_failed": "Failed to create group",
   "group_invite_failed": "Failed to invite members",
+  "group_create_member_limit_reached": "Groups can have up to {maxMembers} members including you. Reduce your selection by {overflowCount} and try again.",
+  "@group_create_member_limit_reached": {
+    "placeholders": {
+      "maxMembers": {
+        "type": "int"
+      },
+      "overflowCount": {
+        "type": "int"
+      }
+    }
+  },
+  "group_invite_member_limit_reached": "Groups can have up to {maxMembers} members. Reduce your selection by {overflowCount} and try again.",
+  "@group_invite_member_limit_reached": {
+    "placeholders": {
+      "maxMembers": {
+        "type": "int"
+      },
+      "overflowCount": {
+        "type": "int"
+      }
+    }
+  },
   "picker_introduce_to": "Introduce to {username}",
   "@picker_introduce_to": {
     "placeholders": {

@@ -13,6 +13,12 @@ import 'package:flutter_app/features/groups/application/send_group_reaction_use_
     as group_react;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/leave_group_use_case.dart'
+    as group_leave;
+import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
+    as group_dissolve;
+import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -26,6 +32,7 @@ import 'in_memory_group_repository.dart';
 /// Encapsulates the full per-user group stack for multi-user integration tests.
 class GroupTestUser {
   final String peerId;
+  final String deviceId;
   final String username;
   final String publicKey;
   final String privateKey;
@@ -41,6 +48,7 @@ class GroupTestUser {
 
   GroupTestUser._({
     required this.peerId,
+    required this.deviceId,
     required this.username,
     required this.publicKey,
     required this.privateKey,
@@ -61,18 +69,26 @@ class GroupTestUser {
     required String peerId,
     required String username,
     required FakeGroupPubSubNetwork network,
+    String? deviceId,
     FakeBridge? bridge,
     ReactionRepository? reactionRepo,
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
   }) {
+    final resolvedDeviceId = deviceId ?? peerId;
     final effectiveBridge = bridge ?? FakeBridge();
     final groupRepo = InMemoryGroupRepository();
     final msgRepo = InMemoryGroupMessageRepository();
     final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
-    final controller = network.registerPeer(peerId);
-    final reactionController = network.registerReactionPeer(peerId);
+    final controller = network.registerPeer(
+      peerId,
+      deviceId: resolvedDeviceId,
+    );
+    final reactionController = network.registerReactionPeer(
+      peerId,
+      deviceId: resolvedDeviceId,
+    );
 
     final listener = GroupMessageListener(
       groupRepo: groupRepo,
@@ -88,6 +104,7 @@ class GroupTestUser {
 
     return GroupTestUser._(
       peerId: peerId,
+      deviceId: resolvedDeviceId,
       username: username,
       publicKey: 'pk-$peerId',
       privateKey: 'sk-$peerId',
@@ -113,14 +130,23 @@ class GroupTestUser {
     );
   }
 
+  void subscribeToGroup(String groupId) {
+    _network.subscribe(groupId, deviceId);
+  }
+
+  void unsubscribeFromGroup(String groupId) {
+    _network.unsubscribe(groupId, deviceId);
+  }
+
   /// Creates a group: saves to local repo, subscribes on network, returns the group.
   Future<GroupModel> createGroup({
     required String groupId,
     required String name,
     GroupType type = GroupType.chat,
     String? description,
+    DateTime? createdAt,
   }) async {
-    final now = DateTime.now().toUtc();
+    final now = (createdAt ?? DateTime.now()).toUtc();
     final group = GroupModel(
       id: groupId,
       name: name,
@@ -144,7 +170,7 @@ class GroupTestUser {
       ),
     );
 
-    _network.subscribe(groupId, peerId);
+    subscribeToGroup(groupId);
 
     return group;
   }
@@ -156,8 +182,9 @@ class GroupTestUser {
   Future<void> addMember({
     required String groupId,
     required GroupTestUser invitee,
+    DateTime? joinedAt,
   }) async {
-    final now = DateTime.now().toUtc();
+    final now = (joinedAt ?? DateTime.now()).toUtc();
 
     // Save member to admin's local repo
     await groupRepo.saveMember(
@@ -185,7 +212,169 @@ class GroupTestUser {
     }
 
     // Subscribe invitee on the network
-    _network.subscribe(groupId, invitee.peerId);
+    invitee.subscribeToGroup(groupId);
+  }
+
+  /// Updates another member's role and broadcasts the resulting system event.
+  Future<void> updateMemberRole({
+    required String groupId,
+    required String memberPeerId,
+    required MemberRole role,
+    DateTime? changedAt,
+  }) async {
+    final existingMember = await groupRepo.getMember(groupId, memberPeerId);
+    if (existingMember == null) {
+      throw StateError('Member not found');
+    }
+
+    final effectiveChangedAt = changedAt?.toUtc() ?? DateTime.now().toUtc();
+    await updateGroupMemberRole(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      memberPeerId: memberPeerId,
+      role: role,
+      selfPeerId: peerId,
+      eventAt: effectiveChangedAt,
+    );
+
+    final updatedMember = await groupRepo.getMember(groupId, memberPeerId);
+    final group = await groupRepo.getGroup(groupId);
+    final allMembers = await groupRepo.getMembers(groupId);
+
+    final timelineMessage = buildMemberRoleUpdatedTimelineMessage(
+      groupId: groupId,
+      updatedPeerId: memberPeerId,
+      updatedUsername: updatedMember?.username ?? existingMember.username,
+      previousRole: existingMember.role,
+      newRole: role,
+      senderId: peerId,
+      senderUsername: username,
+      eventAt: effectiveChangedAt,
+    );
+    await msgRepo.saveMessage(timelineMessage);
+
+    final groupConfig = {
+      'name': group!.name,
+      'groupType': group.type.toValue(),
+      if (group.description != null) 'description': group.description,
+      'members': allMembers
+          .map(
+            (member) => {
+              'peerId': member.peerId,
+              'username': member.username,
+              'role': member.role.toValue(),
+              'publicKey': member.publicKey,
+              if (member.mlKemPublicKey != null)
+                'mlKemPublicKey': member.mlKemPublicKey,
+            },
+          )
+          .toList(),
+      'createdBy': group.createdBy,
+      'createdAt': group.createdAt.toUtc().toIso8601String(),
+    };
+
+    final sysText = jsonEncode({
+      '__sys': 'member_role_updated',
+      'member': {
+        'peerId': memberPeerId,
+        'username': updatedMember?.username ?? existingMember.username,
+        'role': role.toValue(),
+        'publicKey': updatedMember?.publicKey ?? existingMember.publicKey,
+        if (updatedMember?.mlKemPublicKey != null)
+          'mlKemPublicKey': updatedMember!.mlKemPublicKey,
+      },
+      'groupConfig': groupConfig,
+    });
+
+    await _network.publish(
+      groupId,
+      peerId,
+      {
+      'groupId': groupId,
+      'senderId': peerId,
+      'senderUsername': username,
+      'keyEpoch': 0,
+      'text': sysText,
+      'timestamp': effectiveChangedAt.toIso8601String(),
+      },
+      senderDeviceId: deviceId,
+    );
+  }
+
+  /// Leaves a group locally and, when another admin remains, broadcasts the
+  /// same membership update peers rely on for the multi-admin continuity path.
+  Future<void> leaveGroup(String groupId) async {
+    final group = await groupRepo.getGroup(groupId);
+    final members = await groupRepo.getMembers(groupId);
+    final adminCount = members
+        .where((member) => member.role == MemberRole.admin)
+        .length;
+
+    if (group?.myRole == GroupRole.admin && adminCount > 1) {
+      final leftAt = DateTime.now().toUtc();
+      final remainingMembers = members
+          .where((member) => member.peerId != peerId)
+          .toList();
+      final groupConfig = {
+        'name': group!.name,
+        'groupType': group.type.toValue(),
+        if (group.description != null) 'description': group.description,
+        'members': remainingMembers
+            .map(
+              (member) => {
+                'peerId': member.peerId,
+                'username': member.username,
+                'role': member.role.toValue(),
+                'publicKey': member.publicKey,
+                if (member.mlKemPublicKey != null)
+                  'mlKemPublicKey': member.mlKemPublicKey,
+              },
+            )
+            .toList(),
+        'createdBy': group.createdBy,
+        'createdAt': group.createdAt.toUtc().toIso8601String(),
+      };
+
+      await msgRepo.saveMessage(
+        buildMemberRemovedTimelineMessage(
+          groupId: groupId,
+          removedPeerId: peerId,
+          removedUsername: username,
+          senderId: peerId,
+          senderUsername: username,
+          eventAt: leftAt,
+        ),
+      );
+
+      final sysText = jsonEncode({
+        '__sys': 'member_removed',
+        'member': {'peerId': peerId, 'username': username},
+        'removedAt': leftAt.toIso8601String(),
+        'groupConfig': groupConfig,
+      });
+
+      await _network.publish(
+        groupId,
+        peerId,
+        {
+        'groupId': groupId,
+        'senderId': peerId,
+        'senderUsername': username,
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': leftAt.toIso8601String(),
+        },
+        senderDeviceId: deviceId,
+      );
+    }
+
+    await group_leave.leaveGroup(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+    );
+    unsubscribeFromGroup(groupId);
   }
 
   /// Sends a message to a group (publishes via network fan-out + saves locally).
@@ -223,7 +412,12 @@ class GroupTestUser {
       'timestamp': now.toIso8601String(),
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
     };
-    await _network.publish(groupId, peerId, envelope);
+    await _network.publish(
+      groupId,
+      peerId,
+      envelope,
+      senderDeviceId: deviceId,
+    );
 
     return message;
   }
@@ -295,7 +489,12 @@ class GroupTestUser {
           if (publishPayload['media'] is List<dynamic>)
             'media': publishPayload['media'] as List<dynamic>,
         };
-        await _network.publish(groupId, peerId, envelope);
+        await _network.publish(
+          groupId,
+          peerId,
+          envelope,
+          senderDeviceId: deviceId,
+        );
       }
 
       return (result, message);
@@ -306,6 +505,59 @@ class GroupTestUser {
         bridge.responses['group:publish'] = previousPublishResponse;
       }
     }
+  }
+
+  Future<(group_dissolve.DissolveGroupResult, GroupModel?)>
+  dissolveGroupViaBridge({
+    required String groupId,
+    DateTime? dissolvedAt,
+  }) async {
+    final members = await groupRepo.getMembers(groupId);
+    final (result, group) = await group_dissolve.dissolveGroup(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: groupId,
+      actorPeerId: peerId,
+      actorUsername: username,
+      actorPublicKey: publicKey,
+      actorPrivateKey: privateKey,
+      dissolvedAt: dissolvedAt,
+    );
+
+    if ((result == group_dissolve.DissolveGroupResult.success ||
+            result == group_dissolve.DissolveGroupResult.bridgeError) &&
+        group != null) {
+      final publishRaw = bridge.sentMessages.lastWhere(
+        (raw) =>
+            (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:publish',
+      );
+      final publishPayload =
+          (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+
+      await _network.publish(
+        groupId,
+        peerId,
+        {
+        'groupId': groupId,
+        'senderId': peerId,
+        'senderUsername': username,
+        'keyEpoch': 0,
+        'text': publishPayload['text'] as String? ?? '',
+        'timestamp':
+            group.dissolvedAt?.toUtc().toIso8601String() ??
+            DateTime.now().toUtc().toIso8601String(),
+        },
+        senderDeviceId: deviceId,
+      );
+
+      for (final member in members) {
+        _network.unsubscribe(groupId, member.peerId);
+      }
+    }
+
+    return (result, group);
   }
 
   /// Sends through the real bridge-backed reaction use case and mirrors
@@ -348,7 +600,10 @@ class GroupTestUser {
             (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
 
-        await _network.publishReaction(groupId, peerId, {
+        await _network.publishReaction(
+          groupId,
+          peerId,
+          {
           'groupId': groupId,
           'senderId': peerId,
           'reaction':
@@ -361,7 +616,9 @@ class GroupTestUser {
                 'senderPeerId': reaction.senderPeerId,
                 'timestamp': reaction.timestamp,
               }),
-        });
+          },
+          senderDeviceId: deviceId,
+        );
       }
 
       return (result, reaction);
@@ -382,9 +639,16 @@ class GroupTestUser {
     required String groupId,
     required String memberPeerId,
     required String memberUsername,
+    DateTime? removedAt,
   }) async {
-    await groupRepo.removeMember(groupId, memberPeerId);
-    final removedAt = DateTime.now().toUtc();
+    final effectiveRemovedAt = removedAt?.toUtc() ?? DateTime.now().toUtc();
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      memberPeerId: memberPeerId,
+      eventAt: effectiveRemovedAt,
+    );
     await msgRepo.saveMessage(
       buildMemberRemovedTimelineMessage(
         groupId: groupId,
@@ -392,7 +656,7 @@ class GroupTestUser {
         removedUsername: memberUsername,
         senderId: peerId,
         senderUsername: username,
-        eventAt: removedAt,
+        eventAt: effectiveRemovedAt,
       ),
     );
 
@@ -420,7 +684,7 @@ class GroupTestUser {
     final sysText = jsonEncode({
       '__sys': 'member_removed',
       'member': {'peerId': memberPeerId, 'username': memberUsername},
-      'removedAt': removedAt.toIso8601String(),
+      'removedAt': effectiveRemovedAt.toIso8601String(),
       'groupConfig': groupConfig,
     });
 
@@ -430,9 +694,14 @@ class GroupTestUser {
       'senderUsername': username,
       'keyEpoch': 0,
       'text': sysText,
-      'timestamp': removedAt.toIso8601String(),
+      'timestamp': effectiveRemovedAt.toIso8601String(),
     };
-    await _network.publish(groupId, peerId, envelope);
+    await _network.publish(
+      groupId,
+      peerId,
+      envelope,
+      senderDeviceId: deviceId,
+    );
 
     _network.unsubscribe(groupId, memberPeerId);
   }
@@ -482,7 +751,12 @@ class GroupTestUser {
       'text': sysText,
       'timestamp': DateTime.now().toUtc().toIso8601String(),
     };
-    await _network.publish(groupId, peerId, envelope);
+    await _network.publish(
+      groupId,
+      peerId,
+      envelope,
+      senderDeviceId: deviceId,
+    );
   }
 
   /// Loads all messages for a group from the local repo.
@@ -490,16 +764,8 @@ class GroupTestUser {
     return msgRepo.getMessagesPage(groupId);
   }
 
-  /// Leaves a group voluntarily.
-  Future<void> leaveGroup(String groupId) async {
-    _network.unsubscribe(groupId, peerId);
-    await groupRepo.removeAllMembers(groupId);
-    await groupRepo.removeAllKeys(groupId);
-    await groupRepo.deleteGroup(groupId);
-  }
-
   void dispose() {
     groupMessageListener.dispose();
-    _network.unregisterPeer(peerId);
+    _network.unregisterPeer(deviceId);
   }
 }

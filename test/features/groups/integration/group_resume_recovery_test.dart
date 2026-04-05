@@ -10,13 +10,16 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -2227,6 +2230,96 @@ void main() {
       },
     );
 
+    test(
+      'long-offline mixed-window recovery keeps retained backlog and never resurrects expired pages',
+      () async {
+        final user = GroupTestUser.create(
+          peerId: 'user-peer',
+          username: 'User',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final userBridge = user.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-retention-mixed-window';
+        await user.createGroup(groupId: groupId, name: 'Retention Window');
+        await user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final cutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
+        final expiredAt = cutoff.subtract(const Duration(hours: 1));
+        final retainedAt = cutoff.add(const Duration(hours: 1));
+
+        userBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Expired page',
+            'timestamp': expiredAt.toIso8601String(),
+            'messageId': 'msg-expired-window',
+          },
+        ], 'cursor-retained-window');
+
+        userBridge.addPage(groupId, 'cursor-retained-window', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Retained page',
+            'timestamp': retainedAt.toIso8601String(),
+            'messageId': 'msg-retained-window',
+          },
+        ], '');
+
+        user.start();
+
+        await drainGroupOfflineInbox(
+          bridge: user.bridge,
+          groupRepo: user.groupRepo,
+          msgRepo: user.msgRepo,
+        );
+        await drainGroupOfflineInbox(
+          bridge: user.bridge,
+          groupRepo: user.groupRepo,
+          msgRepo: user.msgRepo,
+        );
+
+        final messages = await user.msgRepo.getMessagesPage(groupId);
+        final group = await user.groupRepo.getGroup(groupId);
+        final cursorCmds = userBridge.sentMessages
+            .map((m) => jsonDecode(m) as Map<String, dynamic>)
+            .where((m) => m['cmd'] == 'group:inboxRetrieveCursor')
+            .toList();
+
+        expect(messages, hasLength(1));
+        expect(messages.single.id, 'msg-retained-window');
+        expect(
+          messages.where((message) => message.id == 'msg-expired-window'),
+          isEmpty,
+        );
+        expect(group, isNotNull);
+        expect(group!.lastBacklogExpiredAt, expiredAt);
+        expect(group.lastBacklogRetainedAt, retainedAt);
+        expect(
+          cursorCmds,
+          hasLength(4),
+          reason:
+              'Each drain should continue past the expired page and finish the retained cursor page',
+        );
+
+        user.dispose();
+      },
+    );
+
     test('watchdog restart rejoins topics and resumes live delivery', () async {
       final alice = GroupTestUser.create(
         peerId: 'alice-peer',
@@ -3268,6 +3361,140 @@ void main() {
           bob.dispose();
           charlie.dispose();
           diana.dispose();
+        },
+      );
+
+      test(
+        'offline member reconnects after repeated metadata edits and converges to the final metadata state',
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-meta-peer',
+            username: 'Admin',
+            network: network,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'bob-meta-peer',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final charlie = GroupTestUser.create(
+            peerId: 'charlie-meta-peer',
+            username: 'Charlie',
+            network: network,
+          );
+          final bobBridge = bob.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-metadata-converge-011';
+          await admin.createGroup(
+            groupId: groupId,
+            name: 'Metadata Start',
+            description: 'Original description',
+          );
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await admin.addMember(groupId: groupId, invitee: charlie);
+
+          admin.start();
+          bob.start();
+          charlie.start();
+
+          network.unsubscribe(groupId, bob.peerId);
+
+          Future<Map<String, dynamic>> publishMetadataUpdate({
+            required String messageId,
+            required DateTime eventAt,
+            required String name,
+            required String description,
+          }) async {
+            final updatedGroup = await updateGroupMetadata(
+              groupRepo: admin.groupRepo,
+              groupId: groupId,
+              name: name,
+              description: description,
+              eventAt: eventAt,
+            );
+            final members = await admin.groupRepo.getMembers(groupId);
+            final sysText = jsonEncode({
+              '__sys': 'group_metadata_updated',
+              'updatedAt': eventAt.toIso8601String(),
+              'groupConfig': buildGroupConfigPayload(updatedGroup, members),
+            });
+            final envelope = <String, dynamic>{
+              'groupId': groupId,
+              'senderId': admin.peerId,
+              'senderUsername': admin.username,
+              'keyEpoch': 0,
+              'text': sysText,
+              'timestamp': eventAt.toIso8601String(),
+              'messageId': messageId,
+            };
+            await network.publish(groupId, admin.peerId, envelope);
+            return envelope;
+          }
+
+          final olderAt = DateTime.parse('2026-04-05T13:00:00.000Z').toUtc();
+          final newerAt = DateTime.parse('2026-04-05T13:05:00.000Z').toUtc();
+
+          final olderEnvelope = await publishMetadataUpdate(
+            messageId: 'msg-meta-older',
+            eventAt: olderAt,
+            name: 'Planning Alpha',
+            description: 'First draft',
+          );
+          await pump();
+
+          final newerEnvelope = await publishMetadataUpdate(
+            messageId: 'msg-meta-newer',
+            eventAt: newerAt,
+            name: 'Planning Final',
+            description: 'Final charter',
+          );
+          await pump();
+
+          final livePeerGroup = await charlie.groupRepo.getGroup(groupId);
+          expect(livePeerGroup, isNotNull);
+          expect(livePeerGroup!.name, 'Planning Final');
+          expect(livePeerGroup.description, 'Final charter');
+          expect(livePeerGroup.lastMetadataEventAt, newerAt);
+
+          final offlineBeforeDrain = await bob.groupRepo.getGroup(groupId);
+          expect(offlineBeforeDrain, isNotNull);
+          expect(offlineBeforeDrain!.name, 'Metadata Start');
+          expect(offlineBeforeDrain.description, 'Original description');
+
+          bobBridge.addPage(groupId, '', [newerEnvelope], 'cursor-older-meta');
+          bobBridge.addPage(groupId, 'cursor-older-meta', [olderEnvelope], '');
+
+          await rejoinGroupTopics(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            reason: RejoinReason.startup,
+          );
+          network.subscribe(groupId, bob.peerId);
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+            groupMessageListener: bob.groupMessageListener,
+          );
+
+          final convergedGroup = await bob.groupRepo.getGroup(groupId);
+          expect(convergedGroup, isNotNull);
+          expect(convergedGroup!.name, 'Planning Final');
+          expect(convergedGroup.description, 'Final charter');
+          expect(convergedGroup.lastMetadataEventAt, newerAt);
+
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where(
+              (message) => message.text == 'Admin updated the group details',
+            ),
+            hasLength(1),
+          );
+
+          admin.dispose();
+          bob.dispose();
+          charlie.dispose();
         },
       );
 

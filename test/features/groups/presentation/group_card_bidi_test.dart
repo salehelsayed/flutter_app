@@ -25,11 +25,7 @@ void main() {
     myRole: GroupRole.member,
   );
 
-  Widget buildCard({
-    required GroupModel group,
-    required String sender,
-    required String body,
-  }) {
+  Widget buildCard({required GroupModel group, String? sender, String? body}) {
     return MaterialApp(
       home: Scaffold(
         body: GroupCard(
@@ -79,4 +75,19 @@ void main() {
       expect(_textWidget(tester, body).textDirection, TextDirection.ltr);
     },
   );
+
+  testWidgets('dissolved groups show a badge and fallback preview', (
+    tester,
+  ) async {
+    final dissolvedGroup = chatGroup.copyWith(
+      isDissolved: true,
+      dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+      dissolvedBy: 'peer-admin',
+    );
+
+    await tester.pumpWidget(buildCard(group: dissolvedGroup));
+
+    expect(find.text('Dissolved'), findsOneWidget);
+    expect(find.text('Group dissolved'), findsOneWidget);
+  });
 }

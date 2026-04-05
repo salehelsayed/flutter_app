@@ -195,6 +195,28 @@
   "group_message_hint": "رسالة",
   "group_create_failed": "فشل إنشاء المجموعة",
   "group_invite_failed": "فشل دعوة الأعضاء",
+  "group_create_member_limit_reached": "يمكن أن تضم المجموعات حتى {maxMembers} عضوًا بما فيهم أنت. قلّل اختيارك بمقدار {overflowCount} ثم أعد المحاولة.",
+  "@group_create_member_limit_reached": {
+    "placeholders": {
+      "maxMembers": {
+        "type": "int"
+      },
+      "overflowCount": {
+        "type": "int"
+      }
+    }
+  },
+  "group_invite_member_limit_reached": "يمكن أن تضم المجموعات حتى {maxMembers} عضوًا. قلّل اختيارك بمقدار {overflowCount} ثم أعد المحاولة.",
+  "@group_invite_member_limit_reached": {
+    "placeholders": {
+      "maxMembers": {
+        "type": "int"
+      },
+      "overflowCount": {
+        "type": "int"
+      }
+    }
+  },
   "picker_introduce_to": "تعريفهم إلى {username}",
   "@picker_introduce_to": {
     "placeholders": {

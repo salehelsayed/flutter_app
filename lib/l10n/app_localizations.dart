@@ -934,6 +934,18 @@ abstract class AppLocalizations {
   /// **'Failed to invite members'**
   String get group_invite_failed;
 
+  /// No description provided for @group_create_member_limit_reached.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups can have up to {maxMembers} members including you. Reduce your selection by {overflowCount} and try again.'**
+  String group_create_member_limit_reached(int maxMembers, int overflowCount);
+
+  /// No description provided for @group_invite_member_limit_reached.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups can have up to {maxMembers} members. Reduce your selection by {overflowCount} and try again.'**
+  String group_invite_member_limit_reached(int maxMembers, int overflowCount);
+
   /// No description provided for @picker_introduce_to.
   ///
   /// In en, this message translates to:

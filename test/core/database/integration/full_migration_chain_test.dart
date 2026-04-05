@@ -45,6 +45,11 @@ import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.d
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
 import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
+import 'package:flutter_app/core/database/migrations/049_groups_metadata_columns.dart';
+import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart';
+import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
+import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
+import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -109,13 +114,29 @@ void main() {
     await runGroupQuotedMessageIdMigration(db);
     await runMessagesEditedAtMigration(db);
     await runMessagesDeletedStateMigration(db);
-      await runInboxStagingEntriesMigration(db);
-      await runPendingIntroductionResponsesMigration(db);
-      await runIntroductionOutboxMigration(db);
-      await runGroupsLastMembershipEventAtMigration(db);
+    await runInboxStagingEntriesMigration(db);
+    await runPendingIntroductionResponsesMigration(db);
+    await runIntroductionOutboxMigration(db);
+    await runGroupsLastMembershipEventAtMigration(db);
+    await runGroupsMetadataColumnsMigration(db);
+    await runGroupsMuteColumnMigration(db);
+    await runPendingGroupInvitesMigration(db);
+    await runGroupsDissolveColumnsMigration(db);
+    await runGroupsBacklogRetentionColumnsMigration(db);
 
-      final groupCols48 = await getColumnNames(db, 'groups');
-      expect(groupCols48, contains('last_membership_event_at'));
+    final groupCols53 = await getColumnNames(db, 'groups');
+    expect(groupCols53, contains('last_membership_event_at'));
+    expect(groupCols53, contains('avatar_blob_id'));
+    expect(groupCols53, contains('avatar_mime'));
+    expect(groupCols53, contains('avatar_path'));
+    expect(groupCols53, contains('last_metadata_event_at'));
+    expect(groupCols53, contains('is_muted'));
+    expect(groupCols53, contains('is_dissolved'));
+    expect(groupCols53, contains('dissolved_at'));
+    expect(groupCols53, contains('dissolved_by'));
+    expect(groupCols53, contains('last_backlog_expired_at'));
+    expect(groupCols53, contains('last_backlog_retained_at'));
+    expect(await getTableNames(db), contains('pending_group_invites'));
   }
 
   Future<void> runUpgradePathFromV1(
@@ -154,6 +175,12 @@ void main() {
     await runInboxStagingEntriesMigration(db);
     await runPendingIntroductionResponsesMigration(db);
     await runIntroductionOutboxMigration(db);
+    await runGroupsLastMembershipEventAtMigration(db);
+    await runGroupsMetadataColumnsMigration(db);
+    await runGroupsMuteColumnMigration(db);
+    await runPendingGroupInvitesMigration(db);
+    await runGroupsDissolveColumnsMigration(db);
+    await runGroupsBacklogRetentionColumnsMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {

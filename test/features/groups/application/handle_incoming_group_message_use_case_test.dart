@@ -78,6 +78,25 @@ void main() {
     expect(result.senderPeerId, 'peer-sender');
   });
 
+  test('persists same-self delivery as local sent history', () async {
+    final result = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Synced from another device',
+      timestamp: DateTime.now().toUtc().toIso8601String(),
+      selfPeerId: 'peer-sender',
+    );
+
+    expect(result, isNotNull);
+    expect(result!.isIncoming, isFalse);
+    expect(result.status, 'sent');
+    expect(await msgRepo.getUnreadCount('group-1'), 0);
+  });
+
   test(
     'strips dangerous bidi controls and preserves safe markers on incoming save',
     () async {
@@ -256,6 +275,60 @@ void main() {
       expect(result!.id, 'msg-new-sender');
     },
   );
+
+  test(
+    'accepts a message that predates the persisted dissolve cutoff',
+    () async {
+      await groupRepo.updateGroup(
+        testGroup.copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+          dissolvedBy: 'peer-admin',
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Sent before dissolve',
+        timestamp: DateTime.utc(2026, 4, 5, 11, 59, 59).toIso8601String(),
+        messageId: 'msg-before-dissolve',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.id, 'msg-before-dissolve');
+    },
+  );
+
+  test('rejects a message at or after the persisted dissolve cutoff', () async {
+    final dissolvedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+    await groupRepo.updateGroup(
+      testGroup.copyWith(
+        isDissolved: true,
+        dissolvedAt: dissolvedAt,
+        dissolvedBy: 'peer-admin',
+      ),
+    );
+
+    final result = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Too late',
+      timestamp: dissolvedAt.toIso8601String(),
+      messageId: 'msg-after-dissolve',
+    );
+
+    expect(result, isNull);
+    expect(await msgRepo.getMessage('msg-after-dissolve'), isNull);
+  });
 
   test('deduplicates identical incoming messages', () async {
     final ts = DateTime.now().toUtc().toIso8601String();

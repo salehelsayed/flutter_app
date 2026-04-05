@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -113,6 +114,18 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
   for (var i = 0; i < count; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
+}
+
+ContactModel buildContact(int index) {
+  return ContactModel(
+    peerId: 'peer-contact-$index',
+    publicKey: 'pk-contact-$index',
+    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+    username: 'Contact $index',
+    signature: 'sig-contact-$index',
+    scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: 'mlkem-pk-contact-$index',
+  );
 }
 
 void main() {
@@ -330,9 +343,47 @@ void main() {
 
       // Should show error snackbar
       expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.text('Failed to create group'), findsOneWidget);
       // Should still be on picker screen
       expect(find.byType(CreateGroupPickerScreen), findsOneWidget);
     });
+
+    testWidgets(
+      'shows a size-limit snackbar when create selection exceeds the contract',
+      (tester) async {
+        final contacts = List.generate(groupMembershipLimit, buildContact);
+        for (final contact in contacts) {
+          contactRepo.addTestContact(contact);
+        }
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        final screenBeforeSelection = tester.widget<CreateGroupPickerScreen>(
+          find.byType(CreateGroupPickerScreen),
+        );
+        for (final contact in contacts) {
+          screenBeforeSelection.onToggle(contact);
+        }
+        await tester.pump();
+
+        final screenAfterSelection = tester.widget<CreateGroupPickerScreen>(
+          find.byType(CreateGroupPickerScreen),
+        );
+        screenAfterSelection.onStartGroup(null);
+        await pumpFrames(tester, count: 30);
+
+        expect(find.byType(SnackBar), findsOneWidget);
+        expect(
+          find.text(
+            'Groups can have up to 50 members including you. Reduce your selection by 1 and try again.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.byType(CreateGroupPickerScreen), findsOneWidget);
+        expect(find.byType(GroupConversationScreen), findsNothing);
+      },
+    );
 
     testWidgets('back button pops screen', (tester) async {
       // Wrap in a navigator with a previous screen

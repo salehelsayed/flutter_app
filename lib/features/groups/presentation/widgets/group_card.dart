@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 
 /// Card widget showing group name, type badge, last message preview,
@@ -12,6 +14,7 @@ class GroupCard extends StatelessWidget {
   final String? lastMessageBody;
   final String? lastMessagePreview;
   final String? lastMessageTime;
+  final String? statusText;
   final int unreadCount;
   final VoidCallback? onTap;
 
@@ -22,6 +25,7 @@ class GroupCard extends StatelessWidget {
     this.lastMessageBody,
     this.lastMessagePreview,
     this.lastMessageTime,
+    this.statusText,
     this.unreadCount = 0,
     this.onTap,
   });
@@ -43,24 +47,11 @@ class GroupCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Group avatar placeholder
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Center(
-                child: Text(
-                  _initials(group.name),
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white.withOpacity(0.6),
-                  ),
-                ),
-              ),
+            GroupAvatar(
+              groupId: group.id,
+              name: group.name,
+              avatarPath: group.avatarPath,
+              cacheBustKey: group.lastMetadataEventAt?.toIso8601String(),
             ),
             const SizedBox(width: 12),
             // Content
@@ -88,6 +79,10 @@ class GroupCard extends StatelessWidget {
                             ),
                             const SizedBox(width: 6),
                             GroupTypeBadge(type: group.type),
+                            if (group.isDissolved) ...[
+                              const SizedBox(width: 6),
+                              const GroupDissolvedBadge(dense: true),
+                            ],
                           ],
                         ),
                       ),
@@ -146,6 +141,50 @@ class GroupCard extends StatelessWidget {
   Widget _buildPreviewText() {
     final sender = lastMessageSender;
     final body = lastMessageBody;
+    final status = statusText;
+
+    if (status != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            status,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFE6C36A),
+            ),
+            textDirection: detectTextDirection(status),
+          ),
+          if (sender != null || body != null) const SizedBox(height: 2),
+          if (sender != null)
+            Text(
+              sender,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.white.withOpacity(0.6),
+              ),
+              textDirection: detectTextDirection(sender),
+            ),
+          if (body != null)
+            Text(
+              body,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withOpacity(0.45),
+              ),
+              textDirection: detectTextDirection(body),
+            ),
+        ],
+      );
+    }
 
     if (sender != null || body != null) {
       return Column(
@@ -179,17 +218,11 @@ class GroupCard extends StatelessWidget {
     }
 
     return Text(
-      lastMessagePreview ?? 'No messages yet',
+      lastMessagePreview ??
+          (group.isDissolved ? 'Group dissolved' : 'No messages yet'),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.45)),
     );
-  }
-
-  String _initials(String name) {
-    final words = name.trim().split(RegExp(r'\s+'));
-    if (words.isEmpty) return '';
-    if (words.length == 1) return words[0][0].toUpperCase();
-    return '${words[0][0]}${words[1][0]}'.toUpperCase();
   }
 }

@@ -249,6 +249,32 @@ void main() {
     expect(message, isNull);
   });
 
+  test('returns groupDissolved for a dissolved group', () async {
+    await groupRepo.updateGroup(
+      testGroup.copyWith(
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+        dissolvedBy: 'peer-admin',
+      ),
+    );
+
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'Too late',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Alice',
+    );
+
+    expect(result, SendGroupMessageResult.groupDissolved);
+    expect(message, isNull);
+    expect(bridge.commandLog, isNot(contains('group:publish')));
+  });
+
   test('returns unauthorized for non-admin in announcement group', () async {
     final announcementGroup = GroupModel(
       id: 'group-announce',

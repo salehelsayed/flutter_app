@@ -8,6 +8,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
@@ -180,9 +181,13 @@ Future<void> _drainGroupInbox({
   int pageSize = 50,
 }) async {
   final drainStopwatch = Stopwatch()..start();
+  final retentionCutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
   String cursor = '';
   int totalMessages = 0;
   var pageCount = 0;
+  DateTime? latestExpiredBacklogAt;
+  DateTime? latestRetainedBacklogAt;
+  var sawTimestampedRetentionPayload = false;
 
   do {
     final result = await callGroupInboxRetrieveWithCursor(
@@ -197,6 +202,27 @@ Future<void> _drainGroupInbox({
 
     for (final msg in messages) {
       final payload = decodeInboxMessage(msg, groupId);
+      final text = payload['text'] as String? ?? '';
+      final timestamp =
+          payload['timestamp'] as String? ??
+          DateTime.now().toUtc().toIso8601String();
+      final parsedTimestamp = _tryParseUtcTimestamp(timestamp);
+      final isSystemPayload = text.startsWith('{"__sys":');
+
+      if (!isSystemPayload && parsedTimestamp != null) {
+        sawTimestampedRetentionPayload = true;
+        if (parsedTimestamp.isBefore(retentionCutoff)) {
+          latestExpiredBacklogAt = _latestTimestamp(
+            latestExpiredBacklogAt,
+            parsedTimestamp,
+          );
+          continue;
+        }
+        latestRetainedBacklogAt = _latestTimestamp(
+          latestRetainedBacklogAt,
+          parsedTimestamp,
+        );
+      }
 
       // Route by type: group_reaction payloads are handled separately.
       if (payload['type'] == 'group_reaction' && reactionRepo != null) {
@@ -222,10 +248,6 @@ Future<void> _drainGroupInbox({
           payload['senderId'] as String? ?? (msg['from'] as String? ?? '');
       final senderUsername = payload['senderUsername'] as String? ?? '';
       final keyEpoch = payload['keyEpoch'] as int? ?? 0;
-      final text = payload['text'] as String? ?? '';
-      final timestamp =
-          payload['timestamp'] as String? ??
-          DateTime.now().toUtc().toIso8601String();
 
       if (groupMessageListener != null && text.startsWith('{"__sys":')) {
         await groupMessageListener.handleReplayEnvelope({
@@ -256,6 +278,22 @@ Future<void> _drainGroupInbox({
         continue;
       }
 
+      if (groupMessageListener != null) {
+        await groupMessageListener.handleReplayEnvelope({
+          'groupId': resolvedGroupId,
+          'senderId': senderId,
+          'senderUsername': senderUsername,
+          'keyEpoch': keyEpoch,
+          'text': text,
+          'timestamp': timestamp,
+          if (payload['messageId'] is String) 'messageId': payload['messageId'],
+          if (payload['quotedMessageId'] is String)
+            'quotedMessageId': payload['quotedMessageId'],
+          if (media != null) 'media': media,
+        });
+        continue;
+      }
+
       await handleIncomingGroupMessage(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -278,6 +316,13 @@ Future<void> _drainGroupInbox({
 
     // If caller only wants the first page, stop here.
     if (!drainAllPages && cursor.isNotEmpty) {
+      await _persistRetentionState(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        sawTimestampedRetentionPayload: sawTimestampedRetentionPayload,
+        latestExpiredBacklogAt: latestExpiredBacklogAt,
+        latestRetainedBacklogAt: latestRetainedBacklogAt,
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_DRAIN_OFFLINE_INBOX_FIRST_PAGE_DONE',
@@ -304,6 +349,14 @@ Future<void> _drainGroupInbox({
       return;
     }
   } while (cursor.isNotEmpty);
+
+  await _persistRetentionState(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    sawTimestampedRetentionPayload: sawTimestampedRetentionPayload,
+    latestExpiredBacklogAt: latestExpiredBacklogAt,
+    latestRetainedBacklogAt: latestRetainedBacklogAt,
+  );
 
   emitFlowEvent(
     layer: 'FL',
@@ -367,4 +420,39 @@ Map<String, dynamic> decodeInboxMessage(
     'text': messageStr?.toString() ?? '',
     'timestamp': DateTime.now().toUtc().toIso8601String(),
   };
+}
+
+Future<void> _persistRetentionState({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required bool sawTimestampedRetentionPayload,
+  required DateTime? latestExpiredBacklogAt,
+  required DateTime? latestRetainedBacklogAt,
+}) async {
+  if (!sawTimestampedRetentionPayload) return;
+
+  final group = await groupRepo.getGroup(groupId);
+  if (group == null) return;
+
+  await groupRepo.updateGroup(
+    group.copyWith(
+      lastBacklogExpiredAt: latestExpiredBacklogAt,
+      lastBacklogRetainedAt: latestRetainedBacklogAt,
+    ),
+  );
+}
+
+DateTime? _tryParseUtcTimestamp(String rawTimestamp) {
+  try {
+    return DateTime.parse(rawTimestamp).toUtc();
+  } catch (_) {
+    return null;
+  }
+}
+
+DateTime? _latestTimestamp(DateTime? current, DateTime candidate) {
+  if (current == null || candidate.isAfter(current)) {
+    return candidate;
+  }
+  return current;
 }

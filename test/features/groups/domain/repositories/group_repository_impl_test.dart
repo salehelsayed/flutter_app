@@ -4,6 +4,10 @@ import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
+import 'package:flutter_app/core/database/migrations/049_groups_metadata_columns.dart';
+import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart';
+import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
+import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -27,6 +31,10 @@ void main() {
     await runGroupMessagesTablesMigration(db);
     await runGroupQuotedMessageIdMigration(db);
     await runGroupsLastMembershipEventAtMigration(db);
+    await runGroupsMetadataColumnsMigration(db);
+    await runGroupsMuteColumnMigration(db);
+    await runGroupsDissolveColumnsMigration(db);
+    await runGroupsBacklogRetentionColumnsMigration(db);
 
     repo = GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),
@@ -162,10 +170,95 @@ void main() {
 
       final result = await repo.getGroup('group-1');
       expect(result, isNotNull);
-      expect(
-        result!.lastMembershipEventAt,
-        DateTime.utc(2026, 4, 5, 12, 30),
+      expect(result!.lastMembershipEventAt, DateTime.utc(2026, 4, 5, 12, 30));
+    });
+
+    test('saveGroup and getGroup round-trip metadata fields', () async {
+      await repo.saveGroup(
+        makeGroup().copyWith(
+          avatarBlobId: 'blob-1',
+          avatarMime: 'image/jpeg',
+          avatarPath: 'media/group_avatars/group-1.jpg',
+          lastMetadataEventAt: DateTime.utc(2026, 4, 5, 12, 45),
+        ),
       );
+
+      final result = await repo.getGroup('group-1');
+      expect(result, isNotNull);
+      expect(result!.avatarBlobId, 'blob-1');
+      expect(result.avatarMime, 'image/jpeg');
+      expect(result.avatarPath, 'media/group_avatars/group-1.jpg');
+      expect(result.lastMetadataEventAt, DateTime.utc(2026, 4, 5, 12, 45));
+    });
+
+    test('saveGroup and getGroup round-trip mute state', () async {
+      await repo.saveGroup(makeGroup().copyWith(isMuted: true));
+
+      final result = await repo.getGroup('group-1');
+      expect(result, isNotNull);
+      expect(result!.isMuted, isTrue);
+
+      await repo.updateGroup(result.copyWith(isMuted: false));
+
+      final unmuted = await repo.getGroup('group-1');
+      expect(unmuted, isNotNull);
+      expect(unmuted!.isMuted, isFalse);
+    });
+
+    test('saveGroup and getGroup round-trip dissolved state', () async {
+      await repo.saveGroup(
+        makeGroup().copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 5, 15, 0),
+          dissolvedBy: 'peer-admin',
+        ),
+      );
+
+      final result = await repo.getGroup('group-1');
+      expect(result, isNotNull);
+      expect(result!.isDissolved, isTrue);
+      expect(result.dissolvedAt, DateTime.utc(2026, 4, 5, 15, 0));
+      expect(result.dissolvedBy, 'peer-admin');
+
+      await repo.updateGroup(
+        result.copyWith(
+          isDissolved: false,
+          dissolvedAt: null,
+          dissolvedBy: null,
+        ),
+      );
+
+      final reopened = await repo.getGroup('group-1');
+      expect(reopened, isNotNull);
+      expect(reopened!.isDissolved, isFalse);
+      expect(reopened.dissolvedAt, isNull);
+      expect(reopened.dissolvedBy, isNull);
+    });
+
+    test('saveGroup and getGroup round-trip backlog retention state', () async {
+      await repo.saveGroup(
+        makeGroup().copyWith(
+          lastBacklogExpiredAt: DateTime.utc(2026, 4, 1, 9, 0),
+          lastBacklogRetainedAt: DateTime.utc(2026, 4, 3, 10, 15),
+        ),
+      );
+
+      final result = await repo.getGroup('group-1');
+      expect(result, isNotNull);
+      expect(result!.lastBacklogExpiredAt, DateTime.utc(2026, 4, 1, 9, 0));
+      expect(result.lastBacklogRetainedAt, DateTime.utc(2026, 4, 3, 10, 15));
+
+      await repo.updateGroup(
+        result.copyWith(
+          lastBacklogExpiredAt: null,
+          lastBacklogRetainedAt: null,
+        ),
+      );
+
+      final cleared = await repo.getGroup('group-1');
+      expect(cleared, isNotNull);
+      expect(cleared!.lastBacklogExpiredAt, isNull);
+      expect(cleared.lastBacklogRetainedAt, isNull);
     });
 
     test('deleteGroup removes the group', () async {

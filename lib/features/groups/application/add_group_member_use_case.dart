@@ -1,8 +1,10 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
@@ -71,6 +73,12 @@ Future<void> addGroupMember({
     throw StateError('Member already exists');
   }
 
+  final currentMembers = await groupRepo.getMembers(groupId);
+  ensureWithinGroupMembershipLimit(
+    currentMemberCount: currentMembers.length,
+    requestedAdditionalMembers: 1,
+  );
+
   // 2. Save member to repo
   await groupRepo.saveMember(newMember);
 
@@ -96,24 +104,7 @@ Future<void> addGroupMember({
 
   final allMembers = await groupRepo.getMembers(groupId);
 
-  final groupConfig = {
-    'name': group.name,
-    'groupType': group.type.toValue(),
-    if (group.description != null) 'description': group.description,
-    'members': allMembers
-        .map(
-          (m) => {
-            'peerId': m.peerId,
-            'username': m.username,
-            'role': m.role.toValue(),
-            'publicKey': m.publicKey,
-            if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
-          },
-        )
-        .toList(),
-    'createdBy': group.createdBy,
-    'createdAt': group.createdAt.toUtc().toIso8601String(),
-  };
+  final groupConfig = buildGroupConfigPayload(group, allMembers);
 
   try {
     await callGroupUpdateConfig(

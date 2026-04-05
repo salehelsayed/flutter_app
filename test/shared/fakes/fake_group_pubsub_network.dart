@@ -4,14 +4,17 @@ import 'dart:math';
 /// Routes group messages between peers via topic-based fan-out.
 ///
 /// Simulates GossipSub pubsub: when a peer publishes to a group topic,
-/// all other subscribers receive the message. The sender never receives
-/// their own message.
+/// all other subscribers receive the message. Legacy tests still use one
+/// device per peer id, while same-user multi-device tests can register more
+/// than one device for the same peer id.
 class FakeGroupPubSubNetwork {
   final Map<String, Set<String>> _subscriptions = {};
-  final Map<String, StreamController<Map<String, dynamic>>> _peerControllers =
+  final Map<String, String> _devicePeerIds = {};
+  final Map<String, Set<String>> _peerDeviceIds = {};
+  final Map<String, StreamController<Map<String, dynamic>>> _deviceControllers =
       {};
   final Map<String, StreamController<Map<String, dynamic>>>
-  _peerReactionControllers = {};
+  _deviceReactionControllers = {};
 
   final _random = Random();
 
@@ -46,45 +49,77 @@ class FakeGroupPubSubNetwork {
   /// Creates and returns the broadcast stream controller for a peer.
   ///
   /// Called once per test user during setup.
-  StreamController<Map<String, dynamic>> registerPeer(String peerId) {
+  StreamController<Map<String, dynamic>> registerPeer(
+    String peerId, {
+    String? deviceId,
+  }) {
+    final resolvedDeviceId = deviceId ?? peerId;
     final controller = StreamController<Map<String, dynamic>>.broadcast();
-    _peerControllers[peerId] = controller;
+    _devicePeerIds[resolvedDeviceId] = peerId;
+    _peerDeviceIds.putIfAbsent(peerId, () => <String>{}).add(resolvedDeviceId);
+    _deviceControllers[resolvedDeviceId] = controller;
     return controller;
   }
 
   /// Creates and returns the broadcast reaction stream controller for a peer.
-  StreamController<Map<String, dynamic>> registerReactionPeer(String peerId) {
+  StreamController<Map<String, dynamic>> registerReactionPeer(
+    String peerId, {
+    String? deviceId,
+  }) {
+    final resolvedDeviceId = deviceId ?? peerId;
     final controller = StreamController<Map<String, dynamic>>.broadcast();
-    _peerReactionControllers[peerId] = controller;
+    _devicePeerIds[resolvedDeviceId] = peerId;
+    _peerDeviceIds.putIfAbsent(peerId, () => <String>{}).add(resolvedDeviceId);
+    _deviceReactionControllers[resolvedDeviceId] = controller;
     return controller;
   }
 
-  /// Removes a peer from all subscriptions and closes their controller.
-  void unregisterPeer(String peerId) {
+  /// Removes one registered device or every device for a peer id.
+  void unregisterPeer(String peerOrDeviceId) {
+    final deviceIds = _resolveDeviceIds(peerOrDeviceId);
+
     // Remove from all group subscriptions.
     for (final subscribers in _subscriptions.values) {
-      subscribers.remove(peerId);
+      subscribers.removeAll(deviceIds);
     }
 
-    final controller = _peerControllers.remove(peerId);
-    if (controller != null && !controller.isClosed) {
-      controller.close();
-    }
+    for (final deviceId in deviceIds) {
+      final peerId = _devicePeerIds.remove(deviceId);
+      if (peerId != null) {
+        final peerDevices = _peerDeviceIds[peerId];
+        peerDevices?.remove(deviceId);
+        if (peerDevices != null && peerDevices.isEmpty) {
+          _peerDeviceIds.remove(peerId);
+        }
+      }
 
-    final reactionController = _peerReactionControllers.remove(peerId);
-    if (reactionController != null && !reactionController.isClosed) {
-      reactionController.close();
+      final controller = _deviceControllers.remove(deviceId);
+      if (controller != null && !controller.isClosed) {
+        controller.close();
+      }
+
+      final reactionController = _deviceReactionControllers.remove(deviceId);
+      if (reactionController != null && !reactionController.isClosed) {
+        reactionController.close();
+      }
     }
   }
 
-  /// Adds a peer to the subscription set for a group.
-  void subscribe(String groupId, String peerId) {
-    _subscriptions.putIfAbsent(groupId, () => <String>{}).add(peerId);
+  /// Adds a device (or a legacy one-device peer id) to the subscription set.
+  void subscribe(String groupId, String peerOrDeviceId) {
+    _subscriptions.putIfAbsent(groupId, () => <String>{}).add(peerOrDeviceId);
   }
 
-  /// Removes a peer from the subscription set for a group.
-  void unsubscribe(String groupId, String peerId) {
-    _subscriptions[groupId]?.remove(peerId);
+  /// Removes one device or every device for a peer id from the subscription set.
+  void unsubscribe(String groupId, String peerOrDeviceId) {
+    final subscribers = _subscriptions[groupId];
+    if (subscribers == null) return;
+
+    if (subscribers.remove(peerOrDeviceId)) {
+      return;
+    }
+
+    subscribers.removeAll(_resolveDeviceIds(peerOrDeviceId));
   }
 
   /// Fans out the envelope to all subscribers of [groupId] except the sender.
@@ -94,8 +129,9 @@ class FakeGroupPubSubNetwork {
   Future<void> publish(
     String groupId,
     String senderPeerId,
-    Map<String, dynamic> envelope,
-  ) async {
+    Map<String, dynamic> envelope, {
+    String? senderDeviceId,
+  }) async {
     publishCallCount++;
 
     if (deliveryFails) return;
@@ -103,11 +139,15 @@ class FakeGroupPubSubNetwork {
     final subscribers = _subscriptions[groupId];
     if (subscribers == null || subscribers.isEmpty) return;
 
-    for (final peerId in subscribers) {
-      // Sender does not receive their own message (GossipSub semantics).
-      if (peerId == senderPeerId) continue;
+    for (final subscriberId in subscribers) {
+      final subscriberPeerId = _devicePeerIds[subscriberId] ?? subscriberId;
+      if (senderDeviceId != null) {
+        if (subscriberId == senderDeviceId) continue;
+      } else if (subscriberPeerId == senderPeerId) {
+        continue;
+      }
 
-      final controller = _peerControllers[peerId];
+      final controller = _deviceControllers[subscriberId];
       if (controller == null || controller.isClosed) continue;
 
       // Per-subscriber random drop.
@@ -132,8 +172,9 @@ class FakeGroupPubSubNetwork {
   Future<void> publishReaction(
     String groupId,
     String senderPeerId,
-    Map<String, dynamic> envelope,
-  ) async {
+    Map<String, dynamic> envelope, {
+    String? senderDeviceId,
+  }) async {
     reactionPublishCallCount++;
 
     if (deliveryFails) return;
@@ -141,10 +182,15 @@ class FakeGroupPubSubNetwork {
     final subscribers = _subscriptions[groupId];
     if (subscribers == null || subscribers.isEmpty) return;
 
-    for (final peerId in subscribers) {
-      if (peerId == senderPeerId) continue;
+    for (final subscriberId in subscribers) {
+      final subscriberPeerId = _devicePeerIds[subscriberId] ?? subscriberId;
+      if (senderDeviceId != null) {
+        if (subscriberId == senderDeviceId) continue;
+      } else if (subscriberPeerId == senderPeerId) {
+        continue;
+      }
 
-      final controller = _peerReactionControllers[peerId];
+      final controller = _deviceReactionControllers[subscriberId];
       if (controller == null || controller.isClosed) continue;
 
       if (dropRate > 0.0 && _random.nextDouble() < dropRate) continue;
@@ -164,13 +210,22 @@ class FakeGroupPubSubNetwork {
   }
 
   /// Whether a peer is subscribed to a group.
-  bool isSubscribed(String groupId, String peerId) {
-    return _subscriptions[groupId]?.contains(peerId) ?? false;
+  bool isSubscribed(String groupId, String peerOrDeviceId) {
+    final subscribers = _subscriptions[groupId];
+    if (subscribers == null) return false;
+    if (subscribers.contains(peerOrDeviceId)) return true;
+    return _resolveDeviceIds(
+      peerOrDeviceId,
+    ).any((deviceId) => subscribers.contains(deviceId));
   }
 
   /// Returns the current subscriber list for a group.
   List<String> getSubscribers(String groupId) {
-    return _subscriptions[groupId]?.toList() ?? [];
+    final subscribers = _subscriptions[groupId];
+    if (subscribers == null) return [];
+    return subscribers
+        .map((subscriberId) => _devicePeerIds[subscriberId] ?? subscriberId)
+        .toList();
   }
 
   /// Resets all counters and fault-injection flags to defaults.
@@ -183,5 +238,14 @@ class FakeGroupPubSubNetwork {
     deliveryDelay = null;
     dropRate = 0.0;
     duplicateOnDeliver = false;
+  }
+
+  Iterable<String> _resolveDeviceIds(String peerOrDeviceId) sync* {
+    if (_devicePeerIds.containsKey(peerOrDeviceId)) {
+      yield peerOrDeviceId;
+      return;
+    }
+
+    yield* _peerDeviceIds[peerOrDeviceId] ?? const <String>{};
   }
 }

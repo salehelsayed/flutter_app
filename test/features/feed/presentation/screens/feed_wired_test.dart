@@ -3160,6 +3160,114 @@ void main() {
       },
     );
 
+    testWidgets(
+      'orbit route result refreshes only the changed group snapshot',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final spyGroupRepo = _SpyGroupRepository();
+        final spyGroupMessageRepo = _SpyGroupMessageRepository();
+
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Alpha Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime.utc(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await spyGroupRepo.saveGroup(
+          GroupModel(
+            id: 'g2',
+            name: 'Beta Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g2',
+            createdAt: DateTime.utc(2026, 2, 2),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await spyGroupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-orbit-1',
+            groupId: 'g1',
+            senderPeerId: 'peer-a',
+            senderUsername: 'Peer A',
+            text: 'Old alpha message',
+            timestamp: DateTime.utc(2026, 2, 1, 10),
+            readAt: DateTime.utc(2026, 2, 1, 10, 30),
+            createdAt: DateTime.utc(2026, 2, 1, 10),
+          ),
+        );
+        await spyGroupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-orbit-2',
+            groupId: 'g2',
+            senderPeerId: 'peer-b',
+            senderUsername: 'Peer B',
+            text: 'Old beta message',
+            timestamp: DateTime.utc(2026, 2, 1, 10, 5),
+            readAt: DateTime.utc(2026, 2, 1, 10, 35),
+            createdAt: DateTime.utc(2026, 2, 1, 10, 5),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: spyGroupRepo,
+            groupMessageRepository: spyGroupMessageRepo,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        expect(find.text('Old alpha message'), findsOneWidget);
+        expect(find.text('Old beta message'), findsOneWidget);
+
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester);
+
+        spyGroupRepo.resetTracking();
+        spyGroupMessageRepo.resetTracking();
+
+        await spyGroupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-orbit-3',
+            groupId: 'g1',
+            senderPeerId: 'peer-a',
+            senderUsername: 'Peer A',
+            text: 'Fresh alpha message',
+            timestamp: DateTime.utc(2026, 2, 1, 11),
+            createdAt: DateTime.utc(2026, 2, 1, 11),
+          ),
+        );
+
+        await emitInlineOrbitExit(
+          tester,
+          const FeedRouteChanges(changedGroupIds: {'g1'}),
+        );
+
+        expect(find.text('Fresh alpha message'), findsOneWidget);
+        expect(spyGroupRepo.getActiveGroupsCallCount, 0);
+        expect(spyGroupRepo.getGroupCallCountById.keys, <String>{'g1'});
+        expect(spyGroupRepo.getGroupCallCountById['g1'], 1);
+        expect(
+          spyGroupMessageRepo.getMessagesPageCallCountByGroupId.keys,
+          <String>{'g1'},
+        );
+        expect(spyGroupMessageRepo.getMessagesPageCallCountByGroupId['g1'], 1);
+      },
+    );
+
     testWidgets('feed cards expose stable keys tied to feed ids', (
       tester,
     ) async {

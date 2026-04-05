@@ -10,6 +10,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/upload_pr
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 
 void main() {
@@ -54,6 +55,7 @@ void main() {
     Map<String, List<MediaAttachment>> mediaMap = const {},
     ValueChanged<String>? onSend,
     String? initialText,
+    GroupBacklogRetentionNotice? backlogRetentionNotice,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -80,6 +82,7 @@ void main() {
           onDeleteFailedMedia: onDeleteFailedMedia,
           mediaMap: mediaMap,
           initialText: initialText,
+          backlogRetentionNotice: backlogRetentionNotice,
         ),
       ),
     );
@@ -241,6 +244,103 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('shows dissolved read-only copy and badge for ended groups', (
+    tester,
+  ) async {
+    final dissolvedGroup = testGroup.copyWith(
+      isDissolved: true,
+      dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+      dissolvedBy: 'peer-admin',
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        group: dissolvedGroup,
+        canWrite: false,
+        initialLoadDone: true,
+      ),
+    );
+
+    expect(find.text('Dissolved'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('group-read-only-banner')),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'This group has been dissolved. History stays available, but new messages are disabled.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Only admins can send messages in this group'),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+    'shows expired backlog banner and empty-state override after retention expiry',
+    (tester) async {
+      final expiredGroup = testGroup.copyWith(
+        lastBacklogExpiredAt: DateTime.utc(2026, 4, 5, 12),
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          group: expiredGroup,
+          initialLoadDone: true,
+          backlogRetentionNotice: groupBacklogRetentionNoticeFor(expiredGroup),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('group-backlog-retention-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('Older backlog expired'), findsOneWidget);
+      expect(find.text('No messages yet'), findsNothing);
+      expect(
+        find.text(
+          'Missed messages older than 7 days expired while you were away.',
+        ),
+        findsWidgets,
+      );
+    },
+  );
+
+  testWidgets(
+    'shows mixed-window retention banner while retained messages stay visible',
+    (tester) async {
+      final mixedGroup = testGroup.copyWith(
+        lastBacklogExpiredAt: DateTime.utc(2026, 4, 5, 12),
+        lastBacklogRetainedAt: DateTime.utc(2026, 4, 6, 12),
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          group: mixedGroup,
+          messages: testMessages,
+          initialLoadDone: true,
+          backlogRetentionNotice: groupBacklogRetentionNoticeFor(mixedGroup),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('group-backlog-retention-banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Older missed messages expired after 7 days. Recent messages were recovered.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Hello everyone!'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'composer listenable updates do not rebuild header or message list',

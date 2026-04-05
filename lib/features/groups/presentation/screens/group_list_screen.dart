@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_card.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 
 /// Pure UI screen displaying a list of groups.
@@ -13,8 +16,12 @@ class GroupListScreen extends StatelessWidget {
   final List<GroupModel> groups;
   final Map<String, GroupMessage?> latestMessages;
   final Map<String, int> unreadCounts;
+  final List<PendingGroupInvite> pendingInvites;
+  final Set<String> processingInviteIds;
   final bool isLoading;
   final ValueChanged<GroupModel> onGroupTap;
+  final ValueChanged<PendingGroupInvite>? onAcceptPendingInvite;
+  final ValueChanged<PendingGroupInvite>? onDeclinePendingInvite;
   final VoidCallback onBack;
 
   const GroupListScreen({
@@ -22,8 +29,12 @@ class GroupListScreen extends StatelessWidget {
     required this.groups,
     this.latestMessages = const {},
     this.unreadCounts = const {},
+    this.pendingInvites = const [],
+    this.processingInviteIds = const <String>{},
     this.isLoading = false,
     required this.onGroupTap,
+    this.onAcceptPendingInvite,
+    this.onDeclinePendingInvite,
     required this.onBack,
   });
 
@@ -37,8 +48,8 @@ class GroupListScreen extends StatelessWidget {
             children: [
               _buildHeader(context),
               Expanded(
-                child: groups.isNotEmpty
-                    ? _buildList()
+                child: groups.isNotEmpty || pendingInvites.isNotEmpty
+                    ? _buildContent()
                     : isLoading
                     ? _buildLoadingState()
                     : _buildEmptyState(),
@@ -105,28 +116,95 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildList() {
-    return ListView.builder(
+  Widget _buildContent() {
+    return ListView(
       physics: const BouncingScrollPhysics(),
-      itemCount: groups.length,
-      itemBuilder: (context, index) {
-        final group = groups[index];
-        final lastMsg = latestMessages[group.id];
-        final unread = unreadCounts[group.id] ?? 0;
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+      children: [
+        if (pendingInvites.isNotEmpty) ...[
+          _buildSectionLabel('Pending Invites'),
+          const SizedBox(height: 12),
+          ...pendingInvites.map(
+            (invite) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: PendingGroupInviteCard(
+                invite: invite,
+                isProcessing: processingInviteIds.contains(invite.groupId),
+                onAccept: onAcceptPendingInvite != null
+                    ? () => onAcceptPendingInvite!(invite)
+                    : null,
+                onDecline: onDeclinePendingInvite != null
+                    ? () => onDeclinePendingInvite!(invite)
+                    : null,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+        if (groups.isNotEmpty) ...[
+          if (pendingInvites.isNotEmpty) ...[
+            _buildSectionLabel('Joined Groups'),
+            const SizedBox(height: 12),
+          ],
+          ...groups.map(
+            (group) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _buildGroupCard(group),
+            ),
+          ),
+        ] else if (pendingInvites.isNotEmpty) ...[
+          _buildNoJoinedGroupsCard(),
+        ],
+      ],
+    );
+  }
 
-        return GroupCard(
-          group: group,
-          lastMessageSender: lastMsg != null
-              ? lastMsg.senderUsername ?? 'Unknown'
-              : null,
-          lastMessageBody: lastMsg != null ? lastMsg.text : null,
-          lastMessageTime: lastMsg != null
-              ? _formatTime(lastMsg.timestamp)
-              : null,
-          unreadCount: unread,
-          onTap: () => onGroupTap(group),
-        );
-      },
+  Widget _buildGroupCard(GroupModel group) {
+    final lastMsg = latestMessages[group.id];
+    final unread = unreadCounts[group.id] ?? 0;
+    final retentionNotice = groupBacklogRetentionNoticeFor(group);
+
+    return GroupCard(
+      group: group,
+      statusText: retentionNotice?.listSummary,
+      lastMessageSender: lastMsg != null
+          ? lastMsg.senderUsername ?? 'Unknown'
+          : null,
+      lastMessageBody: lastMsg != null ? lastMsg.text : null,
+      lastMessageTime: lastMsg != null ? _formatTime(lastMsg.timestamp) : null,
+      unreadCount: unread,
+      onTap: () => onGroupTap(group),
+    );
+  }
+
+  Widget _buildSectionLabel(String label) {
+    return Text(
+      label,
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        color: Colors.white.withOpacity(0.5),
+        letterSpacing: 0.8,
+      ),
+    );
+  }
+
+  Widget _buildNoJoinedGroupsCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0x10FFFFFF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0x16FFFFFF)),
+      ),
+      child: Text(
+        'No joined groups yet. Accept an invite to add it here.',
+        style: TextStyle(
+          fontSize: 13,
+          color: Colors.white.withOpacity(0.5),
+          height: 1.35,
+        ),
+      ),
     );
   }
 

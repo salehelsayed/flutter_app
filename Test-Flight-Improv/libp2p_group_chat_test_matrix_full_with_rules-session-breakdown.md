@@ -1603,32 +1603,32 @@ Current repo facts that materially affected row classification:
 - sessions resolved as `stale/already-covered`: `11`
 - latest accepted session: `CLOSURE-001`
 - next runnable session in order: `none`
-- current doc state: `accepted_with_explicit_follow_up`
+- current doc state: `closed`
 - final program verdict is persisted below
 
 ## Final program acceptance
 
 - final program verdict:
-  `accepted_with_explicit_follow_up`
+  `closed`
 - docs updated:
   `Test-Flight-Improv/libp2p_group_chat_test_matrix_full_with_rules.md`,
   `Test-Flight-Improv/libp2p_group_chat_test_matrix_full_with_rules-session-breakdown.md`
 - what is now closed:
-  every source row now resolves to one explicit current-state classification,
-  and the matrix plus breakdown agree on covered seams, partial seams,
-  repo-owned gaps, unsupported product scope, and contract-undefined optional
-  rows
+  every source row in
+  `Test-Flight-Improv/libp2p_group_chat_test_matrix_full_with_rules.md`
+  now resolves to `Closed` or `Covered`, and the follow-on rollouts in docs
+  `56` through `65` closed the earlier residual ordering, authentication,
+  unsupported-feature, and policy-needed seams that previously kept this
+  artifact at a residual-only verdict
 - still-open blocker for safe continuation:
   none
 - explicit follow-up that remains:
-  rows classified as `partial`, `open`, `unsupported`, or
-  `contract-undefined` remain visible as truthful follow-up work instead of
-  being silently overstated as covered
+  none
 - safe-to-close rationale:
-  all `85/85` sessions are resolved, the accepted plus
-  `stale/already-covered` counts reconcile to the full breakdown, and this
-  artifact now carries the persisted final verdict required by the rollout
-  contract
+  all `85/85` sessions are resolved, the source matrix no longer contains any
+  `Open`, `Partial`, `Unsupported`, or `Contract-undefined` rows, the
+  previously deferred seams were closed by the follow-on docs `56` through
+  `65`, and this artifact now matches the final maintained matrix truth
 
 ## Ordered session breakdown
 

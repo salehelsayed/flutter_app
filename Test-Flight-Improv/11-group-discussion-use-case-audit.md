@@ -1,7 +1,7 @@
 # Use Case Audit: Group Discussions
 
-**Total Implemented:** 27 use cases + 3 listeners = 30 features
-**Test Files:** 28 | **Test Quality:** Core implemented flows are broadly covered (many Good / Excellent)
+**Total Implemented:** 28 use cases + 3 listeners = 31 features
+**Test Files:** 29 | **Test Quality:** Core implemented flows are broadly covered (many Good / Excellent)
 
 ---
 
@@ -25,8 +25,9 @@
 |---|----------|------|------|---------|
 | 8 | Add group member | `add_group_member_use_case.dart` | YES | Good |
 | 9 | Remove group member | `remove_group_member_use_case.dart` | YES | Good |
-| 10 | Send group invite (P2P) | `send_group_invite_use_case.dart` | YES | Good |
-| 11 | Handle incoming group invite | `handle_incoming_group_invite_use_case.dart` | YES | Excellent |
+| 10 | Update group member role | `update_group_member_role_use_case.dart` | YES | Good |
+| 11 | Send group invite (P2P) | `send_group_invite_use_case.dart` | YES | Good |
+| 12 | Handle incoming group invite | `handle_incoming_group_invite_use_case.dart` | YES | Excellent |
 
 ---
 
@@ -34,9 +35,9 @@
 
 | # | Use Case | File | Test | Quality |
 |---|----------|------|------|---------|
-| 12 | Send group message (text + media) | `send_group_message_use_case.dart` | YES | Excellent |
-| 13 | Send group reaction | `send_group_reaction_use_case.dart` | YES | Good |
-| 14 | Remove group reaction | `remove_group_reaction_use_case.dart` | YES | Good |
+| 13 | Send group message (text + media) | `send_group_message_use_case.dart` | YES | Excellent |
+| 14 | Send group reaction | `send_group_reaction_use_case.dart` | YES | Good |
+| 15 | Remove group reaction | `remove_group_reaction_use_case.dart` | YES | Good |
 
 ---
 
@@ -44,9 +45,9 @@
 
 | # | Use Case | File | Test | Quality |
 |---|----------|------|------|---------|
-| 15 | Handle incoming group message | `handle_incoming_group_message_use_case.dart` | YES | Good |
-| 16 | Handle incoming group reaction | `handle_incoming_group_reaction_use_case.dart` | YES | Good |
-| 17 | Group message listener | `group_message_listener.dart` | YES | Excellent |
+| 16 | Handle incoming group message | `handle_incoming_group_message_use_case.dart` | YES | Good |
+| 17 | Handle incoming group reaction | `handle_incoming_group_reaction_use_case.dart` | YES | Good |
+| 18 | Group message listener | `group_message_listener.dart` | YES | Excellent |
 
 ---
 
@@ -54,10 +55,10 @@
 
 | # | Use Case | File | Test | Quality |
 |---|----------|------|------|---------|
-| 18 | Retry failed group messages | `retry_failed_group_messages_use_case.dart` | YES | Good |
-| 19 | Recover stuck sending messages | `recover_stuck_sending_group_messages_use_case.dart` | YES | Good |
-| 20 | Retry incomplete media uploads | `retry_incomplete_group_uploads_use_case.dart` | YES | Good |
-| 21 | Retry failed inbox stores | `retry_failed_group_inbox_stores_use_case.dart` | YES | Good |
+| 19 | Retry failed group messages | `retry_failed_group_messages_use_case.dart` | YES | Good |
+| 20 | Recover stuck sending messages | `recover_stuck_sending_group_messages_use_case.dart` | YES | Good |
+| 21 | Retry incomplete media uploads | `retry_incomplete_group_uploads_use_case.dart` | YES | Good |
+| 22 | Retry failed inbox stores | `retry_failed_group_inbox_stores_use_case.dart` | YES | Good |
 
 ---
 
@@ -65,9 +66,9 @@
 
 | # | Use Case | File | Test | Quality |
 |---|----------|------|------|---------|
-| 22 | Rotate group key | `rotate_group_key_use_case.dart` | YES | Good |
-| 23 | Rotate + distribute group key | `rotate_and_distribute_group_key_use_case.dart` | YES | Excellent |
-| 24 | Group key update listener | `group_key_update_listener.dart` | YES | Good |
+| 23 | Rotate group key | `rotate_group_key_use_case.dart` | YES | Good |
+| 24 | Rotate + distribute group key | `rotate_and_distribute_group_key_use_case.dart` | YES | Excellent |
+| 25 | Group key update listener | `group_key_update_listener.dart` | YES | Good |
 
 ---
 
@@ -75,9 +76,9 @@
 
 | # | Use Case | File | Test | Quality |
 |---|----------|------|------|---------|
-| 25 | Rejoin group topics on startup | `rejoin_group_topics_use_case.dart` | YES | Good |
-| 26 | Drain offline inbox (paginated) | `drain_group_offline_inbox_use_case.dart` | YES | Excellent |
-| 27 | Group invite listener | `group_invite_listener.dart` | YES | Excellent |
+| 26 | Rejoin group topics on startup | `rejoin_group_topics_use_case.dart` | YES | Good |
+| 27 | Drain offline inbox (paginated) | `drain_group_offline_inbox_use_case.dart` | YES | Excellent |
+| 28 | Group invite listener | `group_invite_listener.dart` | YES | Excellent |
 
 ---
 
@@ -87,18 +88,11 @@
 |---|---------|--------|----------|
 | 28 | **Delete single message** | No per-message soft-delete or tombstone | Medium |
 | 29 | **Pin/unpin message** | No pinning in current group model/use case | Low |
-| 30 | **Mute group notifications** | No app-layer mute flow | Medium |
 | 31 | **Thread replies** | `quotedMessageId` exists, but no dedicated thread model/view | Low |
 | 32 | **Search messages** | No full-text search | Medium |
-| 33 | **Group avatar/photo** | No full avatar/media management flow | Low |
-| 34 | **Update group name** | Name remains mostly locked after creation | Medium |
-| 35 | **Update group description** | Description editing not currently surfaced | Low |
-| 36 | **Promote/demote member** | Roles are not richly managed after creation | Medium |
 | 37 | **Mute member** | No per-member moderation mute | Low |
 | 38 | **Read receipts** | No sender-visible delivery/read tracking | Medium |
 | 39 | **Admin transfer** | No dedicated admin handoff flow exists; the repo now blocks sole-admin self-leave instead of allowing leaderless exit | High |
-| 40 | **Group dissolution** | No explicit admin-initiated dissolve workflow | Low |
-| 41 | **Invite expiry** | Invites do not have strong expiry semantics | Low |
 
 ---
 
@@ -115,9 +109,16 @@
 - Offline re-invites now have an exact inbox-fallback reconnect regression proving the removed member restores rotated group state before resumed sends
 - Member-role group sends are now blocked until bootstrap key state exists locally, with direct proof in `send_group_message_use_case_test.dart` and `group_membership_smoke_test.dart`
 - Last-admin self-leave is now blocked, so the repo no longer allows groups to become leaderless through the local leave flow
+- Post-creation admin promotion and demotion are now landed member-management flows, with direct proof in `update_group_member_role_use_case_test.dart`, `group_info_wired_test.dart`, and `group_membership_smoke_test.dart`
+- Multi-admin leave now keeps the remaining admin path healthy by broadcasting the leaving admin's self-removal, rotating the key for remaining peers, and persisting the same membership watermark used for stale-event rejection
+- Concurrent and conflicting multi-admin membership changes now converge under authenticated authoritative snapshots plus persisted `lastMembershipEventAt`, with direct listener and smoke proof in `group_message_listener_test.dart` and `group_membership_smoke_test.dart`
+- Post-creation group metadata editing is now a shipped contract: admins can rename a group and update its description/photo from group info, non-admins do not see the edit affordance, unauthorized raw `group_metadata_updated` envelopes are ignored, and offline peers converge to the final metadata state under repeated edits. Direct proof lives in `group_info_screen_test.dart`, `group_info_wired_test.dart`, `group_message_listener_test.dart`, `group_list_wired_test.dart`, `group_conversation_wired_test.dart`, and `group_resume_recovery_test.dart`
+- Per-group mute is now a shipped notification contract: members can mute or unmute one group from group info, the repo persists `is_muted`, and `GroupMessageListener` suppresses local notifications for muted groups without dropping delivery or unread state. Direct proof lives in `set_group_muted_use_case_test.dart`, `group_message_listener_test.dart`, `group_info_screen_test.dart`, `group_info_wired_test.dart`, and the same-day `groups` gate.
+- Explicit invite accept, decline, and expiry are now a shipped contract: invite receipt stores a pending review item instead of auto-joining, accepting reuses the persisted join plus inbox-drain path, and decline or expiry leave no ghost group state behind. Direct proof lives in `group_invite_listener_test.dart`, `accept_pending_group_invite_use_case_test.dart`, `decline_pending_group_invite_use_case_test.dart`, `invite_round_trip_test.dart`, `group_list_screen_test.dart`, `group_list_wired_test.dart`, and the same-day `groups` gate.
+- Admin-initiated group dissolve is now a shipped contract: admins can dissolve from group info, all members retain read-only history, offline peers converge through authenticated `group_dissolved` replay, and post-dissolve send/rejoin paths stay blocked. Direct proof lives in `dissolve_group_use_case_test.dart`, `group_message_listener_test.dart`, `send_group_message_use_case_test.dart`, `rejoin_group_topics_use_case_test.dart`, `group_membership_smoke_test.dart`, `group_info_wired_test.dart`, `group_conversation_wired_test.dart`, and the same-day `groups` gate.
 
 ---
 
 ## Verdict
 
-**Implemented core group-discussion features are well tested.** Lifecycle, sending, reactions, retry, key rotation, and recovery all have direct coverage. The remaining gaps are mainly product-scope features such as search, richer admin tooling, and message-level moderation. These are roadmap choices, not evidence of weak core architecture.
+**Implemented core group-discussion features are well tested.** Lifecycle, sending, reactions, retry, key rotation, recovery, post-creation admin-role management, post-creation group metadata editing, per-group mute, explicit invite-decision flows, and admin-initiated dissolve all have direct coverage. The remaining gaps are mainly product-scope features such as search, admin transfer, and message-level moderation. These are roadmap choices, not evidence of weak core architecture.

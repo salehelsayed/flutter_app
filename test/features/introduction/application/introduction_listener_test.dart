@@ -563,6 +563,7 @@ void main() {
               from: 'peer-A',
               to: 'own-peer',
               content: IntroductionPayload.buildEncryptedEnvelope(
+                introductionId: 'intro-v2-mismatch',
                 senderPeerId: 'peer-A',
                 kem: 'old-kem',
                 ciphertext: jsonEncode({

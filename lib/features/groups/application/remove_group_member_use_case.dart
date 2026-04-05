@@ -1,6 +1,8 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -20,6 +22,7 @@ Future<void> removeGroupMember({
   required GroupRepository groupRepo,
   required String groupId,
   required String memberPeerId,
+  DateTime? eventAt,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -76,30 +79,18 @@ Future<void> removeGroupMember({
 
   // 3. Build updated GroupConfig from remaining members and update Go config
   final remainingMembers = await groupRepo.getMembers(groupId);
-  final groupConfig = {
-    'name': group.name,
-    'groupType': group.type.toValue(),
-    if (group.description != null) 'description': group.description,
-    'members': remainingMembers
-        .map(
-          (m) => {
-            'peerId': m.peerId,
-            'username': m.username,
-            'role': m.role.toValue(),
-            'publicKey': m.publicKey,
-            if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
-          },
-        )
-        .toList(),
-    'createdBy': group.createdBy,
-    'createdAt': group.createdAt.toUtc().toIso8601String(),
-  };
+  final groupConfig = buildGroupConfigPayload(group, remainingMembers);
 
   try {
     await callGroupUpdateConfig(
       bridge,
       groupId: groupId,
       groupConfig: groupConfig,
+    );
+    await recordGroupMembershipEventWatermark(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      eventAt: eventAt,
     );
   } catch (e) {
     if (removedMember != null) {

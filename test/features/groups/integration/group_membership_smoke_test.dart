@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
+    as group_dissolve;
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
@@ -10,6 +12,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
@@ -404,6 +407,373 @@ void main() {
       admin.dispose();
       bob.dispose();
     });
+
+    test(
+      'promoted admin gains admin role and can perform admin-only actions',
+      () async {
+        const groupId = 'grp-admin-role-004';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Admin Roles');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        await admin.updateMemberRole(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          role: MemberRole.admin,
+        );
+        await pump();
+
+        final bobGroup = await bob.groupRepo.getGroup(groupId);
+        final bobMember = await bob.groupRepo.getMember(groupId, bob.peerId);
+        final adminViewOfBob = await admin.groupRepo.getMember(
+          groupId,
+          bob.peerId,
+        );
+
+        expect(bobGroup, isNotNull);
+        expect(bobGroup!.myRole, GroupRole.admin);
+        expect(bobMember, isNotNull);
+        expect(bobMember!.role, MemberRole.admin);
+        expect(adminViewOfBob, isNotNull);
+        expect(adminViewOfBob!.role, MemberRole.admin);
+
+        await bob.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+        );
+        await pump();
+
+        expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
+        expect(
+          await admin.groupRepo.getMember(groupId, charlie.peerId),
+          isNull,
+        );
+        expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'multi-admin leave keeps remaining admin healthy and synchronized',
+      () async {
+        const groupId = 'grp-admin-leave-005';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Admin Leave');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        await admin.updateMemberRole(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          role: MemberRole.admin,
+        );
+        await pump();
+
+        await admin.leaveGroup(groupId);
+        await pump();
+
+        expect(await admin.groupRepo.getGroup(groupId), isNull);
+        expect(network.isSubscribed(groupId, admin.peerId), isFalse);
+
+        final bobGroup = await bob.groupRepo.getGroup(groupId);
+        final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+        expect(bobGroup, isNotNull);
+        expect(charlieGroup, isNotNull);
+        expect(bobGroup!.myRole, GroupRole.admin);
+        expect(charlieGroup!.myRole, GroupRole.member);
+
+        final bobMembers = await bob.groupRepo.getMembers(groupId);
+        final charlieMembers = await charlie.groupRepo.getMembers(groupId);
+        expect(bobMembers.map((member) => member.peerId).toSet(), {
+          'peer-bob',
+          'peer-charlie',
+        });
+        expect(charlieMembers.map((member) => member.peerId).toSet(), {
+          'peer-bob',
+          'peer-charlie',
+        });
+
+        await bob.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+        );
+        await pump();
+
+        expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
+        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'concurrent admin changes converge to one final member/admin map',
+      () async {
+        const groupId = 'grp-admin-converge-006';
+        final createdAt = DateTime.parse('2026-04-05T12:09:56.000Z').toUtc();
+        final bobJoinedAt = DateTime.parse('2026-04-05T12:09:57.000Z').toUtc();
+        final charlieJoinedAt = DateTime.parse(
+          '2026-04-05T12:09:58.000Z',
+        ).toUtc();
+        final dianaJoinedAt = DateTime.parse('2026-04-05T12:09:59.000Z')
+            .toUtc();
+        const initialPromoteAt = '2026-04-05T12:10:00.000Z';
+        const promoteAt = '2026-04-05T12:10:01.000Z';
+        const removeAt = '2026-04-05T12:10:02.000Z';
+        final initialPromoteAtTime = DateTime.parse(initialPromoteAt).toUtc();
+        final promoteAtTime = DateTime.parse(promoteAt).toUtc();
+        final removeAtTime = DateTime.parse(removeAt).toUtc();
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        final diana = GroupTestUser.create(
+          peerId: 'peer-diana',
+          username: 'Diana',
+          network: network,
+        );
+
+        await admin.createGroup(
+          groupId: groupId,
+          name: 'Concurrent Admin',
+          createdAt: createdAt,
+        );
+        await admin.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: bobJoinedAt,
+        );
+        await admin.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: charlieJoinedAt,
+        );
+        await admin.addMember(
+          groupId: groupId,
+          invitee: diana,
+          joinedAt: dianaJoinedAt,
+        );
+
+        admin.start();
+        bob.start();
+        charlie.start();
+        diana.start();
+
+        await admin.updateMemberRole(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          role: MemberRole.admin,
+          changedAt: initialPromoteAtTime,
+        );
+        await pump();
+
+        await admin.updateMemberRole(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          role: MemberRole.admin,
+          changedAt: promoteAtTime,
+        );
+        await pump();
+
+        await bob.removeMember(
+          groupId: groupId,
+          memberPeerId: diana.peerId,
+          memberUsername: diana.username,
+          removedAt: removeAtTime,
+        );
+        await pump();
+
+        Future<void> expectCanonicalState(GroupTestUser user) async {
+          final members = await user.groupRepo.getMembers(groupId);
+          final roles = {
+            for (final member in members) member.peerId: member.role,
+          };
+          expect(roles, {
+            'peer-admin': MemberRole.admin,
+            'peer-bob': MemberRole.admin,
+            'peer-charlie': MemberRole.admin,
+          });
+          expect(
+            (await user.groupRepo.getGroup(groupId))!.lastMembershipEventAt,
+            DateTime.parse(removeAt).toUtc(),
+          );
+        }
+
+        await expectCanonicalState(admin);
+        await expectCanonicalState(bob);
+        await expectCanonicalState(charlie);
+
+        expect(await diana.groupRepo.getGroup(groupId), isNull);
+        expect(network.isSubscribed(groupId, diana.peerId), isFalse);
+
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+        diana.dispose();
+      },
+    );
+
+    test(
+      'conflicting remove and promote of the same member converge to removal',
+      () async {
+        const groupId = 'grp-admin-conflict-007';
+        final createdAt = DateTime.parse('2026-04-05T12:19:56.000Z').toUtc();
+        final bobJoinedAt = DateTime.parse('2026-04-05T12:19:57.000Z').toUtc();
+        final charlieJoinedAt = DateTime.parse(
+          '2026-04-05T12:19:58.000Z',
+        ).toUtc();
+        const initialPromoteAt = '2026-04-05T12:20:00.000Z';
+        const promoteAt = '2026-04-05T12:20:01.000Z';
+        const removeAt = '2026-04-05T12:20:02.000Z';
+        final initialPromoteAtTime = DateTime.parse(initialPromoteAt).toUtc();
+        final promoteAtTime = DateTime.parse(promoteAt).toUtc();
+        final removeAtTime = DateTime.parse(removeAt).toUtc();
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        await admin.createGroup(
+          groupId: groupId,
+          name: 'Conflict Admin',
+          createdAt: createdAt,
+        );
+        await admin.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: bobJoinedAt,
+        );
+        await admin.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: charlieJoinedAt,
+        );
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        await admin.updateMemberRole(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          role: MemberRole.admin,
+          changedAt: initialPromoteAtTime,
+        );
+        await pump();
+
+        await admin.updateMemberRole(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          role: MemberRole.admin,
+          changedAt: promoteAtTime,
+        );
+        await pump();
+
+        await bob.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removeAtTime,
+        );
+        await pump();
+
+        Future<void> expectRemovalWinner(GroupTestUser user) async {
+          final members = await user.groupRepo.getMembers(groupId);
+          final roles = {
+            for (final member in members) member.peerId: member.role,
+          };
+          expect(roles, {
+            'peer-admin': MemberRole.admin,
+            'peer-bob': MemberRole.admin,
+          });
+          expect(
+            (await user.groupRepo.getGroup(groupId))!.lastMembershipEventAt,
+            DateTime.parse(removeAt).toUtc(),
+          );
+        }
+
+        await expectRemovalWinner(admin);
+        await expectRemovalWinner(bob);
+        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
 
     // -----------------------------------------------------------------------
     // 5. Removed member loses send permission after self-removal cleanup.
@@ -1468,6 +1838,74 @@ void main() {
         admin.dispose();
         bob.dispose();
         charlie.dispose();
+      },
+    );
+
+    test(
+      'offline member converges to dissolved state through replay and cannot send afterwards',
+      () async {
+        const groupId = 'grp-dissolve-001';
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        await alice.createGroup(groupId: groupId, name: 'Temporary Group');
+        await alice.addMember(groupId: groupId, invitee: bob);
+
+        alice.start();
+
+        final (result, dissolvedGroup) = await alice.dissolveGroupViaBridge(
+          groupId: groupId,
+        );
+
+        expect(result, group_dissolve.DissolveGroupResult.success);
+        expect(dissolvedGroup, isNotNull);
+        expect(dissolvedGroup!.isDissolved, isTrue);
+        expect(network.isSubscribed(groupId, alice.peerId), isFalse);
+        expect(network.isSubscribed(groupId, bob.peerId), isFalse);
+
+        final inboxRaw = alice.bridge.sentMessages.lastWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        final inboxPayload =
+            (jsonDecode(inboxRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final inboxEnvelope =
+            jsonDecode(inboxPayload['message'] as String)
+                as Map<String, dynamic>;
+
+        await bob.groupMessageListener.handleReplayEnvelope(inboxEnvelope);
+        await pump();
+
+        final bobGroup = await bob.groupRepo.getGroup(groupId);
+        expect(bobGroup, isNotNull);
+        expect(bobGroup!.isDissolved, isTrue);
+
+        final bobLatest = await bob.msgRepo.getLatestMessage(groupId);
+        expect(bobLatest, isNotNull);
+        expect(bobLatest!.text, 'Alice dissolved the group');
+
+        final (sendResult, sendMessage) = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'Too late',
+        );
+
+        expect(sendResult, group_send.SendGroupMessageResult.groupDissolved);
+        expect(sendMessage, isNull);
+        expect(bob.bridge.commandLog, isNot(contains('group:publish')));
+
+        alice.dispose();
+        bob.dispose();
       },
     );
   });

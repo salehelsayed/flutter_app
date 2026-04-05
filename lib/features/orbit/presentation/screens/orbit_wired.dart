@@ -37,6 +37,8 @@ import 'package:flutter_app/features/contacts/application/archive_contact_use_ca
 import 'package:flutter_app/features/groups/application/archive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/unarchive_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
@@ -48,6 +50,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -189,6 +192,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
   StreamSubscription<ContactRequestModel>? _requestSubscription;
   StreamSubscription<GroupMessage>? _groupMessageSubscription;
+  StreamSubscription<GroupModel>? _groupJoinedInviteSubscription;
+  StreamSubscription<PendingGroupInvite>? _pendingGroupInviteSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
@@ -197,6 +202,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   int _introsCount = 0;
   Map<String, List<IntroductionModel>> _groupedIntros = {};
   Map<String, String> _introducerUsernames = {};
+  List<PendingGroupInvite> _pendingGroupInvites = [];
+  final Set<String> _processingPendingInviteIds = <String>{};
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
   final Set<String> _changedGroupIds = <String>{};
@@ -246,15 +253,23 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       mergedItems: List<OrbitItem>.unmodifiable(mergedItems),
       activeCount: _activeFriends.length,
       archivedCount: _archivedFriends.length + _archivedGroups.length,
-      introsCount: _introsCount,
+      introCount: _introsCount,
+      pendingGroupInviteCount: _pendingGroupInvites.length,
+      reviewCount: _introsCount + _pendingGroupInvites.length,
       introsData: OrbitIntrosViewData(
         groupedIntros: _groupedIntros,
         introducerUsernames: _introducerUsernames,
         ownPeerId: _identity?.peerId ?? '',
+        pendingGroupInvites: List<PendingGroupInvite>.unmodifiable(
+          _pendingGroupInvites,
+        ),
+        processingPendingInviteIds: _processingPendingInviteIds,
         onAccept: _onAcceptIntro,
         onPass: _onPassIntro,
         onDelete: _onDeleteIntro,
         onSendMessage: _onIntroSendMessage,
+        onAcceptPendingInvite: _onAcceptPendingInvite,
+        onDeclinePendingInvite: _onDeclinePendingInvite,
         blockedPeerIds: _blockedPeerIds,
       ),
       searchActive: _searchActive,
@@ -321,11 +336,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadVideoQualityPreference();
     _loadOrbitData();
     _loadGroupData();
+    _loadPendingGroupInvites();
     _loadIntroductions();
     _startListeningForChatMessages();
     _startListeningForContactUpdates();
     _startListeningForContactRequests();
     _startListeningForGroupMessages();
+    _startListeningForPendingGroupInvites();
     _startListeningForIntroductions();
     _attachExternalRouteChangesListenable(
       widget.externalRouteChangesListenable,
@@ -496,6 +513,31 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         layer: 'FL',
         event: 'ORBIT_FL_LOAD_GROUP_DATA_ERROR',
         details: {'error': e.toString(), 'segment': 'archived'},
+      );
+    }
+  }
+
+  Future<void> _loadPendingGroupInvites() async {
+    final inviteListener = widget.groupInviteListener;
+    if (inviteListener == null) {
+      if (_pendingGroupInvites.isNotEmpty) {
+        _pendingGroupInvites = const [];
+        _publishListProjection();
+      }
+      return;
+    }
+
+    try {
+      final invites = await inviteListener.pendingInviteRepo
+          .getPendingInvites();
+      if (!mounted) return;
+      _pendingGroupInvites = invites;
+      _publishListProjection();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_LOAD_PENDING_GROUP_INVITES_ERROR',
+        details: {'error': e.toString()},
       );
     }
   }
@@ -710,6 +752,37 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
+  void _startListeningForPendingGroupInvites() {
+    final listener = widget.groupInviteListener;
+    if (listener == null) return;
+
+    _groupJoinedInviteSubscription = listener.groupJoinedStream.listen(
+      (group) {
+        _markGroupChanged(group.id);
+        unawaited(_refreshOrbitGroup(group.id));
+        unawaited(_loadPendingGroupInvites());
+      },
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_GROUP_JOINED_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+
+    _pendingGroupInviteSubscription = listener.pendingInviteStream.listen(
+      (_) => unawaited(_loadPendingGroupInvites()),
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'ORBIT_PENDING_GROUP_INVITE_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+  }
+
   Future<void> _onAcceptIntro(String introductionId) async {
     if (_identity == null) return;
 
@@ -780,6 +853,140 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _onAcceptPendingInvite(PendingGroupInvite invite) async {
+    final inviteListener = widget.groupInviteListener;
+    final groupRepository = widget.groupRepository;
+    final groupMessageRepository = widget.groupMessageRepository;
+    final groupMessageListener = widget.groupMessageListener;
+    if (inviteListener == null ||
+        groupRepository == null ||
+        groupMessageRepository == null ||
+        groupMessageListener == null ||
+        _processingPendingInviteIds.contains(invite.groupId)) {
+      return;
+    }
+
+    setState(() => _processingPendingInviteIds.add(invite.groupId));
+    try {
+      final (result, group) = await acceptPendingGroupInvite(
+        pendingInviteRepo: inviteListener.pendingInviteRepo,
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+        bridge: widget.bridge,
+        groupId: invite.groupId,
+        mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        groupMessageListener: groupMessageListener,
+      );
+      if (group != null) {
+        _markGroupChanged(group.id);
+      }
+      await _loadPendingGroupInvites();
+      if (group != null) {
+        await _refreshOrbitGroup(group.id);
+      }
+      if (!mounted) return;
+
+      switch (result) {
+        case AcceptPendingGroupInviteResult.success:
+          _showSnackBar('Joined ${group?.name ?? invite.groupName}');
+          break;
+        case AcceptPendingGroupInviteResult.notFound:
+          _showSnackBar('Invite no longer available');
+          break;
+        case AcceptPendingGroupInviteResult.expired:
+          _showSnackBar('Invite expired');
+          break;
+        case AcceptPendingGroupInviteResult.invalidPayload:
+          _showSnackBar('Invite is no longer valid');
+          break;
+        case AcceptPendingGroupInviteResult.duplicateGroup:
+          _showSnackBar('Group already added');
+          break;
+        case AcceptPendingGroupInviteResult.bridgeError:
+          _showSnackBar(
+            group != null
+                ? 'Joined ${group.name}, but recovery is still catching up'
+                : 'Invite accepted, but recovery is still catching up',
+          );
+          break;
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_ACCEPT_PENDING_GROUP_INVITE_ERROR',
+        details: {
+          'groupId': invite.groupId.length > 8
+              ? invite.groupId.substring(0, 8)
+              : invite.groupId,
+          'error': e.toString(),
+        },
+      );
+      await _loadPendingGroupInvites();
+      if (mounted) {
+        _showSnackBar('Failed to accept invite');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _processingPendingInviteIds.remove(invite.groupId));
+      }
+    }
+  }
+
+  Future<void> _onDeclinePendingInvite(PendingGroupInvite invite) async {
+    final inviteListener = widget.groupInviteListener;
+    if (inviteListener == null ||
+        _processingPendingInviteIds.contains(invite.groupId)) {
+      return;
+    }
+
+    setState(() => _processingPendingInviteIds.add(invite.groupId));
+    try {
+      final result = await declinePendingGroupInvite(
+        pendingInviteRepo: inviteListener.pendingInviteRepo,
+        groupId: invite.groupId,
+      );
+      await _loadPendingGroupInvites();
+      if (!mounted) return;
+
+      switch (result) {
+        case DeclinePendingGroupInviteResult.success:
+          _showSnackBar('Invite declined');
+          break;
+        case DeclinePendingGroupInviteResult.notFound:
+          _showSnackBar('Invite no longer available');
+          break;
+        case DeclinePendingGroupInviteResult.expired:
+          _showSnackBar('Invite expired');
+          break;
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DECLINE_PENDING_GROUP_INVITE_ERROR',
+        details: {
+          'groupId': invite.groupId.length > 8
+              ? invite.groupId.substring(0, 8)
+              : invite.groupId,
+          'error': e.toString(),
+        },
+      );
+      await _loadPendingGroupInvites();
+      if (mounted) {
+        _showSnackBar('Failed to decline invite');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _processingPendingInviteIds.remove(invite.groupId));
+      }
+    }
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   void _onIntroSendMessage(String peerId) {
     // Find the contact matching this peerId and navigate to conversation
     final friend = _activeFriends.cast<OrbitFriend?>().firstWhere(
@@ -797,6 +1004,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     _groupMessageSubscription = listener.groupMessageStream.listen(
       (message) {
+        _markGroupChanged(message.groupId);
         unawaited(_refreshOrbitGroup(message.groupId));
       },
       onError: (error) {
@@ -1281,6 +1489,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _contactUpdateSubscription?.cancel();
     _requestSubscription?.cancel();
     _groupMessageSubscription?.cancel();
+    _groupJoinedInviteSubscription?.cancel();
+    _pendingGroupInviteSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
     _detachExternalRouteChangesListenable(

@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
-import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -16,6 +14,7 @@ import '../../../features/contacts/domain/repositories/fake_contact_repository.d
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 
 const _testGroupConfig = {
   'name': 'Book Club',
@@ -58,13 +57,14 @@ ContactModel _aliceContact({bool isBlocked = false}) {
 ChatMessage _makeV1InviteMessage({
   String groupId = 'grp-abc123',
   String senderPeerId = '12D3KooWAlice',
+  Map<String, dynamic>? groupConfig,
 }) {
   final payload = GroupInvitePayload(
     id: 'invite-uuid-001',
     groupId: groupId,
     groupKey: 'base64GroupKey==',
     keyEpoch: 1,
-    groupConfig: _testGroupConfig,
+    groupConfig: groupConfig ?? _testGroupConfig,
     senderPeerId: senderPeerId,
     senderUsername: 'Alice',
     timestamp: '2026-03-02T12:00:00.000Z',
@@ -108,7 +108,6 @@ ChatMessage _makeV2InviteMessage({
   );
 }
 
-/// A bridge that returns ok=false for message.decrypt
 class _FailDecryptBridge extends FakeBridge {
   @override
   Future<String> send(String message) async {
@@ -131,80 +130,14 @@ class _FailDecryptBridge extends FakeBridge {
   }
 }
 
-class _InviteInboxPage {
-  final List<Map<String, dynamic>> messages;
-  final String nextCursor;
-
-  const _InviteInboxPage(this.messages, this.nextCursor);
-}
-
-class _CursorInboxInviteBridge extends PassthroughCryptoBridge {
-  final Map<String, _InviteInboxPage> pages = {};
-
-  void addPage(
-    String groupId,
-    String cursor,
-    List<Map<String, dynamic>> messages,
-    String nextCursor,
-  ) {
-    pages['$groupId:$cursor'] = _InviteInboxPage(messages, nextCursor);
-  }
-
-  @override
-  Future<String> send(String message) async {
-    final parsed = jsonDecode(message) as Map<String, dynamic>;
-    final cmd = parsed['cmd'] as String?;
-
-    if (cmd == 'group:inboxRetrieveCursor') {
-      sendCallCount++;
-      lastSentMessage = message;
-      sentMessages.add(message);
-      lastCommand = cmd;
-      commandLog.add(cmd!);
-
-      if (responses.containsKey(cmd)) {
-        return jsonEncode(responses[cmd]!);
-      }
-
-      final payload = parsed['payload'] as Map<String, dynamic>;
-      final groupId = payload['groupId'] as String;
-      final cursor = payload['cursor'] as String? ?? '';
-      final page = pages['$groupId:$cursor'];
-      return jsonEncode({
-        'ok': true,
-        'messages': page?.messages ?? const <Map<String, dynamic>>[],
-        'cursor': page?.nextCursor ?? '',
-      });
-    }
-
-    return super.send(message);
-  }
-}
-
-class _TimeoutInboxRetrieveBridge extends _CursorInboxInviteBridge {
-  @override
-  Future<String> send(String message) async {
-    final parsed = jsonDecode(message) as Map<String, dynamic>;
-    final cmd = parsed['cmd'] as String?;
-    if (cmd == 'group:inboxRetrieveCursor') {
-      sendCallCount++;
-      lastSentMessage = message;
-      sentMessages.add(message);
-      lastCommand = cmd;
-      commandLog.add(cmd!);
-      throw TimeoutException('Simulated inbox timeout');
-    }
-    return super.send(message);
-  }
-}
-
 void main() {
   late StreamController<ChatMessage> incomingController;
   late InMemoryGroupRepository groupRepo;
   late InMemoryGroupMessageRepository msgRepo;
   late InMemoryMediaAttachmentRepository mediaRepo;
+  late InMemoryPendingGroupInviteRepository pendingInviteRepo;
   late FakeContactRepository contactRepo;
-  late _CursorInboxInviteBridge bridge;
+  late FakeBridge bridge;
   late GroupInviteListener listener;
 
   setUp(() {
@@ -212,13 +145,15 @@ void main() {
     groupRepo = InMemoryGroupRepository();
     msgRepo = InMemoryGroupMessageRepository();
     mediaRepo = InMemoryMediaAttachmentRepository();
+    pendingInviteRepo = InMemoryPendingGroupInviteRepository();
     contactRepo = FakeContactRepository();
-    bridge = _CursorInboxInviteBridge();
+    bridge = PassthroughCryptoBridge();
     contactRepo.seed([_aliceContact()]);
 
     listener = GroupInviteListener(
       groupInviteStream: incomingController.stream,
       groupRepo: groupRepo,
+      pendingInviteRepo: pendingInviteRepo,
       contactRepo: contactRepo,
       bridge: bridge,
       msgRepo: msgRepo,
@@ -227,459 +162,164 @@ void main() {
     );
   });
 
-  tearDown(() {
+  tearDown(() async {
     listener.dispose();
-    incomingController.close();
+    await incomingController.close();
   });
 
   group('GroupInviteListener', () {
-    // --- Cycle 6.1 ---
-    test('processes v2 invite and broadcasts joined GroupModel', () async {
+    test(
+      'stores a valid v2 invite as pending and does not join immediately',
+      () async {
+        listener.start();
+
+        final invites = <PendingGroupInvite>[];
+        listener.pendingInviteStream.listen(invites.add);
+
+        incomingController.add(_makeV2InviteMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(invites, hasLength(1));
+        expect(invites.first.groupId, 'grp-abc123');
+        expect(invites.first.groupName, 'Book Club');
+        expect(invites.first.groupDescription, 'A group for book lovers');
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test('does not store pending invite from unknown sender', () async {
+      contactRepo.seed([]);
       listener.start();
 
-      final groups = <GroupModel>[];
-      listener.groupJoinedStream.listen(groups.add);
-
-      incomingController.add(_makeV2InviteMessage());
-
-      // Wait for async processing
-      await Future.delayed(const Duration(milliseconds: 100));
-
-      expect(groups, hasLength(1));
-      expect(groups.first.id, equals('grp-abc123'));
-      expect(groups.first.name, equals('Book Club'));
-
-      // Group is persisted
-      final storedGroup = await groupRepo.getGroup('grp-abc123');
-      expect(storedGroup, isNotNull);
-
-      // Bridge group:join was called
-      expect(bridge.commandLog, contains('group:join'));
-    });
-
-    // --- Cycle 6.2 ---
-    test('does not broadcast for invite from unknown sender', () async {
-      contactRepo.seed([]); // No contacts
-
-      listener.start();
-
-      final groups = <GroupModel>[];
-      listener.groupJoinedStream.listen(groups.add);
+      final invites = <PendingGroupInvite>[];
+      listener.pendingInviteStream.listen(invites.add);
 
       incomingController.add(_makeV1InviteMessage());
-
       await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(groups, isEmpty);
-      expect(groupRepo.groupCount, equals(0));
+      expect(invites, isEmpty);
+      expect(pendingInviteRepo.count, 0);
+      expect(groupRepo.groupCount, 0);
     });
 
-    // --- Cycle 6.3 ---
-    test('does not broadcast for invite to a group already joined', () async {
-      // Pre-populate the group
-      final existingGroup = GroupModel(
-        id: 'grp-abc123',
-        name: 'Already Joined',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/grp-abc123',
-        createdAt: DateTime.utc(2026, 1, 1),
-        createdBy: '12D3KooWAlice',
-        myRole: GroupRole.admin,
+    test('does not store pending invite for an already joined group', () async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'grp-abc123',
+          name: 'Already Joined',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/grp-abc123',
+          createdAt: DateTime.utc(2026, 1, 1),
+          createdBy: '12D3KooWAlice',
+          myRole: GroupRole.admin,
+        ),
       );
-      await groupRepo.saveGroup(existingGroup);
 
       listener.start();
-
-      final groups = <GroupModel>[];
-      listener.groupJoinedStream.listen(groups.add);
+      final invites = <PendingGroupInvite>[];
+      listener.pendingInviteStream.listen(invites.add);
 
       incomingController.add(_makeV1InviteMessage());
-
       await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(groups, isEmpty);
-
-      // Original group still intact
-      final stored = await groupRepo.getGroup('grp-abc123');
-      expect(stored!.name, equals('Already Joined'));
+      expect(invites, isEmpty);
+      expect(pendingInviteRepo.count, 0);
+      expect((await groupRepo.getGroup('grp-abc123'))!.name, 'Already Joined');
     });
 
-    // --- Cycle 6.4 ---
     test('does not crash on decryption failure', () async {
-      final failBridge = _FailDecryptBridge();
       final failListener = GroupInviteListener(
         groupInviteStream: incomingController.stream,
         groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
         contactRepo: contactRepo,
-        bridge: failBridge,
+        bridge: _FailDecryptBridge(),
         getOwnMlKemSecretKey: () async => 'mySecretKey',
       );
+      addTearDown(failListener.dispose);
       failListener.start();
 
-      final groups = <GroupModel>[];
-      failListener.groupJoinedStream.listen(groups.add);
+      final invites = <PendingGroupInvite>[];
+      failListener.pendingInviteStream.listen(invites.add);
 
       incomingController.add(_makeV2InviteMessage());
-
       await Future.delayed(const Duration(milliseconds: 100));
 
-      // Should not crash — just silently ignore
-      expect(groups, isEmpty);
-
-      failListener.dispose();
+      expect(invites, isEmpty);
+      expect(pendingInviteRepo.count, 0);
     });
 
-    // --- Cycle 6.5 ---
     test(
       'calling start twice does not create duplicate subscriptions',
       () async {
         listener.start();
-        listener.start(); // Second call should be no-op
+        listener.start();
 
-        final groups = <GroupModel>[];
-        listener.groupJoinedStream.listen(groups.add);
+        final invites = <PendingGroupInvite>[];
+        listener.pendingInviteStream.listen(invites.add);
 
         incomingController.add(_makeV1InviteMessage());
-
         await Future.delayed(const Duration(milliseconds: 100));
 
-        // Should only get one emission, not two
-        expect(groups, hasLength(1));
+        expect(invites, hasLength(1));
+        expect(pendingInviteRepo.count, 1);
       },
     );
 
-    // --- Cycle 6.6 ---
     test('stop prevents further processing', () async {
       listener.start();
       listener.stop();
 
-      final groups = <GroupModel>[];
-      listener.groupJoinedStream.listen(groups.add);
-
       incomingController.add(_makeV1InviteMessage());
-
       await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(groups, isEmpty);
+      expect(pendingInviteRepo.count, 0);
     });
 
-    // --- Cycle 6.7 ---
-    test('dispose closes groupJoinedStream', () async {
-      // Should not throw
+    test('dispose is safe after start', () {
+      listener.start();
       listener.dispose();
     });
 
-    // --- Cycle 6.8 ---
     test('does not process invite from blocked contact', () async {
       contactRepo.seed([_aliceContact(isBlocked: true)]);
-
       listener.start();
 
-      final groups = <GroupModel>[];
-      listener.groupJoinedStream.listen(groups.add);
-
       incomingController.add(_makeV1InviteMessage());
-
       await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(groups, isEmpty);
-      expect(groupRepo.groupCount, equals(0));
-    });
-
-    // --- Cycle 6.9 ---
-    test('drains offline inbox after successful invite', () async {
-      bridge.addPage('grp-abc123', '', [
-        {
-          'from': '12D3KooWAlice',
-          'message': jsonEncode({
-            'groupId': 'grp-abc123',
-            'messageId': 'offline-msg-1',
-            'senderId': '12D3KooWAlice',
-            'senderUsername': 'Alice',
-            'keyEpoch': 1,
-            'text': '',
-            'media': [
-              {
-                'id': 'blob-offline-1',
-                'mime': 'image/jpeg',
-                'size': 4096,
-                'mediaType': 'image',
-                'downloadStatus': 'pending',
-                'createdAt': '2026-03-02T13:00:00.000Z',
-              },
-            ],
-            'timestamp': '2026-03-02T13:00:00.000Z',
-          }),
-          'timestamp': 1709384400000,
-        },
-        {
-          'from': '12D3KooWAlice',
-          'message': jsonEncode({
-            'groupId': 'grp-abc123',
-            'messageId': 'offline-msg-2',
-            'senderId': '12D3KooWAlice',
-            'senderUsername': 'Alice',
-            'keyEpoch': 1,
-            'text': 'Reply to the missed photo',
-            'quotedMessageId': 'offline-msg-1',
-            'timestamp': '2026-03-02T13:01:00.000Z',
-          }),
-          'timestamp': 1709384460000,
-        },
-      ], '');
-
-      listener.start();
-
-      final groups = <GroupModel>[];
-      listener.groupJoinedStream.listen(groups.add);
-
-      incomingController.add(_makeV1InviteMessage());
-
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      // Group was joined
-      expect(groups, hasLength(1));
-
-      // Offline inbox messages were drained and saved
-      expect(msgRepo.count, 2);
-      final messages = await msgRepo.getMessagesPage('grp-abc123');
-      expect(messages.map((m) => m.id).toSet(), {
-        'offline-msg-1',
-        'offline-msg-2',
-      });
-      expect(messages.every((m) => m.isIncoming), isTrue);
-      final quotedReply = messages.firstWhere(
-        (m) => m.text == 'Reply to the missed photo',
-      );
-      expect(quotedReply.quotedMessageId, 'offline-msg-1');
-
-      final attachments = await mediaRepo.getAttachmentsForMessage(
-        'offline-msg-1',
-      );
-      expect(attachments, hasLength(1));
-      expect(attachments.first.id, 'blob-offline-1');
-      expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
+      expect(pendingInviteRepo.count, 0);
+      expect(groupRepo.groupCount, 0);
     });
 
     test(
-      'offline-added member reconnects, bootstraps, drains inbox, and can send',
+      'duplicate pending invite replaces the existing preview row',
       () async {
-        bridge.addPage('grp-abc123', '', [
-          {
-            'from': '12D3KooWAlice',
-            'message': jsonEncode({
-              'groupId': 'grp-abc123',
-              'messageId': 'offline-msg-1',
-              'senderId': '12D3KooWAlice',
-              'senderUsername': 'Alice',
-              'keyEpoch': 1,
-              'text': 'Welcome back',
-              'timestamp': '2026-03-02T13:00:00.000Z',
-            }),
-            'timestamp': 1709384400000,
-          },
-        ], '');
-        bridge.responses['group:publish'] = {
-          'ok': true,
-          'messageId': 'post-bootstrap-send',
-        };
-
         listener.start();
 
-        final groups = <GroupModel>[];
-        listener.groupJoinedStream.listen(groups.add);
-
         incomingController.add(_makeV1InviteMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
 
-        await Future.delayed(const Duration(milliseconds: 200));
-
-        expect(groups, hasLength(1));
-        expect(msgRepo.count, 1);
-
-        final (result, message) = await sendGroupMessage(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          groupId: 'grp-abc123',
-          text: 'I made it back',
-          senderPeerId: 'myPeerId',
-          senderPublicKey: 'myPubKey',
-          senderPrivateKey: 'myPrivateKey',
-          senderUsername: 'Me',
-        );
-
-        expect(result, SendGroupMessageResult.success);
-        expect(message, isNotNull);
-        expect(message!.text, 'I made it back');
-        expect(message.keyGeneration, 1);
-
-        final storedInviteGroup = await groupRepo.getGroup('grp-abc123');
-        expect(storedInviteGroup, isNotNull);
-
-        final allMessages = await msgRepo.getMessagesPage('grp-abc123');
-        expect(
-          allMessages.map((entry) => entry.text).toSet(),
-          containsAll({'Welcome back', 'I made it back'}),
-        );
-        expect(bridge.commandLog, contains('group:join'));
-        expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
-        expect(bridge.commandLog, contains('group:publish'));
-      },
-    );
-
-    test(
-      'drains all invite inbox cursor pages when backlog exceeds one page',
-      () async {
-        final firstPage = List<Map<String, dynamic>>.generate(50, (index) {
-          final messageNumber = index + 1;
-          return {
-            'from': '12D3KooWAlice',
-            'message': jsonEncode({
-              'groupId': 'grp-abc123',
-              'messageId': 'offline-msg-$messageNumber',
-              'senderId': '12D3KooWAlice',
-              'senderUsername': 'Alice',
-              'keyEpoch': 1,
-              'text': 'Offline backlog $messageNumber',
-              'timestamp': DateTime.utc(
-                2026,
-                3,
-                2,
-                13,
-                messageNumber,
-              ).toIso8601String(),
-            }),
-            'timestamp': 1709384400000 + (messageNumber * 60000),
-          };
-        });
-        bridge.addPage('grp-abc123', '', firstPage, 'cursor-page-2');
-        bridge.addPage('grp-abc123', 'cursor-page-2', [
-          {
-            'from': '12D3KooWAlice',
-            'message': jsonEncode({
-              'groupId': 'grp-abc123',
-              'messageId': 'offline-msg-51',
-              'senderId': '12D3KooWAlice',
-              'senderUsername': 'Alice',
-              'keyEpoch': 1,
-              'text': 'Quoted backlog reply from page two',
-              'quotedMessageId': 'offline-msg-1',
-              'timestamp': '2026-03-02T14:00:00.000Z',
-            }),
-            'timestamp': 1709388000000,
-          },
-        ], '');
-
-        listener.start();
-
-        final groups = <GroupModel>[];
-        listener.groupJoinedStream.listen(groups.add);
-
-        incomingController.add(_makeV1InviteMessage());
-
-        await Future.delayed(const Duration(milliseconds: 250));
-
-        final retrieveCmds = bridge.sentMessages
-            .map((message) => jsonDecode(message) as Map<String, dynamic>)
-            .where((message) => message['cmd'] == 'group:inboxRetrieveCursor')
-            .toList();
-        final pagedReply = await msgRepo.getMessage('offline-msg-51');
-
-        expect(groups, hasLength(1));
-        expect(msgRepo.count, 51);
-        expect(pagedReply, isNotNull);
-        expect(pagedReply!.quotedMessageId, 'offline-msg-1');
-        expect(retrieveCmds, hasLength(2));
-        expect(retrieveCmds[0]['payload']['cursor'], '');
-        expect(retrieveCmds[1]['payload']['cursor'], 'cursor-page-2');
-      },
-    );
-
-    // --- Cycle 6.10 ---
-    test('drain error does not prevent group from being broadcast', () async {
-      // Make inboxRetrieve fail
-      bridge.responses['group:inboxRetrieveCursor'] = {
-        'ok': false,
-        'errorCode': 'RELAY_UNREACHABLE',
-        'errorMessage': 'Cannot reach relay',
-      };
-
-      listener.start();
-
-      final groups = <GroupModel>[];
-      listener.groupJoinedStream.listen(groups.add);
-
-      incomingController.add(_makeV1InviteMessage());
-
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      // Group should still be broadcast despite drain error
-      expect(groups, hasLength(1));
-      expect(groups.first.id, 'grp-abc123');
-
-      // No messages saved (drain failed)
-      expect(msgRepo.count, 0);
-    });
-
-    test(
-      'timeout during offline inbox drain logs an error instead of a done event',
-      () async {
-        final output = <String>[];
-        final originalDebugPrint = debugPrint;
-        flowEventLoggingEnabled = true;
-        debugPrint = (String? message, {int? wrapWidth}) {
-          if (message != null) output.add(message);
+        final refreshedConfig = {
+          ..._testGroupConfig,
+          'name': 'Renamed Book Club',
+          'description': 'Updated invite preview',
         };
-        addTearDown(() {
-          debugPrint = originalDebugPrint;
-          flowEventLoggingEnabled = kDebugMode;
-        });
-
-        final timeoutBridge = _TimeoutInboxRetrieveBridge();
-        final timeoutListener = GroupInviteListener(
-          groupInviteStream: incomingController.stream,
-          groupRepo: groupRepo,
-          contactRepo: contactRepo,
-          bridge: timeoutBridge,
-          msgRepo: msgRepo,
-          mediaAttachmentRepo: mediaRepo,
-          getOwnMlKemSecretKey: () async => 'mySecretKey',
+        incomingController.add(
+          _makeV1InviteMessage(groupConfig: refreshedConfig),
         );
-        addTearDown(timeoutListener.dispose);
+        await Future.delayed(const Duration(milliseconds: 100));
 
-        timeoutListener.start();
-
-        final groups = <GroupModel>[];
-        timeoutListener.groupJoinedStream.listen(groups.add);
-
-        incomingController.add(_makeV1InviteMessage());
-
-        await Future.delayed(const Duration(milliseconds: 200));
-
-        final events = output
-            .where((line) => line.startsWith('[FLOW] '))
-            .map(
-              (line) =>
-                  jsonDecode(line.substring('[FLOW] '.length))
-                      as Map<String, dynamic>,
-            )
-            .toList();
-
-        expect(groups, hasLength(1));
-        expect(msgRepo.count, 0);
-        expect(timeoutBridge.commandLog, contains('group:inboxRetrieveCursor'));
-        expect(
-          events.any(
-            (event) => event['event'] == 'GROUP_INVITE_DRAIN_INBOX_ERROR',
-          ),
-          isTrue,
-        );
-        expect(
-          events.any(
-            (event) => event['event'] == 'GROUP_INVITE_DRAIN_INBOX_DONE',
-          ),
-          isFalse,
-        );
+        expect(pendingInviteRepo.count, 1);
+        final stored = await pendingInviteRepo.getPendingInvite('grp-abc123');
+        expect(stored, isNotNull);
+        expect(stored!.groupName, 'Renamed Book Club');
+        expect(stored.groupDescription, 'Updated invite preview');
       },
     );
   });

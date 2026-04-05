@@ -2,7 +2,29 @@
 
 ## Executive Summary
 
-Robust small/medium-group messaging via GossipSub, symmetric group encryption, relay inbox fallback, and startup/resume recovery. The earlier pass overstated three things: group media retry is **already implemented**, announcement coverage inside the Flutter tree is stronger than initially reported, and announcement writer enforcement is now repo-locally verifiable in `go-mknoon`. The remove-vs-send boundary is now explicit instead of best-effort: live and replay paths persist a sender-specific `member_removed.removedAt` cutoff, and remaining peers accept removed-sender traffic only when `message.timestamp < removedAt`. Repo-owned membership add/remove system events are now also listener-authenticated against durable local creator/admin facts before local state is mutated, so raw non-admin bypass traffic no longer lands at the Flutter seam. Removed peers also keep the targeted replay/offline catch-up path that replays the same `member_removed` cleanup on reconnect. The remaining architectural risks are concentrated around receipt-less publish semantics, residual revocation timing outside that explicit cutoff, and unprofiled scale beyond the current sweet spot.
+Robust small/medium-group messaging via GossipSub, symmetric group encryption,
+relay inbox fallback, and startup/resume recovery. The earlier pass overstated
+three things: group media retry is **already implemented**, announcement
+coverage inside the Flutter tree is stronger than initially reported, and
+announcement writer enforcement is now repo-locally verifiable in `go-mknoon`.
+The remove-vs-send boundary is now explicit instead of best-effort: live and
+replay paths persist a sender-specific `member_removed.removedAt` cutoff, and
+remaining peers accept removed-sender traffic only when
+`message.timestamp < removedAt`. Repo-owned membership
+add/remove/role-update system events are now listener-authenticated against
+durable local creator/admin facts before local state is mutated, and the acting
+peer persists the same membership watermark locally when it originates a
+role/remove change, so stale replays no longer rely on recipient-only ordering
+state. Group backlog replay also now owns one explicit 7-day retention
+boundary: non-system relay backlog older than the cutoff is skipped during
+inbox drain, the group persists whether older backlog expired versus newer
+messages were still retained, and the shipped group conversation/list surfaces
+show truthful expired-versus-mixed-window copy instead of implying full
+recovery. Removed peers also keep the targeted replay/offline catch-up path
+that replays the same `member_removed` cleanup on reconnect. The remaining
+architectural risks are concentrated around receipt-less publish semantics,
+residual revocation timing outside that explicit cutoff, and scale beyond the
+current repo-owned 50-member cap.
 
 ---
 
@@ -99,6 +121,8 @@ Go GossipSub → validate signature → decrypt → emit group message
 | `member_added` | Persist member and sync config only when the sender matches durable local creator/admin facts |
 | `members_added` | Batch persist and sync config only when the sender matches durable local creator/admin facts |
 | `member_removed` | Remove from DB or leave group if self only when the sender matches durable local creator/admin facts, persist a sender-specific removedAt cutoff for removed-sender traffic, and replay the same path during inbox drain |
+| `member_role_updated` | Apply the authenticated authoritative member snapshot, update badges/permissions/myRole, and persist the same membership-event watermark used to reject stale role or removal replays |
+| `group_dissolved` | Persist the group-wide dissolved state only when the sender matches durable local creator/admin facts, store a readable timeline event, retain read-only history, reject later sends, and skip future rejoin attempts during restart/recovery |
 | `key_rotated` | Update stored key + keyEpoch |
 
 ---
@@ -111,6 +135,20 @@ Go GossipSub → validate signature → decrypt → emit group message
 2. Persist member to DB
 3. Sync config to bridge/native layer
 4. New member becomes valid sender under the current config
+
+### Current membership size contract
+
+- The Flutter-owned product contract now enforces one explicit hard cap of
+  `50` total members per group, including the creator/admin.
+- `createGroupWithMembers(...)`, `addGroupMember(...)`, and the add-member
+  batch invite flow all use the same shared
+  `group_membership_limit_policy.dart` seam.
+- Over-limit create and invite selections are rejected before local mutation,
+  bridge config sync, or `members_added` publish.
+- Batch overflow is all-or-nothing: admins must reduce the requested selection
+  and retry; the existing group stays unchanged.
+- The shipped create-group and add-member flows now surface truthful size-limit
+  feedback instead of falling back to generic failure copy for this case.
 
 ### Remove Member
 
@@ -129,6 +167,9 @@ Go GossipSub → validate signature → decrypt → emit group message
 
 - Encrypted 1:1 invite payload carries group config/key context
 - Transport reuses 1:1 delivery logic (direct → relay → inbox)
+- Invite receipt now stores a durable pending review item instead of silently
+  materializing the group; explicit accept reuses the join + inbox-drain path,
+  while decline and expiry leave no local group/member/key ghost state behind
 - The remove -> rotate -> re-invite path is now directly covered in
   `test/features/groups/integration/invite_round_trip_test.dart`: the invite
   carries the rotated epoch, the rejoined member persists that fresh epoch,
@@ -193,6 +234,16 @@ Go GossipSub → validate signature → decrypt → emit group message
   cutoff instead of arrival timing alone, so removed-sender traffic still
   lands when `message.timestamp < removedAt` and is dropped during
   drain/reconnect at or after that cutoff
+- Non-system replayed backlog now uses one repo-owned 7-day retention window
+  (`groupBacklogRetentionWindow`): messages older than the cutoff are skipped
+  during drain, while newer retained backlog still replays in cursor order
+- Drain persists the latest expired and retained replay timestamps
+  (`lastBacklogExpiredAt` / `lastBacklogRetainedAt`) on the group so the UI can
+  distinguish fully expired backlog from mixed-window recovery
+- Message-retention filtering is intentionally content-only: replayed
+  `{"__sys": ...}` envelopes stay exempt from the cutoff so offline membership,
+  self-removal, and dissolve convergence still apply even when those envelopes
+  are older than the backlog message window
 - Temporary partition catch-up is now directly covered with a fake-network
   partition-heal regression: one peer misses two split-window sends, replays
   them through deterministic cursor pages on heal, and then resumes live group
@@ -205,12 +256,16 @@ Go GossipSub → validate signature → decrypt → emit group message
 
 ## Scalability Analysis
 
+The current Flutter app now owns one explicit product cap: groups can contain
+up to `50` total members, including the creator/admin. Requests above that cap
+are rejected before mutation rather than treated as merely unprofiled.
+
 | Group Size | Discovery Time | Publish Latency | Status |
 |-----------|---------------|-----------------|--------|
 | 2-10 | Fast | Fast | Production-ready |
-| 10-50 | Acceptable | Acceptable | Reasonable current target |
-| 50-100 | Needs profiling | Needs profiling | Unproven |
-| 100+ | Not currently justified | Not currently justified | Defer architecture work until measured |
+| 10-50 | Acceptable | Acceptable | Repo-owned current cap (50 total members max) |
+| 51-100 | Rejected by app-owned contract | Rejected by app-owned contract | Above the current 50-member cap |
+| 100+ | Rejected by app-owned contract | Rejected by app-owned contract | Defer until the product contract changes |
 
 ### Bottlenecks at Scale
 
@@ -239,8 +294,7 @@ Go GossipSub → validate signature → decrypt → emit group message
 | Full-text search | UX |
 | Scheduled announcements | UX |
 | Read receipts for announcements | UX |
-| Group avatar/description management | UX |
-| Rich admin transfer / dissolution flows | Admin |
+| Rich admin transfer flows | Admin |
 
 ---
 
@@ -251,6 +305,25 @@ Go GossipSub → validate signature → decrypt → emit group message
 - Announcement-specific create-group coverage now exists in Flutter tests
 - Offline self-removal catch-up is implemented and directly covered by
   listener/drain/resume group regressions plus the `groups` gate
+- Group backlog retention is now directly covered: the repo owns one 7-day
+  replay boundary, older non-system relay backlog expires during inbox drain,
+  newer retained backlog still lands in order, and the shipped conversation and
+  group-list surfaces show truthful expired-versus-mixed-window recovery state.
+  Direct proof lives in
+  `test/features/groups/application/drain_group_offline_inbox_use_case_test.dart`,
+  `test/features/groups/integration/group_resume_recovery_test.dart`,
+  `test/features/groups/presentation/group_conversation_screen_test.dart`,
+  `test/features/groups/presentation/group_list_screen_test.dart`, and the
+  same-day `./scripts/run_test_gates.sh groups` plus
+  `./scripts/run_test_gates.sh baseline` runs
+- Post-creation group metadata editing is now implemented: admins can rename a
+  group and update description/photo from the shipped group-info surface, raw
+  unauthorized metadata envelopes are rejected in the listener, and offline
+  replay keeps the newest metadata watermark instead of rolling back to older
+  edits. Direct proof lives in
+  `test/features/groups/presentation/group_info_wired_test.dart`,
+  `test/features/groups/application/group_message_listener_test.dart`, and
+  `test/features/groups/integration/group_resume_recovery_test.dart`
 - Same-sender sequential ordering is now directly covered: the three-user smoke
   regression in `test/features/groups/integration/group_messaging_smoke_test.dart`
   proves both recipients display `M1` before `M2` under the repo's
@@ -278,10 +351,32 @@ Go GossipSub → validate signature → decrypt → emit group message
   reconnect regression forces a member offline while another member is removed
   and a new member is added, then proves rejoin plus inbox drain converge the
   reconnecting bystander onto the same final member/admin map and metadata as
-  live peers. Richer admin-role propagation remains unsupported scope.
+  live peers
+- Admin-initiated group dissolve is now directly covered: the repo publishes
+  authenticated `group_dissolved` system envelopes, persists dissolved
+  read-only history, blocks post-dissolve sends and rejoin, and replays the
+  same final state to offline peers through inbox drain. Direct proof lives in
+  `test/features/groups/application/dissolve_group_use_case_test.dart`,
+  `test/features/groups/application/group_message_listener_test.dart`,
+  `test/features/groups/application/send_group_message_use_case_test.dart`,
+  `test/features/groups/application/rejoin_group_topics_use_case_test.dart`,
+  `test/features/groups/integration/group_membership_smoke_test.dart`,
+  `test/features/groups/presentation/group_info_wired_test.dart`, and the
+  same-day `./scripts/run_test_gates.sh groups` run
+- Post-creation admin-role propagation is now directly covered: promote,
+  demote, multi-admin leave, and the concurrent/conflicting admin-change
+  paths all converge under authenticated authoritative snapshots plus
+  persisted `lastMembershipEventAt`, with direct proof in
+  `test/features/groups/application/group_message_listener_test.dart`,
+  `test/features/groups/presentation/group_info_wired_test.dart`, and
+  `test/features/groups/integration/group_membership_smoke_test.dart`
 - Replay protection is now directly covered: replaying the same group envelope
   through `GroupMessageListener` keeps both the persisted message count and the
   local notification count at `1`
+- Per-group mute is now directly covered: `is_muted` persists in repo state,
+  `GroupMessageListener` suppresses local notifications for muted groups
+  without blocking delivery or unread counters, and the shipped group-info UI
+  can toggle mute and unmute on demand
 - Duplicate membership-event idempotence is now directly covered: duplicate
   `member_added` converges to one canonical member/admin-role state, and stale
   repeat self-removal is ignored once the group is already deleted locally
@@ -291,6 +386,23 @@ Go GossipSub → validate signature → decrypt → emit group message
 - Offline-add bootstrap is now directly covered: invite acceptance on reconnect
   bootstraps the group, drains missed inbox traffic, and allows immediate
   post-bootstrap participation
+- Explicit invite decision lifecycle is now directly covered: valid invites
+  land as pending review items, the shipped group list exposes accept, decline,
+  and expired states without silent auto-join, and accept/decline paths clean
+  up pending rows while preserving the intended join or non-join contract
+- Same-user multi-device convergence is now directly covered under one
+  explicit repo-owned rule: once a second device has already materialized the
+  group locally, group-authoritative membership state, metadata, and message
+  history converge across same-identity devices, while mute, unread counters,
+  local notification suppression, and pending-invite review remain
+  installation-local. Sibling-device self-delivery is persisted as local
+  `sent` history rather than unread incoming state, with direct proof in
+  `lib/features/groups/domain/models/group_multi_device_policy.dart`,
+  `test/features/groups/domain/models/group_multi_device_policy_test.dart`,
+  `test/features/groups/integration/group_multi_device_convergence_test.dart`,
+  `test/features/groups/application/accept_pending_group_invite_use_case_test.dart`,
+  `test/features/groups/application/decline_pending_group_invite_use_case_test.dart`,
+  and the same-day `./scripts/run_test_gates.sh groups` run
 - Repo-local Go-side announcement writer enforcement is present in `go-mknoon/node/pubsub.go`, backed by announcement-specific node tests, and verified by `go test ./node` plus `go test ./bridge`
 - Duplicate reaction prevention/replacement is already covered by current reaction storage/tests
 

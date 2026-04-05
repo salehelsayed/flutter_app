@@ -40,6 +40,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -116,11 +117,13 @@ class GroupConversationWired extends StatefulWidget {
   State<GroupConversationWired> createState() => _GroupConversationWiredState();
 }
 
-class _GroupConversationWiredState extends State<GroupConversationWired> {
+class _GroupConversationWiredState extends State<GroupConversationWired>
+    with WidgetsBindingObserver {
   static const _maxAttachments = 10;
   static const _liveEdgeTolerance = 32.0;
   static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
 
+  late GroupModel _group;
   List<GroupMessage> _messages = [];
   String? _ownPeerId;
   String _senderUsername = '';
@@ -195,6 +198,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _group = widget.group;
     _draftText = widget.initialText ?? '';
     widget.groupConversationTracker?.setActive('group:${widget.group.id}');
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
@@ -414,10 +419,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   @override
   void didUpdateWidget(covariant GroupConversationWired oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final oldCanWrite = _canWriteForGroup(oldWidget.group);
+    final oldCanWrite = _canWrite;
     final newCanWrite = _canWriteForGroup(widget.group);
-    if (oldCanWrite && !newCanWrite && _activeQuoteMessageId != null) {
+    final shouldSyncGroupFromWidget =
+        widget.group.id != _group.id ||
+        _matchesGroupSnapshot(_group, oldWidget.group) ||
+        _isIncomingGroupNewer(widget.group, _group) ||
+        oldCanWrite != newCanWrite;
+    if (shouldSyncGroupFromWidget) {
+      _group = widget.group;
+    }
+    if (oldCanWrite && !_canWrite && _activeQuoteMessageId != null) {
       _activeQuoteMessageId = null;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshVisibleGroup());
     }
   }
 
@@ -708,6 +728,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
           (message) {
             if (message.groupId == widget.group.id) {
               unawaited(_applyMessageUpdate(message));
+              if (message.id.startsWith('sys-group_metadata_updated:') ||
+                  message.id.startsWith('sys-group_dissolved:')) {
+                unawaited(_refreshVisibleGroup());
+              }
             }
           },
           onError: (error) {
@@ -1219,9 +1243,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             await widget.mediaFileManager?.deletePendingUploadDir(messageId);
           } catch (_) {}
         }
-      } else if (prePersistedOrdinaryMediaRow &&
-          (result == SendGroupMessageResult.groupNotFound ||
-              result == SendGroupMessageResult.unauthorized)) {
+      } else if (result == SendGroupMessageResult.groupNotFound ||
+          result == SendGroupMessageResult.groupDissolved ||
+          result == SendGroupMessageResult.unauthorized) {
         if (mounted) {
           _removeLocalMessage(messageId);
         }
@@ -1234,8 +1258,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
           await widget.mediaFileManager?.deletePendingUploadDir(messageId);
         } catch (_) {}
         try {
-          await widget.msgRepo.deleteMessage(messageId);
+          if (prePersistedOrdinaryMediaRow) {
+            await widget.msgRepo.deleteMessage(messageId);
+          }
         } catch (_) {}
+        if (result == SendGroupMessageResult.groupDissolved) {
+          await _refreshVisibleGroup();
+          if (mounted) {
+            _showFloatingSnackBar('This group has been dissolved');
+          }
+        }
       } else {
         await _restoreComposerSnapshot(composerSnapshot, messageId);
       }
@@ -2114,6 +2146,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
               await mediaFileManager.deletePendingUploadDir(messageId);
             } catch (_) {}
           } else if (result == SendGroupMessageResult.groupNotFound ||
+              result == SendGroupMessageResult.groupDissolved ||
               result == SendGroupMessageResult.unauthorized) {
             if (mounted) {
               _removeLocalMessage(messageId);
@@ -2126,6 +2159,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
             } catch (_) {}
             await widget.msgRepo.deleteMessage(messageId);
             _restoreActiveQuoteIfNeeded(quotedMessageId);
+            if (result == SendGroupMessageResult.groupDissolved) {
+              await _refreshVisibleGroup();
+              if (mounted) {
+                _showFloatingSnackBar('This group has been dissolved');
+              }
+            }
           } else {
             _updateLocalMessageStatus(messageId, 'failed');
             await _persistMessageStatus(messageId, 'failed');
@@ -2265,22 +2304,32 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
   }
 
   void _onInfo() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GroupInfoWired(
-          group: widget.group,
-          groupRepo: widget.groupRepo,
-          msgRepo: widget.msgRepo,
-          contactRepo: widget.contactRepo,
-          bridge: widget.bridge,
-          identityRepo: widget.identityRepo,
-          p2pService: widget.p2pService,
-        ),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => GroupInfoWired(
+              group: _group,
+              groupRepo: widget.groupRepo,
+              msgRepo: widget.msgRepo,
+              contactRepo: widget.contactRepo,
+              bridge: widget.bridge,
+              identityRepo: widget.identityRepo,
+              p2pService: widget.p2pService,
+              imageProcessor: widget.imageProcessor,
+              mediaPicker: widget.mediaPicker,
+              uploadMediaFn: widget.uploadMediaFn,
+            ),
+          ),
+        )
+        .then((_) {
+          unawaited(_refreshAfterInfoRoute());
+        });
   }
 
   bool _canWriteForGroup(GroupModel group) {
+    if (group.isDissolved) {
+      return false;
+    }
     if (group.type == GroupType.announcement &&
         group.myRole != GroupRole.admin) {
       return false;
@@ -2288,7 +2337,65 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
     return true;
   }
 
-  bool get _canWrite => _canWriteForGroup(widget.group);
+  bool _matchesGroupSnapshot(GroupModel a, GroupModel b) {
+    return a.id == b.id &&
+        a.name == b.name &&
+        a.type == b.type &&
+        a.topicName == b.topicName &&
+        a.description == b.description &&
+        a.avatarBlobId == b.avatarBlobId &&
+        a.avatarMime == b.avatarMime &&
+        a.avatarPath == b.avatarPath &&
+        a.createdAt == b.createdAt &&
+        a.createdBy == b.createdBy &&
+        a.myRole == b.myRole &&
+        a.isMuted == b.isMuted &&
+        a.isDissolved == b.isDissolved &&
+        a.dissolvedAt == b.dissolvedAt &&
+        a.dissolvedBy == b.dissolvedBy &&
+        a.isArchived == b.isArchived &&
+        a.archivedAt == b.archivedAt &&
+        a.lastMembershipEventAt == b.lastMembershipEventAt &&
+        a.lastMetadataEventAt == b.lastMetadataEventAt &&
+        a.lastBacklogExpiredAt == b.lastBacklogExpiredAt &&
+        a.lastBacklogRetainedAt == b.lastBacklogRetainedAt;
+  }
+
+  bool _isIncomingGroupNewer(GroupModel incoming, GroupModel current) {
+    final incomingMembershipAt = incoming.lastMembershipEventAt;
+    final currentMembershipAt = current.lastMembershipEventAt;
+    if (incomingMembershipAt != null &&
+        (currentMembershipAt == null ||
+            incomingMembershipAt.isAfter(currentMembershipAt))) {
+      return true;
+    }
+
+    final incomingMetadataAt = incoming.lastMetadataEventAt;
+    final currentMetadataAt = current.lastMetadataEventAt;
+    if (incomingMetadataAt != null &&
+        (currentMetadataAt == null ||
+            incomingMetadataAt.isAfter(currentMetadataAt))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool get _canWrite => _canWriteForGroup(_group);
+
+  Future<void> _refreshVisibleGroup() async {
+    final refreshedGroup = await widget.groupRepo.getGroup(widget.group.id);
+    if (refreshedGroup == null || !mounted) {
+      return;
+    }
+
+    setState(() => _group = refreshedGroup);
+  }
+
+  Future<void> _refreshAfterInfoRoute() async {
+    await _refreshVisibleGroup();
+    await _loadMessages();
+  }
 
   static String _mimeFromPath(String path) {
     final ext = path.split('.').last.toLowerCase();
@@ -2425,6 +2532,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.groupConversationTracker?.clear();
     _messageSubscription?.cancel();
     _removedSubscription?.cancel();
@@ -2462,7 +2570,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         unawaited(_onBack());
       },
       child: GroupConversationScreen(
-        group: widget.group,
+        group: _group,
         messages: _messages,
         ownPeerId: _ownPeerId,
         onSend: _onSend,
@@ -2516,6 +2624,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired> {
         activeQuoteText: activeQuoteText,
         isActiveQuoteUnavailable: isActiveQuoteUnavailable,
         onClearQuote: _canWrite ? _onClearQuote : null,
+        backlogRetentionNotice: groupBacklogRetentionNoticeFor(_group),
       ),
     );
   }
