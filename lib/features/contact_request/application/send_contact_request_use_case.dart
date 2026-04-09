@@ -84,13 +84,14 @@ Future<SendContactRequestResult> sendContactRequest({
 
   // 3. Build unsigned payload (same format as QR, plus mlkem key)
   final timestamp = DateTime.now().toUtc().toIso8601String();
+  final sanitizedUsername = sanitizeUsername(identity.username);
   final unsignedPayload = SplayTreeMap<String, dynamic>.from({
     if (identity.mlKemPublicKey != null) 'mlkem': identity.mlKemPublicKey,
     'ns': identity.peerId,
     'pk': identity.publicKey,
     'rv': RENDEZVOUS_ADDRESS,
     'ts': timestamp,
-    'un': sanitizeUsername(identity.username),
+    'un': sanitizedUsername,
   });
   final dataToSign = jsonEncode(unsignedPayload);
 
@@ -186,6 +187,7 @@ Future<SendContactRequestResult> sendContactRequest({
       'version': '2',
       'msgId': msgId,
       'ts': ts,
+      if (sanitizedUsername.isNotEmpty) 'senderUsername': sanitizedUsername,
       'encrypted': {
         'ephemeralPublicKey': ephemeralPublicKey,
         'ciphertext': ciphertext,
@@ -218,7 +220,10 @@ Future<SendContactRequestResult> sendContactRequest({
       details: {'targetPeerId': targetPrefix},
     );
     final localSent = await p2pService.sendLocalMessage(
-      targetPeerId, messageJson, identity.peerId);
+      targetPeerId,
+      messageJson,
+      identity.peerId,
+    );
     if (localSent) {
       emitFlowEvent(
         layer: 'FL',
@@ -305,10 +310,7 @@ Future<SendContactRequestResult> sendContactRequest({
       emitFlowEvent(
         layer: 'FL',
         event: 'CONTACT_REQUEST_SEND_SUCCESS',
-        details: {
-          'targetPeerId': targetPrefix,
-          'via': 'inbox',
-        },
+        details: {'targetPeerId': targetPrefix, 'via': 'inbox'},
       );
       return SendContactRequestResult.success;
     }

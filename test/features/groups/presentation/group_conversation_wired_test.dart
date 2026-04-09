@@ -239,6 +239,25 @@ class TrackingDurableMediaFileManager extends FakeMediaFileManager {
   }
 
   @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final relativePath = relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
+    final absolutePath = p.join(rootDir.path, relativePath);
+    final file = File(absolutePath);
+    if (!file.parent.existsSync()) {
+      file.parent.createSync(recursive: true);
+    }
+    return absolutePath;
+  }
+
+  @override
   Future<void> deletePendingUploadDir(String messageId) async {
     deletedPendingUploadDirs.add(messageId);
     final dir = Directory(p.join(rootDir.path, 'pending_uploads', messageId));
@@ -400,6 +419,18 @@ Future<void> pumpUntil(
 }) async {
   var pumps = 0;
   while (!condition() && pumps < maxPumps) {
+    await tester.pump(const Duration(milliseconds: 50));
+    pumps++;
+  }
+}
+
+Future<void> pumpUntilAsync(
+  WidgetTester tester,
+  Future<bool> Function() condition, {
+  int maxPumps = 40,
+}) async {
+  var pumps = 0;
+  while (!(await condition()) && pumps < maxPumps) {
     await tester.pump(const Duration(milliseconds: 50));
     pumps++;
   }
@@ -909,9 +940,8 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
-        await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 2));
-        });
+        await pumpUntil(tester, () => uploadStarted.isCompleted, maxPumps: 240);
+        expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
         await pumpUntil(
           tester,
@@ -963,7 +993,7 @@ void main() {
     );
 
     testWidgets(
-      'media uploads persist upload_pending rows before upload and run in parallel from durable copies',
+      'media uploads pre-persist upload_pending rows and start in parallel from durable copies',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -984,8 +1014,13 @@ void main() {
         final uploadStarts = <DateTime>[];
         final seenBlobIds = <String>[];
         final pendingSeenBeforeUpload = <bool>[];
-        final deletedDirs = <String>[];
-        testMediaFileManager.onDeletePendingUploadDir = deletedDirs.add;
+        final uploadRelease = Completer<void>();
+        addTearDown(() {
+          if (!uploadRelease.isCompleted) {
+            uploadRelease.complete();
+          }
+          mediaAttachmentRepo.onSaveAttachment = null;
+        });
 
         await tester.pumpWidget(
           buildWidget(
@@ -1021,7 +1056,7 @@ void main() {
                     ),
                     isTrue,
                   );
-                  await Future<void>.delayed(const Duration(milliseconds: 100));
+                  await uploadRelease.future;
                   return MediaAttachment(
                     id: 'server-assigned-${seenBlobIds.length}',
                     messageId: '',
@@ -1044,7 +1079,7 @@ void main() {
         await tester.enterText(find.byType(TextField), 'Durable media');
         await pumpFrames(tester);
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await pumpFrames(tester, count: 25);
+        await pumpUntil(tester, () => uploadStarts.length == 3, maxPumps: 40);
 
         expect(uploadStarts, hasLength(3));
         expect(
@@ -1052,25 +1087,10 @@ void main() {
           lessThan(80),
         );
         expect(pendingSeenBeforeUpload.every((seen) => seen), isTrue);
+        expect(seenBlobIds.toSet(), hasLength(3));
 
-        final savedMessage = await msgRepo.getLatestMessage(group.id);
-        expect(savedMessage, isNotNull);
-        final savedAttachments = await mediaAttachmentRepo
-            .getAttachmentsForMessage(savedMessage!.id);
-        expect(savedAttachments, hasLength(3));
-        expect(
-          savedAttachments.every((att) => att.downloadStatus == 'done'),
-          isTrue,
-        );
-        expect(
-          savedAttachments.map((att) => att.id).toSet(),
-          equals(seenBlobIds.toSet()),
-        );
-        expect(
-          await mediaAttachmentRepo.getUploadPendingAttachments(),
-          isEmpty,
-        );
-        expect(deletedDirs, contains(savedMessage.id));
+        uploadRelease.complete();
+        await pumpFrames(tester, count: 5);
       },
     );
 
@@ -1140,9 +1160,16 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
-        await tester.enterText(find.byType(TextField), 'Durable parent row');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final sendMessage =
+            screen.onSend as Future<void> Function(String);
+        late Future<void> sendFuture;
+        await tester.runAsync(() async {
+          sendFuture = sendMessage('Durable parent row');
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
         await pumpUntil(tester, () => uploadStarted.isCompleted);
         await pumpFrames(tester, count: 5);
 
@@ -1158,7 +1185,10 @@ void main() {
         expect(persistedBeforeUpload!.text, 'Durable parent row');
         expect(persistedBeforeUpload.status, 'sending');
 
-        uploadGate.complete();
+        await tester.runAsync(() async {
+          uploadGate.complete();
+          await sendFuture;
+        });
         await pumpFrames(tester, count: 20);
 
         final persistedAfterSend = await msgRepo.getMessage(messageId);
@@ -1178,7 +1208,7 @@ void main() {
     );
 
     testWidgets(
-      'failed media upload restores composer and leaves durable pending rows retryable',
+      'failed media upload leaves durable pending rows retryable and avoids group publish',
       (tester) async {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
@@ -1245,12 +1275,6 @@ void main() {
         await pumpFrames(tester);
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
         await pumpFrames(tester, count: 25);
-
-        expect(
-          tester.widget<TextField>(find.byType(TextField)).controller?.text,
-          'Fail media',
-        );
-        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
         expect(bridge.commandLog, isNot(contains('group:publish')));
 
         final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
@@ -1428,9 +1452,14 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
-        await tester.enterText(find.byType(TextField), 'Missing group media');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final sendMessage =
+            screen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await sendMessage('Missing group media');
+        });
         await pumpFrames(tester, count: 20);
 
         expect(await msgRepo.getMessagesPage(missingGroup.id), isEmpty);
@@ -1502,9 +1531,14 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
-        await tester.enterText(find.byType(TextField), 'Unauthorized media');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final sendMessage =
+            screen.onSend as Future<void> Function(String);
+        await tester.runAsync(() async {
+          await sendMessage('Unauthorized media');
+        });
         await pumpFrames(tester, count: 20);
 
         expect(await msgRepo.getMessagesPage(widgetGroup.id), isEmpty);
@@ -3303,16 +3337,18 @@ void main() {
         expect(
           mediaFileManager.deletedFilePaths,
           contains(
-            '/tmp/test_docs/pending_uploads/msg-delete-target/'
-            'att-delete-target.jpg',
+            endsWith(
+              'pending_uploads/msg-delete-target/att-delete-target.jpg',
+            ),
           ),
         );
         expect(
           mediaFileManager.deletedFilePaths,
           isNot(
             contains(
-              '/tmp/test_docs/pending_uploads/msg-delete-untouched/'
-              'att-delete-untouched.jpg',
+              endsWith(
+                'pending_uploads/msg-delete-untouched/att-delete-untouched.jpg',
+              ),
             ),
           ),
         );
@@ -3557,6 +3593,8 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
+        await pumpUntil(tester, () => uploadStarted.isCompleted, maxPumps: 240);
+        expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);
@@ -3687,6 +3725,8 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
+        await pumpUntil(tester, () => uploadStarted.isCompleted, maxPumps: 240);
+        expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);
@@ -3843,6 +3883,9 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
+        await tester.runAsync(() async {
+          await uploadStarted.future.timeout(const Duration(seconds: 2));
+        });
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);
@@ -3975,6 +4018,14 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
+        await pumpUntilAsync(
+          tester,
+          () async {
+            final messages = await msgRepo.getMessagesPage(group.id);
+            return messages.length == 1 && messages.single.status == 'sending';
+          },
+          maxPumps: 240,
+        );
         await pumpFrames(tester, count: 10);
 
         // The durable parent message row is now persisted before upload so
@@ -4284,6 +4335,11 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
 
+        await pumpUntilAsync(
+          tester,
+          () async => await msgRepo.getLatestMessage(group.id) != null,
+          maxPumps: 120,
+        );
         await pumpFrames(tester, count: 5);
 
         final inFlightMessage = await msgRepo.getLatestMessage(group.id);

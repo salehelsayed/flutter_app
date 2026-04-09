@@ -33,7 +33,9 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
       attributes: {'peerId': peerId},
     );
 
-    _broadcast = BonsoirBroadcast(service: service);
+    // Bonsoir's native iOS log formatting can crash while stringifying
+    // resolved service payloads, so keep plugin-side logging disabled here.
+    _broadcast = BonsoirBroadcast(service: service, printLogs: false);
     await _broadcast!.ready;
     await _broadcast!.start();
 
@@ -44,7 +46,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     );
 
     // Start discovery of other peers.
-    _discovery = BonsoirDiscovery(type: _serviceType);
+    _discovery = BonsoirDiscovery(type: _serviceType, printLogs: false);
     await _discovery!.ready;
     _discoverySub?.cancel();
     _discoverySub = _discovery!.eventStream!.listen(_handleDiscoveryEvent);

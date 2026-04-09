@@ -12,6 +12,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 
@@ -353,6 +354,28 @@ class FakeIntroductionRepository implements IntroductionRepository {
 
   @override
   Future<void> deletePendingResponse(String responseKey) async {}
+
+  @override
+  Future<void> saveOutboxDelivery(IntroductionOutboxDelivery delivery) async {}
+
+  @override
+  Future<List<IntroductionOutboxDelivery>> loadOutboxDeliveriesForIntroduction(
+    String introductionId,
+  ) async => const [];
+
+  @override
+  Future<List<IntroductionOutboxDelivery>> loadRetryableOutboxDeliveries({
+    Duration olderThan = const Duration(seconds: 60),
+    int limit = 100,
+  }) async => const [];
+
+  @override
+  Future<void> deleteOutboxDelivery(String deliveryId) async {}
+
+  @override
+  Future<void> deleteOutboxDeliveriesForIntroduction(
+    String introductionId,
+  ) async {}
 }
 
 class FakeMediaFileManager extends MediaFileManager {

@@ -102,7 +102,7 @@ void main() {
       expect(notificationService.shown, isEmpty);
       expect(
         await gate.consumeIfRecentAnnouncement(
-          payload: 'group:group-1',
+          payload: 'group:group-1|message:group-msg-1',
           messageId: 'group-msg-1',
         ),
         isFalse,

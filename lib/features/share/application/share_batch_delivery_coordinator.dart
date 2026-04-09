@@ -335,72 +335,87 @@ class DefaultShareBatchDeliveryCoordinator
       );
     }
 
-    final resolvedGroup = await groupRepo.getGroup(group.id) ?? group;
-    final allowedPeers = (await groupRepo.getMembers(
-      resolvedGroup.id,
-    )).map((member) => member.peerId).toList(growable: false);
-    final attachments = <MediaAttachment>[];
+    String? bgTaskId;
+    try {
+      bgTaskId = await callBgBegin(bridge);
+      final resolvedGroup = await groupRepo.getGroup(group.id) ?? group;
+      final allowedPeers = (await groupRepo.getMembers(
+        resolvedGroup.id,
+      )).map((member) => member.peerId).toList(growable: false);
+      final attachments = <MediaAttachment>[];
 
-    for (final media in processedMedia) {
-      final mime = _mimeFromPath(media.file.path);
-      final attachmentId = _shareBatchUuid.v4();
-      final uploaded = await uploadMedia(
-        bridge: bridge,
-        localFilePath: media.file.path,
-        mime: mime,
-        recipientPeerId: resolvedGroup.id,
-        mediaFileManager: mediaFileManager,
-        width: media.width,
-        height: media.height,
-        durationMs: media.durationMs,
-        allowedPeers: allowedPeers,
-        blobId: attachmentId,
-      );
-      if (uploaded == null) {
-        return ShareBatchTargetResult(
-          target: ShareTargetSelection.group(resolvedGroup),
-          status: ShareBatchTargetStatus.failed,
-          detail: 'Media upload failed.',
+      for (final media in processedMedia) {
+        final mime = _mimeFromPath(media.file.path);
+        final attachmentId = _shareBatchUuid.v4();
+        final uploaded = await uploadMedia(
+          bridge: bridge,
+          localFilePath: media.file.path,
+          mime: mime,
+          recipientPeerId: resolvedGroup.id,
+          mediaFileManager: mediaFileManager,
+          width: media.width,
+          height: media.height,
+          durationMs: media.durationMs,
+          allowedPeers: allowedPeers,
+          blobId: attachmentId,
+        );
+        if (uploaded == null) {
+          return ShareBatchTargetResult(
+            target: ShareTargetSelection.group(resolvedGroup),
+            status: ShareBatchTargetStatus.failed,
+            detail: 'Media upload failed.',
+          );
+        }
+        attachments.add(
+          uploaded.copyWith(id: attachmentId, downloadStatus: 'done'),
         );
       }
-      attachments.add(
-        uploaded.copyWith(id: attachmentId, downloadStatus: 'done'),
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: resolvedGroup.id,
+        text: shareIntent.text ?? '',
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        mediaAttachments: attachments.isEmpty ? null : attachments,
+        mediaAttachmentRepo: mediaAttachmentRepository,
       );
+      final pendingCompletion =
+          result == SendGroupMessageResult.success &&
+          message?.status == 'pending';
+
+      return ShareBatchTargetResult(
+        target: ShareTargetSelection.group(resolvedGroup),
+        status: switch (result) {
+          SendGroupMessageResult.success when pendingCompletion =>
+            ShareBatchTargetStatus.queued,
+          SendGroupMessageResult.success => ShareBatchTargetStatus.sent,
+          SendGroupMessageResult.successNoPeers =>
+            ShareBatchTargetStatus.queued,
+          _ when message != null => ShareBatchTargetStatus.queued,
+          _ => ShareBatchTargetStatus.failed,
+        },
+        detail: switch (result) {
+          SendGroupMessageResult.success when pendingCompletion =>
+            'Stored while group delivery finishes.',
+          SendGroupMessageResult.success => 'Sent.',
+          SendGroupMessageResult.successNoPeers =>
+            'Stored for offline group delivery.',
+          SendGroupMessageResult.groupNotFound => 'Group was not found.',
+          SendGroupMessageResult.unauthorized =>
+            'You no longer have permission to post there.',
+          SendGroupMessageResult.error when message != null =>
+            'Saved for retry.',
+          _ => 'Share failed.',
+        },
+      );
+    } finally {
+      await callBgEnd(bridge, bgTaskId);
     }
-
-    final (result, message) = await sendGroupMessage(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      groupId: resolvedGroup.id,
-      text: shareIntent.text ?? '',
-      senderPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-      senderUsername: identity.username,
-      mediaAttachments: attachments.isEmpty ? null : attachments,
-      mediaAttachmentRepo: mediaAttachmentRepository,
-    );
-
-    return ShareBatchTargetResult(
-      target: ShareTargetSelection.group(resolvedGroup),
-      status: switch (result) {
-        SendGroupMessageResult.success => ShareBatchTargetStatus.sent,
-        SendGroupMessageResult.successNoPeers => ShareBatchTargetStatus.queued,
-        _ when message != null => ShareBatchTargetStatus.queued,
-        _ => ShareBatchTargetStatus.failed,
-      },
-      detail: switch (result) {
-        SendGroupMessageResult.success => 'Sent.',
-        SendGroupMessageResult.successNoPeers =>
-          'Stored for offline group delivery.',
-        SendGroupMessageResult.groupNotFound => 'Group was not found.',
-        SendGroupMessageResult.unauthorized =>
-          'You no longer have permission to post there.',
-        SendGroupMessageResult.error when message != null => 'Saved for retry.',
-        _ => 'Share failed.',
-      },
-    );
   }
 }
 

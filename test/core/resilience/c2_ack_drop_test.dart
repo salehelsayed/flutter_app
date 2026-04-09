@@ -247,7 +247,7 @@ void main() {
     });
 
     test(
-      'message persisted with status "sent" when ACK is lost after live delivery',
+      'message persists as delivered via inbox handoff when ACK is lost after live delivery',
       () async {
         aliceP2P.dropAcks = true;
 
@@ -264,10 +264,10 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(msg, isNotNull);
-        expect(msg!.status, 'sent');
-        expect(msg.transport, isNot('inbox'));
-        expect(msg.wireEnvelope, isNotNull);
-        expect(network.inboxCount(bob.peerId), 0);
+        expect(msg!.status, 'delivered');
+        expect(msg.transport, 'inbox');
+        expect(msg.wireEnvelope, isNull);
+        expect(network.inboxCount(bob.peerId), 1);
 
         // Exactly 1 message — no duplicates
         expect(aliceRepo.count, 1);
@@ -304,7 +304,7 @@ void main() {
     test('no duplicate when retrier re-sends after recovery', () async {
       aliceP2P.dropAcks = true;
 
-      // First send: ACK dropped → status 'sent'
+      // First send: ACK dropped → durable inbox handoff marks it delivered.
       final (_, msg1) = await sendChatMessage(
         p2pService: aliceP2P,
         messageRepo: aliceRepo,
@@ -317,7 +317,7 @@ void main() {
         bridge: encryptBridge,
         recipientMlKemPublicKey: bobMlKemKey,
       );
-      expect(msg1!.status, 'sent');
+      expect(msg1!.status, 'delivered');
 
       // Simulate retrier marking it failed, then attempting re-send
       await aliceRepo.updateMessageStatus('fixed-uuid-1', 'failed');
@@ -350,7 +350,7 @@ void main() {
     });
 
     test(
-      'ACK drop on fast path preserves sent status instead of inbox delivery',
+      'ACK drop on fast path durably hands off to inbox and marks delivered',
       () async {
         // Use the connected variant so fast path fires
         final innerAlice = FakeP2PService(
@@ -377,41 +377,44 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(msg!.status, 'sent');
-        expect(msg.transport, isNot('inbox'));
-        expect(msg.wireEnvelope, isNotNull);
-        expect(network.inboxCount(bob.peerId), 0);
+        expect(msg!.status, 'delivered');
+        expect(msg.transport, 'inbox');
+        expect(msg.wireEnvelope, isNull);
+        expect(network.inboxCount(bob.peerId), 1);
 
         connectedP2P.dispose();
       },
     );
 
-    test('probe-assisted live send stays pending when ACK is lost', () async {
-      final innerAlice = FakeP2PService(peerId: alicePeerId, network: network);
-      final probeP2P = _ProbeConnectedAckDropP2PService(innerAlice);
-      probeP2P.dropAcks = true;
+    test(
+      'probe-assisted live send falls back to inbox delivery when ACK is lost',
+      () async {
+        final innerAlice = FakeP2PService(peerId: alicePeerId, network: network);
+        final probeP2P = _ProbeConnectedAckDropP2PService(innerAlice);
+        probeP2P.dropAcks = true;
 
-      final (result, msg) = await sendChatMessage(
-        p2pService: probeP2P,
-        messageRepo: aliceRepo,
-        targetPeerId: bob.peerId,
-        text: 'probe path ack drop',
-        senderPeerId: alicePeerId,
-        senderUsername: aliceUsername,
-        bridge: encryptBridge,
-        recipientMlKemPublicKey: bobMlKemKey,
-      );
+        final (result, msg) = await sendChatMessage(
+          p2pService: probeP2P,
+          messageRepo: aliceRepo,
+          targetPeerId: bob.peerId,
+          text: 'probe path ack drop',
+          senderPeerId: alicePeerId,
+          senderUsername: aliceUsername,
+          bridge: encryptBridge,
+          recipientMlKemPublicKey: bobMlKemKey,
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(msg, isNotNull);
-      expect(msg!.status, 'sent');
-      expect(msg.transport, isNot('inbox'));
-      expect(msg.wireEnvelope, isNotNull);
-      expect(probeP2P.probeRelayCallCount, 1);
-      expect(network.inboxCount(bob.peerId), 0);
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.status, 'delivered');
+        expect(msg.transport, 'inbox');
+        expect(msg.wireEnvelope, isNull);
+        expect(probeP2P.probeRelayCallCount, 1);
+        expect(network.inboxCount(bob.peerId), 1);
 
-      probeP2P.dispose();
-    });
+        probeP2P.dispose();
+      },
+    );
 
     test('3 total failures fall through to inbox fallback', () async {
       aliceP2P.totalFailure = true;

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -163,7 +164,7 @@ void main() {
     late InMemoryMediaAttachmentRepository mediaRepo;
     late FakeBridge bridge;
 
-    setUp(() {
+    setUp(() async {
       identityRepo = FakeIdentityRepository();
       msgRepo = InMemoryGroupMessageRepository();
       groupRepo = InMemoryGroupRepository();
@@ -172,6 +173,14 @@ void main() {
         initialResponses: {
           'group:publish': {'ok': true, 'messageId': 'msg-1', 'topicPeers': 1},
         },
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 0,
+          encryptedKey: 'encrypted-key-gen-0',
+          createdAt: DateTime.parse('2026-01-15T12:00:00.000Z'),
+        ),
       );
     });
 

@@ -106,7 +106,7 @@ void main() {
     });
 
     test(
-      'calls rejoin, drain, recoverStuck, retryIncompleteGroupUploads, then retryFailed',
+      'calls rejoin, drain, recoverStuck, retryIncompleteGroupUploads, retryFailed, then retryFailedGroupInboxStores',
       () async {
         final callOrder = <String>[];
         bridge = _TracingBridge(callOrder);
@@ -158,6 +158,10 @@ void main() {
             callOrder.add('retryFailed');
             return 0;
           },
+          retryFailedGroupInboxStoresFn: () async {
+            callOrder.add('retryInbox');
+            return 0;
+          },
         );
 
         expect(callOrder, [
@@ -166,6 +170,7 @@ void main() {
           'recoverStuck',
           'retryUploads',
           'retryFailed',
+          'retryInbox',
         ]);
       },
     );
@@ -213,6 +218,7 @@ void main() {
       'blocks admin-only group actions until replayed membership removal settles',
       () async {
         final now = DateTime.utc(2026, 4, 5, 12);
+        final removalEventAt = now.add(const Duration(minutes: 1));
         const groupId = 'group-stale-admin';
         final bridge = _BlockingDrainBridge(
           messages: [
@@ -250,7 +256,7 @@ void main() {
                   'createdAt': now.toIso8601String(),
                 },
               }),
-              'timestamp': now.toIso8601String(),
+              'timestamp': removalEventAt.toIso8601String(),
               'messageId': 'sys-remove-self',
             },
           ],

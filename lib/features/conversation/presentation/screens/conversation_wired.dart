@@ -29,6 +29,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
@@ -118,6 +119,18 @@ typedef DeleteMessageForMeFn =
       MediaAttachmentRepository? mediaAttachmentRepo,
       MediaFileManager? mediaFileManager,
     });
+
+class _PreparedConversationMediaUpload {
+  final PendingComposerMedia source;
+  final MediaAttachment pendingAttachment;
+  final String absoluteDurablePath;
+
+  const _PreparedConversationMediaUpload({
+    required this.source,
+    required this.pendingAttachment,
+    required this.absoluteDurablePath,
+  });
+}
 
 typedef DeleteMessageForEveryoneFn =
     Future<(SendChatMessageResult, ConversationMessage?)> Function({
@@ -276,6 +289,129 @@ class _ConversationWiredState extends State<ConversationWired> {
       sentBytes: (_trackedUploadCompletedBytes + _trackedCurrentUploadBytes)
           .clamp(0, _trackedUploadTotalBytes),
       totalBytes: _trackedUploadTotalBytes,
+    );
+  }
+
+  bool get _supportsDurableMediaUploads =>
+      widget.mediaAttachmentRepo != null && widget.mediaFileManager != null;
+
+  Future<List<_PreparedConversationMediaUpload>> _prepareDurableMediaUploads({
+    required String messageId,
+    required List<PendingComposerMedia> mediaToUpload,
+    required List<MediaAttachment> optimisticMedia,
+  }) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaAttachmentRepo == null ||
+        mediaFileManager == null ||
+        mediaToUpload.isEmpty ||
+        optimisticMedia.length != mediaToUpload.length) {
+      return const [];
+    }
+
+    final preparedUploads = <_PreparedConversationMediaUpload>[];
+
+    for (var index = 0; index < mediaToUpload.length; index++) {
+      final pending = mediaToUpload[index];
+      final optimisticAttachment = optimisticMedia[index];
+      final durableRelativePath = await mediaFileManager.copyToDurableStorage(
+        sourceFilePath: pending.file.path,
+        messageId: messageId,
+        attachmentId: optimisticAttachment.id,
+        mime: optimisticAttachment.mime,
+      );
+      final absoluteDurablePath = await mediaFileManager.resolveStoredPath(
+        durableRelativePath,
+      );
+      final durableAttachment = optimisticAttachment.copyWith(
+        messageId: messageId,
+        localPath: durableRelativePath,
+        downloadStatus: 'upload_pending',
+      );
+      await mediaAttachmentRepo.saveAttachment(durableAttachment);
+      preparedUploads.add(
+        _PreparedConversationMediaUpload(
+          source: pending,
+          pendingAttachment: durableAttachment,
+          absoluteDurablePath: absoluteDurablePath,
+        ),
+      );
+    }
+
+    await Future<void>.delayed(Duration.zero);
+    return preparedUploads;
+  }
+
+  Future<MediaAttachment> _buildLocalSuccessAttachmentFromPlan({
+    required String messageId,
+    required _PreparedConversationMediaUpload plan,
+  }) async {
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaFileManager == null) {
+      return plan.pendingAttachment.copyWith(
+        messageId: messageId,
+        size: plan.source.budgetBytes,
+        localPath: plan.absoluteDurablePath,
+        downloadStatus: 'done',
+      );
+    }
+
+    final absoluteOwnedPath = await mediaFileManager.localPathForAttachment(
+      contactPeerId: _contact.peerId,
+      blobId: plan.pendingAttachment.id,
+      mime: plan.pendingAttachment.mime,
+    );
+    final sourceFile = File(plan.absoluteDurablePath);
+    if (!await sourceFile.exists()) {
+      return plan.pendingAttachment.copyWith(
+        messageId: messageId,
+        size: plan.source.budgetBytes,
+        localPath: plan.absoluteDurablePath,
+        downloadStatus: 'done',
+      );
+    }
+    if (absoluteOwnedPath != plan.absoluteDurablePath) {
+      final targetFile = File(absoluteOwnedPath);
+      final parent = targetFile.parent;
+      if (!await parent.exists()) {
+        await parent.create(recursive: true);
+      }
+      await sourceFile.copy(absoluteOwnedPath);
+    }
+
+    return plan.pendingAttachment.copyWith(
+      messageId: messageId,
+      size: plan.source.budgetBytes,
+      localPath: mediaFileManager.relativePathForAttachment(
+        contactPeerId: _contact.peerId,
+        blobId: plan.pendingAttachment.id,
+        mime: plan.pendingAttachment.mime,
+      ),
+      downloadStatus: 'done',
+    );
+  }
+
+  Future<MediaAttachment> _finalizeUploadedAttachmentFromPlan({
+    required String messageId,
+    required _PreparedConversationMediaUpload plan,
+    required MediaAttachment uploaded,
+  }) async {
+    final stableAttachment = await _buildLocalSuccessAttachmentFromPlan(
+      messageId: messageId,
+      plan: plan,
+    );
+    return uploaded.copyWith(
+      id: plan.pendingAttachment.id,
+      messageId: messageId,
+      size: uploaded.size > 0 ? uploaded.size : stableAttachment.size,
+      mediaType: plan.pendingAttachment.mediaType,
+      width: uploaded.width ?? stableAttachment.width,
+      height: uploaded.height ?? stableAttachment.height,
+      durationMs: uploaded.durationMs ?? stableAttachment.durationMs,
+      localPath: stableAttachment.localPath,
+      downloadStatus: 'done',
+      uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
+      waveform: uploaded.waveform,
     );
   }
 
@@ -879,6 +1015,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         );
         _scrollToBottom();
         await _loadReactions(messages);
+        unawaited(_recoverVisibleMedia(messages));
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) setState(() => _initialLoadDone = true);
         });
@@ -925,6 +1062,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           _hasMoreOlderMessages = olderMessages.length >= _pageSize;
           _isLoadingMore = false;
         });
+        unawaited(_recoverVisibleMedia(olderMessages));
       }
     } catch (e) {
       if (mounted) setState(() => _isLoadingMore = false);
@@ -934,6 +1072,108 @@ class _ConversationWiredState extends State<ConversationWired> {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<void> _recoverVisibleMedia(List<ConversationMessage> messages) async {
+    final bridge = widget.bridge;
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (bridge == null ||
+        mediaAttachmentRepo == null ||
+        mediaFileManager == null ||
+        messages.isEmpty) {
+      return;
+    }
+
+    for (final message in messages) {
+      final storedAttachments = await mediaAttachmentRepo
+          .getAttachmentsForMessage(message.id);
+      if (storedAttachments.isEmpty) {
+        continue;
+      }
+
+      final displayAttachments = <MediaAttachment>[];
+      var didMutateDisplayState = false;
+      for (final attachment in storedAttachments) {
+        final resolved = await _resolveAttachmentForDisplay(attachment);
+        if (_shouldRecoverVisibleAttachment(resolved)) {
+          MediaAttachment? downloaded;
+          try {
+            downloaded = await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              attachment: resolved,
+              contactPeerId: message.contactPeerId,
+            );
+          } catch (_) {
+            downloaded = null;
+          }
+          displayAttachments.add(
+            downloaded ?? resolved.copyWith(downloadStatus: 'failed'),
+          );
+          didMutateDisplayState = true;
+          continue;
+        }
+
+        displayAttachments.add(resolved);
+        if (resolved.localPath != attachment.localPath ||
+            resolved.downloadStatus != attachment.downloadStatus) {
+          didMutateDisplayState = true;
+        }
+      }
+
+      if (!didMutateDisplayState || !mounted) {
+        continue;
+      }
+
+      final latestMessage = await widget.messageRepo.getMessage(message.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _upsertMessageById(
+          (latestMessage ?? message).copyWith(media: displayAttachments),
+        );
+      });
+    }
+  }
+
+  bool _shouldRecoverVisibleAttachment(MediaAttachment attachment) {
+    return attachment.downloadStatus == 'pending' ||
+        attachment.downloadStatus == 'downloading' ||
+        attachment.downloadStatus == 'failed';
+  }
+
+  Future<MediaAttachment> _resolveAttachmentForDisplay(
+    MediaAttachment attachment,
+  ) async {
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaFileManager == null || attachment.localPath == null) {
+      return attachment;
+    }
+
+    final absolutePath = await mediaFileManager.resolveStoredPath(
+      attachment.localPath!,
+    );
+    if (_isPendingUploadPath(attachment.localPath!) ||
+        _isPendingUploadPath(absolutePath)) {
+      return attachment.copyWith(localPath: absolutePath);
+    }
+    final exists = await File(absolutePath).exists();
+    if (!exists && attachment.downloadStatus == 'done') {
+      return attachment.copyWith(
+        localPath: absolutePath,
+        downloadStatus: 'pending',
+      );
+    }
+
+    return attachment.copyWith(localPath: absolutePath);
+  }
+
+  bool _isPendingUploadPath(String path) {
+    return path.contains('pending_uploads/') ||
+        path.contains('pending_uploads\\');
   }
 
   Future<void> _markAsRead() async {
@@ -989,9 +1229,18 @@ class _ConversationWiredState extends State<ConversationWired> {
                   message.isDeleted),
         )
         .listen(
-          (message) {
+          (message) async {
             if (!mounted) return;
-            setState(() => _upsertMessageById(message));
+            final hydratedMedia = message.isDeleted
+                ? message.media
+                : await _resolveHydratedMediaForMessage(
+                    message.id,
+                    fallbackMedia: message.media,
+                  );
+            if (!mounted) return;
+            setState(() {
+              _upsertMessageById(message.copyWith(media: hydratedMedia));
+            });
           },
           onError: (error) {
             emitFlowEvent(
@@ -1289,6 +1538,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         _pendingAttachments,
       );
       List<MediaAttachment>? optimisticMedia;
+      List<_PreparedConversationMediaUpload> preparedUploads = const [];
 
       if (mediaToUpload.isNotEmpty) {
         final now = DateTime.now().toUtc().toIso8601String();
@@ -1353,6 +1603,47 @@ class _ConversationWiredState extends State<ConversationWired> {
         );
       }
 
+      if (mediaToUpload.isNotEmpty &&
+          widget.bridge != null &&
+          _supportsDurableMediaUploads &&
+          optimisticMedia != null) {
+        try {
+          preparedUploads = await _prepareDurableMediaUploads(
+            messageId: optimisticMessage.id,
+            mediaToUpload: mediaToUpload,
+            optimisticMedia: optimisticMedia,
+          );
+          if (mounted && preparedUploads.isNotEmpty) {
+            final displayMedia = preparedUploads
+                .map(
+                  (plan) => plan.pendingAttachment.copyWith(
+                    localPath: plan.absoluteDurablePath,
+                    downloadStatus: 'done',
+                  ),
+                )
+                .toList(growable: false);
+            setState(
+              () => _upsertMessageById(
+                optimisticMessage.copyWith(media: displayMedia),
+              ),
+            );
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_MEDIA_DURABLE_PREP_ERROR',
+            details: {'error': e.toString()},
+          );
+          await _restoreComposerSnapshot(
+            composerSnapshot,
+            optimisticMessageId: optimisticMessage.id,
+            messenger: messenger,
+            snackText: 'Failed to prepare media. Try again.',
+          );
+          return;
+        }
+      }
+
       // Acquire background task BEFORE upload so iOS cannot suspend during upload.
       final bgTaskId = widget.bridge != null
           ? await callBgBegin(widget.bridge!)
@@ -1376,16 +1667,28 @@ class _ConversationWiredState extends State<ConversationWired> {
                 return;
               }
               final media = mediaToUpload[index];
-              final mime = _mimeFromPath(media.file.path);
-              final mediaId = optimisticMedia?[index].id ?? _uuid.v4();
-              final fileSize = File(media.file.path).lengthSync();
+              final preparedUpload = preparedUploads.length > index
+                  ? preparedUploads[index]
+                  : null;
+              final mime =
+                  preparedUpload?.pendingAttachment.mime ??
+                  _mimeFromPath(media.file.path);
+              final mediaId =
+                  preparedUpload?.pendingAttachment.id ??
+                  optimisticMedia?[index].id ??
+                  _uuid.v4();
+              final sourcePath =
+                  preparedUpload?.absoluteDurablePath ?? media.file.path;
+              final fileSize =
+                  preparedUpload?.source.budgetBytes ??
+                  File(sourcePath).lengthSync();
 
               // Try local WiFi first.
               bool localSuccess = false;
               if (widget.p2pService.isLocalPeer(_contact.peerId)) {
                 localSuccess = await widget.p2pService.sendLocalMedia(
                   peerId: _contact.peerId,
-                  filePath: media.file.path,
+                  filePath: sourcePath,
                   mime: mime,
                   mediaId: mediaId,
                   fromPeerId: identity.peerId,
@@ -1397,43 +1700,50 @@ class _ConversationWiredState extends State<ConversationWired> {
                 if (relayTrackingStarted) {
                   _markRelayUploadCompleted(fileSize);
                 }
-                uploadedAttachments.add(
-                  MediaAttachment(
-                    id: mediaId,
-                    messageId: '',
-                    mime: mime,
-                    size: fileSize,
-                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                    localPath: media.file.path,
-                    downloadStatus: 'done',
-                    createdAt: DateTime.now().toUtc().toIso8601String(),
-                    width: media.width,
-                    height: media.height,
-                    durationMs: media.durationMs,
-                  ),
-                );
+                final localAttachment = preparedUpload != null
+                    ? await _buildLocalSuccessAttachmentFromPlan(
+                        messageId: optimisticMessage.id,
+                        plan: preparedUpload,
+                      )
+                    : MediaAttachment(
+                        id: mediaId,
+                        messageId: optimisticMessage.id,
+                        mime: mime,
+                        size: fileSize,
+                        mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                        localPath: media.file.path,
+                        downloadStatus: 'done',
+                        createdAt: DateTime.now().toUtc().toIso8601String(),
+                        width: media.width,
+                        height: media.height,
+                        durationMs: media.durationMs,
+                      );
+                if (widget.mediaAttachmentRepo != null) {
+                  await widget.mediaAttachmentRepo!.saveAttachment(
+                    localAttachment,
+                  );
+                }
+                uploadedAttachments.add(localAttachment);
               } else {
                 if (!relayTrackingStarted) {
                   final remainingBytes = mediaToUpload
                       .skip(index)
-                      .fold<int>(
-                        0,
-                        (sum, item) => sum + File(item.file.path).lengthSync(),
-                      );
+                      .fold<int>(0, (sum, item) => sum + item.budgetBytes);
                   await _startRelayUploadTracking(remainingBytes);
                   relayTrackingStarted = true;
                 }
                 _markRelayUploadStarted(mediaId);
                 final result = await widget.uploadMediaFn(
                   bridge: widget.bridge!,
-                  localFilePath: media.file.path,
+                  localFilePath: sourcePath,
                   mime: mime,
                   recipientPeerId: _contact.peerId,
                   mediaFileManager: widget.mediaFileManager,
                   blobId: mediaId,
-                  width: media.width,
-                  height: media.height,
-                  durationMs: media.durationMs,
+                  width: preparedUpload?.source.width ?? media.width,
+                  height: preparedUpload?.source.height ?? media.height,
+                  durationMs:
+                      preparedUpload?.source.durationMs ?? media.durationMs,
                 );
 
                 if (await _cancelActiveAttachmentUploadIfRequested(
@@ -1455,7 +1765,25 @@ class _ConversationWiredState extends State<ConversationWired> {
                   return;
                 }
                 _markRelayUploadCompleted(fileSize);
-                uploadedAttachments.add(result);
+                if (preparedUpload != null &&
+                    widget.mediaAttachmentRepo != null) {
+                  final stableResult =
+                      await _finalizeUploadedAttachmentFromPlan(
+                        messageId: optimisticMessage.id,
+                        plan: preparedUpload,
+                        uploaded: result.copyWith(
+                          id: mediaId,
+                          messageId: optimisticMessage.id,
+                          downloadStatus: 'done',
+                        ),
+                      );
+                  await widget.mediaAttachmentRepo!.saveAttachment(
+                    stableResult,
+                  );
+                  uploadedAttachments.add(stableResult);
+                } else {
+                  uploadedAttachments.add(result);
+                }
               }
 
               if (await _cancelActiveAttachmentUploadIfRequested(
@@ -1509,6 +1837,16 @@ class _ConversationWiredState extends State<ConversationWired> {
           mediaAttachments: uploadedAttachments,
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
         );
+
+        if (preparedUploads.isNotEmpty &&
+            uploadedAttachments != null &&
+            uploadedAttachments.length == mediaToUpload.length) {
+          try {
+            await widget.mediaFileManager?.deletePendingUploadDir(
+              optimisticMessage.id,
+            );
+          } catch (_) {}
+        }
 
         if (!mounted) return;
 
@@ -2665,14 +3003,7 @@ class _ConversationWiredState extends State<ConversationWired> {
 
     final resolved = <MediaAttachment>[];
     for (final attachment in attachments) {
-      if (attachment.localPath == null) {
-        resolved.add(attachment);
-        continue;
-      }
-      final absolutePath = await mediaFileManager.resolveStoredPath(
-        attachment.localPath!,
-      );
-      resolved.add(attachment.copyWith(localPath: absolutePath));
+      resolved.add(await _resolveAttachmentForDisplay(attachment));
     }
     return resolved;
   }

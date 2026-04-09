@@ -165,16 +165,21 @@ class GroupInvitePayload {
     required String kem,
     required String ciphertext,
     required String nonce,
+    String? inviteId,
+    String? groupId,
+    String? senderUsername,
+    String? groupName,
   }) {
     final envelope = {
       'type': 'group_invite',
       'version': '2',
+      if (inviteId != null && inviteId.isNotEmpty) 'id': inviteId,
       'senderPeerId': senderPeerId,
-      'encrypted': {
-        'kem': kem,
-        'ciphertext': ciphertext,
-        'nonce': nonce,
-      },
+      if (senderUsername != null && senderUsername.isNotEmpty)
+        'senderUsername': senderUsername,
+      if (groupId != null && groupId.isNotEmpty) 'groupId': groupId,
+      if (groupName != null && groupName.isNotEmpty) 'groupName': groupName,
+      'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     };
     return jsonEncode(envelope);
   }

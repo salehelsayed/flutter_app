@@ -83,7 +83,7 @@ void main() {
     msgRepo = InMemoryGroupMessageRepository();
   });
 
-  test('retries eligible messages and updates inbox_stored', () async {
+  test('retries eligible sent messages and clears inbox retry state', () async {
     final msg = _makeRetryEligible('msg-1');
     await msgRepo.saveMessage(msg);
 
@@ -95,7 +95,26 @@ void main() {
     expect(retried, 1);
     final saved = await msgRepo.getMessage('msg-1');
     expect(saved!.inboxStored, isTrue);
+    expect(saved.status, 'sent');
+    expect(saved.inboxRetryPayload, isNull);
     expect(bridge.commandLog, contains('group:inboxStore'));
+  });
+
+  test('retries eligible pending messages and promotes them to sent', () async {
+    final msg = _makeRetryEligible('msg-pending', status: 'pending');
+    await msgRepo.saveMessage(msg);
+
+    final retried = await retryFailedGroupInboxStores(
+      bridge: bridge,
+      msgRepo: msgRepo,
+    );
+
+    expect(retried, 1);
+    final saved = await msgRepo.getMessage('msg-pending');
+    expect(saved, isNotNull);
+    expect(saved!.status, 'sent');
+    expect(saved.inboxStored, isTrue);
+    expect(saved.inboxRetryPayload, isNull);
   });
 
   test('skips messages that are already inbox_stored', () async {
@@ -127,8 +146,12 @@ void main() {
     expect(retried, 1);
     final saved1 = await msgRepo.getMessage('msg-fail');
     expect(saved1!.inboxStored, isFalse);
+    expect(saved1.status, 'sent');
+    expect(saved1.inboxRetryPayload, isNotNull);
     final saved2 = await msgRepo.getMessage('msg-ok');
     expect(saved2!.inboxStored, isTrue);
+    expect(saved2.status, 'sent');
+    expect(saved2.inboxRetryPayload, isNull);
   });
 
   test('respects batch limit', () async {

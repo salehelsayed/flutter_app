@@ -613,7 +613,7 @@ void main() {
       // Path should be resolved
       expect(
         items.first.messages.first.media.first.localPath,
-        '/tmp/test_docs/media/groups/img.jpg',
+        endsWith('test_docs/media/groups/img.jpg'),
       );
     });
 

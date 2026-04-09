@@ -1,9 +1,17 @@
+import 'dart:io';
+
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:path/path.dart' as p;
 
 /// In-memory [MediaFileManager] for tests.
 ///
 /// Returns stub paths without calling getApplicationDocumentsDirectory().
 class FakeMediaFileManager extends MediaFileManager {
+  static final String _testRootPath = p.join(
+    Directory.systemTemp.path,
+    'test_docs',
+  );
+
   final List<String> deletedContactIds = <String>[];
   final List<String> deletedPostIds = <String>[];
   final List<String> deletedFilePaths = <String>[];
@@ -24,7 +32,19 @@ class FakeMediaFileManager extends MediaFileManager {
     required String attachmentId,
     required String mime,
   }) async {
-    return 'pending_uploads/$messageId/$attachmentId';
+    final extension = p.extension(sourceFilePath);
+    final directory = Directory(
+      p.join(_testRootPath, 'pending_uploads', messageId),
+    );
+    if (!directory.existsSync()) {
+      directory.createSync(recursive: true);
+    }
+    final destination = p.join(directory.path, '$attachmentId$extension');
+    final durableFile = File(destination);
+    if (!durableFile.existsSync()) {
+      durableFile.createSync(recursive: true);
+    }
+    return p.join('pending_uploads', messageId, '$attachmentId$extension');
   }
 
   @override
@@ -38,7 +58,17 @@ class FakeMediaFileManager extends MediaFileManager {
     required String blobId,
     required String mime,
   }) async {
-    return '/tmp/test_media/$contactPeerId/$blobId';
+    final relativePath = relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
+    final absolutePath = p.join(_testRootPath, relativePath);
+    final file = File(absolutePath);
+    if (!file.parent.existsSync()) {
+      file.parent.createSync(recursive: true);
+    }
+    return absolutePath;
   }
 
   @override
@@ -50,7 +80,7 @@ class FakeMediaFileManager extends MediaFileManager {
         storedPath.startsWith('media\\') ||
         storedPath.startsWith('post_media/') ||
         storedPath.startsWith('post_media\\')) {
-      return '/tmp/test_docs/$storedPath';
+      return p.join(_testRootPath, storedPath);
     }
     return storedPath;
   }
@@ -61,7 +91,17 @@ class FakeMediaFileManager extends MediaFileManager {
     required String blobId,
     required String mime,
   }) async {
-    return '/tmp/test_post_media/$postId/$blobId';
+    final relativePath = relativePathForPostAttachment(
+      postId: postId,
+      blobId: blobId,
+      mime: mime,
+    );
+    final absolutePath = p.join(_testRootPath, relativePath);
+    final file = File(absolutePath);
+    if (!file.parent.existsSync()) {
+      file.parent.createSync(recursive: true);
+    }
+    return absolutePath;
   }
 
   @override

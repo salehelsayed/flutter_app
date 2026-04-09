@@ -26,7 +26,7 @@ So announcement reliability closure is **not** a separate transport architecture
 
 The current announcement system should be treated as **reliably closed for core messaging** when all of these remain true:
 
-1. admins can reliably send text/media/voice announcements through the shared group pipeline,
+1. admins can reliably send text/media/voice announcements through the shared group pipeline, inheriting the same sender-trust send-then-lock contract as current group sends,
 2. non-admins cannot send announcements through the use case, UI, or repo-local Go publish path,
 3. members can still receive, read, and react to announcements,
 4. shared group retry/recovery changes do not silently break announcement behavior,
@@ -41,7 +41,8 @@ This is the closure bar for current announcements.
 ### 1. Shared durable send/recovery path
 
 - Announcements ride the same durable group send/retry/recovery machinery as current group discussions.
-- Session 28 already revalidated that the shared group reliability work did not regress announcement send, receive, recovery, or read-only behavior.
+- The shared send path now keeps live-peer success `pending` until inbox custody is durably closed and reuses `retryFailedGroupInboxStores(...)` on resume instead of overstating closure as `sent`.
+- Session 28 already revalidated that the shared group reliability work did not regress announcement send, receive, recovery, or read-only behavior, and Report `67` revalidated that admin text send-then-lock parity still holds on top of that shared contract.
 
 ### 2. Writer enforcement at multiple layers
 
@@ -57,9 +58,10 @@ Current closure already includes all three enforcement seams:
 - readers can still react
 - existing integration/resume tests already cover meaningful receive/recovery behavior
 
-### 4. Happy-path proof
+### 4. Happy-path and sender-parity proof
 
-`announcement_happy_path_test.dart` gives the repo a concise announcement create → send → read-only/reader → react proof without needing a separate announcement roadmap.
+- `announcement_happy_path_test.dart` gives the repo a concise announcement create → send → read-only/reader → react proof without needing a separate announcement roadmap.
+- `group_conversation_wired_bg_task_test.dart` directly covers announcement-admin text send lock/unmount parity with live peers and with zero peers.
 
 ---
 
@@ -68,7 +70,7 @@ Current closure already includes all three enforcement seams:
 These differences are real and do **not** automatically mean announcements are unreliable:
 
 1. announcements are admin-only writes, not open writer chat threads,
-2. announcement delivery remains group-style and receipt-less, not 1:1 ACK-backed,
+2. announcement delivery remains group-style and receipt-less; `sent` means the shared sender pipeline is durably closed, not that every reader has definitely received it,
 3. announcement readers are intentionally read-only for message send,
 4. announcement reliability should be validated mainly as a focused acceptance layer on top of shared group reliability, not as a separate large implementation program.
 
@@ -95,9 +97,9 @@ Those are product or evidence niceties, not prerequisites for trusting the curre
 
 Reopen this area only if one of these happens:
 
-1. shared group send/retry/recovery changes regress announcement behavior,
+1. shared group send/retry/recovery changes regress announcement behavior, including the shared sender-trust send-then-lock contract,
 2. non-admins can send through any current enforcement seam,
-3. announcement happy-path acceptance breaks,
+3. announcement happy-path or admin send-then-lock parity acceptance breaks,
 4. role persistence or role-consistency changes create auth drift,
 5. repo-local Go announcement enforcement changes in a way that needs new package-boundary proof.
 
@@ -110,7 +112,7 @@ Do **not** create a new announcement reliability program just because the featur
 When touching announcement auth/send/recovery behavior:
 
 1. add the direct regression first for the exact seam,
-2. run the relevant direct suites, especially announcement happy-path and admin/read-only enforcement tests,
+2. run the relevant direct suites, especially announcement happy-path, admin/read-only enforcement, and announcement lock/unmount parity tests,
 3. run `./scripts/run_test_gates.sh groups`,
 4. run `./scripts/run_test_gates.sh baseline` when Flutter production code changes,
 5. run `./scripts/run_test_gates.sh transport` only when lifecycle/startup/resume/recovery wiring changes,
@@ -127,6 +129,6 @@ The current repo already supports **trustworthy announcement text/media/voice me
 - admins can send,
 - readers can read/react,
 - non-admin writer attempts are blocked,
-- and shared group recovery changes have already been revalidated against announcements.
+- and shared group recovery plus sender-trust send-then-lock parity have already been revalidated against announcements.
 
 Future work should preserve those guarantees and avoid turning announcement maintenance into a separate open-ended reliability backlog unless a real regression proves it is needed.

@@ -207,7 +207,7 @@ void main() {
       expect(preparedMedia, isNotNull);
       expect(
         preparedMedia!.single.localPath,
-        '/tmp/test_docs/post_media/post-1/blob-1.jpg',
+        endsWith('test_docs/post_media/post-1/blob-1.jpg'),
       );
     },
   );

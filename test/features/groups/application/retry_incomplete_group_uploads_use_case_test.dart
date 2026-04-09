@@ -226,7 +226,7 @@ void main() {
         );
         expect(
           uploadFn.lastLocalPath,
-          '/tmp/test_docs/pending_uploads/msg-1/blob.jpg',
+          endsWith('test_docs/pending_uploads/msg-1/blob.jpg'),
         );
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));

@@ -259,8 +259,20 @@ class _FakeBridge implements Bridge {
 
   @override
   Future<String> send(String message) async {
-    requests.add(jsonDecode(message) as Map<String, dynamic>);
-    downloadCallCount++;
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    requests.add(request);
+    if (request['cmd'] == 'media:download') {
+      downloadCallCount++;
+      if (downloadResponse['ok'] == true) {
+        final payload = request['payload'] as Map<String, dynamic>? ?? const {};
+        final outputPath = payload['outputPath'] as String?;
+        if (outputPath != null) {
+          final file = File(outputPath);
+          await file.parent.create(recursive: true);
+          await file.writeAsBytes(const <int>[1, 2, 3]);
+        }
+      }
+    }
     return jsonEncode(downloadResponse);
   }
 
@@ -349,7 +361,9 @@ class _FakeMediaFileManager extends MediaFileManager {
     required String mime,
   }) async {
     final ext = mime.split('/').last;
-    return '/tmp/test_media/$contactPeerId/$blobId.$ext';
+    final path = '/tmp/test_media/$contactPeerId/$blobId.$ext';
+    await Directory('/tmp/test_media/$contactPeerId').create(recursive: true);
+    return path;
   }
 
   @override
@@ -409,6 +423,13 @@ ContactModel _makeContact(
     isArchived: isArchived,
   );
 }
+
+Future<ContactModel?> _noopDownloadProfilePicture({
+  required Bridge bridge,
+  required ContactRepository contactRepo,
+  required String ownerPeerId,
+  required String avatarVersion,
+}) async => null;
 
 ChatMessage _makeChatMessage({
   required String from,
@@ -523,6 +544,7 @@ void main() {
         contactRepo: contactRepo,
         bridge: bridge,
         getOwnMlKemSecretKey: getOwnMlKemSecretKey,
+        downloadProfilePictureFn: _noopDownloadProfilePicture,
       );
     }
 
@@ -734,6 +756,7 @@ void main() {
         bridge: overrideBridge ?? bridge,
         mediaAttachmentRepo: overrideMediaRepo ?? mediaRepo,
         mediaFileManager: overrideFileManager ?? fileManager,
+        downloadProfilePictureFn: _noopDownloadProfilePicture,
       );
     }
 
@@ -1323,6 +1346,7 @@ void main() {
         remoteNotificationGate: notificationGate ?? remoteNotificationGate,
         backgroundNotificationDuplicateGuardDelay:
             backgroundNotificationDuplicateGuardDelay,
+        downloadProfilePictureFn: _noopDownloadProfilePicture,
       );
     }
 

@@ -34,9 +34,13 @@ import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.da
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -62,6 +66,7 @@ import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_post_repository.dart';
@@ -179,6 +184,7 @@ void main() {
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
     GroupMessageListener? groupMessageListener,
+    GroupInviteListener? groupInviteListener,
     InMemoryIntroductionRepository? introductionRepository,
     IntroductionListener? introductionListener,
     List<NavigatorObserver>? navigatorObservers,
@@ -229,6 +235,7 @@ void main() {
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
         groupMessageListener: groupMessageListener,
+        groupInviteListener: groupInviteListener,
         introductionRepository: introductionRepository,
         introductionListener: introductionListener,
         appShellController: appShellController,
@@ -396,6 +403,47 @@ void main() {
       introducerUsername: 'Eve',
       recipientUsername: testIdentity.username,
       introducedUsername: 'Dora',
+    );
+  }
+
+  PendingGroupInvite makePendingInvite({
+    String groupId = 'grp-feed-intro',
+    String groupName = 'Orbit Writers',
+  }) {
+    return PendingGroupInvite.fromPayload(
+      GroupInvitePayload(
+        id: 'invite-$groupId',
+        groupId: groupId,
+        groupKey: 'group-key',
+        keyEpoch: 1,
+        groupConfig: {
+          'name': groupName,
+          'groupType': 'chat',
+          'description': 'Pending review',
+          'createdBy': 'peer-admin',
+          'createdAt': '2026-04-06T10:00:00.000Z',
+          'members': [
+            {
+              'peerId': 'peer-admin',
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'pk-admin',
+              'mlKemPublicKey': 'mlkem-admin',
+            },
+            {
+              'peerId': testIdentity.peerId,
+              'username': testIdentity.username,
+              'role': 'writer',
+              'publicKey': testIdentity.publicKey,
+              'mlKemPublicKey': 'mlkem-user',
+            },
+          ],
+        },
+        senderPeerId: 'peer-admin',
+        senderUsername: 'Alice',
+        timestamp: '2026-04-06T10:00:00.000Z',
+      ),
+      receivedAt: DateTime.utc(2026, 4, 6, 10, 5),
     );
   }
 
@@ -726,6 +774,27 @@ void main() {
     );
 
     testWidgets(
+      'loads the Orbit badge from pending group invites on first load',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        await pendingInviteRepo.savePendingInvite(makePendingInvite());
+        final fakeGroupInviteListener = _FakeGroupInviteListener(
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(groupInviteListener: fakeGroupInviteListener),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+      },
+    );
+
+    testWidgets(
       'refreshes the Orbit badge on intro receipt and remote status changes',
       (tester) async {
         suppressFeedNavErrors();
@@ -787,6 +856,33 @@ void main() {
     );
 
     testWidgets(
+      'refreshes the Orbit badge when a pending group invite arrives',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        final fakeGroupInviteListener = _FakeGroupInviteListener(
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(groupInviteListener: fakeGroupInviteListener),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 0);
+
+        final invite = makePendingInvite(groupId: 'grp-live');
+        await pendingInviteRepo.savePendingInvite(invite);
+        fakeGroupInviteListener.emitPendingInvite(invite);
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+      },
+    );
+
+    testWidgets(
       'inline orbit return refreshes the Orbit badge after local intro actions',
       (tester) async {
         suppressFeedNavErrors();
@@ -819,6 +915,42 @@ void main() {
           intro.id,
           IntroductionOverallStatus.passed,
         );
+        await emitInlineOrbitExit(
+          tester,
+          const FeedRouteChanges(refreshPendingIntroductions: true),
+        );
+
+        expect(
+          navButton(tester, 'Orbit', scope: find.byType(FeedScreen)).badgeCount,
+          0,
+        );
+      },
+    );
+
+    testWidgets(
+      'inline orbit return refreshes the Orbit badge after local pending group invite changes',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        final invite = makePendingInvite(groupId: 'grp-route-return');
+        await pendingInviteRepo.savePendingInvite(invite);
+        final fakeGroupInviteListener = _FakeGroupInviteListener(
+          pendingInviteRepo: pendingInviteRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(groupInviteListener: fakeGroupInviteListener),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester, count: 10);
+
+        await pendingInviteRepo.deletePendingInvite(invite.groupId);
         await emitInlineOrbitExit(
           tester,
           const FeedRouteChanges(refreshPendingIntroductions: true),
@@ -4160,6 +4292,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await _saveLatestGroupKey(groupRepo, 'g1');
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'gm-quoted-1',
@@ -4640,6 +4773,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await _saveLatestGroupKey(groupRepo, 'g-quote');
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'gm-parent',
@@ -4711,6 +4845,86 @@ void main() {
       },
     );
 
+    testWidgets('group inline send wraps publish in a background task', (
+      tester,
+    ) async {
+      final originalOnError = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) return;
+        originalOnError?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = originalOnError);
+
+      identityRepo.seed(testIdentity);
+
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-bg-inline',
+          name: 'Background Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g-bg-inline',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await _saveLatestGroupKey(groupRepo, 'g-bg-inline');
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-read-bg-inline-1',
+          groupId: 'g-bg-inline',
+          senderPeerId: 'other-peer',
+          senderUsername: 'OtherUser',
+          text: 'Existing thread seed',
+          timestamp: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          createdAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+          readAt: DateTime.now().subtract(const Duration(hours: 1)).toUtc(),
+        ),
+      );
+
+      final fakeGroupListener = _FakeGroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: groupMsgRepo,
+      );
+
+      bridge = _InlineGroupBgBridge();
+
+      await tester.pumpWidget(
+        buildFeedWired(
+          groupRepository: groupRepo,
+          groupMessageRepository: groupMsgRepo,
+          groupMessageListener: fakeGroupListener,
+        ),
+      );
+      await pumpFeedFrames(tester);
+
+      await tester.enterText(
+        find.byType(TextField).first,
+        'Background task inline reply',
+      );
+      await tester.pump();
+      final sendButton = find.byIcon(Icons.arrow_upward_rounded).first;
+      await tester.ensureVisible(sendButton);
+      await tester.pump();
+      await tester.tap(sendButton);
+      await pumpFeedFrames(tester);
+
+      expect(bridge.commandLog, contains('bg:begin'));
+      expect(bridge.commandLog, contains('group:publish'));
+      expect(bridge.commandLog, contains('group:inboxStore'));
+      expect(bridge.commandLog, contains('bg:end'));
+      _expectCommandOrder(bridge.commandLog, 'bg:begin', 'group:publish');
+      _expectCommandOrder(
+        bridge.commandLog,
+        'group:publish',
+        'group:inboxStore',
+      );
+      _expectCommandOrder(bridge.commandLog, 'group:inboxStore', 'bg:end');
+    });
+
     testWidgets(
       'group inline send becomes retry-discoverable before publish resolves',
       (tester) async {
@@ -4737,6 +4951,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await _saveLatestGroupKey(groupRepo, 'g-retryable');
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'gm-read-retryable-1',
@@ -4824,6 +5039,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await _saveLatestGroupKey(groupRepo, 'g1');
 
         // Seed a read message so the card starts in collapsed mode
         // with an inline reply input.
@@ -4921,6 +5137,7 @@ void main() {
           myRole: GroupRole.member,
         ),
       );
+      await _saveLatestGroupKey(groupRepo, 'g1');
 
       // Seed a read message so the card starts in collapsed mode
       await groupMsgRepo.saveMessage(
@@ -5025,6 +5242,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await _saveLatestGroupKey(groupRepo, 'g1');
 
         // Seed a read message so the card starts in collapsed mode
         await groupMsgRepo.saveMessage(
@@ -5110,6 +5328,7 @@ void main() {
             myRole: GroupRole.member,
           ),
         );
+        await _saveLatestGroupKey(groupRepo, 'g-zero-peers');
         await groupMsgRepo.saveMessage(
           GroupMessage(
             id: 'gm-read-zero-peers-1',
@@ -5980,6 +6199,34 @@ class _FakeGroupMessageListener extends GroupMessageListener {
   void emitGroupMessage(GroupMessage msg) => _groupMsgEmitter.add(msg);
 }
 
+class _FakeGroupInviteListener extends GroupInviteListener {
+  final _joinedController = StreamController<GroupModel>.broadcast();
+  final _pendingController = StreamController<PendingGroupInvite>.broadcast();
+
+  _FakeGroupInviteListener({
+    required InMemoryPendingGroupInviteRepository pendingInviteRepo,
+  }) : super(
+         groupInviteStream: const Stream<ChatMessage>.empty(),
+         groupRepo: InMemoryGroupRepository(),
+         pendingInviteRepo: pendingInviteRepo,
+         contactRepo: FakeContactRepository(),
+         bridge: FakeBridge(),
+         getOwnMlKemSecretKey: () async => null,
+       );
+
+  @override
+  Stream<GroupModel> get groupJoinedStream => _joinedController.stream;
+
+  @override
+  Stream<PendingGroupInvite> get pendingInviteStream =>
+      _pendingController.stream;
+
+  void emitPendingInvite(PendingGroupInvite invite) =>
+      _pendingController.add(invite);
+
+  void emitJoinedGroup(GroupModel group) => _joinedController.add(group);
+}
+
 class _FakeIntroductionListener extends IntroductionListener {
   final _introReceivedController =
       StreamController<IntroductionModel>.broadcast();
@@ -6220,9 +6467,80 @@ class _GatedBridge extends FakeBridge {
 
   @override
   Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'bg:begin') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      return 'feed-inline-gated-bg-task';
+    }
+    if (cmd == 'bg:end') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      return '';
+    }
     await sendGate.future;
     return super.send(message);
   }
+}
+
+class _InlineGroupBgBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    sendCallCount++;
+    lastSentMessage = message;
+    sentMessages.add(message);
+
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    lastCommand = cmd;
+    if (cmd != null) {
+      commandLog.add(cmd);
+    }
+
+    switch (cmd) {
+      case 'bg:begin':
+        return 'feed-inline-bg-task';
+      case 'bg:end':
+        return '';
+      case 'group:publish':
+        return jsonEncode({
+          'ok': true,
+          'messageId': 'feed-inline-bg-message',
+          'topicPeers': 1,
+        });
+      case 'group:inboxStore':
+        return jsonEncode({'ok': true});
+      default:
+        return jsonEncode({'ok': true});
+    }
+  }
+}
+
+Future<void> _saveLatestGroupKey(
+  InMemoryGroupRepository groupRepo,
+  String groupId,
+) async {
+  await groupRepo.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: 1,
+      encryptedKey: 'encrypted-key-$groupId',
+      createdAt: DateTime(2026, 2, 1).toUtc(),
+    ),
+  );
+}
+
+void _expectCommandOrder(List<String> commands, String earlier, String later) {
+  expect(commands, contains(earlier));
+  expect(commands, contains(later));
+  expect(commands.indexOf(earlier), lessThan(commands.indexOf(later)));
 }
 
 class _SpyGroupMessageRepository extends InMemoryGroupMessageRepository {

@@ -1626,7 +1626,7 @@ void main() {
     });
 
     test(
-      'peers > 0 + inbox fail → success, wireEnvelope cleared, inboxRetryPayload kept',
+      'peers > 0 + inbox fail → success with pending status, wireEnvelope cleared, inboxRetryPayload kept',
       () async {
         final failBridge = _InboxStoreFailBridge();
         failBridge.responses['group:publish'] = {
@@ -1650,18 +1650,20 @@ void main() {
 
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'sent');
+        expect(message!.status, 'pending');
         expect(message.inboxStored, isFalse);
+        expect(message.inboxRetryPayload, isNotNull);
 
         final saved = await msgRepo.getMessage('msg-peers-inbox-fail');
         expect(saved, isNotNull);
-        expect(saved!.wireEnvelope, isNull);
+        expect(saved!.status, 'pending');
+        expect(saved.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNotNull);
       },
     );
 
     test(
-      'peers > 0 returns before inbox store finishes and updates inbox state in background',
+      'peers > 0 returns pending before inbox store finishes and promotes to sent in background',
       () async {
         final gatedBridge = _GatedInboxStoreBridge();
         gatedBridge.responses['group:publish'] = {
@@ -1688,7 +1690,7 @@ void main() {
 
         expect(result, SendGroupMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'sent');
+        expect(message!.status, 'pending');
         expect(message.inboxStored, isFalse);
         expect(message.inboxRetryPayload, isNotNull);
         expect(stopwatch.elapsedMilliseconds, lessThan(150));
@@ -1697,7 +1699,8 @@ void main() {
           'msg-peers-bg-inbox',
         );
         expect(savedBeforeRelease, isNotNull);
-        expect(savedBeforeRelease!.inboxStored, isFalse);
+        expect(savedBeforeRelease!.status, 'pending');
+        expect(savedBeforeRelease.inboxStored, isFalse);
         expect(savedBeforeRelease.inboxRetryPayload, isNotNull);
 
         gatedBridge.inboxGate.complete();
@@ -1713,7 +1716,7 @@ void main() {
       },
     );
 
-    test('missing topicPeers → legacy success', () async {
+    test('missing topicPeers + inbox OK → legacy success stays sent', () async {
       // Old bridge response without topicPeers key
       bridge.responses['group:publish'] = {
         'ok': true,
@@ -1736,7 +1739,49 @@ void main() {
       expect(result, SendGroupMessageResult.success);
       expect(message, isNotNull);
       expect(message!.status, 'sent');
+      expect(message.inboxStored, isTrue);
+
+      final saved = await msgRepo.getMessage('msg-legacy');
+      expect(saved, isNotNull);
+      expect(saved!.status, 'sent');
+      expect(saved.wireEnvelope, isNull);
+      expect(saved.inboxRetryPayload, isNull);
     });
+
+    test(
+      'missing topicPeers + inbox fail → legacy success stays pending until inbox retry closes it',
+      () async {
+        final failBridge = _InboxStoreFailBridge();
+        failBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-legacy-inbox-fail',
+        };
+
+        final (result, message) = await sendGroupMessage(
+          bridge: failBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Legacy bridge with inbox failure',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-legacy-inbox-fail',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'pending');
+        expect(message.inboxStored, isFalse);
+        expect(message.inboxRetryPayload, isNotNull);
+
+        final saved = await msgRepo.getMessage('msg-legacy-inbox-fail');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'pending');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxRetryPayload, isNotNull);
+      });
 
     test(
       'publish fail + inbox fail → status failed, both payloads retained',
@@ -1868,13 +1913,13 @@ void main() {
 
       expect(result, SendGroupMessageResult.success);
       expect(message, isNotNull);
-      expect(message!.status, 'sent');
+      expect(message!.status, 'pending');
       expect(message.inboxStored, isFalse);
       expect(message.inboxRetryPayload, isNotNull);
 
       final saved = await msgRepo.getMessage('msg-inbox-ok-false');
       expect(saved, isNotNull);
-      expect(saved!.status, 'sent');
+      expect(saved!.status, 'pending');
       expect(saved.inboxStored, isFalse);
       expect(saved.inboxRetryPayload, isNotNull);
     });

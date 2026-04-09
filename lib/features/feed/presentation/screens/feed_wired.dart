@@ -65,6 +65,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -244,6 +245,8 @@ class _FeedWiredState extends State<FeedWired>
   StreamSubscription<ReactionChange>? _reactionSubscription;
   StreamSubscription<dynamic>? _groupMessageSubscription;
   StreamSubscription<ReactionChange>? _groupReactionSubscription;
+  StreamSubscription<GroupModel>? _groupInviteJoinedSubscription;
+  StreamSubscription<PendingGroupInvite>? _pendingGroupInviteSubscription;
   StreamSubscription<IntroductionModel>? _introReceivedSubscription;
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
   int _orbitBadgeLoadRequestId = 0;
@@ -493,6 +496,7 @@ class _FeedWiredState extends State<FeedWired>
     _startListeningForReactions();
     _startListeningForGroupReactions();
     _startListeningForGroupMessages();
+    _startListeningForGroupInvites();
     _startListeningForIntroductions();
   }
 
@@ -582,7 +586,8 @@ class _FeedWiredState extends State<FeedWired>
   Future<void> _refreshOrbitBadgeCount() async {
     final introRepo = widget.introductionRepository;
     final ownPeerId = _peerId;
-    if (introRepo == null || ownPeerId == null) {
+    final pendingInviteRepo = widget.groupInviteListener?.pendingInviteRepo;
+    if ((introRepo == null || ownPeerId == null) && pendingInviteRepo == null) {
       if (mounted) {
         _orbitBadgeCountNotifier.value = 0;
       }
@@ -592,18 +597,28 @@ class _FeedWiredState extends State<FeedWired>
     final requestId = ++_orbitBadgeLoadRequestId;
 
     try {
-      await expireOldIntroductions(
-        introRepo: introRepo,
-        peerId: ownPeerId,
-        contactRepo: widget.contactRepository,
-        messageRepo: widget.messageRepository,
-        bridge: widget.bridge,
-      );
-      final count = await introRepo.countPendingIntroductions(ownPeerId);
+      var introCount = 0;
+      if (introRepo != null && ownPeerId != null) {
+        await expireOldIntroductions(
+          introRepo: introRepo,
+          peerId: ownPeerId,
+          contactRepo: widget.contactRepository,
+          messageRepo: widget.messageRepository,
+          bridge: widget.bridge,
+        );
+        introCount = await introRepo.countPendingIntroductions(ownPeerId);
+      }
+
+      var pendingInviteCount = 0;
+      if (pendingInviteRepo != null) {
+        pendingInviteCount =
+            (await pendingInviteRepo.getPendingInvites()).length;
+      }
+
       if (!mounted || requestId != _orbitBadgeLoadRequestId) {
         return;
       }
-      _orbitBadgeCountNotifier.value = count;
+      _orbitBadgeCountNotifier.value = introCount + pendingInviteCount;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -611,6 +626,33 @@ class _FeedWiredState extends State<FeedWired>
         details: {'error': e.toString()},
       );
     }
+  }
+
+  void _startListeningForGroupInvites() {
+    final listener = widget.groupInviteListener;
+    if (listener == null) return;
+
+    _groupInviteJoinedSubscription = listener.groupJoinedStream.listen(
+      (_) => unawaited(_refreshOrbitBadgeCount()),
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_GROUP_INVITE_JOINED_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
+
+    _pendingGroupInviteSubscription = listener.pendingInviteStream.listen(
+      (_) => unawaited(_refreshOrbitBadgeCount()),
+      onError: (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'FEED_PENDING_GROUP_INVITE_STREAM_ERROR',
+          details: {'error': error.toString()},
+        );
+      },
+    );
   }
 
   Future<void> _refreshFeed() async {
@@ -2148,8 +2190,10 @@ class _FeedWiredState extends State<FeedWired>
     _activeQuoteMessageIds.remove(quoteKey);
     _sessionReplies.track('group:$groupId', SessionReply.justNow(text));
     if (mounted) setState(() {});
+    String? bgTaskId;
 
     try {
+      bgTaskId = await callBgBegin(widget.bridge);
       final (result, message) = await sendGroupMessage(
         bridge: widget.bridge,
         groupRepo: groupRepo,
@@ -2205,6 +2249,8 @@ class _FeedWiredState extends State<FeedWired>
           behavior: SnackBarBehavior.floating,
         ),
       );
+    } finally {
+      await callBgEnd(widget.bridge, bgTaskId);
     }
   }
 
@@ -2834,6 +2880,8 @@ class _FeedWiredState extends State<FeedWired>
     _reactionSubscription?.cancel();
     _groupReactionSubscription?.cancel();
     _groupMessageSubscription?.cancel();
+    _groupInviteJoinedSubscription?.cancel();
+    _pendingGroupInviteSubscription?.cancel();
     _introReceivedSubscription?.cancel();
     _introStatusSubscription?.cancel();
     _hostSwipeController.dispose();

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -71,6 +72,7 @@ class GroupTestUser {
     required FakeGroupPubSubNetwork network,
     String? deviceId,
     FakeBridge? bridge,
+    MediaFileManager? mediaFileManager,
     ReactionRepository? reactionRepo,
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
@@ -81,10 +83,7 @@ class GroupTestUser {
     final groupRepo = InMemoryGroupRepository();
     final msgRepo = InMemoryGroupMessageRepository();
     final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
-    final controller = network.registerPeer(
-      peerId,
-      deviceId: resolvedDeviceId,
-    );
+    final controller = network.registerPeer(peerId, deviceId: resolvedDeviceId);
     final reactionController = network.registerReactionPeer(
       peerId,
       deviceId: resolvedDeviceId,
@@ -96,6 +95,7 @@ class GroupTestUser {
       bridge: effectiveBridge,
       getSelfPeerId: () async => peerId,
       mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
       notificationService: notificationService,
       groupConversationTracker: groupConversationTracker,
       getAppLifecycleState: getAppLifecycleState,
@@ -287,19 +287,14 @@ class GroupTestUser {
       'groupConfig': groupConfig,
     });
 
-    await _network.publish(
-      groupId,
-      peerId,
-      {
+    await _network.publish(groupId, peerId, {
       'groupId': groupId,
       'senderId': peerId,
       'senderUsername': username,
       'keyEpoch': 0,
       'text': sysText,
       'timestamp': effectiveChangedAt.toIso8601String(),
-      },
-      senderDeviceId: deviceId,
-    );
+    }, senderDeviceId: deviceId);
   }
 
   /// Leaves a group locally and, when another admin remains, broadcasts the
@@ -354,19 +349,14 @@ class GroupTestUser {
         'groupConfig': groupConfig,
       });
 
-      await _network.publish(
-        groupId,
-        peerId,
-        {
+      await _network.publish(groupId, peerId, {
         'groupId': groupId,
         'senderId': peerId,
         'senderUsername': username,
         'keyEpoch': 0,
         'text': sysText,
         'timestamp': leftAt.toIso8601String(),
-        },
-        senderDeviceId: deviceId,
-      );
+      }, senderDeviceId: deviceId);
     }
 
     await group_leave.leaveGroup(
@@ -412,12 +402,7 @@ class GroupTestUser {
       'timestamp': now.toIso8601String(),
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
     };
-    await _network.publish(
-      groupId,
-      peerId,
-      envelope,
-      senderDeviceId: deviceId,
-    );
+    await _network.publish(groupId, peerId, envelope, senderDeviceId: deviceId);
 
     return message;
   }
@@ -536,10 +521,7 @@ class GroupTestUser {
           (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
               as Map<String, dynamic>;
 
-      await _network.publish(
-        groupId,
-        peerId,
-        {
+      await _network.publish(groupId, peerId, {
         'groupId': groupId,
         'senderId': peerId,
         'senderUsername': username,
@@ -548,9 +530,7 @@ class GroupTestUser {
         'timestamp':
             group.dissolvedAt?.toUtc().toIso8601String() ??
             DateTime.now().toUtc().toIso8601String(),
-        },
-        senderDeviceId: deviceId,
-      );
+      }, senderDeviceId: deviceId);
 
       for (final member in members) {
         _network.unsubscribe(groupId, member.peerId);
@@ -600,10 +580,7 @@ class GroupTestUser {
             (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
 
-        await _network.publishReaction(
-          groupId,
-          peerId,
-          {
+        await _network.publishReaction(groupId, peerId, {
           'groupId': groupId,
           'senderId': peerId,
           'reaction':
@@ -616,9 +593,7 @@ class GroupTestUser {
                 'senderPeerId': reaction.senderPeerId,
                 'timestamp': reaction.timestamp,
               }),
-          },
-          senderDeviceId: deviceId,
-        );
+        }, senderDeviceId: deviceId);
       }
 
       return (result, reaction);
@@ -696,12 +671,7 @@ class GroupTestUser {
       'text': sysText,
       'timestamp': effectiveRemovedAt.toIso8601String(),
     };
-    await _network.publish(
-      groupId,
-      peerId,
-      envelope,
-      senderDeviceId: deviceId,
-    );
+    await _network.publish(groupId, peerId, envelope, senderDeviceId: deviceId);
 
     _network.unsubscribe(groupId, memberPeerId);
   }
@@ -751,12 +721,7 @@ class GroupTestUser {
       'text': sysText,
       'timestamp': DateTime.now().toUtc().toIso8601String(),
     };
-    await _network.publish(
-      groupId,
-      peerId,
-      envelope,
-      senderDeviceId: deviceId,
-    );
+    await _network.publish(groupId, peerId, envelope, senderDeviceId: deviceId);
   }
 
   /// Loads all messages for a group from the local repo.

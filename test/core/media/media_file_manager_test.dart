@@ -300,7 +300,7 @@ void main() {
 
           expect(
             fakeFileManager.deletedFilePaths,
-            contains('/tmp/test_docs/pending_uploads/msg-123/owned.jpg'),
+            contains(endsWith('pending_uploads/msg-123/owned.jpg')),
           );
           expect(
             fakeFileManager.deletedFilePaths,
@@ -311,7 +311,7 @@ void main() {
           expect(
             fakeFileManager.deletedFilePaths,
             isNot(
-              contains('/tmp/test_docs/pending_uploads/msg-other/other.jpg'),
+              contains(endsWith('pending_uploads/msg-other/other.jpg')),
             ),
           );
           expect(

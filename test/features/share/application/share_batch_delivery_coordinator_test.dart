@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -213,6 +214,122 @@ void main() {
       ShareTargetSelection.contact(failedContact).key,
     });
   });
+
+  test(
+    'text-only group share wraps publish in a background task and stays sent on durable success',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final groupRepository = InMemoryGroupRepository();
+      final groupMessageRepository = InMemoryGroupMessageRepository();
+      final bridge = _GroupShareBgBridge(
+        publishMessageId: 'group-bg-sent',
+        publishTopicPeers: 1,
+        inboxStoreOk: true,
+      );
+
+      await groupRepository.saveGroup(_makeGroup('group-1', 'Writers'));
+
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        bridge: bridge,
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'hello group',
+        ),
+        targets: [ShareTargetSelection.group(_makeGroup('group-1', 'Writers'))],
+      );
+
+      expect(result.sentCount, 1);
+      expect(result.queuedCount, 0);
+      expect(result.results.single.status, ShareBatchTargetStatus.sent);
+      expect(result.results.single.detail, 'Sent.');
+      _expectCommandOrder(bridge.commandLog, 'bg:begin', 'group:publish');
+      _expectCommandOrder(
+        bridge.commandLog,
+        'group:publish',
+        'group:inboxStore',
+      );
+      _expectCommandOrder(bridge.commandLog, 'group:inboxStore', 'bg:end');
+
+      final saved = await groupMessageRepository.getMessagesPage('group-1');
+      expect(saved, isNotEmpty);
+      expect(saved.first.status, 'sent');
+      expect(saved.first.inboxStored, isTrue);
+    },
+  );
+
+  test(
+    'group share keeps live-peer pending rows queued until inbox custody closes',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final groupRepository = InMemoryGroupRepository();
+      final groupMessageRepository = InMemoryGroupMessageRepository();
+      final bridge = _GroupShareBgBridge(
+        publishMessageId: 'group-bg-pending',
+        publishTopicPeers: 1,
+        inboxStoreOk: false,
+      );
+
+      await groupRepository.saveGroup(_makeGroup('group-2', 'Pending Writers'));
+
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groupRepository,
+        groupMessageRepository: groupMessageRepository,
+        bridge: bridge,
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'pending group share',
+        ),
+        targets: [
+          ShareTargetSelection.group(_makeGroup('group-2', 'Pending Writers')),
+        ],
+      );
+
+      expect(result.sentCount, 0);
+      expect(result.queuedCount, 1);
+      expect(result.results.single.status, ShareBatchTargetStatus.queued);
+      expect(
+        result.results.single.detail,
+        'Stored while group delivery finishes.',
+      );
+      _expectCommandOrder(bridge.commandLog, 'bg:begin', 'group:publish');
+      _expectCommandOrder(
+        bridge.commandLog,
+        'group:publish',
+        'group:inboxStore',
+      );
+      _expectCommandOrder(bridge.commandLog, 'group:inboxStore', 'bg:end');
+
+      final saved = await groupMessageRepository.getMessagesPage('group-2');
+      expect(saved, isNotEmpty);
+      expect(saved.first.status, 'pending');
+      expect(saved.first.inboxStored, isFalse);
+      expect(saved.first.inboxRetryPayload, isNotNull);
+    },
+  );
 }
 
 ImageProcessor _imageProcessor() {
@@ -266,4 +383,53 @@ IdentityModel _makeIdentity() {
     createdAt: '2026-03-09T08:00:00.000Z',
     updatedAt: '2026-03-09T08:00:00.000Z',
   );
+}
+
+class _GroupShareBgBridge extends FakeBridge {
+  _GroupShareBgBridge({
+    required this.publishMessageId,
+    required this.publishTopicPeers,
+    required this.inboxStoreOk,
+  });
+
+  final String publishMessageId;
+  final int publishTopicPeers;
+  final bool inboxStoreOk;
+
+  @override
+  Future<String> send(String message) async {
+    sendCallCount++;
+    lastSentMessage = message;
+    sentMessages.add(message);
+
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    lastCommand = cmd;
+    if (cmd != null) {
+      commandLog.add(cmd);
+    }
+
+    switch (cmd) {
+      case 'bg:begin':
+        return 'share-group-bg-task';
+      case 'bg:end':
+        return '';
+      case 'group:publish':
+        return jsonEncode({
+          'ok': true,
+          'messageId': publishMessageId,
+          'topicPeers': publishTopicPeers,
+        });
+      case 'group:inboxStore':
+        return jsonEncode({'ok': inboxStoreOk});
+      default:
+        return jsonEncode({'ok': true});
+    }
+  }
+}
+
+void _expectCommandOrder(List<String> commands, String earlier, String later) {
+  expect(commands, contains(earlier));
+  expect(commands, contains(later));
+  expect(commands.indexOf(earlier), lessThan(commands.indexOf(later)));
 }

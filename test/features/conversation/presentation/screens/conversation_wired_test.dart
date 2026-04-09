@@ -178,6 +178,74 @@ class FakeContactRepository implements ContactRepository {
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
+class TrackingDurableConversationMediaFileManager extends FakeMediaFileManager {
+  TrackingDurableConversationMediaFileManager(this.rootDir);
+
+  final Directory rootDir;
+  int copyCalls = 0;
+  final List<String> deletedPendingUploadDirs = <String>[];
+
+  @override
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    copyCalls++;
+    final dotIndex = sourceFilePath.lastIndexOf('.');
+    final ext = dotIndex >= 0 ? sourceFilePath.substring(dotIndex) : '';
+    final dir = Directory('${rootDir.path}/pending_uploads/$messageId');
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    final destinationPath = '${dir.path}/$attachmentId$ext';
+    await File(sourceFilePath).copy(destinationPath);
+    return 'pending_uploads/$messageId/$attachmentId$ext';
+  }
+
+  @override
+  Future<String> resolveStoredPath(String storedPath) async {
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
+        storedPath.startsWith('media\\') ||
+        storedPath.startsWith('post_media/') ||
+        storedPath.startsWith('post_media\\')) {
+      return '${rootDir.path}/$storedPath';
+    }
+    return storedPath;
+  }
+
+  @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final relativePath = relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
+    final absolutePath = '${rootDir.path}/$relativePath';
+    final file = File(absolutePath);
+    if (!file.parent.existsSync()) {
+      file.parent.createSync(recursive: true);
+    }
+    return absolutePath;
+  }
+
+  @override
+  Future<void> deletePendingUploadDir(String messageId) async {
+    deletedPendingUploadDirs.add(messageId);
+    final dir = Directory('${rootDir.path}/pending_uploads/$messageId');
+    if (dir.existsSync()) {
+      dir.deleteSync(recursive: true);
+    }
+  }
+}
+
 class FakeMessageRepository
     implements MessageRepository, MessageRepositoryChangeSource {
   final Map<String, ConversationMessage> store = {};
@@ -1119,6 +1187,189 @@ void main() {
       expect(savedAttachment.messageId, isNotEmpty);
       expect(savedAttachment.localPath, attachment.path);
     });
+
+    testWidgets(
+      'durable media prep stores upload_pending rows in app-owned storage when MediaFileManager is available',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final callOrder = <String>[];
+        mediaAttachmentRepo.onSaveAttachment = (attachment) =>
+            callOrder.add('save:${attachment.downloadStatus}');
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_durable_upload_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final mediaFileManager = TrackingDurableConversationMediaFileManager(
+          tempDir,
+        );
+        final attachment = File('${tempDir.path}/source.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async {
+                callOrder.add('uploadMedia');
+                return MediaAttachment(
+                  id: blobId ?? 'uploaded-1',
+                  messageId: '',
+                  mime: mime,
+                  size: _tinyPngBytes.length,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath:
+                      mediaFileManager?.relativePathForAttachment(
+                        contactPeerId: recipientPeerId,
+                        blobId: blobId ?? 'uploaded-1',
+                        mime: mime,
+                      ) ??
+                      localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'Durable photo');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => mediaFileManager.copyCalls == 1);
+
+        expect(mediaFileManager.copyCalls, 1);
+        expect(callOrder, contains('save:upload_pending'));
+        final durableDir = Directory('${tempDir.path}/pending_uploads');
+        expect(durableDir.existsSync(), isTrue);
+        final durableFiles = durableDir
+            .listSync(recursive: true)
+            .whereType<File>()
+            .toList(growable: false);
+        expect(durableFiles, isNotEmpty);
+        expect(durableFiles.single.existsSync(), isTrue);
+
+        await tester.pump(const Duration(seconds: 1));
+      },
+    );
+
+    testWidgets(
+      'outgoing repository status updates keep hydrated media instead of wiping sender bubbles',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_repo_change_media_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final imageFile = File('${tempDir.path}/bubble.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        final sentAt = DateTime.now().toUtc().toIso8601String();
+        const messageId = 'msg-media-hydrated-001';
+        final message = ConversationMessage(
+          id: messageId,
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: '',
+          timestamp: sentAt,
+          status: 'sent',
+          isIncoming: false,
+          createdAt: sentAt,
+        );
+        messageRepo.store[messageId] = message;
+        mediaAttachmentRepo.seed([
+          MediaAttachment(
+            id: 'att-media-hydrated-001',
+            messageId: messageId,
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: imageFile.path,
+            downloadStatus: 'done',
+            createdAt: sentAt,
+          ),
+        ]);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+        );
+
+        ConversationScreen screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        ConversationMessage visibleMessage = screen.messages.firstWhere(
+          (message) => message.id == messageId,
+        );
+        expect(visibleMessage.media, isNotEmpty);
+
+        await messageRepo.saveMessage(message.copyWith(status: 'delivered'));
+        await pumpUntil(tester, () {
+          final nextScreen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          final nextMessage = nextScreen.messages.firstWhere(
+            (message) => message.id == messageId,
+          );
+          return nextMessage.status == 'delivered' &&
+              nextMessage.media.isNotEmpty;
+        });
+
+        screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        visibleMessage = screen.messages.firstWhere(
+          (message) => message.id == messageId,
+        );
+        expect(visibleMessage.status, 'delivered');
+        expect(visibleMessage.media, isNotEmpty);
+        expect(visibleMessage.media.single.id, 'att-media-hydrated-001');
+      },
+    );
 
     testWidgets(
       'relay media send reuses optimistic attachment id and clears upload_pending placeholder',
@@ -3680,8 +3931,9 @@ void main() {
       expect(
         mediaFileManager.deletedFilePaths,
         contains(
-          '/tmp/test_docs/pending_uploads/failed-delete-msg/'
-          'pending-delete-attachment.jpg',
+          endsWith(
+            'pending_uploads/failed-delete-msg/pending-delete-attachment.jpg',
+          ),
         ),
       );
     });
