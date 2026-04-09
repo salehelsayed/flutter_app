@@ -68,6 +68,9 @@ Important current automated evidence already exists:
   `test/integration/notification_tap_smoke_test.dart`,
   `test/features/push/application/chat_and_group_push_open_flow_test.dart`,
   `test/integration/notification_deeplink_integration_test.dart`
+- missing-local-group recovery and pending-invite redirect:
+  `test/features/push/application/resolve_group_notification_route_target_use_case_test.dart`
+  Residual: this covers receiver-side recovery after the push opens, not sender-side invite delivery or admin-member-list parity.
 - fallback suppression and dedupe-key logic:
   `test/features/push/application/background_push_notification_fallback_test.dart`,
   `test/features/push/application/background_message_handler_test.dart`
@@ -228,7 +231,7 @@ Current limitation to keep explicit:
 
 | Test ID | Scenario | Expected Result | Priority | Unit | Integration | Smoke | Fake Network | 2-party E2E | Current coverage / notes |
 |---|---|---|---|---|---|---|---|---|---|
-| DM-101 | Visible remote push plus later local replay | One message yields one user-visible notification path; later local replay does not materialize a second notification. | P0 | Required | Required | Recommended | Required | Recommended | Covered by `test/integration/chat_notification_dedupe_integration_test.dart` and `test/features/push/application/show_notification_use_case_test.dart`. |
+| DM-101 | Visible remote push plus later local replay | One message yields one user-visible notification path; later local replay does not materialize a second notification. | P0 | Required | Required | Recommended | Required | Recommended | Covered by `test/integration/chat_notification_dedupe_integration_test.dart` and the shared suppression seam in `test/features/push/application/show_notification_use_case_test.dart`; the new route-payload regression specifically strengthens the group replay row instead of this 1:1 row. |
 | DM-102 | Delayed redelivery / retry of same message | The same `message_id` redelivered later still does not produce a second notification. | P0 | Required | Required | N/A | Required | Recommended | Current exact message-aware gate coverage exists in `test/core/notifications/recent_remote_notification_gate_test.dart`; a later-delivery end-to-end replay remains a high-value fake-network row. |
 | DM-103 | Generic unnamed iOS fallback is suppressed | A routable iOS chat push with only routing data does not create the extra unnamed generic fallback when a visible remote push already exists. | P0 | Required | Required | Required | Recommended | Recommended | Covered by `test/features/push/application/background_push_notification_fallback_test.dart` and `test/features/push/application/background_message_handler_test.dart`. |
 | DM-104 | Stale notification tap after message already seen | Tapping an older notification remains safe, routes to the conversation, and does not recreate duplicate local state. | P1 | Recommended | Required | Recommended | N/A | Required | Current closest evidence: `test/integration/notification_tap_smoke_test.dart`, `test/integration/notification_deeplink_integration_test.dart`. |
@@ -238,10 +241,10 @@ Current limitation to keep explicit:
 
 | Test ID | Scenario | Expected Result | Priority | Unit | Integration | Smoke | Fake Network | 3-party E2E | Current coverage / notes |
 |---|---|---|---|---|---|---|---|---|---|
-| GMN-101 | Visible remote push plus later local group replay | One group message yields one user-visible notification path; later local replay is suppressed. | P0 | Required | Required | Recommended | Required | Recommended | Covered by `test/integration/group_notification_dedupe_integration_test.dart` and `test/features/groups/application/group_message_listener_test.dart`. |
+| GMN-101 | Visible remote push plus later local group replay | One group message yields one user-visible notification path; later local replay is suppressed. | P0 | Required | Required | Recommended | Required | Recommended | Covered by `test/integration/group_notification_dedupe_integration_test.dart`, `test/features/push/application/show_notification_use_case_test.dart`, and `test/features/groups/application/group_message_listener_test.dart`. |
 | GMN-102 | Removed member loses notification eligibility | After removal, C does not receive later group notifications or later group messages. | P0 | Required | Required | Required | Required | Required | Notification suppression side is covered by `test/features/groups/application/group_message_listener_test.dart`; end-to-end receive blocking is covered by `test/features/groups/integration/group_membership_smoke_test.dart`. |
 | GMN-103 | Re-invited member regains notification eligibility only after rejoin | C stays silent while removed and starts receiving again only after rejoin becomes effective. | P0 | Required | Required | Required | Required | Required | Rejoin messaging is covered by `test/features/groups/integration/group_membership_smoke_test.dart`; exact notification-resume proof is still a gap. |
-| GMN-104 | Offline member reconnect / drain | If C is offline, allowed post-reconnect delivery yields one notification/materialization path without duplicate replay. | P1 | Required | Required | N/A | Required | Recommended | Current mixed-path delivery coverage exists in `test/features/groups/integration/group_resume_recovery_test.dart`, but the exact notification row is still not direct. |
+| GMN-104 | Offline member reconnect / drain | If C is offline, allowed post-reconnect delivery yields one notification/materialization path without duplicate replay. | P1 | Required | Required | N/A | Required | Recommended | Current mixed-path delivery coverage exists in `test/features/groups/integration/group_resume_recovery_test.dart`, including `10-B acceptance uses real GroupConversationWired sender path for media + resume fallback`, but the exact notification row is still not direct. |
 | GMN-105 | Group copy formatting remains truthful | Group notification title stays on the group and the body preserves `sender: text` semantics. | P1 | Recommended | Required | Recommended | N/A | Recommended | Covered by `test/features/groups/application/group_message_listener_test.dart` and `test/features/push/application/show_notification_use_case_test.dart`. |
 
 ### Preservation / Regression Cases
@@ -265,6 +268,7 @@ still only partly automated:
 - Core notification routing / smoke:
   - `flutter test test/integration/notification_tap_smoke_test.dart`
   - `flutter test test/features/push/application/chat_and_group_push_open_flow_test.dart`
+  - `flutter test test/features/push/application/resolve_group_notification_route_target_use_case_test.dart`
   - `flutter test test/integration/notification_deeplink_integration_test.dart`
 - 1:1 notification correctness:
   - `flutter test test/features/push/application/show_notification_use_case_test.dart`
