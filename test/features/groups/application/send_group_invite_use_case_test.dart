@@ -100,9 +100,7 @@ void main() {
   late PassthroughCryptoBridge bridge;
 
   setUp(() {
-    p2pService = FakeP2PService(
-      initialState: const NodeState(isStarted: true),
-    );
+    p2pService = FakeP2PService(initialState: const NodeState(isStarted: true));
     bridge = PassthroughCryptoBridge();
   });
 
@@ -112,61 +110,66 @@ void main() {
 
   group('sendGroupInvite', () {
     // --- Cycle 5.1 ---
-    test('encrypts invite payload and sends to recipient via p2pService',
-        () async {
-      final result = await sendGroupInvite(
-        p2pService: p2pService,
-        bridge: bridge,
-        recipientPeerId: '12D3KooWBob',
-        recipientMlKemPublicKey: 'bobMlKem64',
-        senderPeerId: '12D3KooWAlice',
-        senderUsername: 'Alice',
-        groupId: 'grp-abc123',
-        groupKey: 'base64GroupKey==',
-        keyEpoch: 1,
-        groupConfig: _testGroupConfig,
-      );
+    test(
+      'encrypts invite payload and sends to recipient via p2pService',
+      () async {
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
 
-      expect(result, equals(SendGroupInviteResult.success));
+        expect(result, equals(SendGroupInviteResult.success));
 
-      // p2pService.sendMessage was called with the recipient
-      expect(p2pService.sendMessageCallCount, equals(1));
-      expect(p2pService.lastSendMessagePeerId, equals('12D3KooWBob'));
+        // p2pService.sendMessage was called with the recipient
+        expect(p2pService.sendMessageCallCount, equals(1));
+        expect(p2pService.lastSendMessagePeerId, equals('12D3KooWBob'));
 
-      // The sent message is a v2 group_invite envelope
-      final sentContent = p2pService.lastSendMessageContent!;
-      final parsed =
-          GroupInvitePayload.parseEncryptedEnvelope(sentContent);
-      expect(parsed, isNotNull);
-      expect(parsed!['type'], equals('group_invite'));
-      expect(parsed['version'], equals('2'));
-    });
+        // The sent message is a v2 group_invite envelope
+        final sentContent = p2pService.lastSendMessageContent!;
+        final parsed = GroupInvitePayload.parseEncryptedEnvelope(sentContent);
+        expect(parsed, isNotNull);
+        expect(parsed!['type'], equals('group_invite'));
+        expect(parsed['version'], equals('2'));
+        expect(parsed['id'], isA<String>());
+        expect(parsed['senderUsername'], equals('Alice'));
+        expect(parsed['groupId'], equals('grp-abc123'));
+        expect(parsed['groupName'], equals('Book Club'));
+      },
+    );
 
     // --- Cycle 5.2 ---
-    test('returns encryptionRequired when recipientMlKemPublicKey is null',
-        () async {
-      final result = await sendGroupInvite(
-        p2pService: p2pService,
-        bridge: bridge,
-        recipientPeerId: '12D3KooWBob',
-        recipientMlKemPublicKey: null,
-        senderPeerId: '12D3KooWAlice',
-        senderUsername: 'Alice',
-        groupId: 'grp-abc123',
-        groupKey: 'base64GroupKey==',
-        keyEpoch: 1,
-        groupConfig: _testGroupConfig,
-      );
+    test(
+      'returns encryptionRequired when recipientMlKemPublicKey is null',
+      () async {
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: null,
+          senderPeerId: '12D3KooWAlice',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
 
-      expect(result, equals(SendGroupInviteResult.encryptionRequired));
-      expect(p2pService.sendMessageCallCount, equals(0));
-    });
+        expect(result, equals(SendGroupInviteResult.encryptionRequired));
+        expect(p2pService.sendMessageCallCount, equals(0));
+      },
+    );
 
     // --- Cycle 5.3 ---
     test('returns nodeNotRunning when p2pService is not started', () async {
-      final stoppedP2P = FakeP2PService(
-        initialState: NodeState.stopped,
-      );
+      final stoppedP2P = FakeP2PService(initialState: NodeState.stopped);
 
       final result = await sendGroupInvite(
         p2pService: stoppedP2P,
@@ -206,26 +209,28 @@ void main() {
     });
 
     // --- Cycle 5.5 ---
-    test('returns sendFailed when p2pService returns false and inbox fails',
-        () async {
-      p2pService.sendMessageResult = false;
-      p2pService.storeInInboxResult = false;
+    test(
+      'returns sendFailed when p2pService returns false and inbox fails',
+      () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = false;
 
-      final result = await sendGroupInvite(
-        p2pService: p2pService,
-        bridge: bridge,
-        recipientPeerId: '12D3KooWBob',
-        recipientMlKemPublicKey: 'bobMlKem64',
-        senderPeerId: '12D3KooWAlice',
-        senderUsername: 'Alice',
-        groupId: 'grp-abc123',
-        groupKey: 'base64GroupKey==',
-        keyEpoch: 1,
-        groupConfig: _testGroupConfig,
-      );
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
 
-      expect(result, equals(SendGroupInviteResult.sendFailed));
-    });
+        expect(result, equals(SendGroupInviteResult.sendFailed));
+      },
+    );
 
     // --- Cycle 5.6 ---
     test('stores invite in inbox when direct send fails', () async {
@@ -252,51 +257,56 @@ void main() {
 
       // The inbox message is a v2 group_invite envelope
       final inboxContent = p2pService.lastStoreInInboxMessage!;
-      final parsed =
-          GroupInvitePayload.parseEncryptedEnvelope(inboxContent);
+      final parsed = GroupInvitePayload.parseEncryptedEnvelope(inboxContent);
       expect(parsed, isNotNull);
+      expect(parsed!['id'], isA<String>());
+      expect(parsed['senderUsername'], equals('Alice'));
+      expect(parsed['groupId'], equals('grp-abc123'));
+      expect(parsed['groupName'], equals('Book Club'));
     });
 
     // --- Cycle 5.7 ---
-    test('invite payload includes full groupConfig with members array',
-        () async {
-      final result = await sendGroupInvite(
-        p2pService: p2pService,
-        bridge: bridge,
-        recipientPeerId: '12D3KooWBob',
-        recipientMlKemPublicKey: 'bobMlKem64',
-        senderPeerId: '12D3KooWAlice',
-        senderUsername: 'Alice',
-        groupId: 'grp-abc123',
-        groupKey: 'base64GroupKey==',
-        keyEpoch: 1,
-        groupConfig: _testGroupConfig,
-      );
+    test(
+      'invite payload includes full groupConfig with members array',
+      () async {
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
 
-      expect(result, equals(SendGroupInviteResult.success));
+        expect(result, equals(SendGroupInviteResult.success));
 
-      // With PassthroughCryptoBridge, ciphertext == plaintext (inner JSON)
-      final sentContent = p2pService.lastSendMessageContent!;
-      final envelope = jsonDecode(sentContent) as Map<String, dynamic>;
-      final encrypted = envelope['encrypted'] as Map<String, dynamic>;
-      final innerJson = encrypted['ciphertext'] as String;
+        // With PassthroughCryptoBridge, ciphertext == plaintext (inner JSON)
+        final sentContent = p2pService.lastSendMessageContent!;
+        final envelope = jsonDecode(sentContent) as Map<String, dynamic>;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final innerJson = encrypted['ciphertext'] as String;
 
-      final inner = jsonDecode(innerJson) as Map<String, dynamic>;
-      expect(inner['groupId'], equals('grp-abc123'));
-      expect(inner['groupKey'], equals('base64GroupKey=='));
-      expect(inner['keyEpoch'], equals(1));
+        final inner = jsonDecode(innerJson) as Map<String, dynamic>;
+        expect(inner['groupId'], equals('grp-abc123'));
+        expect(inner['groupKey'], equals('base64GroupKey=='));
+        expect(inner['keyEpoch'], equals(1));
 
-      final config = inner['groupConfig'] as Map<String, dynamic>;
-      expect(config['name'], equals('Book Club'));
-      final members = config['members'] as List<dynamic>;
-      expect(members, hasLength(2));
+        final config = inner['groupConfig'] as Map<String, dynamic>;
+        expect(config['name'], equals('Book Club'));
+        final members = config['members'] as List<dynamic>;
+        expect(members, hasLength(2));
 
-      final firstMember = members[0] as Map<String, dynamic>;
-      expect(firstMember['peerId'], equals('12D3KooWAlice'));
-      expect(firstMember['role'], equals('admin'));
-      expect(firstMember['publicKey'], equals('alicePubKey64'));
-      expect(firstMember['mlKemPublicKey'], equals('aliceMlKem64'));
-    });
+        final firstMember = members[0] as Map<String, dynamic>;
+        expect(firstMember['peerId'], equals('12D3KooWAlice'));
+        expect(firstMember['role'], equals('admin'));
+        expect(firstMember['publicKey'], equals('alicePubKey64'));
+        expect(firstMember['mlKemPublicKey'], equals('aliceMlKem64'));
+      },
+    );
   });
 
   group('sendGroupInvitesInParallel', () {
@@ -309,13 +319,12 @@ void main() {
       groupConfig: _testGroupConfig,
     );
 
-    test('sends invites to all recipients and returns success count',
-        () async {
+    test('sends invites to all recipients and returns success count', () async {
       final recipients = [
         (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
         (
           peerId: '12D3KooWCharlie',
-          mlKemPublicKey: 'charlieMlKem64' as String?
+          mlKemPublicKey: 'charlieMlKem64' as String?,
         ),
       ];
 
@@ -345,7 +354,7 @@ void main() {
         (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
         (
           peerId: '12D3KooWCharlie',
-          mlKemPublicKey: 'charlieMlKem64' as String?
+          mlKemPublicKey: 'charlieMlKem64' as String?,
         ),
         (peerId: '12D3KooWDave', mlKemPublicKey: 'daveMlKem64' as String?),
       ];
@@ -378,7 +387,7 @@ void main() {
         (peerId: '12D3KooWNoKey', mlKemPublicKey: null as String?),
         (
           peerId: '12D3KooWCharlie',
-          mlKemPublicKey: 'charlieMlKem64' as String?
+          mlKemPublicKey: 'charlieMlKem64' as String?,
         ),
       ];
 
@@ -422,7 +431,7 @@ void main() {
         (peerId: '12D3KooWEvil', mlKemPublicKey: 'badKey' as String?),
         (
           peerId: '12D3KooWCharlie',
-          mlKemPublicKey: 'charlieMlKem64' as String?
+          mlKemPublicKey: 'charlieMlKem64' as String?,
         ),
       ];
 

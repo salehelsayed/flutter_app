@@ -81,6 +81,14 @@ class _DelayedMediaDownloadBridge extends FakeBridge {
       lastCommand = cmd;
       commandLog.add(cmd!);
       await downloadGate.future;
+      final payload =
+          parsed['payload'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+      final outputPath = payload['outputPath'] as String?;
+      if (outputPath != null) {
+        final file = File(outputPath);
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes(const <int>[1, 2, 3]);
+      }
       return jsonEncode({'ok': true});
     }
 
@@ -2612,7 +2620,7 @@ void main() {
         );
         addTearDown(gate.clear);
         await gate.markAnnouncement(
-          payload: 'group:group-1',
+          payload: 'group:group-1|message:group-msg-1',
           messageId: 'group-msg-1',
         );
 

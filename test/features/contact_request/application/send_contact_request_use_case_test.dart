@@ -231,30 +231,33 @@ void main() {
     expect(sent['payload']['mlkem'], equals('ownMlKemPub'));
   });
 
-  test('sanitizes dangerous bidi controls in outgoing username payload', () async {
-    identityRepo.identity = IdentityModel(
-      peerId: _testIdentity.peerId,
-      publicKey: _testIdentity.publicKey,
-      privateKey: _testIdentity.privateKey,
-      mnemonic12: _testIdentity.mnemonic12,
-      mlKemPublicKey: _testIdentity.mlKemPublicKey,
-      createdAt: _testIdentity.createdAt,
-      updatedAt: _testIdentity.updatedAt,
-      username: 'A\u202Eli\u200Fce',
-    );
+  test(
+    'sanitizes dangerous bidi controls in outgoing username payload',
+    () async {
+      identityRepo.identity = IdentityModel(
+        peerId: _testIdentity.peerId,
+        publicKey: _testIdentity.publicKey,
+        privateKey: _testIdentity.privateKey,
+        mnemonic12: _testIdentity.mnemonic12,
+        mlKemPublicKey: _testIdentity.mlKemPublicKey,
+        createdAt: _testIdentity.createdAt,
+        updatedAt: _testIdentity.updatedAt,
+        username: 'A\u202Eli\u200Fce',
+      );
 
-    final result = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: 'targetPeer123456789',
-    );
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+      );
 
-    expect(result, equals(SendContactRequestResult.success));
-    final sent =
-        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-    expect(sent['payload']['un'], equals('Ali\u200Fce'));
-  });
+      expect(result, equals(SendContactRequestResult.success));
+      final sent =
+          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+      expect(sent['payload']['un'], equals('Ali\u200Fce'));
+    },
+  );
 
   test('nodeNotRunning: returns error when P2P node is stopped', () async {
     p2pService.currentState = const NodeState(isStarted: false);
@@ -435,6 +438,31 @@ void main() {
     final ts = sent['ts'] as String;
     expect(DateTime.tryParse(ts), isNotNull);
     expect(ts, endsWith('Z'));
+  });
+
+  test('v2: envelope carries senderUsername when available', () async {
+    identityRepo.identity = IdentityModel(
+      peerId: _testIdentity.peerId,
+      publicKey: _testIdentity.publicKey,
+      privateKey: _testIdentity.privateKey,
+      mnemonic12: _testIdentity.mnemonic12,
+      mlKemPublicKey: _testIdentity.mlKemPublicKey,
+      createdAt: _testIdentity.createdAt,
+      updatedAt: _testIdentity.updatedAt,
+      username: 'Alice',
+    );
+
+    await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+    );
+
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(sent['senderUsername'], equals('Alice'));
   });
 
   test(

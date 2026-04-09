@@ -142,9 +142,10 @@ void _finalizeSuccessfulPublishInboxStoreInBackground({
   unawaited(() async {
     try {
       final inboxOk = await inboxFuture;
-      await msgRepo.updateInboxStored(messageId, stored: inboxOk);
       if (inboxOk) {
+        await msgRepo.updateInboxStored(messageId, stored: true);
         await msgRepo.updateInboxRetryPayload(messageId, null);
+        await msgRepo.updateMessageStatus(messageId, 'sent');
       }
 
       emitFlowEvent(
@@ -524,9 +525,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     }
     final resolvedInboxOk = inboxResult;
     final finalMessage = prePersistMessage.copyWith(
-      status: 'sent',
+      status: resolvedInboxOk == true ? 'sent' : 'pending',
       wireEnvelope: null,
-      inboxStored: resolvedInboxOk ?? false,
+      inboxStored: resolvedInboxOk == true,
       inboxRetryPayload: resolvedInboxOk == true
           ? null
           : prePersistMessage.inboxRetryPayload,
@@ -579,9 +580,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     }
     final resolvedInboxOk = inboxResult;
     final finalMessage = prePersistMessage.copyWith(
-      status: 'sent',
+      status: resolvedInboxOk == true ? 'sent' : 'pending',
       wireEnvelope: null,
-      inboxStored: resolvedInboxOk ?? false,
+      inboxStored: resolvedInboxOk == true,
       inboxRetryPayload: resolvedInboxOk == true
           ? null
           : prePersistMessage.inboxRetryPayload,

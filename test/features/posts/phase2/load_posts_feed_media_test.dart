@@ -63,7 +63,7 @@ void main() {
       expect(feed.single.media, hasLength(1));
       expect(
         feed.single.media.single.localPath,
-        '/tmp/test_docs/post_media/post-1/blob-1.jpg',
+        endsWith('test_docs/post_media/post-1/blob-1.jpg'),
       );
     },
   );

@@ -15,7 +15,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 ///   - `inbox_retry_payload IS NOT NULL`
 ///
 /// For each, reconstructs the inbox store call from persisted JSON payload,
-/// calls `callGroupInboxStore`, and updates `inbox_stored` on success.
+/// calls `callGroupInboxStore`, and closes the row as fully sent on success.
 ///
 /// Returns the number of successfully retried messages.
 Future<int> retryFailedGroupInboxStores({
@@ -82,6 +82,8 @@ Future<int> retryFailedGroupInboxStores({
       );
 
       await msgRepo.updateInboxStored(msg.id, stored: true);
+      await msgRepo.updateInboxRetryPayload(msg.id, null);
+      await msgRepo.updateMessageStatus(msg.id, 'sent');
       retriedCount++;
 
       emitFlowEvent(

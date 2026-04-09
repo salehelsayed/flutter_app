@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -731,6 +732,79 @@ func TestBuildIntroductionPushMessage_UsesIntrosRouteAndGenericCopy(t *testing.T
 	}
 }
 
+func TestBuildContactRequestPushMessage_UsesContactRequestRoute(t *testing.T) {
+	msg := buildPushMessage(
+		"fcm-token",
+		"peer-from",
+		`{"type":"contact_request","version":"2","msgId":"req-1","senderUsername":"Alice","encrypted":{"ephemeralPublicKey":"e","ciphertext":"c","nonce":"n"}}`,
+	)
+
+	if msg.Data["type"] != "contact_request" {
+		t.Fatalf("type = %q, want %q", msg.Data["type"], "contact_request")
+	}
+	if msg.Data["sender_id"] != "peer-from" {
+		t.Fatalf("sender_id = %q, want %q", msg.Data["sender_id"], "peer-from")
+	}
+	if msg.Data["message_id"] != "req-1" {
+		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "req-1")
+	}
+	if msg.Data["title"] != contactRequestPushTitle {
+		t.Fatalf("title = %q, want %q", msg.Data["title"], contactRequestPushTitle)
+	}
+	if msg.Data["body"] != "Alice wants to connect" {
+		t.Fatalf("body = %q, want %q", msg.Data["body"], "Alice wants to connect")
+	}
+}
+
+func TestBuildGroupInvitePushMessage_UsesInviteRouteAndMetadata(t *testing.T) {
+	msg := buildPushMessage(
+		"fcm-token",
+		"peer-from",
+		`{"type":"group_invite","version":"2","id":"invite-1","senderPeerId":"peer-from","senderUsername":"Alice","groupId":"group-1","groupName":"Book Club","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+	)
+
+	if msg.Data["type"] != "group_invite" {
+		t.Fatalf("type = %q, want %q", msg.Data["type"], "group_invite")
+	}
+	if msg.Data["groupId"] != "group-1" {
+		t.Fatalf("groupId = %q, want %q", msg.Data["groupId"], "group-1")
+	}
+	if msg.Data["message_id"] != "invite-1" {
+		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "invite-1")
+	}
+	if msg.Data["title"] != "Book Club" {
+		t.Fatalf("title = %q, want %q", msg.Data["title"], "Book Club")
+	}
+	if msg.Data["body"] != "Alice invited you to Book Club" {
+		t.Fatalf("body = %q, want %q", msg.Data["body"], "Alice invited you to Book Club")
+	}
+}
+
+func TestInboxStore_UnsupportedEnvelopeDoesNotSendPush(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	tokenStore.RegisterToken("peer-recipient", "fcm-token", "android")
+
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+
+	stored := inbox.Store("peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"presence_ping","id":"unsupported-1","payload":{"status":"online"}}`,
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if !stored {
+		t.Fatal("expected unsupported envelope to still be stored in inbox")
+	}
+
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("unexpected push send for unsupported envelope")
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
 func TestBuildGroupPushMessage_IncludesTopLevelNotificationAndData(t *testing.T) {
 	msg := buildGroupPushMessage(
 		"fcm-token",
@@ -813,11 +887,93 @@ func TestHandleInboxStream_StoreTriggersPushSendAfterPersistence(t *testing.T) {
 }
 
 func TestPushService_SendNotification_UnregistersInvalidToken(t *testing.T) {
-	t.Skip("push sender injection coverage is outside Section 4 and not required for this verification gate")
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	push.retryDelays = []time.Duration{0}
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+
+	tokenStore.RegisterToken("peer-recipient", "invalid-token", "ios")
+	recorder.onSend = func(ctx context.Context, msg *messaging.Message) (string, error) {
+		return "", fmt.Errorf("registration-token-not-registered")
+	}
+
+	push.SendNotification(
+		context.Background(),
+		"peer-recipient",
+		"peer-sender",
+		`{"id":"msg-chat-1","text":"hello"}`,
+	)
+
+	if recorder.SendCallCount() != 1 {
+		t.Fatalf("send calls = %d, want 1", recorder.SendCallCount())
+	}
+	if tokenStore.LookupToken("peer-recipient") != nil {
+		t.Fatal("expected invalid token to be removed after failed send")
+	}
 }
 
 func TestPushService_SendNotification_LogsWhenTokenMissing(t *testing.T) {
-	t.Skip("push sender injection coverage is outside Section 4 and not required for this verification gate")
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+
+	push.SendNotification(
+		context.Background(),
+		"peer-missing",
+		"peer-sender",
+		`{"id":"msg-chat-1","text":"hello"}`,
+	)
+
+	if recorder.SendCallCount() != 0 {
+		t.Fatalf("send calls = %d, want 0 when token is missing", recorder.SendCallCount())
+	}
+}
+
+func TestPushService_SendGroupNotification_RetriesTransientFailure(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	push.retryDelays = []time.Duration{0}
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+
+	tokenStore.RegisterToken("peer-recipient", "recipient-token", "ios")
+
+	attempts := 0
+	recorder.onSend = func(ctx context.Context, msg *messaging.Message) (string, error) {
+		attempts++
+		if attempts == 1 {
+			return "", fmt.Errorf("temporary push outage")
+		}
+		return "mock-message-id", nil
+	}
+
+	push.SendGroupNotification(
+		context.Background(),
+		"peer-recipient",
+		"group-1",
+		"Team Chat",
+		"Alice: hello",
+		"group-msg-1",
+	)
+
+	if recorder.SendCallCount() != 2 {
+		t.Fatalf("send calls = %d, want 2", recorder.SendCallCount())
+	}
+	if tokenStore.LookupToken("peer-recipient") == nil {
+		t.Fatal("expected transient group push failure to keep the token registered")
+	}
+
+	messages := recorder.Messages()
+	if len(messages) != 2 {
+		t.Fatalf("recorded messages = %d, want 2", len(messages))
+	}
+	for _, msg := range messages {
+		if msg.Data["groupId"] != "group-1" {
+			t.Fatalf("groupId = %q, want %q", msg.Data["groupId"], "group-1")
+		}
+	}
 }
 
 func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testing.T) {
@@ -1057,6 +1213,69 @@ func TestHandleInboxStream_RetrievePendingAndAck(t *testing.T) {
 	final := retrievePending()
 	if final.Status != "NO_MESSAGES" {
 		t.Fatalf("expected final retrieve_pending status NO_MESSAGES, got %q", final.Status)
+	}
+}
+
+func TestHandleInboxStream_RetrievePendingTrimsOversizedResponses(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+	senderPeer := env.sender.ID().String()
+	oversizedPayload := fmt.Sprintf(
+		`{"type":"chat_message","version":"1","payload":{"id":"%%s","text":"%s","senderUsername":"Alice"}}`,
+		strings.Repeat("x", 4000),
+	)
+
+	storeMessage := func(id string) {
+		t.Helper()
+
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open store stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "store",
+			To:      recipientPeer,
+			From:    senderPeer,
+			Message: fmt.Sprintf(oversizedPayload, id),
+		})
+		resp := recvInboxResp(t, stream)
+		if resp.Status != "OK" {
+			t.Fatalf("store status = %q, want OK", resp.Status)
+		}
+	}
+
+	for i := 0; i < 40; i++ {
+		storeMessage(fmt.Sprintf("msg-%02d", i))
+	}
+
+	stream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open retrieve_pending stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action: "retrieve_pending",
+		Limit:  50,
+	})
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "OK" {
+		t.Fatalf("retrieve_pending status = %q, want OK", resp.Status)
+	}
+	if len(resp.Messages) == 0 {
+		t.Fatal("expected at least one message in trimmed response")
+	}
+	if len(resp.Messages) >= 40 {
+		t.Fatalf("expected trimmed response to include fewer than 40 messages, got %d", len(resp.Messages))
+	}
+	if !resp.HasMore {
+		t.Fatal("expected hasMore=true after trimming oversized retrieve_pending response")
 	}
 }
 

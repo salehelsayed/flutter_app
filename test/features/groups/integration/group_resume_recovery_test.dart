@@ -14,6 +14,7 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
@@ -104,6 +105,70 @@ class _InboxPage {
   _InboxPage(this.messages, this.nextCursor);
 }
 
+class _Section10TempMediaFileManager extends FakeMediaFileManager {
+  _Section10TempMediaFileManager(this.rootDir);
+
+  final Directory rootDir;
+
+  @override
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    final extension = p.extension(sourceFilePath);
+    final directory = Directory(
+      p.join(rootDir.path, 'pending_uploads', messageId),
+    );
+    if (!directory.existsSync()) {
+      directory.createSync(recursive: true);
+    }
+    final destination = p.join(directory.path, '$attachmentId$extension');
+    await File(sourceFilePath).copy(destination);
+    return p.join('pending_uploads', messageId, '$attachmentId$extension');
+  }
+
+  @override
+  String relativePathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) {
+    return p.join('media', contactPeerId, '$blobId${_extensionForMime(mime)}');
+  }
+
+  @override
+  Future<String> resolveStoredPath(String storedPath) async {
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
+        storedPath.startsWith('media\\')) {
+      return p.join(rootDir.path, storedPath);
+    }
+    return storedPath;
+  }
+
+  @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final relativePath = relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
+    final absolutePath = p.join(rootDir.path, relativePath);
+    final file = File(absolutePath);
+    if (!file.parent.existsSync()) {
+      file.parent.createSync(recursive: true);
+    }
+    return absolutePath;
+  }
+}
+
 Map<String, dynamic> latestBridgePayload(FakeBridge bridge, String command) {
   final raw = bridge.sentMessages.lastWhere(
     (message) =>
@@ -180,6 +245,7 @@ class _Section10MirroringBridge extends FakeBridge {
     required this.groupRepo,
     List<String>? operationLog,
     this.publishFailuresRemaining = 0,
+    this.inboxStoreFailuresRemaining = 0,
     this.inboxStoreResponse,
     Map<String, Completer<void>>? commandGates,
   }) : operationLog = operationLog ?? <String>[],
@@ -190,6 +256,7 @@ class _Section10MirroringBridge extends FakeBridge {
   final InMemoryGroupRepository groupRepo;
   final List<String> operationLog;
   int publishFailuresRemaining;
+  int inboxStoreFailuresRemaining;
   final Map<String, dynamic>? inboxStoreResponse;
   final Map<String, Completer<void>> commandGates;
 
@@ -219,6 +286,10 @@ class _Section10MirroringBridge extends FakeBridge {
       case 'group:publish':
         return _handlePublish(parsed['payload'] as Map<String, dynamic>);
       case 'group:inboxStore':
+        if (inboxStoreFailuresRemaining > 0) {
+          inboxStoreFailuresRemaining--;
+          return jsonEncode({'ok': false, 'errorCode': 'INBOX_STORE_FAILED'});
+        }
         return jsonEncode(inboxStoreResponse ?? {'ok': true});
       default:
         if (cmd != null && responses.containsKey(cmd)) {
@@ -357,11 +428,36 @@ MediaAttachment _uploadedMedia({
   );
 }
 
+String _extensionForMime(String mime) {
+  if (mime == 'image/png') return '.png';
+  if (mime == 'image/jpeg') return '.jpg';
+  if (mime == 'audio/mp4' || mime == 'audio/x-m4a') return '.m4a';
+  if (mime == 'audio/mpeg') return '.mp3';
+  if (mime == 'video/mp4') return '.mp4';
+  return '';
+}
+
 Future<void> _sendText(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField), text);
   await tester.pump();
   await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
   await tester.pump();
+}
+
+Future<void> _pumpUntilAsyncCondition(
+  WidgetTester tester, {
+  required bool Function() condition,
+  int maxTicks = 200,
+}) async {
+  var ticks = 0;
+  while (!condition() && ticks < maxTicks) {
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pump(const Duration(milliseconds: 50));
+    ticks++;
+  }
+  expect(condition(), isTrue, reason: 'Condition was not met in time');
 }
 
 Future<void> _saveKey(
@@ -622,7 +718,7 @@ Future<void> _section10WidgetMediaLifecycleProof(
     sender: admin,
     groupId: groupId,
     bridge: senderBridge,
-    mediaFileManager: FakeMediaFileManager(),
+    mediaFileManager: _Section10TempMediaFileManager(tempDir),
     initialAttachments: [attachment],
     uploadMediaFn:
         ({
@@ -659,10 +755,9 @@ Future<void> _section10WidgetMediaLifecycleProof(
     afterPause: () async {
       network.unsubscribe(groupId, reader.peerId);
       await _sendText(tester, 'Photo update');
-      await _pumpUntil(
+      await _pumpUntilAsyncCondition(
         tester,
-        () => senderBridge.commandLog.contains('group:inboxStore'),
-        maxPumps: 120,
+        condition: () => senderBridge.commandLog.contains('group:inboxStore'),
       );
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
@@ -1009,6 +1104,17 @@ void main() {
   });
 
   Future<void> pump() => Future.delayed(const Duration(milliseconds: 50));
+
+  Future<void> pumpUntilAsync(
+    Future<bool> Function() condition, {
+    int maxPumps = 40,
+  }) async {
+    var pumps = 0;
+    while (!(await condition()) && pumps < maxPumps) {
+      await pump();
+      pumps++;
+    }
+  }
 
   group('Group resume recovery integration tests', () {
     test(
@@ -2470,60 +2576,211 @@ void main() {
         bob.dispose();
       });
 
-      test("inbox store failure doesn't block publish", () async {
-        final admin = GroupTestUser.create(
-          peerId: 'admin-inbox-fail-peer',
-          username: 'Alice',
-          network: network,
-          bridge: _Section10MirroringBridge(
+      test(
+        "inbox store failure doesn't block publish but leaves sender state pending",
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-inbox-fail-peer',
+            username: 'Alice',
+            network: network,
+            bridge: _Section10MirroringBridge(
+              network: network,
+              msgRepo: InMemoryGroupMessageRepository(),
+              groupRepo: InMemoryGroupRepository(),
+              inboxStoreResponse: {
+                'ok': false,
+                'errorCode': 'INBOX_STORE_FAILED',
+              },
+            ),
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-inbox-fail-peer',
+            username: 'Bob',
+            network: network,
+          );
+
+          const groupId = 'group-inbox-fail';
+          await admin.createGroup(groupId: groupId, name: 'Inbox Fail');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+
+          admin.start();
+          bob.start();
+
+          final (result, sent) = await admin.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: 'Publish despite inbox failure',
+          );
+
+          expect(result, SendGroupMessageResult.success);
+          expect(sent, isNotNull);
+          expect(sent!.status, 'pending');
+          expect(sent.inboxStored, isFalse);
+          expect(admin.bridge.commandLog, contains('group:publish'));
+          expect(admin.bridge.commandLog, contains('group:inboxStore'));
+
+          await pump();
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.any(
+              (message) => message.text == 'Publish despite inbox failure',
+            ),
+            isTrue,
+          );
+
+          admin.dispose();
+          bob.dispose();
+        },
+      );
+
+      test(
+        'rapid pause/resume closes a pending live-peer send via inbox retry exactly once',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
             network: network,
             msgRepo: InMemoryGroupMessageRepository(),
             groupRepo: InMemoryGroupRepository(),
-            inboxStoreResponse: {
-              'ok': false,
-              'errorCode': 'INBOX_STORE_FAILED',
+            inboxStoreFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-rapid-pending-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final liveReader = GroupTestUser.create(
+            peerId: 'reader-rapid-live-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final inboxReader = GroupTestUser.create(
+            peerId: 'reader-rapid-inbox-peer',
+            username: 'Carol',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final inboxBridge = inboxReader.bridge as _CursorInboxBridge;
+          var injectedRecoveredInbox = false;
+
+          const groupId = 'group-rapid-pending-recovery';
+          await admin.createGroup(groupId: groupId, name: 'Rapid Pending');
+          await admin.addMember(groupId: groupId, invitee: liveReader);
+          await admin.addMember(groupId: groupId, invitee: inboxReader);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(liveReader, groupId, 1, 'k1');
+          await _saveKey(inboxReader, groupId, 1, 'k1');
+          network.unsubscribe(groupId, inboxReader.peerId);
+
+          admin.start();
+          liveReader.start();
+          inboxReader.start();
+
+          final (initialResult, initialMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'Rapid pending recovery',
+              );
+
+          expect(initialResult, SendGroupMessageResult.success);
+          expect(initialMessage, isNotNull);
+          expect(initialMessage!.status, 'pending');
+          expect(initialMessage.inboxStored, isFalse);
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            hasLength(1),
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(1),
+          );
+
+          await pump();
+          final liveBeforeResume = await liveReader.loadGroupMessages(groupId);
+          expect(
+            liveBeforeResume.where(
+              (message) => message.id == initialMessage.id,
+            ),
+            hasLength(1),
+          );
+
+          await simulateRapidLockUnlock(
+            bridge: admin.bridge,
+            p2pService: FakeP2PService(),
+            messageRepo: InMemoryMessageRepository(),
+            groupMsgRepo: admin.msgRepo,
+            cycles: 2,
+            retryFailedGroupInboxStoresFn: () async {
+              final retried = await retryFailedGroupInboxStores(
+                bridge: admin.bridge,
+                msgRepo: admin.msgRepo,
+              );
+              if (retried > 0 && !injectedRecoveredInbox) {
+                _injectInboxMessageFromLatestStore(
+                  senderBridge: admin.bridge,
+                  receiverBridge: inboxBridge,
+                  receiverPeerId: inboxReader.peerId,
+                  groupId: groupId,
+                );
+                injectedRecoveredInbox = true;
+              }
+              return retried;
             },
-          ),
-        );
-        final bob = GroupTestUser.create(
-          peerId: 'reader-inbox-fail-peer',
-          username: 'Bob',
-          network: network,
-        );
+          );
 
-        const groupId = 'group-inbox-fail';
-        await admin.createGroup(groupId: groupId, name: 'Inbox Fail');
-        await admin.addMember(groupId: groupId, invitee: bob);
-        await _saveKey(admin, groupId, 1, 'k1');
-        await _saveKey(bob, groupId, 1, 'k1');
+          await drainGroupOfflineInbox(
+            bridge: inboxReader.bridge,
+            groupRepo: inboxReader.groupRepo,
+            msgRepo: inboxReader.msgRepo,
+          );
 
-        admin.start();
-        bob.start();
+          final finalMessage = await _latestOutgoingMessage(
+            admin.msgRepo,
+            groupId,
+            text: 'Rapid pending recovery',
+          );
+          expect(finalMessage.id, initialMessage.id);
+          expect(finalMessage.status, 'sent');
+          expect(finalMessage.inboxStored, isTrue);
+          expect(finalMessage.inboxRetryPayload, isNull);
+          expect(
+            (await admin.msgRepo.getMessagesPage(groupId, limit: 20)).where(
+              (message) =>
+                  !message.isIncoming &&
+                  message.text == 'Rapid pending recovery',
+            ),
+            hasLength(1),
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            hasLength(1),
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(2),
+          );
 
-        final (result, sent) = await admin.sendGroupMessageViaBridge(
-          groupId: groupId,
-          text: 'Publish despite inbox failure',
-        );
+          final liveAfterResume = await liveReader.loadGroupMessages(groupId);
+          expect(
+            liveAfterResume.where((message) => message.id == initialMessage.id),
+            hasLength(1),
+          );
 
-        expect(result, SendGroupMessageResult.success);
-        expect(sent, isNotNull);
-        expect(sent!.status, 'sent');
-        expect(sent.inboxStored, isFalse);
-        expect(admin.bridge.commandLog, contains('group:publish'));
-        expect(admin.bridge.commandLog, contains('group:inboxStore'));
+          final inboxRecoveredMessages = await inboxReader.loadGroupMessages(
+            groupId,
+          );
+          expect(
+            inboxRecoveredMessages.where(
+              (message) => message.id == initialMessage.id,
+            ),
+            hasLength(1),
+          );
 
-        await pump();
-        final bobMessages = await bob.loadGroupMessages(groupId);
-        expect(
-          bobMessages.any(
-            (message) => message.text == 'Publish despite inbox failure',
-          ),
-          isTrue,
-        );
-
-        admin.dispose();
-        bob.dispose();
-      });
+          admin.dispose();
+          liveReader.dispose();
+          inboxReader.dispose();
+        },
+      );
 
       test('stuck sending recovery after background', () async {
         final publishGate = Completer<void>();
@@ -2793,7 +3050,13 @@ void main() {
           expect(secondSent, isNotNull);
           expect(secondSent!.inboxStored, isTrue);
 
-          await pump();
+          await pumpUntilAsync(() async {
+            final texts = (await onlineReader.loadGroupMessages(groupId))
+                .where((message) => message.isIncoming)
+                .map((message) => message.text)
+                .toList(growable: false);
+            return texts.length >= 3;
+          }, maxPumps: 120);
 
           onlineTexts = (await onlineReader.loadGroupMessages(groupId))
               .where((message) => message.isIncoming)

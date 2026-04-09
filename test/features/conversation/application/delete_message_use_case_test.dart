@@ -109,7 +109,7 @@ void main() {
         expect(await reactionRepo.getReactionsForMessage(message.id), isEmpty);
         expect(
           mediaFileManager.deletedFilePaths,
-          contains('/tmp/test_docs/media/msg-1/photo.jpg'),
+          contains(endsWith('test_docs/media/msg-1/photo.jpg')),
         );
         expect(
           mediaFileManager.deletedFilePaths,

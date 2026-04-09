@@ -32,9 +32,20 @@ const (
 	pushNotificationTitle      = "New Message"
 	pushNotificationBody       = "You have a new message"
 	pushNotificationChannelID  = "mknoon_messages"
+	contactRequestPushTitle    = "New Contact Request"
+	contactRequestPushBody     = "Open Mknoon to respond"
+	groupInvitePushTitle       = "Group Invite"
+	groupInvitePushBody        = "Open Mknoon to review"
 	introPushNotificationTitle = "New Introduction"
 	introPushNotificationBody  = "Open Mknoon to review"
 )
+
+func defaultPushRetryDelays() []time.Duration {
+	return []time.Duration{
+		250 * time.Millisecond,
+		1 * time.Second,
+	}
+}
 
 // --- Push service ---
 
@@ -42,6 +53,7 @@ type PushService struct {
 	client       *messaging.Client
 	tokenBackend PushTokenBackend
 	sender       func(context.Context, *messaging.Message) (string, error)
+	retryDelays  []time.Duration
 }
 
 type tokenEntry struct {
@@ -61,6 +73,7 @@ func newPushServiceWithTokenBackend(
 ) *PushService {
 	ps := &PushService{
 		tokenBackend: tokenBackend,
+		retryDelays:  defaultPushRetryDelays(),
 	}
 
 	opt := option.WithCredentialsFile(serviceAccountPath)
@@ -85,6 +98,7 @@ func newPushServiceWithTokenBackend(
 func NewPushServiceWithBackend(tokenBackend PushTokenBackend) *PushService {
 	return &PushService{
 		tokenBackend: tokenBackend,
+		retryDelays:  defaultPushRetryDelays(),
 	}
 }
 
@@ -108,26 +122,14 @@ func (ps *PushService) UnregisterToken(peerId string) {
 func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId, message string) {
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
+		pushSentCounter.WithLabelValues("missing_token").Inc()
+		log.Printf("[PUSH] Skip chat push to %s: no registered token",
+			toPeerId[:min(20, len(toPeerId))])
 		return
 	}
 
 	msg := buildPushMessage(entry.Token, fromPeerId, message)
-
-	err := ps.send(ctx, msg)
-	if err != nil {
-		log.Printf("[PUSH] Failed to send to %s: %v", toPeerId[:min(20, len(toPeerId))], err)
-		// Remove invalid tokens
-		if isInvalidTokenError(err) {
-			ps.tokenBackend.UnregisterToken(toPeerId)
-			pushSentCounter.WithLabelValues("invalid_token").Inc()
-			log.Printf("[PUSH] Removed invalid token for %s", toPeerId[:min(20, len(toPeerId))])
-		} else {
-			pushSentCounter.WithLabelValues("failed").Inc()
-		}
-		return
-	}
-	pushSentCounter.WithLabelValues("success").Inc()
-	log.Printf("[PUSH] Notification sent to %s", toPeerId[:min(20, len(toPeerId))])
+	ps.sendWithRetry(ctx, toPeerId, msg, "chat", "")
 }
 
 func (ps *PushService) SendGroupNotification(
@@ -140,25 +142,15 @@ func (ps *PushService) SendGroupNotification(
 ) {
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
+		pushSentCounter.WithLabelValues("missing_token").Inc()
+		log.Printf("[PUSH] Skip group push to %s for group %s: no registered token",
+			toPeerId[:min(20, len(toPeerId))],
+			groupId[:min(20, len(groupId))])
 		return
 	}
 
 	msg := buildGroupPushMessage(entry.Token, groupId, title, body, messageID)
-
-	err := ps.send(ctx, msg)
-	if err != nil {
-		log.Printf("[PUSH] Failed to send group push to %s: %v", toPeerId[:min(20, len(toPeerId))], err)
-		if isInvalidTokenError(err) {
-			ps.tokenBackend.UnregisterToken(toPeerId)
-			pushSentCounter.WithLabelValues("invalid_token").Inc()
-			log.Printf("[PUSH] Removed invalid token for %s", toPeerId[:min(20, len(toPeerId))])
-		} else {
-			pushSentCounter.WithLabelValues("failed").Inc()
-		}
-		return
-	}
-	pushSentCounter.WithLabelValues("success").Inc()
-	log.Printf("[PUSH] Group notification sent to %s", toPeerId[:min(20, len(toPeerId))])
+	ps.sendWithRetry(ctx, toPeerId, msg, "group", groupId)
 }
 
 func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
@@ -173,19 +165,141 @@ func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
 	return err
 }
 
+func (ps *PushService) sendWithRetry(
+	ctx context.Context,
+	toPeerId string,
+	msg *messaging.Message,
+	pushKind string,
+	groupId string,
+) {
+	totalAttempts := len(ps.retryDelays) + 1
+
+	for attempt := 1; attempt <= totalAttempts; attempt++ {
+		err := ps.send(ctx, msg)
+		if err == nil {
+			pushSentCounter.WithLabelValues("success").Inc()
+			if pushKind == "group" {
+				log.Printf("[PUSH] Group notification sent to %s for group %s (attempt %d/%d)",
+					toPeerId[:min(20, len(toPeerId))],
+					groupId[:min(20, len(groupId))],
+					attempt,
+					totalAttempts)
+			} else {
+				log.Printf("[PUSH] Notification sent to %s (attempt %d/%d)",
+					toPeerId[:min(20, len(toPeerId))],
+					attempt,
+					totalAttempts)
+			}
+			return
+		}
+
+		if isInvalidTokenError(err) {
+			ps.tokenBackend.UnregisterToken(toPeerId)
+			pushSentCounter.WithLabelValues("invalid_token").Inc()
+			log.Printf("[PUSH] Removed invalid token for %s after %s push error: %v",
+				toPeerId[:min(20, len(toPeerId))],
+				pushKind,
+				err)
+			return
+		}
+
+		if attempt == totalAttempts {
+			pushSentCounter.WithLabelValues("failed").Inc()
+			if pushKind == "group" {
+				log.Printf("[PUSH] Failed to send group push to %s for group %s after %d attempt(s): %v",
+					toPeerId[:min(20, len(toPeerId))],
+					groupId[:min(20, len(groupId))],
+					attempt,
+					err)
+			} else {
+				log.Printf("[PUSH] Failed to send push to %s after %d attempt(s): %v",
+					toPeerId[:min(20, len(toPeerId))],
+					attempt,
+					err)
+			}
+			return
+		}
+
+		delay := ps.retryDelays[attempt-1]
+		if pushKind == "group" {
+			log.Printf("[PUSH] Group push to %s for group %s failed on attempt %d/%d: %v; retrying in %s",
+				toPeerId[:min(20, len(toPeerId))],
+				groupId[:min(20, len(groupId))],
+				attempt,
+				totalAttempts,
+				err,
+				delay)
+		} else {
+			log.Printf("[PUSH] Push to %s failed on attempt %d/%d: %v; retrying in %s",
+				toPeerId[:min(20, len(toPeerId))],
+				attempt,
+				totalAttempts,
+				err,
+				delay)
+		}
+
+		if !waitForRetryDelay(ctx, delay) {
+			pushSentCounter.WithLabelValues("failed").Inc()
+			log.Printf("[PUSH] Aborting %s push retry to %s: context canceled",
+				pushKind,
+				toPeerId[:min(20, len(toPeerId))])
+			return
+		}
+	}
+}
+
+func waitForRetryDelay(ctx context.Context, delay time.Duration) bool {
+	if delay <= 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			return true
+		}
+	}
+
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 	metadata := extractChatPushMetadata(message)
 	resolvedTitle := metadata.SenderUsername
-	if metadata.RouteType == "intros" {
+	switch metadata.RouteType {
+	case "intros":
 		resolvedTitle = introPushNotificationTitle
-	} else if resolvedTitle == "" {
+	case "contact_request":
+		resolvedTitle = contactRequestPushTitle
+	case "group_invite":
+		if metadata.GroupName != "" {
+			resolvedTitle = metadata.GroupName
+		} else {
+			resolvedTitle = groupInvitePushTitle
+		}
+	case "new_message":
+		if resolvedTitle == "" {
+			resolvedTitle = pushNotificationTitle
+		}
+	default:
 		resolvedTitle = pushNotificationTitle
 	}
 	resolvedBody := metadata.Body
 	if resolvedBody == "" {
-		if metadata.RouteType == "intros" {
+		switch metadata.RouteType {
+		case "intros":
 			resolvedBody = introPushNotificationBody
-		} else {
+		case "contact_request":
+			resolvedBody = contactRequestPushBody
+		case "group_invite":
+			resolvedBody = groupInvitePushBody
+		default:
 			resolvedBody = pushNotificationBody
 		}
 	}
@@ -195,14 +309,18 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		"title": resolvedTitle,
 		"body":  resolvedBody,
 	}
-	if metadata.RouteType == "new_message" {
+	if metadata.RouteType == "new_message" || metadata.RouteType == "contact_request" {
 		data["sender_id"] = fromPeerId
+	}
+	if metadata.RouteType == "group_invite" && metadata.GroupID != "" {
+		data["groupId"] = metadata.GroupID
 	}
 	if metadata.MessageID != "" {
 		data["message_id"] = metadata.MessageID
 	}
-	if metadata.RouteType == "new_message" && metadata.SenderUsername != "" {
+	if metadata.SenderUsername != "" {
 		data["sender_username"] = metadata.SenderUsername
+		data["senderUsername"] = metadata.SenderUsername
 	}
 
 	return &messaging.Message{
@@ -296,43 +414,103 @@ func buildGroupPushMessage(token, groupId, title, body, messageID string) *messa
 }
 
 type chatPushMetadata struct {
+	ShouldNotify   bool
 	RouteType      string
 	MessageID      string
 	SenderUsername string
+	GroupID        string
+	GroupName      string
 	Body           string
 }
 
 func extractChatPushMetadata(message string) chatPushMetadata {
 	var envelope map[string]interface{}
 	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
-		return chatPushMetadata{RouteType: "new_message"}
+		return chatPushMetadata{}
 	}
 
-	if trimmedString(envelope["type"]) == "introduction" {
+	switch trimmedString(envelope["type"]) {
+	case "introduction":
 		return chatPushMetadata{
-			RouteType: "intros",
-			MessageID: extractMessageId(message),
-			Body:      introPushNotificationBody,
+			ShouldNotify: true,
+			RouteType:    "intros",
+			MessageID:    extractMessageId(message),
+			Body:         introPushNotificationBody,
 		}
-	}
-
-	metadata := chatPushMetadata{
-		RouteType:      "new_message",
-		MessageID:      extractMessageId(message),
-		SenderUsername: trimmedString(envelope["senderUsername"]),
-		Body:           trimmedString(envelope["text"]),
-	}
-
-	if payload, ok := envelope["payload"].(map[string]interface{}); ok {
-		if metadata.SenderUsername == "" {
-			metadata.SenderUsername = trimmedString(payload["senderUsername"])
+	case "chat_message":
+		metadata := chatPushMetadata{
+			ShouldNotify:   true,
+			RouteType:      "new_message",
+			MessageID:      extractMessageId(message),
+			SenderUsername: trimmedString(envelope["senderUsername"]),
+			Body:           trimmedString(envelope["text"]),
 		}
-		if metadata.Body == "" {
-			metadata.Body = trimmedString(payload["text"])
-		}
-	}
 
-	return metadata
+		if payload, ok := envelope["payload"].(map[string]interface{}); ok {
+			if metadata.SenderUsername == "" {
+				metadata.SenderUsername = trimmedString(payload["senderUsername"])
+			}
+			if metadata.Body == "" {
+				metadata.Body = trimmedString(payload["text"])
+			}
+		}
+
+		return metadata
+	case "contact_request":
+		metadata := chatPushMetadata{
+			ShouldNotify:   true,
+			RouteType:      "contact_request",
+			MessageID:      extractMessageId(message),
+			SenderUsername: trimmedString(envelope["senderUsername"]),
+		}
+		if payload, ok := envelope["payload"].(map[string]interface{}); ok {
+			if metadata.SenderUsername == "" {
+				metadata.SenderUsername = trimmedString(payload["senderUsername"])
+			}
+			if metadata.SenderUsername == "" {
+				metadata.SenderUsername = trimmedString(payload["un"])
+			}
+		}
+		if metadata.SenderUsername != "" {
+			metadata.Body = fmt.Sprintf("%s wants to connect", metadata.SenderUsername)
+		} else {
+			metadata.Body = contactRequestPushBody
+		}
+		return metadata
+	case "group_invite":
+		metadata := chatPushMetadata{
+			ShouldNotify:   true,
+			RouteType:      "group_invite",
+			MessageID:      extractMessageId(message),
+			SenderUsername: trimmedString(envelope["senderUsername"]),
+			GroupID:        trimmedString(envelope["groupId"]),
+			GroupName:      trimmedString(envelope["groupName"]),
+		}
+		if payload, ok := envelope["payload"].(map[string]interface{}); ok {
+			if metadata.SenderUsername == "" {
+				metadata.SenderUsername = trimmedString(payload["senderUsername"])
+			}
+			if metadata.GroupID == "" {
+				metadata.GroupID = trimmedString(payload["groupId"])
+			}
+			if metadata.GroupName == "" {
+				if groupConfig, ok := payload["groupConfig"].(map[string]interface{}); ok {
+					metadata.GroupName = trimmedString(groupConfig["name"])
+				}
+			}
+		}
+		switch {
+		case metadata.SenderUsername != "" && metadata.GroupName != "":
+			metadata.Body = fmt.Sprintf("%s invited you to %s", metadata.SenderUsername, metadata.GroupName)
+		case metadata.SenderUsername != "":
+			metadata.Body = fmt.Sprintf("%s sent you a group invite", metadata.SenderUsername)
+		default:
+			metadata.Body = groupInvitePushBody
+		}
+		return metadata
+	default:
+		return chatPushMetadata{}
+	}
 }
 
 func (ps *PushService) TokenCount() int {
@@ -364,7 +542,8 @@ func containsImpl(s, substr string) bool {
 }
 
 // extractMessageId attempts to extract a message ID from the JSON payload
-// for deduplication. Supports chat IDs plus introduction IDs.
+// for deduplication. Supports chat IDs, introduction IDs, and v2 contact
+// request `msgId` values.
 // Returns "" if the payload is malformed or has no extractable ID.
 func extractMessageId(message string) string {
 	var envelope map[string]interface{}
@@ -378,6 +557,10 @@ func extractMessageId(message string) string {
 	}
 
 	if id, ok := envelope["messageId"].(string); ok && id != "" {
+		return id
+	}
+
+	if id, ok := envelope["msgId"].(string); ok && id != "" {
 		return id
 	}
 
@@ -461,8 +644,10 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) bool {
 		toPeerId[:min(20, len(toPeerId))],
 		entry.From[:min(20, len(entry.From))])
 
-	// Fire push notification only for genuinely new messages.
-	go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
+	// Fire push notification only for supported user-visible envelope types.
+	if metadata := extractChatPushMetadata(entry.Message); metadata.ShouldNotify {
+		go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
+	}
 	return true
 }
 
@@ -737,6 +922,36 @@ type inboxResponse struct {
 	NextCursor    string              `json:"nextCursor,omitempty"`
 }
 
+func fitRetrievePendingResponse(
+	messages []inboxMessage,
+	hasMore bool,
+) ([]inboxMessage, bool, error) {
+	if len(messages) == 0 {
+		return nil, hasMore, nil
+	}
+
+	trimmed := append([]inboxMessage(nil), messages...)
+	trimmedHasMore := hasMore
+	for len(trimmed) > 0 {
+		data, err := json.Marshal(inboxResponse{
+			Status:   "OK",
+			Messages: trimmed,
+			HasMore:  trimmedHasMore,
+		})
+		if err == nil && len(data) <= maxFrameLen {
+			if len(trimmed) != len(messages) {
+				log.Printf("[INBOX] retrieve_pending trimmed response from %d to %d message(s) to fit %d-byte frame",
+					len(messages), len(trimmed), maxFrameLen)
+			}
+			return trimmed, trimmedHasMore, nil
+		}
+		trimmed = trimmed[:len(trimmed)-1]
+		trimmedHasMore = true
+	}
+
+	return nil, true, fmt.Errorf("single retrieve_pending entry exceeds %d-byte frame limit", maxFrameLen)
+}
+
 func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInboxStore) {
 	start := time.Now()
 	activeStreams.WithLabelValues("inbox").Inc()
@@ -810,7 +1025,16 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		}
 		messages, hasMore := inbox.RetrievePendingWithMeta(remotePeer, limit)
 		if len(messages) > 0 {
-			resp = inboxResponse{Status: "OK", Messages: messages, HasMore: hasMore}
+			fittedMessages, fittedHasMore, err := fitRetrievePendingResponse(messages, hasMore)
+			if err != nil {
+				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
+			} else {
+				resp = inboxResponse{
+					Status:   "OK",
+					Messages: fittedMessages,
+					HasMore:  fittedHasMore,
+				}
+			}
 		} else {
 			resp = inboxResponse{Status: "NO_MESSAGES"}
 		}

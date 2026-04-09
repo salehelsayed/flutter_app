@@ -696,27 +696,34 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     for (final entry in mediaMap.entries) {
       for (final attachment in entry.value) {
-        if (attachment.downloadStatus == 'pending') {
-          final downloaded = await downloadMedia(
+        if (!_shouldRecoverVisibleAttachment(attachment)) {
+          continue;
+        }
+
+        MediaAttachment? downloaded;
+        try {
+          downloaded = await downloadMedia(
             bridge: widget.bridge,
             mediaAttachmentRepo: widget.mediaAttachmentRepo!,
             mediaFileManager: widget.mediaFileManager!,
             attachment: attachment,
             contactPeerId: widget.group.id,
           );
-          if (mounted) {
-            setState(() {
-              final list = List<MediaAttachment>.from(
-                _mediaMap[entry.key] ?? entry.value,
-              );
-              final idx = list.indexWhere((a) => a.id == attachment.id);
-              if (idx >= 0) {
-                list[idx] =
-                    downloaded ?? attachment.copyWith(downloadStatus: 'failed');
-                _updateMediaForMessage(entry.key, list);
-              }
-            });
-          }
+        } catch (_) {
+          downloaded = null;
+        }
+        if (mounted) {
+          setState(() {
+            final list = List<MediaAttachment>.from(
+              _mediaMap[entry.key] ?? entry.value,
+            );
+            final idx = list.indexWhere((a) => a.id == attachment.id);
+            if (idx >= 0) {
+              list[idx] =
+                  downloaded ?? attachment.copyWith(downloadStatus: 'failed');
+              _updateMediaForMessage(entry.key, list);
+            }
+          });
         }
       }
     }
@@ -943,31 +950,22 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         continue;
       }
 
-      final completed = uploaded.copyWith(
-        id: plan.pendingAttachment.id,
+      final completed = await _buildStableUploadedAttachmentFromPlan(
         messageId: messageId,
-        downloadStatus: 'done',
-        uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
+        plan: plan,
+        uploaded: uploaded,
       );
       await mediaAttachmentRepo.saveAttachment(completed);
       completedAttachments.add(completed);
     }
 
     if (failedPlans.isNotEmpty) {
-      final failedIds = failedPlans
-          .map((plan) => plan.pendingAttachment.id)
-          .toSet();
-      for (final plan in preparedUploads) {
-        final isFailed = failedIds.contains(plan.pendingAttachment.id);
-        final nextRetryCount = isFailed
-            ? (plan.pendingAttachment.uploadRetryCount ?? 0) + 1
-            : plan.pendingAttachment.uploadRetryCount;
+      for (final plan in failedPlans) {
+        final nextRetryCount =
+            (plan.pendingAttachment.uploadRetryCount ?? 0) + 1;
         await mediaAttachmentRepo.saveAttachment(
           plan.pendingAttachment.copyWith(
-            downloadStatus:
-                isFailed &&
-                    nextRetryCount != null &&
-                    nextRetryCount >= kMaxUploadRetries
+            downloadStatus: nextRetryCount >= kMaxUploadRetries
                 ? 'upload_failed'
                 : 'upload_pending',
             uploadRetryCount: nextRetryCount,
@@ -978,6 +976,77 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
 
     return completedAttachments;
+  }
+
+  Future<MediaAttachment> _buildStableUploadedAttachmentFromPlan({
+    required String messageId,
+    required _PreparedGroupMediaUpload plan,
+    required MediaAttachment uploaded,
+  }) async {
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaFileManager == null) {
+      return uploaded.copyWith(
+        id: plan.pendingAttachment.id,
+        messageId: messageId,
+        size: uploaded.size > 0 ? uploaded.size : plan.source.budgetBytes,
+        mediaType: plan.pendingAttachment.mediaType,
+        width: uploaded.width ?? plan.source.width,
+        height: uploaded.height ?? plan.source.height,
+        durationMs: uploaded.durationMs ?? plan.source.durationMs,
+        localPath: plan.absoluteDurablePath,
+        downloadStatus: 'done',
+        uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
+        waveform: uploaded.waveform,
+      );
+    }
+
+    final absoluteOwnedPath = await mediaFileManager.localPathForAttachment(
+      contactPeerId: widget.group.id,
+      blobId: plan.pendingAttachment.id,
+      mime: plan.pendingAttachment.mime,
+    );
+    final sourceFile = File(plan.absoluteDurablePath);
+    if (!await sourceFile.exists()) {
+      return uploaded.copyWith(
+        id: plan.pendingAttachment.id,
+        messageId: messageId,
+        size: uploaded.size > 0 ? uploaded.size : plan.source.budgetBytes,
+        mediaType: plan.pendingAttachment.mediaType,
+        width: uploaded.width ?? plan.source.width,
+        height: uploaded.height ?? plan.source.height,
+        durationMs: uploaded.durationMs ?? plan.source.durationMs,
+        localPath: uploaded.localPath ?? plan.absoluteDurablePath,
+        downloadStatus: 'done',
+        uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
+        waveform: uploaded.waveform,
+      );
+    }
+    if (absoluteOwnedPath != plan.absoluteDurablePath) {
+      final targetFile = File(absoluteOwnedPath);
+      final parent = targetFile.parent;
+      if (!await parent.exists()) {
+        await parent.create(recursive: true);
+      }
+      await sourceFile.copy(absoluteOwnedPath);
+    }
+
+    return uploaded.copyWith(
+      id: plan.pendingAttachment.id,
+      messageId: messageId,
+      size: uploaded.size > 0 ? uploaded.size : plan.source.budgetBytes,
+      mediaType: plan.pendingAttachment.mediaType,
+      width: uploaded.width ?? plan.source.width,
+      height: uploaded.height ?? plan.source.height,
+      durationMs: uploaded.durationMs ?? plan.source.durationMs,
+      localPath: mediaFileManager.relativePathForAttachment(
+        contactPeerId: widget.group.id,
+        blobId: plan.pendingAttachment.id,
+        mime: plan.pendingAttachment.mime,
+      ),
+      downloadStatus: 'done',
+      uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
+      waveform: uploaded.waveform,
+    );
   }
 
   Future<void> _onSend(String text) async {
@@ -1475,9 +1544,35 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       final absolutePath = await mediaFileManager.resolveStoredPath(
         attachment.localPath!,
       );
+      if (_isPendingUploadPath(attachment.localPath!) ||
+          _isPendingUploadPath(absolutePath)) {
+        resolved.add(attachment.copyWith(localPath: absolutePath));
+        continue;
+      }
+      final exists = await File(absolutePath).exists();
+      if (!exists && attachment.downloadStatus == 'done') {
+        resolved.add(
+          attachment.copyWith(
+            localPath: absolutePath,
+            downloadStatus: 'pending',
+          ),
+        );
+        continue;
+      }
       resolved.add(attachment.copyWith(localPath: absolutePath));
     }
     return resolved;
+  }
+
+  bool _shouldRecoverVisibleAttachment(MediaAttachment attachment) {
+    return attachment.downloadStatus == 'pending' ||
+        attachment.downloadStatus == 'downloading' ||
+        attachment.downloadStatus == 'failed';
+  }
+
+  bool _isPendingUploadPath(String path) {
+    return path.contains('pending_uploads/') ||
+        path.contains('pending_uploads\\');
   }
 
   Future<void> _applyMessageUpdate(
@@ -1699,25 +1794,32 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _updateLocalMessageStatus(String messageId, String status) {
-    setState(() {
-      final idx = _messages.indexWhere((m) => m.id == messageId);
-      if (idx >= 0) {
-        final updated = List<GroupMessage>.from(_messages);
-        updated[idx] = updated[idx].copyWith(status: status);
-        _messages = updated;
-      }
-    });
+    final idx = _messages.indexWhere((m) => m.id == messageId);
+    if (idx < 0) return;
+    final updated = List<GroupMessage>.from(_messages);
+    updated[idx] = updated[idx].copyWith(status: status);
+    if (mounted) {
+      setState(() => _messages = updated);
+    } else {
+      _messages = updated;
+    }
   }
 
   void _removeLocalMessage(String messageId) {
-    setState(() {
-      _messages = _messages
-          .where((message) => message.id != messageId)
-          .toList();
-      final nextMedia = Map<String, List<MediaAttachment>>.from(_mediaMap);
-      nextMedia.remove(messageId);
+    final nextMessages = _messages
+        .where((message) => message.id != messageId)
+        .toList();
+    final nextMedia = Map<String, List<MediaAttachment>>.from(_mediaMap);
+    nextMedia.remove(messageId);
+    if (mounted) {
+      setState(() {
+        _messages = nextMessages;
+        _mediaMap = nextMedia;
+      });
+    } else {
+      _messages = nextMessages;
       _mediaMap = nextMedia;
-    });
+    }
   }
 
   Future<void> _persistMessageStatus(String messageId, String status) async {

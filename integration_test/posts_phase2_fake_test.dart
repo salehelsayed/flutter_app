@@ -535,7 +535,9 @@ void main() {
       expect(restoredPost.mediaKind, mediaCase.expectedKind);
       expect(
         restoredPost.media.single.localPath,
-        startsWith('/tmp/test_docs/'),
+        contains(
+          '/test_docs/post_media/${post!.id}/${mediaCase.attachment.blobId}',
+        ),
       );
 
       final payload =

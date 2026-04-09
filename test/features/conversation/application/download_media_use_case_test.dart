@@ -18,11 +18,22 @@ class _FakeBridge implements Bridge {
   Map<String, dynamic> downloadResponse = {'ok': true};
   Map<String, dynamic>? lastRequest;
   int sendCallCount = 0;
+  List<int> downloadedBytes = const <int>[1, 2, 3];
+  bool skipFileWrite = false;
 
   @override
   Future<String> send(String message) async {
     sendCallCount++;
     lastRequest = jsonDecode(message) as Map<String, dynamic>;
+    final payload = lastRequest?['payload'] as Map<String, dynamic>?;
+    final outputPath = payload?['outputPath'] as String?;
+    if (!skipFileWrite &&
+        outputPath != null &&
+        downloadResponse['ok'] == true) {
+      final file = File(outputPath);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(downloadedBytes, flush: true);
+    }
     return jsonEncode(downloadResponse);
   }
 
@@ -61,6 +72,15 @@ class _DelayedBridge extends _FakeBridge {
     sendCallCount++;
     lastRequest = jsonDecode(message) as Map<String, dynamic>;
     await gate.future;
+    final payload = lastRequest?['payload'] as Map<String, dynamic>?;
+    final outputPath = payload?['outputPath'] as String?;
+    if (!skipFileWrite &&
+        outputPath != null &&
+        downloadResponse['ok'] == true) {
+      final file = File(outputPath);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(downloadedBytes, flush: true);
+    }
     return jsonEncode(downloadResponse);
   }
 }
@@ -359,6 +379,31 @@ void main() {
       expect(result.width, 1920);
       expect(result.height, 1080);
     });
+
+    test(
+      'returns null and marks failed when bridge reports success but no file was written',
+      () async {
+        bridge.skipFileWrite = true;
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+        );
+
+        expect(result, isNull);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', 'failed'),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
 
     test(
       'emits MEDIA_DOWNLOAD_TIMING with blob, mime, and size metadata',

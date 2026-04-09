@@ -44,8 +44,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
       'recipientPeerId': recipientPeerId.length > 10
           ? recipientPeerId.substring(0, 10)
           : recipientPeerId,
-      'groupId':
-          groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
     },
   );
 
@@ -103,6 +102,10 @@ Future<SendGroupInviteResult> sendGroupInvite({
     // 5. Build v2 envelope
     envelopeJson = GroupInvitePayload.buildEncryptedEnvelope(
       senderPeerId: senderPeerId,
+      inviteId: payload.id,
+      senderUsername: senderUsername,
+      groupId: groupId,
+      groupName: groupConfig['name'] as String?,
       kem: encryptResult['kem'] as String,
       ciphertext: encryptResult['ciphertext'] as String,
       nonce: encryptResult['nonce'] as String,
@@ -161,8 +164,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
             : recipientPeerId,
       },
     );
-    final stored =
-        await p2pService.storeInInbox(recipientPeerId, envelopeJson);
+    final stored = await p2pService.storeInInbox(recipientPeerId, envelopeJson);
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_SEND_INBOX_RESULT',
@@ -184,11 +186,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
     );
   }
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_INVITE_SEND_FAILED',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'GROUP_INVITE_SEND_FAILED', details: {});
   return SendGroupInviteResult.sendFailed;
 }
 

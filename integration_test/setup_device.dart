@@ -16,6 +16,7 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
+import 'package:flutter_app/core/database/migrations/004_nullify_secret_columns.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
@@ -59,7 +60,14 @@ import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.
 import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
 import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
 import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
+import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
+import 'package:flutter_app/core/database/migrations/049_groups_metadata_columns.dart';
+import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart';
+import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
+import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
+import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
@@ -79,11 +87,12 @@ void main() {
     final db = await openEncryptedDatabase(
       secureKeyStore: secureKeyStore,
       dbName: 'identity.db',
-      version: 47,
+      version: 53,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
         await runMlKemKeysMigration(db);
+        // Fresh install: skip 004; 005 adds the nullable + CHECK schema.
         await runSecretNullChecksMigration(db);
         await runReadAtColumnMigration(db);
         await runArchiveColumnsMigration(db);
@@ -127,12 +136,17 @@ void main() {
         await runInboxStagingEntriesMigration(db);
         await runPendingIntroductionResponsesMigration(db);
         await runIntroductionOutboxMigration(db);
+        await runGroupsLastMembershipEventAtMigration(db);
+        await runGroupsMetadataColumnsMigration(db);
+        await runGroupsMuteColumnMigration(db);
+        await runPendingGroupInvitesMigration(db);
+        await runGroupsDissolveColumnsMigration(db);
+        await runGroupsBacklogRetentionColumnsMigration(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        // Not needed for fresh install after uninstall, but included for safety.
         if (oldVersion < 2) await runMessagesTableMigration(db);
         if (oldVersion < 3) await runMlKemKeysMigration(db);
-        if (oldVersion < 5) await runSecretNullChecksMigration(db);
+        if (oldVersion < 4) await runNullifySecretColumnsMigration(db);
         if (oldVersion < 6) await runReadAtColumnMigration(db);
         if (oldVersion < 7) await runArchiveColumnsMigration(db);
         if (oldVersion < 8) await runBlockColumnsMigration(db);
@@ -177,9 +191,20 @@ void main() {
         if (oldVersion < 45) await runInboxStagingEntriesMigration(db);
         if (oldVersion < 46) await runPendingIntroductionResponsesMigration(db);
         if (oldVersion < 47) await runIntroductionOutboxMigration(db);
+        if (oldVersion < 48) await runGroupsLastMembershipEventAtMigration(db);
+        if (oldVersion < 49) await runGroupsMetadataColumnsMigration(db);
+        if (oldVersion < 50) await runGroupsMuteColumnMigration(db);
+        if (oldVersion < 51) await runPendingGroupInvitesMigration(db);
+        if (oldVersion < 52) await runGroupsDissolveColumnsMigration(db);
+        if (oldVersion < 53)
+          await runGroupsBacklogRetentionColumnsMigration(db);
       },
     );
     print('[SETUP] Database opened');
+
+    await migrateSecretsToSecureStorage(db: db, secureKeyStore: secureKeyStore);
+    await runSecretNullChecksMigration(db);
+    print('[SETUP] Secrets migration/checks completed');
 
     // 3. Create identity repository (real DB + real Keychain)
     final repository = IdentityRepositoryImpl(
