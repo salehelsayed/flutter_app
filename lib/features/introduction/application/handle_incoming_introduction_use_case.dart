@@ -347,6 +347,36 @@ _applyResponseToExistingIntroduction({
       ? IntroductionStatus.accepted
       : IntroductionStatus.passed;
 
+  final alreadyApplied =
+      (isRecipient && existing.recipientStatus == status) ||
+      (isIntroduced && existing.introducedStatus == status);
+  final isTerminalReplayTarget =
+      existing.status == IntroductionOverallStatus.mutualAccepted ||
+      existing.status == IntroductionOverallStatus.passed ||
+      existing.status == IntroductionOverallStatus.expired ||
+      existing.status == IntroductionOverallStatus.alreadyConnected;
+  if (alreadyApplied && isTerminalReplayTarget) {
+    if (existing.status == IntroductionOverallStatus.mutualAccepted) {
+      await handleMutualAcceptance(
+        introduction: existing,
+        contactRepo: contactRepo,
+        ownPeerId: ownPeerId,
+        messageRepo: messageRepo,
+        bridge: bridge,
+      );
+    }
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'HANDLE_INCOMING_INTRO_ALREADY_EXISTS',
+      details: {
+        'introductionId': payload.introductionId,
+        'responderId': responderId,
+        'action': payload.action,
+      },
+    );
+    return (HandleIntroductionResult.alreadyExists, existing);
+  }
+
   if (isRecipient) {
     await introRepo.updateRecipientStatus(payload.introductionId, status);
   } else {

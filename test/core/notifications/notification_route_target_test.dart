@@ -55,6 +55,16 @@ void main() {
       },
     );
 
+    test('fromRemoteMessageData maps group_invite to intros route', () {
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+        'type': 'group_invite',
+        'groupId': 'group-123',
+      });
+
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.intros);
+    });
+
     test('fromPayload maps intros to intros route', () {
       final routeTarget = NotificationRouteTarget.fromPayload('intros');
 

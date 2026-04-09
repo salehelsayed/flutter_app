@@ -21,16 +21,22 @@ Future<void> deliverIntroductionPayloadReliably({
   required String? targetMlKemPublicKey,
   required IntroductionPayload payload,
 }) async {
+  final envelopeMessageId = IntroductionPayload.buildEnvelopeMessageId(
+    introductionId: payload.introductionId,
+    action: payload.action,
+    senderPeerId: senderPeerId,
+  );
   final now = DateTime.now().toUtc().toIso8601String();
   final rawEnvelope = await _buildRawEnvelope(
     bridge: bridge,
     senderPeerId: senderPeerId,
     targetMlKemPublicKey: targetMlKemPublicKey,
     payload: payload,
+    messageId: envelopeMessageId,
   );
   final normalizedEnvelope = IntroductionPayload.ensureEnvelopeMessageId(
     rawEnvelope,
-    payload.introductionId,
+    envelopeMessageId,
   );
 
   final deliveryId = _uuid.v4();
@@ -101,9 +107,14 @@ Future<int> retryPendingIntroductionDeliveries({
 
   var deliveredCount = 0;
   for (final delivery in deliveries) {
+    final envelopeMessageId = IntroductionPayload.buildEnvelopeMessageId(
+      introductionId: delivery.introductionId,
+      action: delivery.action,
+      senderPeerId: delivery.senderPeerId,
+    );
     final normalizedEnvelope = IntroductionPayload.ensureEnvelopeMessageId(
       delivery.rawEnvelope,
-      delivery.introductionId,
+      envelopeMessageId,
     );
     if (delivery.deliveryStatus == IntroductionOutboxDeliveryStatus.delivered &&
         delivery.deliveryPath == IntroductionOutboxDeliveryPath.inbox) {
@@ -162,6 +173,7 @@ Future<String> _buildRawEnvelope({
   required String senderPeerId,
   required String? targetMlKemPublicKey,
   required IntroductionPayload payload,
+  required String messageId,
 }) async {
   if (targetMlKemPublicKey != null) {
     try {
@@ -177,6 +189,7 @@ Future<String> _buildRawEnvelope({
           kem: encrypted['kem'] as String,
           ciphertext: encrypted['ciphertext'] as String,
           nonce: encrypted['nonce'] as String,
+          messageId: messageId,
         );
       }
     } catch (_) {}

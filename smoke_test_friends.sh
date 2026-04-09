@@ -83,7 +83,11 @@ write_config() {
 }
 
 clear_results() {
-  for dev in "$DEVICE_A" "$DEVICE_B" "$DEVICE_C"; do
+  clear_results_for_devices "$DEVICE_A" "$DEVICE_B" "$DEVICE_C"
+}
+
+clear_results_for_devices() {
+  for dev in "$@"; do
     local docs
     docs=$(get_docs_dir "$dev")
     [ -n "$docs" ] || continue
@@ -92,11 +96,15 @@ clear_results() {
 }
 
 relaunch_all() {
-  for dev in "$DEVICE_A" "$DEVICE_B" "$DEVICE_C"; do
+  relaunch_devices "$DEVICE_A" "$DEVICE_B" "$DEVICE_C"
+}
+
+relaunch_devices() {
+  for dev in "$@"; do
     xcrun simctl terminate "$dev" "$BUNDLE_ID" 2>/dev/null || true
   done
   sleep 1
-  for dev in "$DEVICE_A" "$DEVICE_B" "$DEVICE_C"; do
+  for dev in "$@"; do
     xcrun simctl launch "$dev" "$BUNDLE_ID" >/dev/null
   done
 }
@@ -150,9 +158,15 @@ PY
 
 wait_for_all_results() {
   local step_id="$1"
-  wait_for_step_result "$DEVICE_A" "$step_id"
-  wait_for_step_result "$DEVICE_B" "$step_id"
-  wait_for_step_result "$DEVICE_C" "$step_id"
+  wait_for_results_for_devices "$step_id" "$DEVICE_A" "$DEVICE_B" "$DEVICE_C"
+}
+
+wait_for_results_for_devices() {
+  local step_id="$1"
+  shift
+  for dev in "$@"; do
+    wait_for_step_result "$dev" "$step_id"
+  done
 }
 
 result_file_path() {
@@ -181,6 +195,26 @@ result_path, contact_peer_id, expected_text = sys.argv[1:]
 snapshot = json.load(open(result_path))["snapshot"]
 messages = []
 for row in snapshot.get("systemMessages", []):
+    if row.get("contactPeerId") == contact_peer_id:
+        messages.extend(message.get("text") for message in row.get("messages", []))
+assert expected_text in messages, {
+    "contactPeerId": contact_peer_id,
+    "expected": expected_text,
+    "messages": messages,
+}
+PY
+}
+
+assert_chat_message_for_contact() {
+  local result_path="$1"
+  local contact_peer_id="$2"
+  local expected_text="$3"
+  python3 - "$result_path" "$contact_peer_id" "$expected_text" <<'PY'
+import json, sys
+result_path, contact_peer_id, expected_text = sys.argv[1:]
+snapshot = json.load(open(result_path))["snapshot"]
+messages = []
+for row in snapshot.get("chatMessages", []):
     if row.get("contactPeerId") == contact_peer_id:
         messages.extend(message.get("text") for message in row.get("messages", []))
 assert expected_text in messages, {
@@ -240,10 +274,252 @@ assert b_rows[0]["overallStatus"] == expected_status, b_rows
 assert c_rows[0]["overallStatus"] == expected_status, c_rows
 
 if expect_contact == "yes":
-    b_contacts = {c["peerId"] for c in b_snap["contacts"]}
-    c_contacts = {c["peerId"] for c in c_snap["contacts"]}
-    assert peer_c in b_contacts, b_snap
-    assert peer_b in c_contacts, c_snap
+    b_to_c_contacts = [c for c in b_snap["contacts"] if c["peerId"] == peer_c]
+    c_to_b_contacts = [c for c in c_snap["contacts"] if c["peerId"] == peer_b]
+    assert len(b_to_c_contacts) == 1, b_snap
+    assert len(c_to_b_contacts) == 1, c_snap
+PY
+}
+
+pair_intro_id_from_result() {
+  local result_path="$1"
+  python3 - "$result_path" "$PEER_A" "$PEER_B" "$PEER_C" <<'PY'
+import json, sys
+result_path, peer_a, peer_b, peer_c = sys.argv[1:]
+snapshot = json.load(open(result_path))["snapshot"]
+rows = [
+    row for row in snapshot["introductions"]
+    if row["introducerId"] == peer_a
+    and {row["recipientId"], row["introducedId"]} == {peer_b, peer_c}
+]
+assert len(rows) == 1, snapshot
+print(rows[0]["id"])
+PY
+}
+
+assert_pair_intro_id_equals() {
+  local result_path="$1"
+  local expected_intro_id="$2"
+  python3 - "$result_path" "$PEER_A" "$PEER_B" "$PEER_C" "$expected_intro_id" <<'PY'
+import json, sys
+result_path, peer_a, peer_b, peer_c, expected_intro_id = sys.argv[1:]
+snapshot = json.load(open(result_path))["snapshot"]
+rows = [
+    row for row in snapshot["introductions"]
+    if row["introducerId"] == peer_a
+    and {row["recipientId"], row["introducedId"]} == {peer_b, peer_c}
+]
+assert len(rows) == 1, snapshot
+assert rows[0]["id"] == expected_intro_id, rows
+PY
+}
+
+assert_partial_fanout_mid_state() {
+  python3 - "$(result_file_path "$DEVICE_A")" "$(result_file_path "$DEVICE_B")" "$(result_file_path "$DEVICE_C")" "$PEER_A" "$PEER_B" "$PEER_C" <<'PY'
+import json, sys
+path_a, path_b, path_c, peer_a, peer_b, peer_c = sys.argv[1:]
+result_a = json.load(open(path_a))
+result_b = json.load(open(path_b))
+result_c = json.load(open(path_c))
+assert result_a["stepId"] == "split-brain-second-accept", result_a
+assert result_b["stepId"] == "split-brain-first-accept", result_b
+assert result_c["stepId"] == "split-brain-second-accept", result_c
+snap_a = result_a["snapshot"]
+snap_b = result_b["snapshot"]
+snap_c = result_c["snapshot"]
+
+def pair_rows(snapshot):
+    return [
+        row for row in snapshot["introductions"]
+        if row["introducerId"] == peer_a
+        and {row["recipientId"], row["introducedId"]} == {peer_b, peer_c}
+    ]
+
+a_rows = pair_rows(snap_a)
+b_rows = pair_rows(snap_b)
+c_rows = pair_rows(snap_c)
+
+assert len(a_rows) == 1, snap_a
+assert len(b_rows) == 1, snap_b
+assert len(c_rows) == 0, snap_c
+assert a_rows[0]["id"] == b_rows[0]["id"], (a_rows, b_rows)
+# The responder's local row is the proof that B received and acted.
+# The introducer-side snapshot can lag while the same intro is still pending.
+assert a_rows[0]["recipientStatus"] in {"pending", "accepted"}, a_rows
+assert a_rows[0]["introducedStatus"] == "pending", a_rows
+assert a_rows[0]["overallStatus"] == "pending", a_rows
+assert b_rows[0]["recipientStatus"] == "accepted", b_rows
+assert b_rows[0]["introducedStatus"] == "pending", b_rows
+assert b_rows[0]["overallStatus"] == "pending", b_rows
+
+b_contacts = [c["peerId"] for c in snap_b["contacts"]]
+c_contacts = [c["peerId"] for c in snap_c["contacts"]]
+assert peer_c not in b_contacts, snap_b
+assert peer_b not in c_contacts, snap_c
+
+node_action = result_c.get("nodeAction") or {}
+assert node_action.get("action") == "stop_node", result_c
+PY
+}
+
+assert_partition_mid_state() {
+  python3 - "$(result_file_path "$DEVICE_A")" "$(result_file_path "$DEVICE_B")" "$(result_file_path "$DEVICE_C")" "$PEER_A" "$PEER_B" "$PEER_C" <<'PY'
+import json, sys
+path_a, path_b, path_c, peer_a, peer_b, peer_c = sys.argv[1:]
+result_a = json.load(open(path_a))
+result_b = json.load(open(path_b))
+result_c = json.load(open(path_c))
+snap_a = result_a["snapshot"]
+snap_b = result_b["snapshot"]
+snap_c = result_c["snapshot"]
+
+def pair_rows(snapshot):
+    return [
+        row for row in snapshot["introductions"]
+        if row["introducerId"] == peer_a
+        and {row["recipientId"], row["introducedId"]} == {peer_b, peer_c}
+    ]
+
+a_rows = pair_rows(snap_a)
+b_rows = pair_rows(snap_b)
+c_rows = pair_rows(snap_c)
+
+assert len(a_rows) == 1, snap_a
+assert len(b_rows) == 1, snap_b
+assert len(c_rows) == 1, snap_c
+assert a_rows[0]["id"] == b_rows[0]["id"] == c_rows[0]["id"], (a_rows, b_rows, c_rows)
+
+if a_rows[0]["overallStatus"] == "pending":
+    assert a_rows[0]["recipientStatus"] == "pending", a_rows
+    assert a_rows[0]["introducedStatus"] == "pending", a_rows
+else:
+    assert a_rows[0]["overallStatus"] == "mutual_accepted", a_rows
+    assert a_rows[0]["recipientStatus"] == "accepted", a_rows
+    assert a_rows[0]["introducedStatus"] == "accepted", a_rows
+assert b_rows[0]["overallStatus"] == "mutual_accepted", b_rows
+assert c_rows[0]["overallStatus"] == "mutual_accepted", c_rows
+
+b_to_c_contacts = [c for c in snap_b["contacts"] if c["peerId"] == peer_c]
+c_to_b_contacts = [c for c in snap_c["contacts"] if c["peerId"] == peer_b]
+assert len(b_to_c_contacts) == 1, snap_b
+assert len(c_to_b_contacts) == 1, snap_c
+
+node_action = result_a.get("nodeAction") or {}
+assert node_action.get("action") == "stop_node", result_a
+PY
+}
+
+assert_pass_fallback_mid_state() {
+  python3 - "$(result_file_path "$DEVICE_A")" "$(result_file_path "$DEVICE_B")" "$(result_file_path "$DEVICE_C")" "$PEER_A" "$PEER_B" "$PEER_C" <<'PY'
+import json, sys
+path_a, path_b, path_c, peer_a, peer_b, peer_c = sys.argv[1:]
+result_a = json.load(open(path_a))
+result_b = json.load(open(path_b))
+result_c = json.load(open(path_c))
+snap_a = result_a["snapshot"]
+snap_b = result_b["snapshot"]
+snap_c = result_c["snapshot"]
+
+def pair_rows(snapshot):
+    return [
+        row for row in snapshot["introductions"]
+        if row["introducerId"] == peer_a
+        and {row["recipientId"], row["introducedId"]} == {peer_b, peer_c}
+    ]
+
+a_rows = pair_rows(snap_a)
+b_rows = pair_rows(snap_b)
+c_rows = pair_rows(snap_c)
+
+assert len(a_rows) == 1, snap_a
+assert len(b_rows) == 1, snap_b
+assert len(c_rows) == 1, snap_c
+assert a_rows[0]["id"] == b_rows[0]["id"] == c_rows[0]["id"], (a_rows, b_rows, c_rows)
+assert a_rows[0]["overallStatus"] == "pending", a_rows
+assert b_rows[0]["overallStatus"] == "passed", b_rows
+assert c_rows[0]["overallStatus"] == "pending", c_rows
+
+b_to_c_contacts = [c for c in snap_b["contacts"] if c["peerId"] == peer_c]
+c_to_b_contacts = [c for c in snap_c["contacts"] if c["peerId"] == peer_b]
+assert len(b_to_c_contacts) == 0, snap_b
+assert len(c_to_b_contacts) == 0, snap_c
+
+node_action_a = result_a.get("nodeAction") or {}
+node_action_c = result_c.get("nodeAction") or {}
+assert node_action_a.get("action") == "stop_node", result_a
+assert node_action_c.get("action") == "stop_node", result_c
+PY
+}
+
+assert_pass_terminal_state() {
+  python3 - "$(result_file_path "$DEVICE_A")" "$(result_file_path "$DEVICE_B")" "$(result_file_path "$DEVICE_C")" "$PEER_A" "$PEER_B" "$PEER_C" <<'PY'
+import json, sys
+path_a, path_b, path_c, peer_a, peer_b, peer_c = sys.argv[1:]
+snap_a = json.load(open(path_a))["snapshot"]
+snap_b = json.load(open(path_b))["snapshot"]
+snap_c = json.load(open(path_c))["snapshot"]
+
+def pair_rows(snapshot):
+    return [
+        row for row in snapshot["introductions"]
+        if row["introducerId"] == peer_a
+        and {row["recipientId"], row["introducedId"]} == {peer_b, peer_c}
+    ]
+
+a_rows = pair_rows(snap_a)
+b_rows = pair_rows(snap_b)
+c_rows = pair_rows(snap_c)
+
+assert len(a_rows) == 1, snap_a
+assert len(b_rows) == 1, snap_b
+assert len(c_rows) == 1, snap_c
+assert a_rows[0]["id"] == b_rows[0]["id"] == c_rows[0]["id"], (a_rows, b_rows, c_rows)
+assert a_rows[0]["overallStatus"] == "passed", a_rows
+assert b_rows[0]["overallStatus"] == "passed", b_rows
+assert c_rows[0]["overallStatus"] == "passed", c_rows
+
+b_to_c_contacts = [c for c in snap_b["contacts"] if c["peerId"] == peer_c]
+c_to_b_contacts = [c for c in snap_c["contacts"] if c["peerId"] == peer_b]
+assert len(b_to_c_contacts) == 0, snap_b
+assert len(c_to_b_contacts) == 0, snap_c
+PY
+}
+
+assert_split_brain_mid_state() {
+  python3 - "$(result_file_path "$DEVICE_A")" "$(result_file_path "$DEVICE_B")" "$(result_file_path "$DEVICE_C")" "$PEER_A" "$PEER_B" "$PEER_C" <<'PY'
+import json, sys
+path_a, path_b, path_c, peer_a, peer_b, peer_c = sys.argv[1:]
+result_a = json.load(open(path_a))
+result_b = json.load(open(path_b))
+result_c = json.load(open(path_c))
+snap_a = result_a["snapshot"]
+snap_b = result_b["snapshot"]
+snap_c = result_c["snapshot"]
+
+def pair_rows(snapshot):
+    return [
+        row for row in snapshot["introductions"]
+        if row["introducerId"] == peer_a
+        and {row["recipientId"], row["introducedId"]} == {peer_b, peer_c}
+    ]
+
+a_rows = pair_rows(snap_a)
+b_rows = pair_rows(snap_b)
+c_rows = pair_rows(snap_c)
+
+assert len(a_rows) == 1, snap_a
+assert len(b_rows) == 1, snap_b
+assert len(c_rows) == 1, snap_c
+assert a_rows[0]["id"] == b_rows[0]["id"] == c_rows[0]["id"], (a_rows, b_rows, c_rows)
+assert b_rows[0]["recipientStatus"] == "accepted", b_rows
+assert b_rows[0]["introducedStatus"] == "pending", b_rows
+assert b_rows[0]["overallStatus"] == "pending", b_rows
+assert c_rows[0]["overallStatus"] == "mutual_accepted", c_rows
+
+b_to_c_contacts = [c for c in snap_b["contacts"] if c["peerId"] == peer_c]
+c_to_b_contacts = [c for c in snap_c["contacts"] if c["peerId"] == peer_b]
+assert len(b_to_c_contacts) == 0, snap_b
+assert len(c_to_b_contacts) == 1, snap_c
 PY
 }
 
@@ -275,6 +551,17 @@ assert_copy_accept_messages() {
     "$(result_file_path "$DEVICE_C")" \
     "$PEER_B" \
     "You and $USER_B are now connected — introduced by $USER_A"
+}
+
+assert_offline_first_chat_messages() {
+  assert_chat_message_for_contact \
+    "$(result_file_path "$DEVICE_B")" \
+    "$PEER_C" \
+    "hello after intro"
+  assert_chat_message_for_contact \
+    "$(result_file_path "$DEVICE_C")" \
+    "$PEER_B" \
+    "hello after intro"
 }
 
 prepare_devices() {
@@ -507,9 +794,403 @@ EOF
   capture_step_screenshots "$step_id"
 }
 
+run_partial_fanout_send_phase() {
+  local step_id="partial-send"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "send_introductions": [
+    {
+      "recipientPeerId": "$PEER_B",
+      "friendPeerIds": ["$PEER_C"]
+    }
+  ],
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "contact_settle_delay_ms": 5000,
+  "introduction_settle_delay_ms": 2500,
+  "poll_cycles": 25,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "contact_settle_delay_ms": 3000,
+  "introduction_action": "accept_all",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "node_action_before_intro_phase": "stop_node",
+  "introduction_action": "none",
+  "poll_cycles": 30,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_partial_fanout_recovery_phase() {
+  local step_id="partial-recover"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 25,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "accept_all",
+  "idle_cycles_after_seen": 12,
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_partition_divergent_accept_phase() {
+  local step_id="partition-divergent-accepts"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "node_action_before_intro_phase": "stop_node",
+  "node_action_settle_delay_ms": 4000,
+  "introduction_action": "none",
+  "poll_cycles": 0,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "accept_all",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "contact_settle_delay_ms": 3000,
+  "introduction_action": "accept_all",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_partition_heal_phase() {
+  local step_id="partition-heal"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_pass_fallback_phase() {
+  local step_id="pass-fallback-disconnected"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "node_action_before_intro_phase": "stop_node",
+  "introduction_action": "none",
+  "poll_cycles": 0,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "contact_settle_delay_ms": 3000,
+  "introduction_action": "pass_all",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "node_action_before_intro_phase": "stop_node",
+  "introduction_action": "none",
+  "poll_cycles": 0,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_pass_fallback_recovery_phase() {
+  local step_id="pass-fallback-recover"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_split_brain_second_accept_phase() {
+  local step_id="split-brain-second-accept"
+  clear_results_for_devices "$DEVICE_A" "$DEVICE_C"
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "contact_settle_delay_ms": 3000,
+  "introduction_action": "accept_all",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  xcrun simctl terminate "$DEVICE_B" "$BUNDLE_ID" 2>/dev/null || true
+  relaunch_devices "$DEVICE_A" "$DEVICE_C"
+  wait_for_results_for_devices "$step_id" "$DEVICE_A" "$DEVICE_C"
+}
+
+run_split_brain_recovery_phase() {
+  local step_id="split-brain-recover"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 35,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_first_chat_phase() {
+  local step_id="offline-first-chat"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "send_chat_messages": [
+    {
+      "targetPeerId": "$PEER_C",
+      "text": "hello after intro"
+    }
+  ],
+  "chat_settle_delay_ms": 1500,
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "expected_chat_messages": [
+    {
+      "contactPeerId": "$PEER_B",
+      "text": "hello after intro",
+      "isIncoming": true
+    }
+  ],
+  "chat_poll_cycles": 35,
+  "chat_poll_interval_ms": 500,
+  "poll_cycles": 20,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+  assert_offline_first_chat_messages
+}
+
 scenario_happy_path() {
   echo ""
-  echo "=== Scenario 1/4: Happy path mutual acceptance ==="
+  echo "=== Scenario 1/10: Happy path mutual acceptance ==="
   prepare_devices
   run_handshake_phase "happy-handshake"
   run_intro_phase "happy-intro" "accept_all" "accept_all"
@@ -518,7 +1199,7 @@ scenario_happy_path() {
 
 scenario_resend_refresh_pending() {
   echo ""
-  echo "=== Scenario 2/4: Re-send refreshes both pending rows ==="
+  echo "=== Scenario 2/10: Re-send refreshes both pending rows ==="
   prepare_devices
   run_handshake_phase "refresh-handshake"
   run_intro_phase "refresh-first-intro" "none" "none"
@@ -530,7 +1211,7 @@ scenario_resend_refresh_pending() {
 
 scenario_resend_after_pass() {
   echo ""
-  echo "=== Scenario 3/4: Re-send revives a passed intro ==="
+  echo "=== Scenario 3/10: Re-send revives a passed intro ==="
   prepare_devices
   run_handshake_phase "pass-handshake"
   run_intro_phase "pass-first-intro" "pass_all" "none"
@@ -540,7 +1221,7 @@ scenario_resend_after_pass() {
 
 scenario_repair_missing_side() {
   echo ""
-  echo "=== Scenario 4/4: Re-send repairs the missing side ==="
+  echo "=== Scenario 4/10: Re-send repairs the missing side ==="
   prepare_devices
   run_handshake_phase "repair-handshake"
   run_intro_phase "repair-first-intro" "none" "drop_first"
@@ -550,11 +1231,76 @@ scenario_repair_missing_side() {
 
 scenario_visible_copy_review() {
   echo ""
-  echo "=== Scenario 5/5: Visible intro copy across all three users ==="
+  echo "=== Scenario 5/10: Visible intro copy across all three users ==="
   prepare_devices
   run_handshake_phase "copy-handshake"
   run_copy_send_phase
   run_copy_accept_phase
+  assert_pair_state "mutual_accepted" "yes"
+}
+
+scenario_partial_fanout_same_intro_recovery() {
+  echo ""
+  echo "=== Scenario 6/10: Partial fan-out recovers on the same intro ==="
+  prepare_devices
+  run_handshake_phase "partial-handshake"
+  run_partial_fanout_send_phase
+  assert_partial_fanout_mid_state
+  PARTIAL_INTRO_ID=$(pair_intro_id_from_result "$(result_file_path "$DEVICE_B")")
+  run_partial_fanout_recovery_phase
+  assert_pair_state "mutual_accepted" "yes"
+  assert_pair_intro_id_equals "$(result_file_path "$DEVICE_A")" "$PARTIAL_INTRO_ID"
+  assert_pair_intro_id_equals "$(result_file_path "$DEVICE_B")" "$PARTIAL_INTRO_ID"
+  assert_pair_intro_id_equals "$(result_file_path "$DEVICE_C")" "$PARTIAL_INTRO_ID"
+}
+
+scenario_partition_heal_divergent_accepts() {
+  echo ""
+  echo "=== Scenario 7/10: Partitioned accept deliveries heal back to one intro truth ==="
+  prepare_devices
+  run_handshake_phase "partition-handshake"
+  run_intro_phase "partition-send" "none" "none"
+  run_partition_divergent_accept_phase
+  assert_partition_mid_state
+  run_partition_heal_phase
+  assert_pair_state "mutual_accepted" "yes"
+}
+
+scenario_offline_relay_first_chat() {
+  echo ""
+  echo "=== Scenario 8/10: Offline intro relay heals to mutual acceptance and first chat ==="
+  prepare_devices
+  run_handshake_phase "offline-chat-handshake"
+  run_partial_fanout_send_phase
+  assert_partial_fanout_mid_state
+  run_partial_fanout_recovery_phase
+  assert_pair_state "mutual_accepted" "yes"
+  run_first_chat_phase
+  assert_pair_state "mutual_accepted" "yes"
+}
+
+scenario_pass_fallback_recovery() {
+  echo ""
+  echo "=== Scenario 9/10: Pass notifications drain from inbox after both targets recover ==="
+  prepare_devices
+  run_handshake_phase "pass-fallback-handshake"
+  run_intro_phase "pass-fallback-send" "none" "none"
+  run_pass_fallback_phase
+  assert_pass_fallback_mid_state
+  run_pass_fallback_recovery_phase
+  assert_pass_terminal_state
+}
+
+scenario_split_brain_mutual_acceptance_recovery() {
+  echo ""
+  echo "=== Scenario 10/10: Waiting vs connected split heals after reconnect ==="
+  prepare_devices
+  run_handshake_phase "split-brain-handshake"
+  run_intro_phase "split-brain-send" "none" "none"
+  run_intro_phase "split-brain-first-accept" "accept_all" "none"
+  run_split_brain_second_accept_phase
+  assert_split_brain_mid_state
+  run_split_brain_recovery_phase
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -565,6 +1311,11 @@ case "$INTRO_E2E_SCENARIO" in
     scenario_resend_after_pass
     scenario_repair_missing_side
     scenario_visible_copy_review
+    scenario_partial_fanout_same_intro_recovery
+    scenario_partition_heal_divergent_accepts
+    scenario_offline_relay_first_chat
+    scenario_pass_fallback_recovery
+    scenario_split_brain_mutual_acceptance_recovery
     ;;
   happy)
     scenario_happy_path
@@ -580,6 +1331,21 @@ case "$INTRO_E2E_SCENARIO" in
     ;;
   copy)
     scenario_visible_copy_review
+    ;;
+  partial)
+    scenario_partial_fanout_same_intro_recovery
+    ;;
+  partition)
+    scenario_partition_heal_divergent_accepts
+    ;;
+  offline-chat)
+    scenario_offline_relay_first_chat
+    ;;
+  pass-fallback)
+    scenario_pass_fallback_recovery
+    ;;
+  split-brain)
+    scenario_split_brain_mutual_acceptance_recovery
     ;;
   *)
     echo "ERROR: Unknown INTRO_E2E_SCENARIO=$INTRO_E2E_SCENARIO" >&2

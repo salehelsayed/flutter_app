@@ -221,6 +221,36 @@ void main() {
       expect(fallback.payload, 'intros');
     });
 
+    test('preserves provided copy for a new-introduction intros fallback', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'intros',
+          'title': 'New Introduction',
+          'body': 'Noor introduced Sarah to you',
+        },
+      );
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'New Introduction');
+      expect(fallback.body, 'Noor introduced Sarah to you');
+      expect(fallback.payload, 'intros');
+    });
+
+    test('preserves provided copy for a mutual-accept intros fallback', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'intros',
+          'title': 'New Connection',
+          'body': 'Sarah also accepted! You\'re now connected.',
+        },
+      );
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'New Connection');
+      expect(fallback.body, 'Sarah also accepted! You\'re now connected.');
+      expect(fallback.payload, 'intros');
+    });
+
     test('shows fallback for contact_request type', () {
       const message = RemoteMessage(
         data: {
@@ -237,6 +267,24 @@ void main() {
       expect(fallback.title, 'New Contact Request');
       expect(fallback.body, 'Alice wants to connect');
       expect(fallback.payload, 'contact_request:12D3KooWRequestPeer');
+    });
+
+    test('shows fallback for group_invite type and routes to intros', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'group_invite',
+          'groupId': 'group-abc-123',
+          'title': 'Book Club',
+          'body': 'Alice invited you to Book Club',
+        },
+      );
+
+      expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, 'Book Club');
+      expect(fallback.body, 'Alice invited you to Book Club');
+      expect(fallback.payload, 'intros');
     });
 
     test('shows fallback for unknown type with payload data key', () {

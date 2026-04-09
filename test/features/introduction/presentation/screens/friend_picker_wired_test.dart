@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -5,6 +7,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_wired.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -25,6 +28,33 @@ class _FakeIdentityRepository implements IdentityRepository {
   @override
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
+  }
+}
+
+class _DelayedSendFakeP2PService extends FakeP2PService {
+  final Map<String, Duration> sendReplyDelayByPeerId;
+
+  _DelayedSendFakeP2PService({
+    required super.peerId,
+    required super.network,
+    this.sendReplyDelayByPeerId = const {},
+  });
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    final delay = sendReplyDelayByPeerId[targetPeerId];
+    if (delay != null) {
+      await Future.delayed(delay);
+    }
+    return super.sendMessageWithReply(
+      targetPeerId,
+      message,
+      timeoutMs: timeoutMs,
+    );
   }
 }
 
@@ -90,6 +120,51 @@ Widget _buildSubject({
 }
 
 void main() {
+  testWidgets(
+    'filters recipient, self, blocked, and archived contacts while keeping eligible friends selectable',
+    (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      final introRepo = InMemoryIntroductionRepository();
+      final identityRepo = _FakeIdentityRepository(_identity());
+      final p2pService = FakeP2PService(
+        peerId: 'peer-A',
+        network: FakeP2PNetwork(),
+      );
+      addTearDown(p2pService.dispose);
+
+      final self = _contact('peer-A', 'Noor');
+      final recipientB = _contact('peer-B', 'Lina');
+      final blockedC = _contact('peer-C', 'Blocked');
+      final archivedD = _contact('peer-D', 'Archived');
+      final eligibleE = _contact('peer-E', 'Sarah');
+
+      contactRepo.addTestContact(self);
+      contactRepo.addTestContact(recipientB);
+      contactRepo.addTestContact(blockedC);
+      contactRepo.addTestContact(archivedD);
+      contactRepo.addTestContact(eligibleE);
+      await contactRepo.blockContact(blockedC.peerId);
+      await contactRepo.archiveContact(archivedD.peerId);
+
+      await tester.pumpWidget(
+        _buildSubject(
+          recipient: recipientB,
+          contactRepo: contactRepo,
+          introRepo: introRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Noor'), findsNothing);
+      expect(find.text('Lina'), findsNothing);
+      expect(find.text('Blocked'), findsNothing);
+      expect(find.text('Archived'), findsNothing);
+      expect(find.text('Sarah'), findsOneWidget);
+    },
+  );
+
   testWidgets(
     'intro history no longer hides other eligible contacts in the picker',
     (tester) async {
@@ -190,6 +265,92 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Lina'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'loads, searches, selects, sends with progress, and returns introductions to the parent callback',
+    (tester) async {
+      final network = FakeP2PNetwork();
+      final recipientService = FakeP2PService(peerId: 'peer-B', network: network);
+      final friendCService = FakeP2PService(peerId: 'peer-C', network: network);
+      final friendDService = FakeP2PService(peerId: 'peer-D', network: network);
+      final contactRepo = InMemoryContactRepository();
+      final introRepo = InMemoryIntroductionRepository();
+      final identityRepo = _FakeIdentityRepository(_identity());
+      final p2pService = _DelayedSendFakeP2PService(
+        peerId: 'peer-A',
+        network: network,
+        sendReplyDelayByPeerId: const {
+          'peer-D': Duration(milliseconds: 500),
+        },
+      );
+      addTearDown(recipientService.dispose);
+      addTearDown(friendCService.dispose);
+      addTearDown(friendDService.dispose);
+      addTearDown(p2pService.dispose);
+
+      final recipientB = _contact('peer-B', 'Lina');
+      final friendC = _contact('peer-C', 'Sarah');
+      final friendD = _contact('peer-D', 'Dana');
+
+      contactRepo.addTestContact(recipientB);
+      contactRepo.addTestContact(friendC);
+      contactRepo.addTestContact(friendD);
+
+      List<IntroductionModel>? sentIntroductions;
+
+      await tester.pumpWidget(
+        _buildSubject(
+          recipient: recipientB,
+          contactRepo: contactRepo,
+          introRepo: introRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          onIntroductionsSent: (intros) => sentIntroductions = intros,
+        ),
+      );
+
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Sa');
+      await tester.pump();
+      expect(find.text('Sarah'), findsOneWidget);
+      expect(find.text('Dana'), findsNothing);
+
+      await tester.enterText(find.byType(TextField), '');
+      await tester.pump();
+
+      await tester.tap(find.text('Sarah'));
+      await tester.pump();
+      await tester.tap(find.text('Dana'));
+      await tester.pump();
+
+      expect(find.text('Introduce (2)'), findsOneWidget);
+
+      await tester.tap(find.text('Introduce (2)'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+
+      expect(find.text('Sending 1 of 2'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+      await tester.pumpAndSettle();
+
+      expect(sentIntroductions, isNotNull);
+      expect(sentIntroductions, hasLength(2));
+      expect(
+        sentIntroductions!.map((intro) => intro.introducedId).toSet(),
+        {'peer-C', 'peer-D'},
+      );
+      expect(
+        sentIntroductions!.every(
+          (intro) => intro.recipientId == recipientB.peerId,
+        ),
+        isTrue,
+      );
     },
   );
 }

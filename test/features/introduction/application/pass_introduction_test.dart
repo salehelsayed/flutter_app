@@ -121,6 +121,30 @@ void main() {
     expect(contactCountAfter, contactCountBefore);
   });
 
+  test('non-party caller cannot pass and does not mutate intro state',
+      () async {
+    network.resetCounters();
+
+    final result = await passIntroduction(
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pServiceB,
+      bridge: bridge,
+      introductionId: 'intro-1',
+      ownPeerId: 'peer-X',
+      ownUsername: 'Mallory',
+    );
+
+    final intro = await introRepo.getIntroduction('intro-1');
+    expect(result, isNull);
+    expect(intro, isNotNull);
+    expect(intro!.recipientStatus, IntroductionStatus.pending);
+    expect(intro.introducedStatus, IntroductionStatus.pending);
+    expect(intro.status, IntroductionOverallStatus.pending);
+    expect(network.deliverCallCount, 0);
+    expect(network.storeInInboxCallCount, 0);
+  });
+
   test('pass sends notification to introducer and other party', () async {
     network.resetCounters();
 
@@ -211,6 +235,87 @@ void main() {
           bridge.commandLog.where((c) => c == 'message.encrypt').length;
       expect(encryptCalls, 1,
           reason: 'only introducer encrypted, stranger gets v1');
+    });
+
+    test(
+        'contact ML-KEM key is used for stranger on pass when intro record omits it',
+        () async {
+      introRepo.clear();
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        recipientMlKemPublicKey: 'mlkem-pk-bob',
+        createdAt: now,
+      ));
+
+      bridge.sentMessages.clear();
+      bridge.commandLog.clear();
+
+      await passIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      final encryptRecipientKeys = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .where((request) => request['cmd'] == 'message.encrypt')
+          .map((request) =>
+              (request['payload'] as Map<String, dynamic>)['recipientPublicKey']
+                  as String)
+          .toList();
+
+      expect(encryptRecipientKeys, hasLength(2));
+      expect(encryptRecipientKeys, contains('test-mlkem-pk-peer-A'));
+      expect(encryptRecipientKeys, contains('test-mlkem-pk-peer-C'));
+    });
+
+    test('rejects intro/contact stranger ML-KEM mismatches before mutation',
+        () async {
+      introRepo.clear();
+      await introRepo.saveIntroduction(IntroductionModel(
+        id: 'intro-1',
+        introducerId: 'peer-A',
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        introducerUsername: 'Alice',
+        recipientUsername: 'Bob',
+        introducedUsername: 'Charlie',
+        introducedMlKemPublicKey: 'mlkem-pk-charlie-stale',
+        recipientMlKemPublicKey: 'mlkem-pk-bob',
+        createdAt: now,
+      ));
+
+      bridge.commandLog.clear();
+
+      final result = await passIntroduction(
+        introRepo: introRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pServiceB,
+        bridge: bridge,
+        introductionId: 'intro-1',
+        ownPeerId: 'peer-B',
+        ownUsername: 'Bob',
+      );
+
+      expect(result, isNull);
+
+      final intro = await introRepo.getIntroduction('intro-1');
+      expect(intro, isNotNull);
+      expect(intro!.recipientStatus, IntroductionStatus.pending);
+      expect(intro.introducedStatus, IntroductionStatus.pending);
+      expect(intro.status, IntroductionOverallStatus.pending);
+      expect(network.deliverCallCount, 0);
+      expect(bridge.commandLog, isEmpty);
     });
   });
 }

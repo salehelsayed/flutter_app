@@ -32,6 +32,7 @@ void main() {
     String? displayUsername,
     VoidCallback? onAccept,
     VoidCallback? onPass,
+    VoidCallback? onSendMessage,
     IntroductionStatus? ownPartyStatus,
     String? waitingForUsername,
   }) {
@@ -46,6 +47,7 @@ void main() {
           showActions: showActions,
           onAccept: onAccept,
           onPass: onPass,
+          onSendMessage: onSendMessage,
           ownPartyStatus: ownPartyStatus,
           waitingForUsername: waitingForUsername,
         ),
@@ -79,6 +81,30 @@ void main() {
       expect(find.text('Pass'), findsNothing);
     });
 
+    testWidgets('mutualAccepted state shows Message CTA and invokes callback', (
+      tester,
+    ) async {
+      var tapped = false;
+
+      await tester.pumpWidget(buildWidget(
+        introduction: _makeIntro(
+          status: IntroductionOverallStatus.mutualAccepted,
+        ),
+        showActions: false,
+        onSendMessage: () => tapped = true,
+      ));
+
+      expect(find.text('Connected'), findsOneWidget);
+      expect(find.text('Message'), findsOneWidget);
+      expect(find.text('Accept'), findsNothing);
+      expect(find.text('Pass'), findsNothing);
+
+      await tester.tap(find.text('Message'));
+      await tester.pump();
+
+      expect(tapped, isTrue);
+    });
+
     testWidgets('accepted own pending intro shows waiting label', (
       tester,
     ) async {
@@ -108,6 +134,22 @@ void main() {
       expect(find.text('Passed'), findsOneWidget);
       expect(find.text('Accept'), findsNothing);
       expect(find.text('Pass'), findsNothing);
+    });
+
+    testWidgets('alreadyConnected state shows status only and no actions', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildWidget(
+        introduction: _makeIntro(
+          status: IntroductionOverallStatus.alreadyConnected,
+        ),
+        showActions: false,
+      ));
+
+      expect(find.text('Already connected'), findsOneWidget);
+      expect(find.text('Accept'), findsNothing);
+      expect(find.text('Pass'), findsNothing);
+      expect(find.text('Message'), findsNothing);
     });
 
     testWidgets('shows introducer attribution', (tester) async {

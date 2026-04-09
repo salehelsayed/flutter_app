@@ -143,6 +143,100 @@ void main() {
       expect(map['encrypted']['nonce'], equals('test-nonce'));
     });
 
+    test('buildEnvelopeMessageId scopes retries to action and sender', () {
+      expect(
+        IntroductionPayload.buildEnvelopeMessageId(
+          introductionId: 'intro-1',
+          action: 'send',
+          senderPeerId: 'peer-A',
+        ),
+        equals('intro-1::send::peer-A'),
+      );
+      expect(
+        IntroductionPayload.buildEnvelopeMessageId(
+          introductionId: 'intro-1',
+          action: 'accept',
+          senderPeerId: 'peer-B',
+        ),
+        equals('intro-1::accept::peer-B'),
+      );
+    });
+
+    test(
+      'ensureEnvelopeMessageId replaces intro-only ids so send and accept do not collide',
+      () {
+        final sendEnvelope = _makeSendPayload().toJson();
+        final acceptEnvelope = _makeAcceptPayload().toJson();
+
+        final normalizedSend = jsonDecode(
+          IntroductionPayload.ensureEnvelopeMessageId(
+            sendEnvelope,
+            IntroductionPayload.buildEnvelopeMessageId(
+              introductionId: 'intro-1',
+              action: 'send',
+              senderPeerId: 'peer-A',
+            ),
+          ),
+        ) as Map<String, dynamic>;
+        final normalizedAccept = jsonDecode(
+          IntroductionPayload.ensureEnvelopeMessageId(
+            acceptEnvelope,
+            IntroductionPayload.buildEnvelopeMessageId(
+              introductionId: 'intro-1',
+              action: 'accept',
+              senderPeerId: 'peer-B',
+            ),
+          ),
+        ) as Map<String, dynamic>;
+
+        expect(normalizedSend['messageId'], 'intro-1::send::peer-A');
+        expect(normalizedAccept['messageId'], 'intro-1::accept::peer-B');
+        expect(normalizedSend['messageId'], isNot(normalizedAccept['messageId']));
+        expect(
+          (normalizedSend['payload'] as Map<String, dynamic>)['introductionId'],
+          'intro-1',
+        );
+        expect(
+          (normalizedAccept['payload'] as Map<String, dynamic>)['introductionId'],
+          'intro-1',
+        );
+      },
+    );
+
+    test(
+      'ensureEnvelopeMessageId patches missing messageId and preserves legacy id envelopes',
+      () {
+        final legacyEnvelope = jsonDecode(
+          IntroductionPayload.buildEncryptedEnvelope(
+            introductionId: 'intro-1',
+            senderPeerId: 'peer-A',
+            kem: 'test-kem-data',
+            ciphertext: 'test-ciphertext',
+            nonce: 'test-nonce',
+          ),
+        ) as Map<String, dynamic>;
+        legacyEnvelope.remove('messageId');
+        legacyEnvelope['id'] = 'legacy-envelope-id';
+
+        final normalizedJson = IntroductionPayload.ensureEnvelopeMessageId(
+          jsonEncode(legacyEnvelope),
+          IntroductionPayload.buildEnvelopeMessageId(
+            introductionId: 'intro-1',
+            action: 'send',
+            senderPeerId: 'peer-A',
+          ),
+        );
+        final normalized = jsonDecode(normalizedJson) as Map<String, dynamic>;
+
+        expect(normalized['id'], 'legacy-envelope-id');
+        expect(normalized['messageId'], 'intro-1::send::peer-A');
+        expect(
+          IntroductionPayload.parseEncryptedEnvelope(normalizedJson),
+          isNotNull,
+        );
+      },
+    );
+
     test('parseEncryptedEnvelope rejects non-introduction types', () {
       final nonIntroEnvelope = jsonEncode({
         'type': 'chat_message',

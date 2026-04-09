@@ -208,6 +208,39 @@ void main() {
     });
 
     test(
+      'local/direct race converges to one intro row and one system message on the receiver',
+      () async {
+        final friendC = await userA.contactRepo.getContact('peer-C');
+        userA.p2pService.localPeers.add('peer-B');
+        userA.p2pService.localAckDelay = const Duration(milliseconds: 50);
+        network.resetCounters();
+
+        final intros = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: [friendC!],
+        );
+        final introId = intros.single.id;
+
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        expect(userA.p2pService.localSendCallCount, 1);
+        expect(
+          network.deliverCallCount,
+          3,
+          reason: 'direct-to-B, delayed local-to-B, and the normal send-to-C',
+        );
+
+        final bPending = await userB.loadPendingIntros();
+        expect(bPending, hasLength(1));
+        expect(bPending.single.id, introId);
+
+        final bMessages = await userB.messageRepo.getMessagesForContact('peer-A');
+        expect(bMessages, hasLength(1));
+        expect(bMessages.single.text, contains('introduced'));
+      },
+    );
+
+    test(
       're-introducing the same pair refreshes the intro instead of duplicating it',
       () async {
         final friendC = await userA.contactRepo.getContact('peer-C');
@@ -247,6 +280,73 @@ void main() {
         expect(await userC.introRepo.getIntroduction(firstIntroId), isNull);
         expect(await userB.introRepo.getIntroduction(secondIntroId), isNotNull);
         expect(await userC.introRepo.getIntroduction(secondIntroId), isNotNull);
+      },
+    );
+
+    test(
+      'expired intro can be reintroduced as a fresh pending flow',
+      () async {
+        final friendC = await userA.contactRepo.getContact('peer-C');
+        final firstRound = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: [friendC!],
+        );
+        final firstIntroId = firstRound.single.id;
+        final thirtyOneDaysAgo = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 31))
+            .toIso8601String();
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final introA = await userA.introRepo.getIntroduction(firstIntroId);
+        final introB = await userB.introRepo.getIntroduction(firstIntroId);
+        final introC = await userC.introRepo.getIntroduction(firstIntroId);
+        expect(introA, isNotNull);
+        expect(introB, isNotNull);
+        expect(introC, isNotNull);
+
+        await userA.introRepo.saveIntroduction(
+          introA!.copyWith(
+            createdAt: thirtyOneDaysAgo,
+            status: IntroductionOverallStatus.expired,
+          ),
+        );
+        await userB.introRepo.saveIntroduction(
+          introB!.copyWith(
+            createdAt: thirtyOneDaysAgo,
+            status: IntroductionOverallStatus.expired,
+          ),
+        );
+        await userC.introRepo.saveIntroduction(
+          introC!.copyWith(
+            createdAt: thirtyOneDaysAgo,
+            status: IntroductionOverallStatus.expired,
+          ),
+        );
+
+        expect(await userB.introRepo.countPendingIntroductions('peer-B'), 0);
+        expect(await userC.introRepo.countPendingIntroductions('peer-C'), 0);
+
+        final secondRound = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: [friendC],
+        );
+        final secondIntroId = secondRound.single.id;
+        expect(secondIntroId, isNot(firstIntroId));
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final refreshedB = await userB.introRepo.getIntroduction(secondIntroId);
+        final refreshedC = await userC.introRepo.getIntroduction(secondIntroId);
+        expect(await userB.introRepo.getIntroduction(firstIntroId), isNull);
+        expect(await userC.introRepo.getIntroduction(firstIntroId), isNull);
+        expect(refreshedB, isNotNull);
+        expect(refreshedC, isNotNull);
+        expect(refreshedB!.status, IntroductionOverallStatus.pending);
+        expect(refreshedC!.status, IntroductionOverallStatus.pending);
+        expect(await userB.introRepo.countPendingIntroductions('peer-B'), 1);
+        expect(await userC.introRepo.countPendingIntroductions('peer-C'), 1);
       },
     );
 

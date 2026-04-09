@@ -59,8 +59,8 @@ class NotificationRouteTarget {
         'contact_request:${peerId ?? ''}',
       NotificationRouteTargetKind.group =>
         messageId == null || messageId!.isEmpty
-        ? 'group:${groupId ?? ''}'
-        : 'group:${groupId ?? ''}|message:${messageId!}',
+            ? 'group:${groupId ?? ''}'
+            : 'group:${groupId ?? ''}|message:${messageId!}',
       NotificationRouteTargetKind.intros => 'intros',
       NotificationRouteTargetKind.post => 'post:${postId ?? ''}',
       NotificationRouteTargetKind.postComment =>
@@ -160,6 +160,10 @@ class NotificationRouteTarget {
             _trimToNull(data['id']?.toString()) ??
             _trimToNull(data['msgId']?.toString());
         return NotificationRouteTarget.group(groupId, messageId: messageId);
+      case 'group_invite':
+        // Group invites are reviewed from the shared Intros surface, which
+        // already renders pending invites alongside introductions.
+        return const NotificationRouteTarget.intros();
       case 'intros':
         return const NotificationRouteTarget.intros();
       case 'post_create':

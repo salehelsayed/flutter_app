@@ -378,6 +378,16 @@ class IntroductionListener {
       }
 
       if (result == HandleIntroductionResult.alreadyExists) {
+        if (model != null &&
+            (payload.action == 'accept' || payload.action == 'pass')) {
+          _introStatusChangedController.add(model);
+
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'INTRO_LISTENER_STATUS_REPLAY_IGNORED',
+            details: {'introductionId': model.id, 'action': payload.action},
+          );
+        }
         return finish(
           IntroductionMessageProcessOutcome(
             state: IntroductionMessageProcessState.stored,

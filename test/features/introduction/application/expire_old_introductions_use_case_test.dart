@@ -4,14 +4,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_introduction_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 void main() {
   late InMemoryIntroductionRepository introRepo;
   late InMemoryContactRepository contactRepo;
+  late InMemoryMessageRepository messageRepo;
 
   setUp(() {
     introRepo = InMemoryIntroductionRepository();
     contactRepo = InMemoryContactRepository();
+    messageRepo = InMemoryMessageRepository();
   });
 
   group('expireOldIntroductions', () {
@@ -41,6 +44,7 @@ void main() {
         introRepo: introRepo,
         peerId: 'peer-B',
         contactRepo: contactRepo,
+        messageRepo: messageRepo,
       );
 
       expect(repaired, 1);
@@ -49,6 +53,80 @@ void main() {
       expect(updated, isNotNull);
       expect(updated!.status, IntroductionOverallStatus.mutualAccepted);
       expect(await contactRepo.contactExists('peer-C'), isTrue);
+
+      final messages = await messageRepo.getMessagesForContact('peer-C');
+      expect(messages, hasLength(1));
+      expect(
+        messages.single.text,
+        'You and Sarah are now connected — introduced by Noor',
+      );
+    });
+
+    test('repairs stale pending passed rows without creating a contact',
+        () async {
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-stale-passed',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.passed,
+          introducedStatus: IntroductionStatus.pending,
+          status: IntroductionOverallStatus.pending,
+          createdAt: '2026-03-25T12:00:00.000Z',
+        ),
+      );
+
+      final repaired = await expireOldIntroductions(
+        introRepo: introRepo,
+        peerId: 'peer-B',
+        contactRepo: contactRepo,
+        messageRepo: messageRepo,
+      );
+
+      expect(repaired, 1);
+
+      final updated = await introRepo.getIntroduction('intro-stale-passed');
+      expect(updated, isNotNull);
+      expect(updated!.status, IntroductionOverallStatus.passed);
+      expect(await contactRepo.contactExists('peer-C'), isFalse);
+      expect(await messageRepo.getMessagesForContact('peer-C'), isEmpty);
+    });
+
+    test('repairs stale pending expired rows without creating a contact',
+        () async {
+      final thirtyOneDaysAgo = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(days: 31))
+          .toIso8601String();
+
+      await introRepo.saveIntroduction(
+        IntroductionModel(
+          id: 'intro-stale-expired',
+          introducerId: 'peer-A',
+          recipientId: 'peer-B',
+          introducedId: 'peer-C',
+          recipientStatus: IntroductionStatus.pending,
+          introducedStatus: IntroductionStatus.pending,
+          status: IntroductionOverallStatus.pending,
+          createdAt: thirtyOneDaysAgo,
+        ),
+      );
+
+      final repaired = await expireOldIntroductions(
+        introRepo: introRepo,
+        peerId: 'peer-B',
+        contactRepo: contactRepo,
+        messageRepo: messageRepo,
+      );
+
+      expect(repaired, 1);
+
+      final updated = await introRepo.getIntroduction('intro-stale-expired');
+      expect(updated, isNotNull);
+      expect(updated!.status, IntroductionOverallStatus.expired);
+      expect(await contactRepo.contactExists('peer-C'), isFalse);
+      expect(await messageRepo.getMessagesForContact('peer-C'), isEmpty);
     });
 
     test('leaves alreadyConnected rows untouched during startup repair',
