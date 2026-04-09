@@ -508,17 +508,19 @@ group('GIF full-screen')
 
 **Why:** GIFs can be 50MB+. Reject oversized files before upload.
 
-**Guard placement:** The guard goes in `_processMediaIfNeeded` (not `_pickFromGallery`). Both wired screens have three pick entry points — `_pickFromGallery`, `_pickFromCamera`, `_pickVideoFromCamera` — and all three funnel through `_processMediaIfNeeded`. Placing the guard there covers all media entry paths with a single check per screen.
+**Guard placement:** The guard goes in `_preparePendingMedia()`, the shared helper that all three pick entry points funnel through. Both wired screens have three pick methods — `_pickFromGallery`, `_pickFromCamera`, `_pickVideoFromCamera` — and all three delegate to `_preparePendingMedia()` which calls the core `preparePendingComposerMedia()` function. Placing the guard at the top of `_preparePendingMedia()` covers all media entry paths with a single check per screen.
 
-- `conversation_wired.dart`: `_processMediaIfNeeded` at line 1050, called from lines 993, 1015, 1035
-- `group_conversation_wired.dart`: `_processMediaIfNeeded` at line 995, called from lines 944, 964, 982
+- `conversation_wired.dart`: `_pickFromGallery` (~line 2120), `_pickFromCamera` (~line 2180), `_pickVideoFromCamera` (~line 2199) — all call `_preparePendingMedia()` (~line 829)
+- `group_conversation_wired.dart`: `_pickFromGallery` (~line 1673), `_pickFromCamera` (~line 1729), `_pickVideoFromCamera` (~line 1746) — all call `_preparePendingMedia()`
+
+**Note:** There is also a cumulative budget check in `_attemptAddPendingMedia()` against `maxAttachmentBudgetBytes` (5 GB default). The per-file guard here is a tighter, user-facing limit at a different layer.
 
 **Constant file:** `lib/core/constants/media_constants.dart` (new, following pattern of `retry_constants.dart` and `network_constants.dart`):
 ```dart
 const int kMaxMediaFileSize = 25 * 1024 * 1024; // 25 MB
 ```
 
-**Note:** The codebase has existing 100 MB limits (`local_media_server.dart:43` and `send_voice_message_use_case.dart:20`) which are server/transport-layer limits. The 25 MB `kMaxMediaFileSize` is a UI picker guard — a different layer with a tighter bound. Both are intentional.
+**Note:** The codebase has an existing 100 MB limit in `send_voice_message_use_case.dart:20` (voice message transport limit) and a 5 GB limit in `lib/core/local_discovery/local_media_server.dart:43` (local media server). The 25 MB `kMaxMediaFileSize` is a UI picker guard — a different layer with a tighter bound. All are intentional.
 
 **Test file:** `test/features/conversation/presentation/screens/conversation_wired_gif_test.dart` (new)
 
@@ -551,10 +553,10 @@ group('file size guard — group')
 
 **Production files:**
 - `lib/core/constants/media_constants.dart` — NEW: `kMaxMediaFileSize` constant
-- `lib/features/conversation/presentation/screens/conversation_wired.dart` — guard at top of `_processMediaIfNeeded`
-- `lib/features/groups/presentation/screens/group_conversation_wired.dart` — guard at top of `_processMediaIfNeeded`
+- `lib/features/conversation/presentation/screens/conversation_wired.dart` — guard at top of `_preparePendingMedia()`
+- `lib/features/groups/presentation/screens/group_conversation_wired.dart` — guard at top of `_preparePendingMedia()`
 
-Changes in each `_processMediaIfNeeded`:
+Changes in each `_preparePendingMedia()`:
 ```dart
 if (File(path).lengthSync() > kMaxMediaFileSize) {
   // reject — throw or return null depending on return type
@@ -643,6 +645,11 @@ group('GIF fromJson')
 
 ### Phase 11: Retry — GIF survives failure recovery
 
+**Why expanded:** The existing media retry suite has 80+ tests covering transient failure,
+max-retry exhaustion, partial multi-attachment crash recovery, and inbox fallback — all
+using JPEG/MP4 fixtures. GIF bypasses `ImageProcessor` (no re-compression on retry), so
+the retry path is subtly different and needs explicit proof.
+
 **Test file:** `test/features/conversation/application/retry_failed_messages_use_case_test.dart`
 
 ```
@@ -650,6 +657,35 @@ group('GIF retry')
   test('failed GIF message retries with correct mime')
     → create failed message with GIF attachment
     → retry → verify re-upload called with mime: 'image/gif'
+
+  test('GIF retry via inbox fallback preserves media metadata in wire envelope')
+    → create failed GIF message with wireEnvelope already set
+    → retry → verify inbox store receives envelope with media[0].mime == 'image/gif'
+    → verify no re-encrypt (envelope reused as-is)
+```
+
+**Test file:** `test/features/conversation/application/retry_incomplete_uploads_use_case_test.dart`
+
+```
+group('GIF upload retry')
+  test('GIF transient upload failure increments retryCount and stays upload_pending')
+    → create upload_pending GIF attachment (retryCount: 0)
+    → bridge returns transient error
+    → verify retryCount incremented to 1, status still upload_pending
+
+  test('GIF upload after kMaxUploadRetries exhaustion transitions to upload_failed')
+    → create upload_pending GIF attachment (retryCount: kMaxUploadRetries)
+    → bridge returns transient error
+    → verify status transitions to upload_failed (terminal)
+
+  test('partial multi-attachment GIF + JPEG: crash recovery re-uploads only pending GIF')
+    → create message with 2 attachments:
+      - JPEG: downloadStatus = 'done' (already uploaded)
+      - GIF: downloadStatus = 'upload_pending'
+    → trigger retryIncompleteUploads
+    → verify upload called only for GIF (mime: 'image/gif')
+    → verify JPEG not re-uploaded
+    → on success: verify send called with both attachments
 ```
 
 **Test file:** `test/features/groups/application/retry_failed_group_messages_use_case_test.dart`
@@ -666,6 +702,11 @@ group('GIF group retry')
 
 ### Phase 12: Integration — end-to-end
 
+**Why expanded:** The existing media integration suite (14 tests) covers send/receive,
+multi-attachment, and stale upload recovery — all with JPEG/video. GIF needs proof that
+the full lifecycle works, including download state transitions (the download use case
+validates file size > 0 and actual size matches expected).
+
 **Test file:** `test/features/conversation/integration/media_attachment_flow_test.dart`
 
 ```
@@ -681,6 +722,19 @@ group('GIF end-to-end')
   test('group: GIF arrives to all members')
     → group pubsub cycle
     → verify GIF attachment on receiver
+
+  test('GIF download: pending → downloading → done with mime preserved')
+    → receive message with GIF attachment (downloadStatus: 'pending')
+    → trigger downloadMedia
+    → verify status transitions: pending → downloading → done
+    → verify downloaded attachment has mime: 'image/gif', isAnimated: true
+    → verify file exists on disk with .gif extension
+
+  test('GIF + JPEG multi-attachment: correct order preserved through send/receive')
+    → send message with [GIF, JPEG] attachments
+    → receive on other side
+    → verify media[0].mime == 'image/gif', media[1].mime == 'image/jpeg'
+    → verify ordering matches sender's original order
 ```
 
 **Production file:** None — integration tests only.
@@ -750,15 +804,15 @@ group('GIF share smoke')
 | 4 | Phase 4: MediaGridCell animated + badge | 7 | ~25 lines | M |
 | 5 | Phase 5: AttachmentPreviewStrip badge | 5 | ~20 lines | M |
 | 6 | Phase 6: FullScreenImageViewer verify | 3 | 0 lines | S |
-| 7 | Phase 7: File size guard (in `_processMediaIfNeeded`) | 5 | ~20 lines + 1 new file | M |
+| 7 | Phase 7: File size guard (in `_preparePendingMedia`) | 5 | ~20 lines + 1 new file | M |
 | 8 | Phase 8: Upload verification | 3 | 0 lines | S |
 | 9 | Phase 9: Send wire envelope | 4 | 0 lines | S |
 | 10 | Phase 10: Receive parsing | 2 | 0 lines | S |
-| 11 | Phase 11: Retry verification | 2 | 0 lines | S |
-| 12 | Phase 12: Integration e2e | 3 | 0 lines | M |
+| 11 | Phase 11: Retry reliability | 6 | 0 lines | M |
+| 12 | Phase 12: Integration e2e | 5 | 0 lines | M |
 | 13 | Phase 13: Announcement acceptance | 2 | 0 lines | S |
 | 14 | Phase 14: Share-intent pass-through | 2 | 0 lines | S |
-| **Total** | | **53 tests** | **~81 lines + 1 new file** | |
+| **Total** | | **58 tests** | **~81 lines + 1 new file** | |
 
 ---
 
@@ -771,8 +825,8 @@ group('GIF share smoke')
 | `lib/features/conversation/presentation/widgets/attachment_preview_strip.dart` | Skip `cacheWidth` for GIF + "GIF" badge |
 | `lib/shared/widgets/media/media_preview_text.dart` | "GIF" / "N GIFs" label (also affects `collapsed_mode_card_body.dart` downstream) |
 | `lib/features/push/application/show_notification_use_case.dart` | "GIF" in notification body |
-| `lib/features/conversation/presentation/screens/conversation_wired.dart` | File size guard in `_processMediaIfNeeded` (covers gallery + camera + video) |
-| `lib/features/groups/presentation/screens/group_conversation_wired.dart` | File size guard in `_processMediaIfNeeded` (covers gallery + camera + video) |
+| `lib/features/conversation/presentation/screens/conversation_wired.dart` | File size guard in `_preparePendingMedia()` (covers gallery + camera + video) |
+| `lib/features/groups/presentation/screens/group_conversation_wired.dart` | File size guard in `_preparePendingMedia()` (covers gallery + camera + video) |
 | `lib/core/constants/media_constants.dart` | **NEW:** `kMaxMediaFileSize = 25 * 1024 * 1024` |
 
 ## New Test Files
@@ -794,9 +848,10 @@ group('GIF share smoke')
 | `test/features/conversation/application/upload_media_use_case_test.dart` | GIF upload |
 | `test/features/conversation/application/send_chat_message_use_case_test.dart` | GIF in envelope |
 | `test/features/groups/application/send_group_message_use_case_test.dart` | GIF in group envelope |
-| `test/features/conversation/application/retry_failed_messages_use_case_test.dart` | GIF retry |
+| `test/features/conversation/application/retry_failed_messages_use_case_test.dart` | GIF retry + inbox fallback |
+| `test/features/conversation/application/retry_incomplete_uploads_use_case_test.dart` | GIF transient failure, max retry exhaustion, partial multi-attachment recovery |
 | `test/features/groups/application/retry_failed_group_messages_use_case_test.dart` | GIF group retry |
-| `test/features/conversation/integration/media_attachment_flow_test.dart` | GIF e2e |
+| `test/features/conversation/integration/media_attachment_flow_test.dart` | GIF e2e + download state transitions + multi-attachment ordering |
 | `test/shared/widgets/media/full_screen_image_viewer_test.dart` | GIF animation |
 | `test/features/groups/integration/announcement_happy_path_test.dart` | GIF announcement admin-send / reader-receive acceptance |
 | `test/features/share/application/handle_share_intent_use_case_test.dart` | Raw `.gif` share-intent path pass-through |
@@ -832,6 +887,7 @@ Direct suites from this plan:
 - `test/features/conversation/application/send_chat_message_use_case_test.dart`
 - `test/features/groups/application/send_group_message_use_case_test.dart`
 - `test/features/conversation/application/retry_failed_messages_use_case_test.dart`
+- `test/features/conversation/application/retry_incomplete_uploads_use_case_test.dart`
 - `test/features/groups/application/retry_failed_group_messages_use_case_test.dart`
 - `test/features/conversation/integration/media_attachment_flow_test.dart`
 - `test/features/groups/integration/announcement_happy_path_test.dart`
