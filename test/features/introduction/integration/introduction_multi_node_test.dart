@@ -1013,6 +1013,406 @@ void main() {
     );
 
     test(
+      'pass notifications fall back to inbox while peers are unreachable and converge after drain',
+      () async {
+        final introId = await sendSingleIntroduction(
+          introducer: userA,
+          recipientPeerId: 'peer-B',
+          introducedPeerId: 'peer-C',
+        );
+
+        await waitForAsyncCondition(() async {
+          final bIntro = await userB.introRepo.getIntroduction(introId);
+          final cIntro = await userC.introRepo.getIntroduction(introId);
+          return bIntro != null && cIntro != null;
+        });
+
+        userA.setOnline(false);
+        userC.setOnline(false);
+        await userB.passIntro(introId);
+
+        expect(network.inboxCount('peer-A'), 1);
+        expect(network.inboxCount('peer-C'), 1);
+
+        userA.setOnline(true);
+        userC.setOnline(true);
+
+        final aSawBPass = waitForIntroStatusChanged(userA, introId);
+        final cSawBPass = waitForIntroStatusChanged(userC, introId);
+        expect(await userA.drainOfflineInbox(), 1);
+        expect(await userC.drainOfflineInbox(), 1);
+        await Future.wait([aSawBPass, cSawBPass]);
+
+        final aFinal = await userA.introRepo.getIntroduction(introId);
+        final bFinal = await userB.introRepo.getIntroduction(introId);
+        final cFinal = await userC.introRepo.getIntroduction(introId);
+        expect(aFinal!.status, IntroductionOverallStatus.passed);
+        expect(bFinal!.status, IntroductionOverallStatus.passed);
+        expect(cFinal!.status, IntroductionOverallStatus.passed);
+        expect(await userB.contactRepo.contactExists('peer-C'), isFalse);
+        expect(await userC.contactRepo.contactExists('peer-B'), isFalse);
+      },
+    );
+
+    test('split-brain mutual acceptance heals after reconnect', () async {
+      final introId = await sendSingleIntroduction(
+        introducer: userA,
+        recipientPeerId: 'peer-B',
+        introducedPeerId: 'peer-C',
+      );
+
+      await waitForAsyncCondition(() async {
+        final bIntro = await userB.introRepo.getIntroduction(introId);
+        final cIntro = await userC.introRepo.getIntroduction(introId);
+        return bIntro != null && cIntro != null;
+      });
+
+      final cSawBAccept = waitForIntroStatusChanged(userC, introId);
+      await userB.acceptIntro(introId);
+      final cAfterBAccept = await cSawBAccept;
+      expect(cAfterBAccept.recipientStatus, IntroductionStatus.accepted);
+      expect(cAfterBAccept.status, IntroductionOverallStatus.pending);
+
+      userB.setOnline(false);
+      await userC.acceptIntro(introId);
+
+      expect(network.inboxCount('peer-B'), 1);
+
+      final aFinalBeforeHeal = await userA.introRepo.getIntroduction(introId);
+      final bSplit = await userB.introRepo.getIntroduction(introId);
+      final cFinalBeforeHeal = await userC.introRepo.getIntroduction(introId);
+      expect(aFinalBeforeHeal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(bSplit!.recipientStatus, IntroductionStatus.accepted);
+      expect(bSplit.introducedStatus, IntroductionStatus.pending);
+      expect(bSplit.status, IntroductionOverallStatus.pending);
+      expect(cFinalBeforeHeal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(await userB.contactRepo.contactExists('peer-C'), isFalse);
+      expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
+
+      userB.setOnline(true);
+      final bSawCAccept = waitForIntroStatusChanged(userB, introId);
+      expect(await userB.drainOfflineInbox(), 1);
+      await bSawCAccept;
+
+      final aFinal = await userA.introRepo.getIntroduction(introId);
+      final bFinal = await userB.introRepo.getIntroduction(introId);
+      final cFinal = await userC.introRepo.getIntroduction(introId);
+      expect(aFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(bFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(cFinal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
+      expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
+    });
+
+    test(
+      'introducer heals after partitioned accept deliveries and converges with B and C',
+      () async {
+        final introId = await sendSingleIntroduction(
+          introducer: userA,
+          recipientPeerId: 'peer-B',
+          introducedPeerId: 'peer-C',
+        );
+
+        await waitForAsyncCondition(() async {
+          final aIntro = await userA.introRepo.getIntroduction(introId);
+          final bIntro = await userB.introRepo.getIntroduction(introId);
+          final cIntro = await userC.introRepo.getIntroduction(introId);
+          return aIntro != null && bIntro != null && cIntro != null;
+        });
+
+        userA.setOnline(false);
+
+        await userB.acceptIntro(introId);
+
+        await waitForAsyncCondition(() async {
+          final aIntro = await userA.introRepo.getIntroduction(introId);
+          final cIntro = await userC.introRepo.getIntroduction(introId);
+          return aIntro?.recipientStatus == IntroductionStatus.pending &&
+              aIntro?.introducedStatus == IntroductionStatus.pending &&
+              aIntro?.status == IntroductionOverallStatus.pending &&
+              cIntro?.recipientStatus == IntroductionStatus.accepted &&
+              cIntro?.introducedStatus == IntroductionStatus.pending &&
+              cIntro?.status == IntroductionOverallStatus.pending;
+        });
+        expect(network.inboxCount('peer-A'), 1);
+
+        await userC.acceptIntro(introId);
+
+        await waitForAsyncCondition(() async {
+          final bIntro = await userB.introRepo.getIntroduction(introId);
+          final cIntro = await userC.introRepo.getIntroduction(introId);
+          return bIntro?.status == IntroductionOverallStatus.mutualAccepted &&
+              cIntro?.status == IntroductionOverallStatus.mutualAccepted;
+        });
+
+        final aBeforeHeal = await userA.introRepo.getIntroduction(introId);
+        expect(aBeforeHeal, isNotNull);
+        expect(aBeforeHeal!.recipientStatus, IntroductionStatus.pending);
+        expect(aBeforeHeal.introducedStatus, IntroductionStatus.pending);
+        expect(aBeforeHeal.status, IntroductionOverallStatus.pending);
+        expect(network.inboxCount('peer-A'), 2);
+
+        userA.setOnline(true);
+        expect(await userA.drainOfflineInbox(), 2);
+
+        await waitForAsyncCondition(() async {
+          final aIntro = await userA.introRepo.getIntroduction(introId);
+          final bIntro = await userB.introRepo.getIntroduction(introId);
+          final cIntro = await userC.introRepo.getIntroduction(introId);
+          return aIntro?.status == IntroductionOverallStatus.mutualAccepted &&
+              bIntro?.status == IntroductionOverallStatus.mutualAccepted &&
+              cIntro?.status == IntroductionOverallStatus.mutualAccepted;
+        });
+
+        final aFinal = await userA.introRepo.getIntroduction(introId);
+        final bFinal = await userB.introRepo.getIntroduction(introId);
+        final cFinal = await userC.introRepo.getIntroduction(introId);
+        expect(aFinal, isNotNull);
+        expect(bFinal, isNotNull);
+        expect(cFinal, isNotNull);
+        expect(aFinal!.id, introId);
+        expect(bFinal!.id, introId);
+        expect(cFinal!.id, introId);
+        expect(aFinal.recipientStatus, IntroductionStatus.accepted);
+        expect(aFinal.introducedStatus, IntroductionStatus.accepted);
+        expect(bFinal.recipientStatus, IntroductionStatus.accepted);
+        expect(bFinal.introducedStatus, IntroductionStatus.accepted);
+        expect(cFinal.recipientStatus, IntroductionStatus.accepted);
+        expect(cFinal.introducedStatus, IntroductionStatus.accepted);
+
+        final bContacts = await userB.contactRepo.getAllContacts();
+        final cContacts = await userC.contactRepo.getAllContacts();
+        expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
+        expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
+        expect(
+          bContacts.where((contact) => contact.peerId == 'peer-C'),
+          hasLength(1),
+        );
+        expect(
+          cContacts.where((contact) => contact.peerId == 'peer-B'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'late delivery on the same intro replays an earlier accept and converges on A, B, and C without duplicates',
+      () async {
+        userC.setOnline(false);
+
+        final introId = await sendSingleIntroduction(
+          introducer: userA,
+          recipientPeerId: 'peer-B',
+          introducedPeerId: 'peer-C',
+        );
+
+        await waitForAsyncCondition(() async {
+          final aIntro = await userA.introRepo.getIntroduction(introId);
+          final bIntro = await userB.introRepo.getIntroduction(introId);
+          final cIntro = await userC.introRepo.getIntroduction(introId);
+          return aIntro != null && bIntro != null && cIntro == null;
+        });
+
+        await userB.acceptIntro(introId);
+
+        await waitForAsyncCondition(() async {
+          final aIntro = await userA.introRepo.getIntroduction(introId);
+          final bIntro = await userB.introRepo.getIntroduction(introId);
+          return aIntro?.recipientStatus == IntroductionStatus.accepted &&
+              aIntro?.introducedStatus == IntroductionStatus.pending &&
+              aIntro?.status == IntroductionOverallStatus.pending &&
+              bIntro?.recipientStatus == IntroductionStatus.accepted &&
+              bIntro?.introducedStatus == IntroductionStatus.pending &&
+              bIntro?.status == IntroductionOverallStatus.pending;
+        });
+
+        expect(await userC.introRepo.getIntroduction(introId), isNull);
+        expect(network.inboxCount('peer-C'), 2);
+        expect(await userB.contactRepo.contactExists('peer-C'), isFalse);
+        expect(await userC.contactRepo.contactExists('peer-B'), isFalse);
+
+        userC.setOnline(true);
+
+        final cReceived = waitForIntroReceived(userC, introId);
+        expect(await userC.drainOfflineInbox(), 2);
+        final cAfterReplay = await cReceived;
+        expect(cAfterReplay.id, introId);
+        expect(cAfterReplay.recipientStatus, IntroductionStatus.accepted);
+        expect(cAfterReplay.introducedStatus, IntroductionStatus.pending);
+        expect(cAfterReplay.status, IntroductionOverallStatus.pending);
+
+        final cReplayedIntro = await userC.introRepo.getIntroduction(introId);
+        expect(cReplayedIntro, isNotNull);
+        expect(
+          cReplayedIntro!.recipientStatus,
+          IntroductionStatus.accepted,
+        );
+        expect(
+          cReplayedIntro.introducedStatus,
+          IntroductionStatus.pending,
+        );
+        expect(cReplayedIntro.status, IntroductionOverallStatus.pending);
+
+        await userC.acceptIntro(introId);
+
+        await waitForAsyncCondition(() async {
+          final aIntro = await userA.introRepo.getIntroduction(introId);
+          final bIntro = await userB.introRepo.getIntroduction(introId);
+          final cIntro = await userC.introRepo.getIntroduction(introId);
+          return aIntro?.status == IntroductionOverallStatus.mutualAccepted &&
+              bIntro?.status == IntroductionOverallStatus.mutualAccepted &&
+              cIntro?.status == IntroductionOverallStatus.mutualAccepted;
+        });
+
+        final aFinal = await userA.introRepo.getIntroduction(introId);
+        final bFinal = await userB.introRepo.getIntroduction(introId);
+        final cFinal = await userC.introRepo.getIntroduction(introId);
+        expect(aFinal, isNotNull);
+        expect(bFinal, isNotNull);
+        expect(cFinal, isNotNull);
+        expect(aFinal!.id, introId);
+        expect(bFinal!.id, introId);
+        expect(cFinal!.id, introId);
+        expect(aFinal.recipientStatus, IntroductionStatus.accepted);
+        expect(aFinal.introducedStatus, IntroductionStatus.accepted);
+        expect(bFinal.recipientStatus, IntroductionStatus.accepted);
+        expect(bFinal.introducedStatus, IntroductionStatus.accepted);
+        expect(cFinal.recipientStatus, IntroductionStatus.accepted);
+        expect(cFinal.introducedStatus, IntroductionStatus.accepted);
+
+        final aPairRows = (await userA.introRepo.getIntroductionsByIntroducer(
+          'peer-A',
+        )).where((intro) => intro.id == introId);
+        final bPairRows = (await userB.introRepo.getIntroductionsByRecipient(
+          'peer-B',
+        )).where((intro) => intro.id == introId);
+        final cPairRows = (await userC.introRepo.getIntroductionsByIntroduced(
+          'peer-C',
+        )).where((intro) => intro.id == introId);
+        expect(aPairRows, hasLength(1));
+        expect(bPairRows, hasLength(1));
+        expect(cPairRows, hasLength(1));
+
+        expect(await userB.contactRepo.contactExists('peer-C'), isTrue);
+        expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
+
+        final bContacts = await userB.contactRepo.getAllContacts();
+        final cContacts = await userC.contactRepo.getAllContacts();
+        expect(
+          bContacts.where((contact) => contact.peerId == 'peer-C'),
+          hasLength(1),
+        );
+        expect(
+          cContacts.where((contact) => contact.peerId == 'peer-B'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'simultaneous intro chains stay isolated when one passes and the other reaches mutual acceptance',
+      () async {
+        userB.addContact(userD);
+        userD.addContact(userB);
+
+        final introIds = await Future.wait([
+          sendSingleIntroduction(
+            introducer: userA,
+            recipientPeerId: 'peer-B',
+            introducedPeerId: 'peer-C',
+          ),
+          sendSingleIntroduction(
+            introducer: userB,
+            recipientPeerId: 'peer-A',
+            introducedPeerId: 'peer-D',
+          ),
+        ]);
+        final intro1Id = introIds[0];
+        final intro2Id = introIds[1];
+
+        await waitForAsyncCondition(() async {
+          final bIntro1 = await userB.introRepo.getIntroduction(intro1Id);
+          final cIntro1 = await userC.introRepo.getIntroduction(intro1Id);
+          final aIntro2 = await userA.introRepo.getIntroduction(intro2Id);
+          final dIntro2 = await userD.introRepo.getIntroduction(intro2Id);
+          return bIntro1 != null &&
+              cIntro1 != null &&
+              aIntro2 != null &&
+              dIntro2 != null;
+        });
+
+        final initialBIntro1 = await userB.introRepo.getIntroduction(intro1Id);
+        final initialAIntro2 = await userA.introRepo.getIntroduction(intro2Id);
+        expect(initialBIntro1, isNotNull);
+        expect(initialAIntro2, isNotNull);
+        expect(initialBIntro1!.id, isNot(equals(initialAIntro2!.id)));
+        expect(initialBIntro1.status, IntroductionOverallStatus.pending);
+        expect(initialAIntro2!.status, IntroductionOverallStatus.pending);
+
+        final dSawAAccept = waitForIntroStatusChanged(userD, intro2Id);
+        await userA.acceptIntro(intro2Id);
+        await dSawAAccept;
+
+        final cSawBAccept = waitForIntroStatusChanged(userC, intro1Id);
+        await userB.acceptIntro(intro1Id);
+        await cSawBAccept;
+
+        final aSawDAccept = waitForIntroStatusChanged(userA, intro2Id);
+        await userD.acceptIntro(intro2Id);
+        await aSawDAccept;
+
+        final bSawCPass = waitForIntroStatusChanged(userB, intro1Id);
+        await userC.passIntro(intro1Id);
+        await bSawCPass;
+
+        await waitForAsyncCondition(() async {
+          final aIntro1 = await userA.introRepo.getIntroduction(intro1Id);
+          final bIntro1 = await userB.introRepo.getIntroduction(intro1Id);
+          final cFinalIntro1 = await userC.introRepo.getIntroduction(intro1Id);
+          final bIntro2 = await userB.introRepo.getIntroduction(intro2Id);
+          final aFinalIntro2 = await userA.introRepo.getIntroduction(intro2Id);
+          final dIntro2 = await userD.introRepo.getIntroduction(intro2Id);
+          return aIntro1?.status == IntroductionOverallStatus.passed &&
+              bIntro1?.status == IntroductionOverallStatus.passed &&
+              cFinalIntro1?.status == IntroductionOverallStatus.passed &&
+              bIntro2?.status == IntroductionOverallStatus.mutualAccepted &&
+              aFinalIntro2?.status ==
+                  IntroductionOverallStatus.mutualAccepted &&
+              dIntro2?.status == IntroductionOverallStatus.mutualAccepted;
+        });
+
+        final aIntro1 = await userA.introRepo.getIntroduction(intro1Id);
+        final bIntro1 = await userB.introRepo.getIntroduction(intro1Id);
+        final cFinalIntro1 = await userC.introRepo.getIntroduction(intro1Id);
+        final bIntro2 = await userB.introRepo.getIntroduction(intro2Id);
+        final aFinalIntro2 = await userA.introRepo.getIntroduction(intro2Id);
+        final dIntro2 = await userD.introRepo.getIntroduction(intro2Id);
+
+        expect(aIntro1, isNotNull);
+        expect(bIntro1, isNotNull);
+        expect(cFinalIntro1, isNotNull);
+        expect(bIntro2, isNotNull);
+        expect(aFinalIntro2, isNotNull);
+        expect(dIntro2, isNotNull);
+
+        expect(aIntro1!.status, IntroductionOverallStatus.passed);
+        expect(bIntro1!.status, IntroductionOverallStatus.passed);
+        expect(cFinalIntro1!.status, IntroductionOverallStatus.passed);
+        expect(bIntro2!.status, IntroductionOverallStatus.mutualAccepted);
+        expect(
+          aFinalIntro2!.status,
+          IntroductionOverallStatus.mutualAccepted,
+        );
+        expect(dIntro2!.status, IntroductionOverallStatus.mutualAccepted);
+
+        expect(await userB.contactRepo.contactExists('peer-C'), isFalse);
+        expect(await userC.contactRepo.contactExists('peer-B'), isFalse);
+        expect(await userA.contactRepo.contactExists('peer-D'), isTrue);
+        expect(await userD.contactRepo.contactExists('peer-A'), isTrue);
+      },
+    );
+
+    test(
       'reintroducing the same pair repairs a missed side and ignores stale older delivery',
       () async {
         userC.setOnline(false);

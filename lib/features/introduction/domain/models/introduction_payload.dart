@@ -193,15 +193,29 @@ class IntroductionPayload {
     required String kem,
     required String ciphertext,
     required String nonce,
+    String? messageId,
   }) {
     final envelope = {
       'type': 'introduction',
       'version': '2',
-      'messageId': introductionId,
+      'messageId': messageId ?? introductionId,
       'senderPeerId': senderPeerId,
       'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     };
     return jsonEncode(envelope);
+  }
+
+  /// Builds the transport-level message identifier for one intro envelope.
+  ///
+  /// This stays stable across retries of the same logical intro message while
+  /// keeping `send`, `accept`, and `pass` deliveries for the same
+  /// `introductionId` distinct in relay/inbox dedupe.
+  static String buildEnvelopeMessageId({
+    required String introductionId,
+    required String action,
+    required String senderPeerId,
+  }) {
+    return '$introductionId::$action::$senderPeerId';
   }
 
   /// Attempts to parse a JSON string as a v2 encrypted envelope.
@@ -229,22 +243,23 @@ class IntroductionPayload {
   /// Ensures the envelope exposes a stable top-level message identifier.
   ///
   /// Relay-side inbox dedupe cannot inspect encrypted introduction payloads,
-  /// so retries must carry a cleartext message ID at the envelope level.
+  /// so retries must carry a cleartext message ID at the envelope level. The
+  /// caller-provided [messageId] wins even when an older intro-only identifier
+  /// is already present.
   static String ensureEnvelopeMessageId(
     String rawEnvelope,
-    String introductionId,
+    String messageId,
   ) {
     try {
       final json = jsonDecode(rawEnvelope) as Map<String, dynamic>;
       if (json['type'] != 'introduction') {
         return rawEnvelope;
       }
-      final existingTopLevelId =
-          (json['messageId'] as String?) ?? (json['id'] as String?);
-      if (existingTopLevelId != null && existingTopLevelId.isNotEmpty) {
+      final existingTopLevelId = (json['messageId'] as String?)?.trim();
+      if (existingTopLevelId == messageId) {
         return rawEnvelope;
       }
-      json['messageId'] = introductionId;
+      json['messageId'] = messageId;
       return jsonEncode(json);
     } catch (_) {
       return rawEnvelope;

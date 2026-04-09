@@ -39,6 +39,39 @@ Future<IntroductionModel?> passIntroduction({
 
   // Determine if we are recipient or introduced
   final isRecipient = intro.recipientId == ownPeerId;
+  final isIntroduced = intro.introducedId == ownPeerId;
+
+  if (!isRecipient && !isIntroduced) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'PASS_INTRO_NON_PARTY_CALLER',
+      details: {
+        'introductionId': introductionId,
+        'ownPeerId': ownPeerId,
+      },
+    );
+    return null;
+  }
+
+  final otherPeerId = isRecipient ? intro.introducedId : intro.recipientId;
+  final otherMlKemKey = isRecipient
+      ? intro.introducedMlKemPublicKey
+      : intro.recipientMlKemPublicKey;
+  if (await _hasIntroContactMlKemMismatch(
+    contactRepo: contactRepo,
+    targetPeerId: otherPeerId,
+    introMlKemPublicKey: otherMlKemKey,
+  )) {
+    emitFlowEvent(
+      layer: 'UC',
+      event: 'PASS_INTRO_STRANGER_KEY_MISMATCH',
+      details: {
+        'introductionId': introductionId,
+        'targetPeerId': otherPeerId,
+      },
+    );
+    return null;
+  }
 
   if (isRecipient) {
     await introRepo.updateRecipientStatus(
@@ -85,10 +118,6 @@ Future<IntroductionModel?> passIntroduction({
 
   // Send to other party — pass ML-KEM key from intro record since
   // the other party isn't a contact yet (contact lookup would miss them).
-  final otherPeerId = isRecipient ? intro.introducedId : intro.recipientId;
-  final otherMlKemKey = isRecipient
-      ? intro.introducedMlKemPublicKey
-      : intro.recipientMlKemPublicKey;
   await _sendPayloadToContact(
     introRepo: introRepo,
     p2pService: p2pService,
@@ -112,6 +141,24 @@ Future<IntroductionModel?> passIntroduction({
   );
 
   return finalIntro;
+}
+
+Future<bool> _hasIntroContactMlKemMismatch({
+  required ContactRepository contactRepo,
+  required String targetPeerId,
+  required String? introMlKemPublicKey,
+}) async {
+  if (introMlKemPublicKey == null || introMlKemPublicKey.isEmpty) {
+    return false;
+  }
+
+  final contact = await contactRepo.getContact(targetPeerId);
+  final contactMlKemPublicKey = contact?.mlKemPublicKey;
+  if (contactMlKemPublicKey == null || contactMlKemPublicKey.isEmpty) {
+    return false;
+  }
+
+  return contactMlKemPublicKey != introMlKemPublicKey;
 }
 
 /// Sends an introduction payload to a contact, encrypting with ML-KEM

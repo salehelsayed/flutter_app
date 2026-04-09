@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -261,6 +262,75 @@ void main() {
   });
 
   test(
+    're-sending the same pair after expiry replaces the expired local row with a fresh pending intro',
+    () async {
+      final firstRound = await _sendFriends([contactC]);
+      final firstIntro = firstRound.single;
+      final thirtyOneDaysAgo = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(days: 31))
+          .toIso8601String();
+
+      await introRepo.saveIntroduction(
+        firstIntro.copyWith(
+          createdAt: thirtyOneDaysAgo,
+          status: IntroductionOverallStatus.expired,
+        ),
+      );
+
+      expect(await introRepo.countPendingIntroductions('peer-B'), 0);
+
+      final secondRound = await _sendFriends([contactC]);
+      final secondIntro = secondRound.single;
+
+      expect(secondIntro.id, isNot(firstIntro.id));
+      expect(await introRepo.getIntroduction(firstIntro.id), isNull);
+
+      final stored = await introRepo.getIntroductionsByIntroducer('peer-A');
+      final pairRows = stored
+          .where(
+            (intro) =>
+                intro.recipientId == 'peer-B' && intro.introducedId == 'peer-C',
+          )
+          .toList(growable: false);
+      expect(pairRows, hasLength(1));
+      expect(pairRows.single.id, secondIntro.id);
+      expect(pairRows.single.status, IntroductionOverallStatus.pending);
+      expect(pairRows.single.recipientStatus, IntroductionStatus.pending);
+      expect(pairRows.single.introducedStatus, IntroductionStatus.pending);
+      expect(await introRepo.countPendingIntroductions('peer-B'), 1);
+    },
+  );
+
+  test(
+    'persists the sender local intro row before a later delivery-stage crash',
+    () async {
+      final crashingRepo = _CrashAfterNthOutboxSaveIntroductionRepository(
+        crashOnSaveNumber: 3,
+      );
+      introRepo = crashingRepo;
+
+      await expectLater(
+        _sendFriends([contactC]),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated crash after first remote delivery',
+          ),
+        ),
+      );
+
+      final stored = await crashingRepo.getIntroductionsByIntroducer('peer-A');
+      expect(stored, hasLength(1));
+      expect(stored.single.recipientId, 'peer-B');
+      expect(stored.single.introducedId, 'peer-C');
+      expect(stored.single.status, IntroductionOverallStatus.pending);
+      expect(network.deliverCallCount, 1);
+    },
+  );
+
+  test(
     'caps active intro work at 10 and splits later friends into a second batch',
     () async {
       final friends = _createFriends(15);
@@ -499,5 +569,24 @@ class _TrackingContactRepository extends InMemoryContactRepository {
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {
     setIntrosSentAtCallCount++;
     await super.setIntrosSentAt(peerId, timestamp);
+  }
+}
+
+class _CrashAfterNthOutboxSaveIntroductionRepository
+    extends InMemoryIntroductionRepository {
+  _CrashAfterNthOutboxSaveIntroductionRepository({
+    required this.crashOnSaveNumber,
+  });
+
+  final int crashOnSaveNumber;
+  int _saveOutboxDeliveryCalls = 0;
+
+  @override
+  Future<void> saveOutboxDelivery(IntroductionOutboxDelivery delivery) async {
+    _saveOutboxDeliveryCalls++;
+    if (_saveOutboxDeliveryCalls == crashOnSaveNumber) {
+      throw StateError('simulated crash after first remote delivery');
+    }
+    await super.saveOutboxDelivery(delivery);
   }
 }

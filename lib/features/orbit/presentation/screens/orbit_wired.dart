@@ -880,6 +880,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       if (group != null) {
         _markGroupChanged(group.id);
       }
+      _refreshPendingIntroductionsOnPop = true;
       await _loadPendingGroupInvites();
       if (group != null) {
         await _refreshOrbitGroup(group.id);
@@ -945,6 +946,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         pendingInviteRepo: inviteListener.pendingInviteRepo,
         groupId: invite.groupId,
       );
+      _refreshPendingIntroductionsOnPop = true;
       await _loadPendingGroupInvites();
       if (!mounted) return;
 

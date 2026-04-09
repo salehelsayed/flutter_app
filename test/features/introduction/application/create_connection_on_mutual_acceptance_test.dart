@@ -4,6 +4,7 @@ import 'package:flutter_app/features/introduction/application/handle_mutual_acce
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 
@@ -150,6 +151,49 @@ void main() {
           ownPeerId: 'peer-B',
           messageRepo: messageRepo,
         );
+
+        final messages = await messageRepo.getMessagesForContact('peer-C');
+        expect(messages, hasLength(1));
+        expect(
+          messages.single.text,
+          'You and Sarah are now connected — introduced by Noor',
+        );
+      },
+    );
+
+    test(
+      'avatar retry failure does not roll back the created contact or system message',
+      () async {
+        final bridge = PassthroughCryptoBridge();
+        var downloadCalls = 0;
+
+        final result = await handleMutualAcceptance(
+          introduction: mutualIntro,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+          messageRepo: messageRepo,
+          bridge: bridge,
+          downloadProfilePictureFn: ({
+            required bridge,
+            required contactRepo,
+            required ownerPeerId,
+            required avatarVersion,
+          }) async {
+            downloadCalls++;
+            if (downloadCalls == 1) {
+              return null;
+            }
+            throw StateError('avatar retry failed');
+          },
+        );
+
+        expect(result, isNotNull);
+        expect(await contactRepo.contactExists('peer-C'), isTrue);
+
+        await Future<void>.delayed(const Duration(seconds: 5, milliseconds: 50));
+
+        expect(downloadCalls, 2);
+        expect(await contactRepo.contactExists('peer-C'), isTrue);
 
         final messages = await messageRepo.getMessagesForContact('peer-C');
         expect(messages, hasLength(1));

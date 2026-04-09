@@ -165,6 +165,24 @@ Future<IntroductionModel> _sendIntroductionChain({
     timestamp: now,
   );
 
+  // Persist before outbound staging so a sender crash cannot leave remote
+  // recipients ahead of the sender's own intro truth.
+  final model = IntroductionModel(
+    id: introId,
+    introducerId: introducerPeerId,
+    recipientId: recipientPeerId,
+    introducedId: friend.peerId,
+    introducerUsername: introducerUsername,
+    recipientUsername: recipientUsername,
+    introducedUsername: friend.username,
+    introducedPublicKey: friend.publicKey,
+    introducedMlKemPublicKey: friend.mlKemPublicKey,
+    recipientPublicKey: recipientPublicKey,
+    recipientMlKemPublicKey: recipientPayloadMlKemPublicKey,
+    createdAt: now,
+  );
+  await introRepo.saveIntroduction(model);
+
   // Send to recipient (User-B)
   await deliverIntroductionPayloadReliably(
     introRepo: introRepo,
@@ -186,23 +204,6 @@ Future<IntroductionModel> _sendIntroductionChain({
     targetMlKemPublicKey: friend.mlKemPublicKey,
     payload: payloadForIntroduced,
   );
-
-  // Save introduction record locally
-  final model = IntroductionModel(
-    id: introId,
-    introducerId: introducerPeerId,
-    recipientId: recipientPeerId,
-    introducedId: friend.peerId,
-    introducerUsername: introducerUsername,
-    recipientUsername: recipientUsername,
-    introducedUsername: friend.username,
-    introducedPublicKey: friend.publicKey,
-    introducedMlKemPublicKey: friend.mlKemPublicKey,
-    recipientPublicKey: recipientPublicKey,
-    recipientMlKemPublicKey: recipientPayloadMlKemPublicKey,
-    createdAt: now,
-  );
-  await introRepo.saveIntroduction(model);
 
   emitFlowEvent(
     layer: 'UC',

@@ -12,6 +12,8 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
@@ -123,6 +125,18 @@ Future<void> runIntroE2EActions({
       messageRepo: messageRepo,
     );
 
+    final nodeActionResult = await _runNodeActionBeforeIntroPhase(
+      action: (config['node_action_before_intro_phase'] as String?) ?? 'none',
+      p2pService: p2pService,
+    );
+    final nodeActionSettleDelayMs =
+        (config['node_action_settle_delay_ms'] as num?)?.toInt() ?? 0;
+    if (nodeActionSettleDelayMs > 0) {
+      await Future<void>.delayed(
+        Duration(milliseconds: nodeActionSettleDelayMs),
+      );
+    }
+
     await _runIntroductionSends(
       config: config,
       contactRepo: contactRepo,
@@ -149,6 +163,29 @@ Future<void> runIntroE2EActions({
       messageRepo: messageRepo,
       pollCycles: (config['poll_cycles'] as num?)?.toInt() ?? 25,
       pollIntervalMs: (config['poll_interval_ms'] as num?)?.toInt() ?? 1000,
+      idleCyclesAfterSeen:
+          (config['idle_cycles_after_seen'] as num?)?.toInt() ?? 3,
+    );
+
+    final chatActionResult = await _runChatMessageSends(
+      config: config,
+      identityRepo: identityRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pService,
+      bridge: bridge,
+      messageRepo: messageRepo,
+    );
+
+    final chatSettleDelayMs =
+        (config['chat_settle_delay_ms'] as num?)?.toInt() ?? 0;
+    if (chatSettleDelayMs > 0) {
+      await Future<void>.delayed(Duration(milliseconds: chatSettleDelayMs));
+    }
+
+    final chatExpectationResult = await _waitForExpectedChatMessages(
+      config: config,
+      messageRepo: messageRepo,
+      p2pService: p2pService,
     );
 
     final uiNavigation = await _openConversationIfRequested(
@@ -168,7 +205,10 @@ Future<void> runIntroE2EActions({
         'stepId': config['stepId'],
         'status': 'complete',
         'success': true,
+        'nodeAction': nodeActionResult,
         'introAction': introActionResult,
+        'chatAction': chatActionResult,
+        'chatExpectations': chatExpectationResult,
         'uiNavigation': uiNavigation,
         'snapshot': snapshot,
       }),
@@ -296,16 +336,29 @@ Future<File> _resultFile() async {
   return File('${dir.path}/$_kResultFile');
 }
 
+bool _hasUsableTransportForIntroE2E(P2PService p2pService) {
+  final state = p2pService.currentState;
+  if (!state.isStarted) {
+    return false;
+  }
+
+  // The three-simulator harness can converge over either relay-backed
+  // transport or same-host local discovery. Waiting only for relay circuits
+  // blocks valid local-direct runs when the relay stays in recovering state.
+  return state.circuitAddresses.isNotEmpty ||
+      state.relayState == 'online' ||
+      state.listenAddresses.isNotEmpty;
+}
+
 Future<void> _waitForP2PReady(P2PService p2pService) async {
   for (var i = 0; i < 90; i++) {
-    final state = p2pService.currentState;
-    if (state.isStarted && state.circuitAddresses.isNotEmpty) {
+    if (_hasUsableTransportForIntroE2E(p2pService)) {
       await Future<void>.delayed(const Duration(seconds: 3));
       return;
     }
     await Future<void>.delayed(const Duration(seconds: 1));
   }
-  throw StateError('P2P node did not become online in time');
+  throw StateError('P2P node did not expose a usable transport in time');
 }
 
 Future<void> _sendContactRequestsForAddedContacts({
@@ -446,6 +499,24 @@ Future<void> _runIntroductionSends({
   }
 }
 
+Future<Map<String, dynamic>?> _runNodeActionBeforeIntroPhase({
+  required String action,
+  required P2PService p2pService,
+}) async {
+  switch (action) {
+    case 'none':
+      return null;
+    case 'stop_node':
+      final stopped = await p2pService.stopNode();
+      if (!stopped) {
+        throw StateError('Failed to stop node for intro E2E');
+      }
+      return {'action': action, 'stopped': true};
+  }
+
+  throw StateError('Unknown intro E2E node action: $action');
+}
+
 Future<Map<String, dynamic>> _runIntroductionAction({
   required String action,
   required IntroductionRepository introRepo,
@@ -456,6 +527,7 @@ Future<Map<String, dynamic>> _runIntroductionAction({
   required MessageRepository messageRepo,
   required int pollCycles,
   required int pollIntervalMs,
+  required int idleCyclesAfterSeen,
 }) async {
   final identity = await identityRepo.loadIdentity();
   if (identity == null) {
@@ -476,7 +548,7 @@ Future<Map<String, dynamic>> _runIntroductionAction({
       idleAfterSeen = 0;
     } else if (sawAny) {
       idleAfterSeen++;
-      if (idleAfterSeen >= 3) {
+      if (idleAfterSeen >= idleCyclesAfterSeen) {
         break;
       }
     }
@@ -526,6 +598,142 @@ Future<Map<String, dynamic>> _runIntroductionAction({
   return {'action': action, 'actedOn': actedOn, 'dropped': dropped};
 }
 
+Future<Map<String, dynamic>?> _runChatMessageSends({
+  required Map<String, dynamic> config,
+  required IdentityRepository identityRepo,
+  required ContactRepository contactRepo,
+  required P2PService p2pService,
+  required Bridge bridge,
+  required MessageRepository messageRepo,
+}) async {
+  final sendPlans = config['send_chat_messages'];
+  if (sendPlans is! List<dynamic> || sendPlans.isEmpty) {
+    return null;
+  }
+
+  final identity = await identityRepo.loadIdentity();
+  if (identity == null) {
+    throw StateError('Identity missing for intro E2E chat send');
+  }
+
+  final sent = <Map<String, dynamic>>[];
+  for (final plan in sendPlans.cast<Map<String, dynamic>>()) {
+    final targetPeerId = plan['targetPeerId'] as String;
+    final text = plan['text'] as String;
+    final recipient = await contactRepo.getContact(targetPeerId);
+    if (recipient == null) {
+      throw StateError('Chat target contact $targetPeerId missing');
+    }
+
+    final (result, message) = await sendChatMessage(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: targetPeerId,
+      text: text,
+      senderPeerId: identity.peerId,
+      senderUsername: identity.username,
+      bridge: bridge,
+      recipientMlKemPublicKey: recipient.mlKemPublicKey,
+    );
+    if (result != SendChatMessageResult.success || message == null) {
+      throw StateError(
+        'Intro E2E chat send to $targetPeerId failed with $result',
+      );
+    }
+
+    sent.add({
+      'targetPeerId': targetPeerId,
+      'text': text,
+      'messageId': message.id,
+      'transport': message.transport,
+      'status': message.status,
+    });
+  }
+
+  return {'sent': sent};
+}
+
+Future<Map<String, dynamic>?> _waitForExpectedChatMessages({
+  required Map<String, dynamic> config,
+  required MessageRepository messageRepo,
+  required P2PService p2pService,
+}) async {
+  final expectations = config['expected_chat_messages'];
+  if (expectations is! List<dynamic> || expectations.isEmpty) {
+    return null;
+  }
+
+  final pending = expectations
+      .cast<Map<String, dynamic>>()
+      .map(Map<String, dynamic>.from)
+      .toList(growable: true);
+  final matched = <Map<String, dynamic>>[];
+  final pollCycles = (config['chat_poll_cycles'] as num?)?.toInt() ?? 20;
+  final pollIntervalMs =
+      (config['chat_poll_interval_ms'] as num?)?.toInt() ?? 500;
+
+  for (var tick = 0; tick < pollCycles; tick++) {
+    await p2pService.drainOfflineInbox();
+
+    for (var i = pending.length - 1; i >= 0; i--) {
+      final expectation = pending[i];
+      final contactPeerId = expectation['contactPeerId'] as String;
+      final messages = await messageRepo.getMessagesForContact(contactPeerId);
+      ConversationMessage? match;
+      for (final message in messages) {
+        if (_messageMatchesExpectation(message, expectation)) {
+          match = message;
+          break;
+        }
+      }
+      if (match == null) {
+        continue;
+      }
+
+      matched.add({
+        'contactPeerId': contactPeerId,
+        'text': match.text,
+        'messageId': match.id,
+        'isIncoming': match.isIncoming,
+        'transport': match.transport,
+        'status': match.status,
+      });
+      pending.removeAt(i);
+    }
+
+    if (pending.isEmpty) {
+      return {'matched': matched, 'pending': const []};
+    }
+
+    await Future<void>.delayed(Duration(milliseconds: pollIntervalMs));
+  }
+
+  throw StateError(
+    'Timed out waiting for intro E2E chat expectations: $pending',
+  );
+}
+
+bool _messageMatchesExpectation(
+  ConversationMessage message,
+  Map<String, dynamic> expectation,
+) {
+  if (message.transport == 'system' || message.isDeleted || message.isHidden) {
+    return false;
+  }
+  if (message.text != expectation['text']) {
+    return false;
+  }
+  final expectedIncoming = expectation['isIncoming'];
+  if (expectedIncoming is bool && message.isIncoming != expectedIncoming) {
+    return false;
+  }
+  final expectedStatus = expectation['status'];
+  if (expectedStatus is String && expectedStatus.isNotEmpty) {
+    return message.status == expectedStatus;
+  }
+  return true;
+}
+
 Future<Map<String, dynamic>> _collectSnapshot({
   required IdentityRepository identityRepo,
   required ContactRepository contactRepo,
@@ -572,6 +780,7 @@ Future<Map<String, dynamic>> _collectSnapshot({
   }
 
   final systemMessages = <Map<String, dynamic>>[];
+  final chatMessages = <Map<String, dynamic>>[];
   final sortedPeerIds = conversationPeerIds.toList()..sort();
   for (final peerId in sortedPeerIds) {
     final messages = await messageRepo.getMessagesForContact(peerId);
@@ -589,6 +798,31 @@ Future<Map<String, dynamic>> _collectSnapshot({
       systemMessages.add({
         'contactPeerId': peerId,
         'messages': visibleSystemMessages,
+      });
+    }
+
+    final visibleChatMessages = messages
+        .where(
+          (message) =>
+              message.transport != 'system' &&
+              !message.isDeleted &&
+              !message.isHidden,
+        )
+        .map(
+          (message) => {
+            'id': message.id,
+            'text': message.text,
+            'timestamp': message.timestamp,
+            'isIncoming': message.isIncoming,
+            'status': message.status,
+            'transport': message.transport,
+          },
+        )
+        .toList(growable: false);
+    if (visibleChatMessages.isNotEmpty) {
+      chatMessages.add({
+        'contactPeerId': peerId,
+        'messages': visibleChatMessages,
       });
     }
   }
@@ -641,5 +875,6 @@ Future<Map<String, dynamic>> _collectSnapshot({
         )
         .toList(growable: false),
     'systemMessages': systemMessages,
+    'chatMessages': chatMessages,
   };
 }

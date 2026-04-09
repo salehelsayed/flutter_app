@@ -275,6 +275,49 @@ void main() {
       },
     );
 
+    test(
+      'duplicate send replay keeps one row, one system message, and one notification',
+      () async {
+        final message = ChatMessage(
+          from: 'peer-A',
+          to: 'own-peer',
+          content: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-duplicate-send',
+            introducerId: 'peer-A',
+            introducerUsername: 'Noor',
+            recipientId: 'own-peer',
+            recipientUsername: 'Me',
+            introducedId: 'peer-C',
+            introducedUsername: 'Sarah',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          ).toJson(),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        );
+
+        final first = await listener.processIncomingMessage(message);
+        final second = await listener.processIncomingMessage(message);
+
+        expect(first.state, IntroductionMessageProcessState.stored);
+        expect(second.state, IntroductionMessageProcessState.stored);
+        expect(second.reasonCode, 'already_exists');
+
+        final intro = await introRepo.getIntroduction('intro-duplicate-send');
+        expect(intro, isNotNull);
+        expect(await introRepo.countPendingIntroductions('own-peer'), 1);
+
+        final systemMessages = await messageRepo.getMessagesForContact(
+          'peer-A',
+        );
+        expect(systemMessages, hasLength(1));
+        expect(systemMessages.single.text, 'Noor introduced Sarah to you');
+
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(notificationService.shownGeneric.single.title, 'New Introduction');
+      },
+    );
+
     test('dispatches status changes to introStatusChangedStream', () async {
       // First save the intro
       await introRepo.saveIntroduction(
@@ -397,6 +440,69 @@ void main() {
           'Sarah also accepted! You\'re now connected.',
         );
         expect(notificationService.shownGeneric.single.payload, 'intros');
+      },
+    );
+
+    test(
+      'duplicate accept replay after mutual acceptance does not duplicate contact side effects or notifications',
+      () async {
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-duplicate-accept',
+            introducerId: 'peer-A',
+            introducerUsername: 'Noor',
+            recipientId: 'own-peer',
+            recipientUsername: 'Me',
+            introducedId: 'peer-C',
+            introducedUsername: 'Sarah',
+            recipientStatus: IntroductionStatus.accepted,
+            introducedStatus: IntroductionStatus.pending,
+            status: IntroductionOverallStatus.pending,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        final message = ChatMessage(
+          from: 'peer-C',
+          to: 'own-peer',
+          content: IntroductionPayload(
+            action: 'accept',
+            introductionId: 'intro-duplicate-accept',
+            responderId: 'peer-C',
+            responderUsername: 'Sarah',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          ).toJson(),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        );
+
+        final first = await listener.processIncomingMessage(message);
+        final second = await listener.processIncomingMessage(message);
+
+        expect(first.state, IntroductionMessageProcessState.stored);
+        expect(second.state, IntroductionMessageProcessState.stored);
+
+        final finalIntro = await introRepo.getIntroduction(
+          'intro-duplicate-accept',
+        );
+        expect(finalIntro, isNotNull);
+        expect(finalIntro!.status, IntroductionOverallStatus.mutualAccepted);
+
+        expect(await contactRepo.contactExists('peer-C'), isTrue);
+        final contacts = await contactRepo.getAllContacts();
+        expect(contacts.where((contact) => contact.peerId == 'peer-C'), hasLength(1));
+
+        final systemMessages = await messageRepo.getMessagesForContact(
+          'peer-C',
+        );
+        expect(systemMessages, hasLength(1));
+        expect(
+          systemMessages.single.text,
+          'You and Sarah are now connected — introduced by Noor',
+        );
+
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(notificationService.shownGeneric.single.title, 'New Connection');
       },
     );
 
@@ -593,6 +699,43 @@ void main() {
           decryptFailedEvents.single['details'],
           containsPair('errorCode', 'KEY_MISMATCH'),
         );
+      },
+    );
+
+    test(
+      'tampered v2 ciphertext rejects intro, stores nothing, and logs failure',
+      () async {
+        late IntroductionMessageProcessOutcome outcome;
+        final events = await captureFlowEvents(() async {
+          outcome = await listener.processIncomingMessage(
+            ChatMessage(
+              from: 'peer-A',
+              to: 'own-peer',
+              content: IntroductionPayload.buildEncryptedEnvelope(
+                introductionId: 'intro-v2-tampered',
+                senderPeerId: 'peer-A',
+                kem: 'fake-kem',
+                ciphertext: '{"action":"send"',
+                nonce: 'fake-nonce',
+              ),
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+              isIncoming: true,
+            ),
+          );
+        });
+
+        expect(outcome.state, IntroductionMessageProcessState.rejected);
+        expect(outcome.reasonCode, 'invalid_payload');
+        expect(await introRepo.getIntroduction('intro-v2-tampered'), isNull);
+        expect(await introRepo.countPendingIntroductions('own-peer'), 0);
+        expect(await contactRepo.getAllContacts(), isEmpty);
+        expect(notificationService.shownGeneric, isEmpty);
+        expect(await messageRepo.getTotalUnreadCount(), 0);
+
+        final invalidPayloadEvents = events.where(
+          (event) => event['event'] == 'INTRO_LISTENER_INVALID_PAYLOAD',
+        );
+        expect(invalidPayloadEvents, hasLength(1));
       },
     );
   });

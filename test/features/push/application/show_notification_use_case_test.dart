@@ -122,6 +122,36 @@ void main() {
     );
 
     test(
+      'uses route payload for remote suppression when present',
+      () async {
+        var capturedPayload = '';
+        String? capturedMessageId;
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          contactPeerId: 'group:group-123',
+          routePayload: 'group:group-123|message:msg-123',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Hello group!',
+          messageId: 'msg-123',
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async {
+                capturedPayload = payload;
+                capturedMessageId = messageId;
+                return true;
+              },
+          backgroundDuplicateGuardDelay: Duration.zero,
+        );
+
+        expect(notificationService.shown, isEmpty);
+        expect(capturedPayload, 'group:group-123|message:msg-123');
+        expect(capturedMessageId, 'msg-123');
+      },
+    );
+
+    test(
       'preserves mixed-script sender and body when forwarding notification text',
       () async {
         const sender = '\u0644\u064a\u0644\u0649 Alpha';

@@ -836,7 +836,9 @@ void main() {
           bridge: bob.bridge,
         );
 
-        expect(result, HandleIntroductionResult.success);
+        expect(result, HandleIntroductionResult.alreadyExists);
+        expect(model, isNotNull);
+        expect(model!.status, IntroductionOverallStatus.mutualAccepted);
         // Contact still exists (not deleted by the duplicate processing)
         expect(await bob.contactRepo.contactExists(carol.peerId), isTrue);
       },

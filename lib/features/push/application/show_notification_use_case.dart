@@ -89,8 +89,9 @@ Future<void> maybeShowNotification({
       await Future<void>.delayed(backgroundDuplicateGuardDelay);
     }
 
+    final remoteAnnouncementPayload = routePayload ?? contactPeerId;
     final shouldSuppress = await consumeRecentRemoteNotificationAnnouncement(
-      payload: contactPeerId,
+      payload: remoteAnnouncementPayload,
       messageId: messageId,
     );
     if (shouldSuppress) {

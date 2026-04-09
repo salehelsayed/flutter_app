@@ -107,6 +107,45 @@ void main() {
     });
 
     test(
+      'duplicate send for the same introductionId does not reopen a passed intro',
+      () async {
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-passed',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            recipientStatus: IntroductionStatus.passed,
+            introducedStatus: IntroductionStatus.pending,
+            status: IntroductionOverallStatus.passed,
+            createdAt: '2026-03-01T11:00:00.000Z',
+          ),
+        );
+
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-passed',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            timestamp: '2026-03-01T11:00:00.000Z',
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: ownPeerId,
+        );
+
+        expect(result, HandleIntroductionResult.alreadyExists);
+        expect(model, isNotNull);
+        expect(model!.id, 'intro-passed');
+        expect(model.status, IntroductionOverallStatus.passed);
+        expect(model.recipientStatus, IntroductionStatus.passed);
+        expect(model.introducedStatus, IntroductionStatus.pending);
+      },
+    );
+
+    test(
       'newer send for the same pair replaces the older local row and resets state',
       () async {
         await introRepo.saveIntroduction(
@@ -177,6 +216,141 @@ void main() {
         expect(model, isNotNull);
         expect(model!.id, 'intro-current');
         expect(await introRepo.getIntroduction('intro-stale'), isNull);
+      },
+    );
+
+    test(
+      'older same-pair send does not replace a passed intro with a new pending row',
+      () async {
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-terminal',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            recipientStatus: IntroductionStatus.passed,
+            introducedStatus: IntroductionStatus.pending,
+            status: IntroductionOverallStatus.passed,
+            createdAt: '2026-03-01T11:00:00.000Z',
+          ),
+        );
+
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-stale-terminal',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            timestamp: '2026-03-01T10:00:00.000Z',
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: ownPeerId,
+        );
+
+        expect(result, HandleIntroductionResult.alreadyExists);
+        expect(model, isNotNull);
+        expect(model!.id, 'intro-terminal');
+        expect(model.status, IntroductionOverallStatus.passed);
+        expect(model.recipientStatus, IntroductionStatus.passed);
+        expect(model.introducedStatus, IntroductionStatus.pending);
+        expect(await introRepo.getIntroduction('intro-stale-terminal'), isNull);
+
+        final stored = await introRepo.getIntroduction('intro-terminal');
+        expect(stored, isNotNull);
+        expect(stored!.status, IntroductionOverallStatus.passed);
+        expect(stored.recipientStatus, IntroductionStatus.passed);
+        expect(stored.introducedStatus, IntroductionStatus.pending);
+      },
+    );
+
+    test(
+      'older same-pair send does not replace an expired intro with a new pending row',
+      () async {
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-expired-current',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            recipientStatus: IntroductionStatus.pending,
+            introducedStatus: IntroductionStatus.pending,
+            status: IntroductionOverallStatus.expired,
+            createdAt: '2026-03-01T11:00:00.000Z',
+          ),
+        );
+
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-expired-stale',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            timestamp: '2026-03-01T10:00:00.000Z',
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: ownPeerId,
+        );
+
+        expect(result, HandleIntroductionResult.alreadyExists);
+        expect(model, isNotNull);
+        expect(model!.id, 'intro-expired-current');
+        expect(model.status, IntroductionOverallStatus.expired);
+        expect(await introRepo.getIntroduction('intro-expired-stale'), isNull);
+
+        final stored = await introRepo.getIntroduction('intro-expired-current');
+        expect(stored, isNotNull);
+        expect(stored!.status, IntroductionOverallStatus.expired);
+      },
+    );
+
+    test(
+      'older same-pair send does not replace an alreadyConnected intro with a new pending row',
+      () async {
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-already-connected-current',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            recipientStatus: IntroductionStatus.pending,
+            introducedStatus: IntroductionStatus.pending,
+            status: IntroductionOverallStatus.alreadyConnected,
+            createdAt: '2026-03-01T11:00:00.000Z',
+          ),
+        );
+
+        final (result, model) = await handleIncomingIntroduction(
+          payload: IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-already-connected-stale',
+            introducerId: 'peer-A',
+            recipientId: 'peer-B',
+            introducedId: 'peer-C',
+            timestamp: '2026-03-01T10:00:00.000Z',
+          ),
+          introRepo: introRepo,
+          contactRepo: contactRepo,
+          ownPeerId: ownPeerId,
+        );
+
+        expect(result, HandleIntroductionResult.alreadyExists);
+        expect(model, isNotNull);
+        expect(model!.id, 'intro-already-connected-current');
+        expect(model.status, IntroductionOverallStatus.alreadyConnected);
+        expect(
+          await introRepo.getIntroduction('intro-already-connected-stale'),
+          isNull,
+        );
+
+        final stored = await introRepo.getIntroduction(
+          'intro-already-connected-current',
+        );
+        expect(stored, isNotNull);
+        expect(stored!.status, IntroductionOverallStatus.alreadyConnected);
       },
     );
   });

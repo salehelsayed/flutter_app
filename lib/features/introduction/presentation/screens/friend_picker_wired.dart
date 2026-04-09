@@ -54,9 +54,12 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
 
   Future<void> _loadFriends() async {
     final contacts = await widget.contactRepo.getActiveContacts();
+    final identity = await widget.identityRepo.loadIdentity();
+    final selfPeerId = identity?.peerId;
 
     final filtered = contacts.where((c) {
       if (c.peerId == widget.recipient.peerId) return false;
+      if (c.peerId == selfPeerId) return false;
       if (c.isBlocked) return false;
       return true;
     }).toList();

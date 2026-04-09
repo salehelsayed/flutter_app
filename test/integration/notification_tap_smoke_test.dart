@@ -120,6 +120,22 @@ void main() {
       expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
     });
 
+    test('group_invite → intros', () async {
+      await routeRemoteNotificationOpen(
+        data: const {'type': 'group_invite', 'groupId': 'grp-team'},
+        onBeforeRouteTarget: h.prepare,
+        onRouteTarget: h.route,
+        onMissingRouteTarget: h.missing,
+      );
+
+      expect(h.events, [
+        'prepare:intros',
+        'drain:inbox',
+        'route:intros',
+      ]);
+      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
+    });
+
     test('group_message → group', () async {
       await routeRemoteNotificationOpen(
         data: const {'type': 'group_message', 'groupId': 'grp-team'},
@@ -228,6 +244,20 @@ void main() {
       await routeInitialRemoteNotificationOpen(
         getInitialMessage: () async => const RemoteMessage(
           data: {'type': 'intros'},
+        ),
+        onBeforeRouteTarget: h.prepare,
+        onRouteTarget: h.route,
+        onMissingRouteTarget: h.missing,
+      );
+
+      expect(h.routedTargets.single.kind, NotificationRouteTargetKind.intros);
+      expect(h.events, contains('drain:inbox'));
+    });
+
+    test('group_invite → intros', () async {
+      await routeInitialRemoteNotificationOpen(
+        getInitialMessage: () async => const RemoteMessage(
+          data: {'type': 'group_invite', 'groupId': 'grp-team'},
         ),
         onBeforeRouteTarget: h.prepare,
         onRouteTarget: h.route,
@@ -655,6 +685,14 @@ void main() {
       expect(h.events, contains('drain:inbox'));
     });
 
+    test('group_invite push → fallback → tap → intros route', () async {
+      await simulateBackgroundPushThenTap(
+        pushData: const {'type': 'group_invite', 'groupId': 'grp-team'},
+        expectedKind: NotificationRouteTargetKind.intros,
+      );
+      expect(h.events, contains('drain:inbox'));
+    });
+
     test('group_message push → fallback → tap → group route', () async {
       await simulateBackgroundPushThenTap(
         pushData: const {'type': 'group_message', 'groupId': 'grp-team'},
@@ -943,6 +981,18 @@ void main() {
       expect(h.events, isNot(anyElement(startsWith('drain:group:'))));
     });
 
+    test('group_invite drains 1:1 inbox, not group', () async {
+      await routeRemoteNotificationOpen(
+        data: const {'type': 'group_invite', 'groupId': 'grp-x'},
+        onBeforeRouteTarget: h.prepare,
+        onRouteTarget: h.route,
+        onMissingRouteTarget: h.missing,
+      );
+
+      expect(h.events, contains('drain:inbox'));
+      expect(h.events, isNot(anyElement(startsWith('drain:group:'))));
+    });
+
     test('group drains targeted group inbox, not 1:1', () async {
       await routeRemoteNotificationOpen(
         data: const {'type': 'group_message', 'groupId': 'grp-x'},
@@ -993,6 +1043,7 @@ void main() {
         {'type': 'new_message', 'sender_id': 'p-1'},
         {'type': 'contact_request', 'sender_id': 'p-2'},
         {'type': 'intros'},
+        {'type': 'group_invite', 'groupId': 'g-1'},
         {'type': 'group_message', 'groupId': 'g-1'},
         {'type': 'post_create', 'post_id': 'post-1'},
         {'type': 'post_comment', 'post_id': 'post-1', 'comment_id': 'c-1'},

@@ -7,6 +7,7 @@ import 'package:flutter_app/features/introduction/presentation/widgets/intro_gro
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 
 void main() {
   late ValueNotifier<Key?> openRowNotifier;
@@ -54,14 +55,22 @@ void main() {
     String filterTab = 'all',
     List<OrbitGroup> groups = const [],
     OrbitIntrosViewData? introsData,
+    int introCount = 0,
+    int pendingGroupInviteCount = 0,
+    int? reviewCount,
   }) {
     final headerNotifier = ValueNotifier(const OrbitHeaderProjection());
+    final effectiveReviewCount =
+        reviewCount ?? introCount + pendingGroupInviteCount;
     final listNotifier = ValueNotifier(
       OrbitViewProjection(
         groups: groups,
         mergedItems: groups.map(OrbitGroupItem.new).toList(),
         introsData: introsData,
         filterTab: filterTab,
+        introCount: introCount,
+        pendingGroupInviteCount: pendingGroupInviteCount,
+        reviewCount: effectiveReviewCount,
       ),
     );
     addTearDown(headerNotifier.dispose);
@@ -232,6 +241,206 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Sarah'), findsOneWidget);
+    });
+
+    testWidgets(
+      'intros tab renders grouped intros and carries the correct pending count',
+      (tester) async {
+        suppressOverflowErrors();
+        tester.view.physicalSize = testViewSize;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final introsData = OrbitIntrosViewData(
+          groupedIntros: {
+            'peer-noor': [
+              IntroductionModel(
+                id: 'intro-1',
+                introducerId: 'peer-noor',
+                recipientId: 'peer-me',
+                introducedId: 'peer-sarah',
+                introducerUsername: 'Noor',
+                recipientUsername: 'Me',
+                introducedUsername: 'Sarah',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+              ),
+            ],
+            'peer-layla': [
+              IntroductionModel(
+                id: 'intro-2',
+                introducerId: 'peer-layla',
+                recipientId: 'peer-me',
+                introducedId: 'peer-dora',
+                introducerUsername: 'Layla',
+                recipientUsername: 'Me',
+                introducedUsername: 'Dora',
+                createdAt: DateTime.now().toUtc().toIso8601String(),
+              ),
+            ],
+          },
+          introducerUsernames: const {
+            'peer-noor': 'Noor',
+            'peer-layla': 'Layla',
+          },
+          ownPeerId: 'peer-me',
+          onAccept: (_) {},
+          onPass: (_) {},
+          onDelete: (_) {},
+        );
+
+        await tester.pumpWidget(
+          buildOrbitScreen(
+            filterTab: 'intros',
+            introsData: introsData,
+            introCount: 2,
+            reviewCount: 2,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        expect(find.byType(IntroGroupHeader), findsNWidgets(2));
+        expect(find.text('Sarah'), findsOneWidget);
+        expect(find.text('Dora'), findsOneWidget);
+
+        final filterToggle = tester.widget<FriendsFilterToggle>(
+          find.byType(FriendsFilterToggle),
+        );
+        expect(filterToggle.activeFilter, 'intros');
+        expect(filterToggle.introsCount, 2);
+      },
+    );
+
+    testWidgets('hides the intro banner when there are no pending review items',
+        (tester) async {
+      suppressOverflowErrors();
+      tester.view.physicalSize = testViewSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(buildOrbitScreen(filterTab: 'all'));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.textContaining('item pending'), findsNothing);
+      expect(
+        find.text('Review and accept introductions to start chatting'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('shows singular intro banner copy for one pending intro', (
+      tester,
+    ) async {
+      suppressOverflowErrors();
+      tester.view.physicalSize = testViewSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final introsData = OrbitIntrosViewData(
+        groupedIntros: {
+          'peer-noor': [
+            IntroductionModel(
+              id: 'intro-banner-one',
+              introducerId: 'peer-noor',
+              recipientId: 'peer-me',
+              introducedId: 'peer-sarah',
+              introducerUsername: 'Noor',
+              recipientUsername: 'Me',
+              introducedUsername: 'Sarah',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          ],
+        },
+        introducerUsernames: const {'peer-noor': 'Noor'},
+        ownPeerId: 'peer-me',
+        onAccept: (_) {},
+        onPass: (_) {},
+      );
+
+      await tester.pumpWidget(
+        buildOrbitScreen(
+          filterTab: 'all',
+          introsData: introsData,
+          introCount: 1,
+          reviewCount: 1,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('1 item pending'), findsOneWidget);
+      expect(
+        find.text('Review and accept introductions to start chatting'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('shows plural intro banner copy for multiple pending intros', (
+      tester,
+    ) async {
+      suppressOverflowErrors();
+      tester.view.physicalSize = testViewSize;
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final introsData = OrbitIntrosViewData(
+        groupedIntros: {
+          'peer-noor': [
+            IntroductionModel(
+              id: 'intro-banner-two',
+              introducerId: 'peer-noor',
+              recipientId: 'peer-me',
+              introducedId: 'peer-sarah',
+              introducerUsername: 'Noor',
+              recipientUsername: 'Me',
+              introducedUsername: 'Sarah',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+            IntroductionModel(
+              id: 'intro-banner-three',
+              introducerId: 'peer-noor',
+              recipientId: 'peer-me',
+              introducedId: 'peer-dora',
+              introducerUsername: 'Noor',
+              recipientUsername: 'Me',
+              introducedUsername: 'Dora',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+            IntroductionModel(
+              id: 'intro-banner-four',
+              introducerId: 'peer-noor',
+              recipientId: 'peer-me',
+              introducedId: 'peer-yara',
+              introducerUsername: 'Noor',
+              recipientUsername: 'Me',
+              introducedUsername: 'Yara',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          ],
+        },
+        introducerUsernames: const {'peer-noor': 'Noor'},
+        ownPeerId: 'peer-me',
+        onAccept: (_) {},
+        onPass: (_) {},
+      );
+
+      await tester.pumpWidget(
+        buildOrbitScreen(
+          filterTab: 'all',
+          introsData: introsData,
+          introCount: 3,
+          reviewCount: 3,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('3 items pending'), findsOneWidget);
+      expect(
+        find.text('Review and accept introductions to start chatting'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('live intro row reveals delete on swipe', (tester) async {
