@@ -220,8 +220,12 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/features/conversation/integration/emoji_reaction_exchange_test.dart` | Optional / manual direct suite | Reaction pipeline coverage, not shared durable-send coverage |
 | `test/features/contact_request/integration/contact_request_flow_test.dart` | Optional / manual direct suite | Contact bootstrap and acceptance flow; run with invite or onboarding entry work |
 | `test/features/contact_request/integration/key_exchange_retry_flow_test.dart` | Optional / manual direct suite | Contact key-bootstrap retry logic, not a named gate member |
+| `test/features/push/application/show_notification_use_case_test.dart` | Optional / manual direct suite | Notification display and suppression boundary, including the route-payload remote-announcement dedupe regression for group pushes |
+| `test/features/push/application/chat_and_group_push_open_flow_test.dart` | Optional / manual direct suite | Notification open sequencing across chat, group, intros, and contact-request routes without widening named gates |
+| `test/features/push/application/resolve_group_notification_route_target_use_case_test.dart` | Optional / manual direct suite | Group push recovery regression for missing local group state, pending invite discovery, inbox-drain retry, and Orbit intro redirect fallback |
 | `test/features/settings/integration/profile_picture_flow_test.dart` | Optional / manual direct suite | Profile media / broadcast / download flow |
 | `test/features/share/integration/share_to_contact_smoke_test.dart` | Optional / manual direct suite | Share target routing and compose hydration |
+| `test/integration/group_notification_dedupe_integration_test.dart` | Optional / manual direct suite | Background group push announcement versus later local group notification dedupe regression without widening the frozen named gates |
 | `test/integration/onboarding_golden_path_test.dart` | Optional / manual direct suite | Session 7 onboarding confidence flow spanning identity create, accepted contact request, and first 1:1 send without widening frozen named gates |
 | `test/integration/notification_deeplink_integration_test.dart` | Optional / manual direct suite | Notification routing boundary; Session 4 work will harden this area |
 | `test/integration/rapid_lock_unlock_integration_test.dart` | Optional / manual direct suite | Lifecycle retry edge case, narrower than the named gates |
@@ -231,6 +235,8 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `integration_test/feed_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/feed_wired_init_performance_test.dart` | Optional / manual direct suite | Performance-only validation for feed initialization |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
+| `integration_test/media_message_journey_e2e_test.dart` | Optional / manual direct suite | End-to-end media delivery journey coverage that stays outside the frozen named gates |
+| `integration_test/notification_open_ui_smoke_test.dart` | Optional / manual direct suite | Notification-open UI routing smoke without widening the frozen named gates |
 | `integration_test/orbit_performance_test.dart` | Optional / manual direct suite | Performance-only validation for Orbit surface behavior |
 
 ### Explicit Out-of-Gate File

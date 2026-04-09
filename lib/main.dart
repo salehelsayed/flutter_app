@@ -187,6 +187,7 @@ import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
+import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
     as push_registration;
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
@@ -2059,51 +2060,33 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
         return;
       case NotificationRouteTargetKind.intros:
-        await openIntroNotificationOrbitRoute(
-          navigator: navigator,
-          appShellController: widget.appShellController,
-          messageRepository: widget.messageRepository,
-          builder: (feedUnreadCountListenable) => OrbitWired(
-            identityRepo: widget.repository,
-            contactRepo: widget.contactRepository,
-            contactRequestRepo: widget.contactRequestRepository,
-            contactRequestListener: widget.contactRequestListener,
-            messageRepo: widget.messageRepository,
-            postRepository: widget.postRepository,
-            mediaAttachmentRepo: widget.mediaAttachmentRepository,
-            chatMessageListener: widget.chatMessageListener,
-            bridge: widget.bridge,
-            p2pService: widget.p2pService,
-            mediaFileManager: widget.mediaFileManager,
-            secureKeyStore: widget.secureKeyStore,
-            imageProcessor: widget.imageProcessor,
-            conversationTracker: widget.conversationTracker,
-            audioRecorderService: widget.audioRecorderService,
-            reactionRepository: widget.reactionRepository,
-            reactionListener: widget.reactionListener,
-            groupRepository: widget.groupRepository,
-            groupMessageRepository: widget.groupMessageRepository,
-            groupMessageListener: widget.groupMessageListener,
-            groupInviteListener: widget.groupInviteListener,
-            groupConversationTracker: widget.groupConversationTracker,
-            introductionRepository: widget.introductionRepository,
-            introductionListener: widget.introductionListener,
-            appShellController: widget.appShellController,
-            feedUnreadCountListenable: feedUnreadCountListenable,
-            pendingPostTargetStore: widget.pendingPostTargetStore,
-            postsPrivacySettingsRepository:
-                widget.postsPrivacySettingsRepository,
-            initialFilterTab: 'intros',
-          ),
-        );
+        await _openIntroOrbitRoute(navigator: navigator);
         return;
       case NotificationRouteTargetKind.group:
-        final group = await widget.groupRepository.getGroup(
-          routeTarget.groupId!,
+        final resolution = await resolveGroupNotificationRouteTarget(
+          groupId: routeTarget.groupId!,
+          groupRepo: widget.groupRepository,
+          pendingInviteRepo: widget.groupInviteListener.pendingInviteRepo,
+          drainOfflineInbox: widget.p2pService.drainOfflineInbox,
         );
-        if (group == null) {
+        if (resolution.group == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: resolution.hasPendingInvite
+                ? 'GROUP_NOTIFICATION_ROUTE_PENDING_INVITE_REDIRECT'
+                : 'GROUP_NOTIFICATION_ROUTE_GROUP_MISSING',
+            details: {
+              'groupId': routeTarget.groupId!.length > 8
+                  ? routeTarget.groupId!.substring(0, 8)
+                  : routeTarget.groupId!,
+            },
+          );
+          if (resolution.hasPendingInvite) {
+            await _openIntroOrbitRoute(navigator: navigator);
+          }
           return;
         }
+        final group = resolution.group!;
         navigator.push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
@@ -2142,6 +2125,45 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       case NotificationRouteTargetKind.postComment:
         return;
     }
+  }
+
+  Future<void> _openIntroOrbitRoute({required NavigatorState navigator}) async {
+    await openIntroNotificationOrbitRoute(
+      navigator: navigator,
+      appShellController: widget.appShellController,
+      messageRepository: widget.messageRepository,
+      builder: (feedUnreadCountListenable) => OrbitWired(
+        identityRepo: widget.repository,
+        contactRepo: widget.contactRepository,
+        contactRequestRepo: widget.contactRequestRepository,
+        contactRequestListener: widget.contactRequestListener,
+        messageRepo: widget.messageRepository,
+        postRepository: widget.postRepository,
+        mediaAttachmentRepo: widget.mediaAttachmentRepository,
+        chatMessageListener: widget.chatMessageListener,
+        bridge: widget.bridge,
+        p2pService: widget.p2pService,
+        mediaFileManager: widget.mediaFileManager,
+        secureKeyStore: widget.secureKeyStore,
+        imageProcessor: widget.imageProcessor,
+        conversationTracker: widget.conversationTracker,
+        audioRecorderService: widget.audioRecorderService,
+        reactionRepository: widget.reactionRepository,
+        reactionListener: widget.reactionListener,
+        groupRepository: widget.groupRepository,
+        groupMessageRepository: widget.groupMessageRepository,
+        groupMessageListener: widget.groupMessageListener,
+        groupInviteListener: widget.groupInviteListener,
+        groupConversationTracker: widget.groupConversationTracker,
+        introductionRepository: widget.introductionRepository,
+        introductionListener: widget.introductionListener,
+        appShellController: widget.appShellController,
+        feedUnreadCountListenable: feedUnreadCountListenable,
+        pendingPostTargetStore: widget.pendingPostTargetStore,
+        postsPrivacySettingsRepository: widget.postsPrivacySettingsRepository,
+        initialFilterTab: 'intros',
+      ),
+    );
   }
 
   Future<void> _openConversationForContact({
