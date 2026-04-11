@@ -203,6 +203,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Map<String, List<IntroductionModel>> _groupedIntros = {};
   Map<String, String> _introducerUsernames = {};
   List<PendingGroupInvite> _pendingGroupInvites = [];
+  final Set<String> _processingIntroductionIds = <String>{};
   final Set<String> _processingPendingInviteIds = <String>{};
   Set<String> _blockedPeerIds = {};
   final Set<String> _changedContactPeerIds = <String>{};
@@ -263,6 +264,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         pendingGroupInvites: List<PendingGroupInvite>.unmodifiable(
           _pendingGroupInvites,
         ),
+        processingIntroductionIds: _processingIntroductionIds,
         processingPendingInviteIds: _processingPendingInviteIds,
         onAccept: _onAcceptIntro,
         onPass: _onPassIntro,
@@ -784,46 +786,76 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   Future<void> _onAcceptIntro(String introductionId) async {
-    if (_identity == null) return;
+    final identity = _identity;
+    final introRepo = widget.introductionRepository;
+    if (identity == null ||
+        introRepo == null ||
+        _processingIntroductionIds.contains(introductionId)) {
+      return;
+    }
 
-    final updated = await acceptIntroduction(
-      introRepo: widget.introductionRepository!,
-      contactRepo: widget.contactRepo,
-      p2pService: widget.p2pService,
-      bridge: widget.bridge,
-      introductionId: introductionId,
-      ownPeerId: _identity!.peerId,
-      ownUsername: _identity!.username,
-      messageRepo: widget.messageRepo,
-    );
-    if (updated != null &&
-        updated.status == IntroductionOverallStatus.mutualAccepted) {
-      final otherPeerId = updated.recipientId == _identity!.peerId
-          ? updated.introducedId
-          : updated.recipientId;
-      if (otherPeerId.isNotEmpty) {
-        _markContactChanged(otherPeerId);
-        await _refreshOrbitFriend(otherPeerId);
+    _processingIntroductionIds.add(introductionId);
+    _publishListProjection();
+    try {
+      final updated = await acceptIntroduction(
+        introRepo: introRepo,
+        contactRepo: widget.contactRepo,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        introductionId: introductionId,
+        ownPeerId: identity.peerId,
+        ownUsername: identity.username,
+        messageRepo: widget.messageRepo,
+      );
+      if (updated != null &&
+          updated.status == IntroductionOverallStatus.mutualAccepted) {
+        final otherPeerId = updated.recipientId == identity.peerId
+            ? updated.introducedId
+            : updated.recipientId;
+        if (otherPeerId.isNotEmpty) {
+          _markContactChanged(otherPeerId);
+          await _refreshOrbitFriend(otherPeerId);
+        }
+      }
+      _refreshPendingIntroductionsOnPop = true;
+      await _loadIntroductions();
+    } finally {
+      _processingIntroductionIds.remove(introductionId);
+      if (mounted) {
+        _publishListProjection();
       }
     }
-    _refreshPendingIntroductionsOnPop = true;
-    await _loadIntroductions();
   }
 
   Future<void> _onPassIntro(String introductionId) async {
-    if (_identity == null) return;
+    final identity = _identity;
+    final introRepo = widget.introductionRepository;
+    if (identity == null ||
+        introRepo == null ||
+        _processingIntroductionIds.contains(introductionId)) {
+      return;
+    }
 
-    await passIntroduction(
-      introRepo: widget.introductionRepository!,
-      contactRepo: widget.contactRepo,
-      p2pService: widget.p2pService,
-      bridge: widget.bridge,
-      introductionId: introductionId,
-      ownPeerId: _identity!.peerId,
-      ownUsername: _identity!.username,
-    );
-    _refreshPendingIntroductionsOnPop = true;
-    await _loadIntroductions();
+    _processingIntroductionIds.add(introductionId);
+    _publishListProjection();
+    try {
+      await passIntroduction(
+        introRepo: introRepo,
+        contactRepo: widget.contactRepo,
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        introductionId: introductionId,
+        ownPeerId: identity.peerId,
+        ownUsername: identity.username,
+      );
+      _refreshPendingIntroductionsOnPop = true;
+      await _loadIntroductions();
+    } finally {
+      _processingIntroductionIds.remove(introductionId);
+      if (mounted) {
+        _publishListProjection();
+      }
+    }
   }
 
   Future<void> _onDeleteIntro(String introductionId) async {

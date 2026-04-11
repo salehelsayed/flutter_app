@@ -445,15 +445,6 @@ class AppLocalizationsDe extends AppLocalizations {
   String get comment_hint => 'Schreib einen Kommentar...';
 
   @override
-  String get group_create_title => 'Gruppe erstellen';
-
-  @override
-  String get group_name_hint => 'Gruppenname eingeben';
-
-  @override
-  String get group_desc_hint => 'Worum geht es in dieser Gruppe?';
-
-  @override
   String get group_name_optional => 'Gruppenname (optional)';
 
   @override

@@ -975,6 +975,48 @@ void main() {
       expect(saved, isTrue);
     });
 
+    test('includes GIF metadata in publish and inbox payloads', () async {
+      final gifAttachment = testAttachment.copyWith(
+        id: 'gif-att-1',
+        mime: 'image/gif',
+        localPath: '/tmp/funny.gif',
+      );
+
+      final (result, _) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: '',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [gifAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+
+      final publishMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+      );
+      final publishPayload =
+          (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+      final publishMedia = publishPayload['media'] as List<dynamic>;
+      expect((publishMedia.single as Map<String, dynamic>)['mime'], 'image/gif');
+
+      final inboxMsg = bridge.sentMessages.firstWhere(
+        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:inboxStore',
+      );
+      final inboxPayload =
+          (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
+      final innerPayload =
+          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      final inboxMedia = innerPayload['media'] as List<dynamic>;
+      expect((inboxMedia.single as Map<String, dynamic>)['mime'], 'image/gif');
+    });
+
     test(
       'removes stale upload_pending placeholders before saving final attachments',
       () async {

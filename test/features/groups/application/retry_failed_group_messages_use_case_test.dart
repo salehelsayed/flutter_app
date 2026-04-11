@@ -380,6 +380,65 @@ void main() {
     );
 
     test(
+      'retries a failed GIF row from persisted done attachments with image/gif preserved',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await groupRepo.saveGroup(_makeGroup());
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-gif-done',
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: '',
+            timestamp: DateTime.parse('2026-01-15T12:00:00.000Z'),
+            keyGeneration: 0,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.parse('2026-01-15T12:00:00.000Z'),
+            wireEnvelope: jsonEncode({
+              'groupId': 'group-1',
+              'text': '',
+              'senderPeerId': 'peer-1',
+              'senderUsername': 'Alice',
+              'messageId': 'msg-gif-done',
+              'media': [
+                {'id': 'att-gif-done', 'mime': 'image/gif'},
+              ],
+            }),
+            inboxStored: true,
+            inboxRetryPayload: null,
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _makeAttachment(
+            id: 'att-gif-done',
+            messageId: 'msg-gif-done',
+            downloadStatus: 'done',
+            mime: 'image/gif',
+          ),
+        );
+
+        final count = await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage('msg-gif-done');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'sent');
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:publish',
+        );
+        expect(publishMsg, contains('"mime":"image/gif"'));
+      },
+    );
+
+    test(
       'skips rows whose persisted media attachments are still upload_pending',
       () async {
         identityRepo.seed(_makeIdentity());

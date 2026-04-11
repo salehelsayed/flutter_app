@@ -407,6 +407,9 @@ class FeedScreen extends StatelessWidget {
     ThreadMessage message,
     BuildContext bubbleContext,
   ) {
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
+
     final renderObject = bubbleContext.findRenderObject();
     Rect anchorRect = Rect.fromCenter(
       center: MediaQuery.of(context).size.center(Offset.zero),
@@ -882,8 +885,7 @@ class _FeedScrollableContentState extends State<_FeedScrollableContent> {
     final position = _scrollController.position;
     final anchors = _visibleThreadAnchors();
     final estimatedEntryExtent = _estimatedEntryExtent(anchors);
-    final nearestAnchor =
-        anchors.isEmpty
+    final nearestAnchor = anchors.isEmpty
         ? null
         : anchors.reduce(
             (best, candidate) =>
@@ -930,18 +932,18 @@ class _FeedScrollableContentState extends State<_FeedScrollableContent> {
         Offset.zero,
         ancestor: viewportRenderObject,
       );
-      anchors.add(
-        (
-          index: index,
-          absoluteOffset: _scrollController.position.pixels + relativeTop.dy,
-        ),
-      );
+      anchors.add((
+        index: index,
+        absoluteOffset: _scrollController.position.pixels + relativeTop.dy,
+      ));
     }
     anchors.sort((a, b) => a.index.compareTo(b.index));
     return anchors;
   }
 
-  double _estimatedEntryExtent(List<({int index, double absoluteOffset})> anchors) {
+  double _estimatedEntryExtent(
+    List<({int index, double absoluteOffset})> anchors,
+  ) {
     if (anchors.length < 2) {
       return 72;
     }
@@ -992,16 +994,10 @@ class _FeedScrollableContentState extends State<_FeedScrollableContent> {
 
     Widget wrappedChild = child;
     if (item is ThreadFeedItem) {
-      wrappedChild = SizedBox(
-        key: _threadCardKey(item.id),
-        child: child,
-      );
+      wrappedChild = SizedBox(key: _threadCardKey(item.id), child: child);
     }
 
-    return KeyedSubtree(
-      key: ValueKey<String>(item.id),
-      child: wrappedChild,
-    );
+    return KeyedSubtree(key: ValueKey<String>(item.id), child: wrappedChild);
   }
 
   @override

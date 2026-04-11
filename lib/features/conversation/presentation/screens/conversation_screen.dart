@@ -485,8 +485,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 final mediaViewerBuilder = widget.mediaViewerBuilder;
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) =>
-                        mediaViewerBuilder != null
+                    builder: (_) => mediaViewerBuilder != null
                         ? mediaViewerBuilder(
                             localPath: tappedPath,
                             allPaths: allPaths,
@@ -620,6 +619,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
     required BuildContext cardContext,
     required Widget selectedMessage,
   }) {
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
+
     final renderObject = cardContext.findRenderObject();
     Rect anchorRect = Rect.fromCenter(
       center: MediaQuery.of(context).size.center(Offset.zero),
@@ -713,7 +715,18 @@ class _ConversationScreenState extends State<ConversationScreen> {
     if (widget.ownPeerId == null || message.isIncoming) return false;
     if (message.senderPeerId != widget.ownPeerId) return false;
     if (message.text.trim().isEmpty) return false;
+    if (_isComposerBusy()) return false;
     return _lastSentMessageId() == message.id;
+  }
+
+  bool _isComposerBusy() {
+    final composerState =
+        widget.composerStateListenable?.value ?? _legacyComposerState;
+    return widget.isSending ||
+        composerState.pendingAttachments.isNotEmpty ||
+        composerState.isUploading ||
+        composerState.isProcessing ||
+        composerState.isRecording;
   }
 
   bool _canDeleteMessage(ConversationMessage message) {

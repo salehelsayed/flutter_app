@@ -465,14 +465,16 @@ class TestUser {
     required String peerId,
     required String username,
     required FakeP2PNetwork network,
+    InMemoryMessageRepository? messageRepo,
+    InMemoryContactRepository? contactRepo,
   }) {
     final p2p = FakeP2PService(peerId: peerId, network: network);
-    final msgRepo = InMemoryMessageRepository();
-    final contactRepo = InMemoryContactRepository();
+    final msgRepo = messageRepo ?? InMemoryMessageRepository();
+    final contactsRepo = contactRepo ?? InMemoryContactRepository();
     final listener = ChatMessageListener(
       chatMessageStream: p2p.messageStream,
       messageRepo: msgRepo,
-      contactRepo: contactRepo,
+      contactRepo: contactsRepo,
     );
 
     return TestUser._(
@@ -480,7 +482,7 @@ class TestUser {
       username: username,
       p2pService: p2p,
       messageRepo: msgRepo,
-      contactRepo: contactRepo,
+      contactRepo: contactsRepo,
       chatListener: listener,
     );
   }

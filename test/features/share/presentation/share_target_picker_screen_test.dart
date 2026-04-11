@@ -118,6 +118,18 @@ void main() {
     );
   });
 
+  testWidgets('GIF preview avoids ResizeImage cache hints', (tester) async {
+    await tester.pumpWidget(
+      buildScreen(sharedFilePaths: const ['/tmp/shared-animation.gif']),
+    );
+    await tester.pump();
+
+    final image = tester.widget<Image>(
+      find.byKey(const ValueKey('share-preview-image')),
+    );
+    expect(image.image, isA<FileImage>());
+  });
+
   testWidgets('shows caption field for media shares on the picker screen', (
     tester,
   ) async {

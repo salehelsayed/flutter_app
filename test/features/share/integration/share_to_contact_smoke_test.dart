@@ -297,6 +297,42 @@ void main() {
     },
   );
 
+  testWidgets(
+    '6b2: share GIF keeps file payload when send is confirmed from the picker',
+    (tester) async {
+      identityRepository.seed(identityWithContacts);
+      contactRepository.addTestContact(_makeContact('peer-alice', 'Alice'));
+      final coordinator = _RecordingBatchCoordinator.failAll();
+      final tempDir = Directory.systemTemp.createTempSync('share_smoke_gif_');
+      addTearDown(() {
+        if (tempDir.existsSync()) {
+          tempDir.deleteSync(recursive: true);
+        }
+      });
+      final sharedFile = File('${tempDir.path}/shared.gif')
+        ..writeAsStringSync('gif');
+
+      await tester.pumpWidget(
+        buildSharePickerApp(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: [sharedFile.path],
+          ),
+          batchShareCoordinator: coordinator,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.byKey(const ValueKey('share-contact-peer-alice')));
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await pumpFrames(tester);
+
+      expect(coordinator.deliverCallCount, 1);
+      expect(coordinator.lastShareIntent?.filePaths, [sharedFile.path]);
+    },
+  );
+
   testWidgets('6e: share URL keeps URL text in the picker delivery request', (
     tester,
   ) async {

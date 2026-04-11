@@ -16,14 +16,16 @@ void main() {
     p2pService = FakeP2PService(
       initialState: const NodeState(isStarted: true, peerId: 'my-peer'),
     );
-    bridge = FakeBridge(initialResponses: {
-      'message.encrypt': {
-        'ok': true,
-        'kem': 'test-kem',
-        'ciphertext': 'test-cipher',
-        'nonce': 'test-nonce',
+    bridge = FakeBridge(
+      initialResponses: {
+        'message.encrypt': {
+          'ok': true,
+          'kem': 'test-kem',
+          'ciphertext': 'test-cipher',
+          'nonce': 'test-nonce',
+        },
       },
-    });
+    );
     reactionRepo = FakeReactionRepository();
   });
 
@@ -66,14 +68,16 @@ void main() {
 
     test('returns success — encrypts, sends, deletes locally', () async {
       // Pre-populate with a reaction to remove
-      await reactionRepo.saveReaction(const MessageReaction(
-        id: 'r1',
-        messageId: 'msg-1',
-        emoji: '👍',
-        senderPeerId: 'my-peer',
-        timestamp: '2026-02-27T10:00:00.000Z',
-        createdAt: '2026-02-27T10:00:01.000Z',
-      ));
+      await reactionRepo.saveReaction(
+        const MessageReaction(
+          id: 'r1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'my-peer',
+          timestamp: '2026-02-27T10:00:00.000Z',
+          createdAt: '2026-02-27T10:00:01.000Z',
+        ),
+      );
 
       final result = await removeReaction(
         p2pService: p2pService,
@@ -111,5 +115,42 @@ void main() {
       expect(result, RemoveReactionResult.success);
       expect(p2pService.storeInInboxCallCount, 1);
     });
+
+    test(
+      'returns sendFailed and does not delete locally when direct send and inbox store both fail',
+      () async {
+        await reactionRepo.saveReaction(
+          const MessageReaction(
+            id: 'r1',
+            messageId: 'msg-1',
+            emoji: '👍',
+            senderPeerId: 'my-peer',
+            timestamp: '2026-02-27T10:00:00.000Z',
+            createdAt: '2026-02-27T10:00:01.000Z',
+          ),
+        );
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = false;
+
+        final result = await removeReaction(
+          p2pService: p2pService,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          targetPeerId: 'peer-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'my-peer',
+          recipientMlKemPublicKey: 'key-1',
+        );
+
+        expect(result, RemoveReactionResult.sendFailed);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(reactionRepo.removeReactionCallCount, 0);
+
+        final remaining = await reactionRepo.getReactionsForMessage('msg-1');
+        expect(remaining, hasLength(1));
+        expect(remaining.single.id, 'r1');
+      },
+    );
   });
 }

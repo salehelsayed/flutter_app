@@ -914,6 +914,58 @@ void main() {
       },
     );
 
+    test(
+      'partial upload crash re-uploads only pending GIF and keeps done JPEG sibling',
+      () async {
+        final msg = _makeMsg(
+          'msg-gif-partial-001',
+          status: 'failed',
+          contactPeerId: 'peer-bob',
+        );
+        messageRepo.seed([msg]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+
+        mediaRepo.seed([
+          _doneAttachment('att-jpeg-done', 'msg-gif-partial-001', mime: 'image/jpeg'),
+          _pendingAtt(
+            id: 'att-gif-pending',
+            messageId: 'msg-gif-partial-001',
+            localPath: '/durable/funny.gif',
+            mime: 'image/gif',
+            mediaType: 'image',
+            durationMs: null,
+          ),
+        ]);
+
+        fakeUploadFn.willReturn(
+          _doneAttachment(
+            'att-gif-pending',
+            'msg-gif-partial-001',
+            mime: 'image/gif',
+          ),
+        );
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+        );
+
+        expect(count, 1);
+        expect(fakeUploadFn.callCount, 1);
+        expect(fakeUploadFn.lastMime, 'image/gif');
+        expect(fakeUploadFn.lastBlobId, 'att-gif-pending');
+        final payload = p2pService.lastStoreInInboxMessage!;
+        expect(payload, contains('att-jpeg-done'));
+        expect(payload, contains('att-gif-pending'));
+        expect(payload, contains('"mime":"image/gif"'));
+      },
+    );
+
     // G.10.1.1
     test(
       'retry after interrupted sendLocalMedia uses relay, not local WiFi',

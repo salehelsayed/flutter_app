@@ -1263,6 +1263,7 @@ void main() async {
   // Create reaction listener
   final reactionListener = ReactionListener(
     reactionStream: messageRouter.reactionStream,
+    messageRepo: messageRepository,
     reactionRepo: reactionRepository,
     contactRepo: contactRepository,
     bridge: bridge,

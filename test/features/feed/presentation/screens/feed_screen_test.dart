@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
@@ -68,6 +71,7 @@ void main() {
     EdgeInsets viewInsets = EdgeInsets.zero,
     SessionReplyTracker? sessionReplies,
     Map<String, String>? activeQuoteMessageIds,
+    Map<String, List<MessageReaction>> reactions = const {},
     void Function(String contactPeerId)? onClearQuote,
     void Function(String messageId, String emoji)? onReactionSelected,
     void Function(String contactPeerId, String messageId)? onEditMessage,
@@ -76,6 +80,7 @@ void main() {
     void Function(String groupId, String text)? onGroupInlineSend,
     void Function(String contactPeerId, String messageId)? onQuoteReply,
     void Function(GroupThreadFeedItem)? onGroupAttach,
+    String? userPeerId = 'alice-peer',
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -106,6 +111,8 @@ void main() {
               onGroupInlineSend: onGroupInlineSend,
               onQuoteReply: onQuoteReply,
               onGroupAttach: onGroupAttach,
+              reactions: reactions,
+              userPeerId: userPeerId,
             ),
           ),
         ),
@@ -834,6 +841,42 @@ void main() {
     expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
   });
 
+  testWidgets('deleted feed rows stay inert and never reopen the overlay', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    final item = ThreadFeedItem(
+      id: 'thread_deleted',
+      timestamp: DateTime.utc(2026, 3, 1, 10),
+      contactPeerId: 'deleted-peer',
+      contactUsername: 'Deleted Bob',
+      messages: [
+        ThreadMessage(
+          id: 'deleted-msg-1',
+          text: '',
+          time: '12:00',
+          timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+          isIncoming: true,
+          isDeleted: true,
+        ),
+      ],
+      conversationState: ConversationState.read,
+    );
+
+    await tester.pumpWidget(
+      buildFeedScreen(feedItems: [item], onDeleteMessage: (_, __) {}),
+    );
+    await tester.pump();
+
+    expect(find.text('This message was deleted'), findsOneWidget);
+
+    await tester.longPress(find.text('This message was deleted'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+  });
+
   testWidgets('collapsed feed preview renders edited indicator', (
     tester,
   ) async {
@@ -871,6 +914,143 @@ void main() {
     expect(find.text('Edited outgoing preview'), findsOneWidget);
     expect(find.text('(edited)'), findsOneWidget);
   });
+
+  testWidgets(
+    'after restart, feed direct-thread screen rebuilds stored reply edit delete and reaction state without stale pre-restart UI',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      const threadId = 'thread_restart';
+      const contactPeerId = 'restart-peer';
+      const parentId = 'restart-parent';
+      const replyId = 'restart-reply';
+
+      final preRestartItem = ThreadFeedItem(
+        id: threadId,
+        timestamp: DateTime.utc(2026, 2, 9, 15, 32),
+        contactPeerId: contactPeerId,
+        contactUsername: 'Restart Bob',
+        conversationState: ConversationState.read,
+        messages: [
+          ThreadMessage(
+            id: parentId,
+            text: 'Quote source before restart',
+            time: '15:30',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 30),
+            isIncoming: true,
+          ),
+          ThreadMessage(
+            id: 'restart-edited',
+            text: 'Editable before restart',
+            time: '15:31',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 31),
+            isIncoming: false,
+            status: 'delivered',
+          ),
+          ThreadMessage(
+            id: 'restart-deleted',
+            text: 'Delete me after restart',
+            time: '15:32',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 32),
+            isIncoming: true,
+            status: 'read',
+          ),
+        ],
+      );
+
+      final postRestartItem = ThreadFeedItem(
+        id: threadId,
+        timestamp: DateTime.utc(2026, 2, 9, 15, 42),
+        contactPeerId: contactPeerId,
+        contactUsername: 'Restart Bob',
+        conversationState: ConversationState.read,
+        messages: [
+          ThreadMessage(
+            id: parentId,
+            text: 'Quote source before restart',
+            time: '15:30',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 30),
+            isIncoming: true,
+          ),
+          ThreadMessage(
+            id: 'restart-edited',
+            text: 'Edited after restart',
+            time: '15:31',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 31),
+            isIncoming: false,
+            status: 'delivered',
+            editedAt: '2026-02-09T15:40:00.000Z',
+          ),
+          ThreadMessage(
+            id: 'restart-deleted',
+            text: '',
+            time: '15:32',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 32),
+            isIncoming: true,
+            isDeleted: true,
+            status: 'read',
+          ),
+          ThreadMessage(
+            id: replyId,
+            text: 'Reply restored after restart',
+            time: '15:42',
+            timestamp: DateTime.utc(2026, 2, 9, 15, 42),
+            isIncoming: false,
+            status: 'delivered',
+            quotedMessageId: parentId,
+          ),
+        ],
+      );
+
+      final postRestartReactions = {
+        replyId: [
+          MessageReaction(
+            id: 'restart-reaction-1',
+            messageId: replyId,
+            emoji: '🔥',
+            senderPeerId: contactPeerId,
+            timestamp: '2026-02-09T15:43:00.000Z',
+            createdAt: '2026-02-09T15:43:00.000Z',
+          ),
+        ],
+      };
+
+      await tester.pumpWidget(
+        buildFeedScreen(feedItems: [preRestartItem], expandedCardId: threadId),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(find.text('Editable before restart'), findsOneWidget);
+      expect(find.text('Delete me after restart'), findsOneWidget);
+      expect(find.text('Reply restored after restart'), findsNothing);
+      expect(find.text('(edited)'), findsNothing);
+      expect(find.text('This message was deleted'), findsNothing);
+      expect(find.text('🔥'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [postRestartItem],
+          expandedCardId: threadId,
+          reactions: postRestartReactions,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 700));
+
+      expect(find.text('Editable before restart'), findsNothing);
+      expect(find.text('Delete me after restart'), findsNothing);
+      expect(find.text('Edited after restart'), findsOneWidget);
+      expect(find.text('Reply restored after restart'), findsOneWidget);
+      expect(find.text('Quote source before restart'), findsOneWidget);
+      expect(find.text('(edited)'), findsOneWidget);
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(find.text('🔥'), findsOneWidget);
+    },
+  );
 
   testWidgets('copy action copies exact text and dismisses the overlay', (
     tester,
@@ -930,6 +1110,103 @@ void main() {
     expect(find.text('Message copied to clipboard'), findsOneWidget);
   });
 
+  testWidgets(
+    'copy action stays safe after the feed host context changes during the clipboard await',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final showFeed = ValueNotifier(true);
+      final clipboardCompleter = Completer<void>();
+      var clipboardCalls = 0;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') {
+          clipboardCalls++;
+          await clipboardCompleter.future;
+        }
+        return null;
+      });
+      addTearDown(() {
+        if (!clipboardCompleter.isCompleted) {
+          clipboardCompleter.complete();
+        }
+        showFeed.dispose();
+        messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+      });
+
+      final item = ThreadFeedItem(
+        id: 'thread_copy_safe',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        contactPeerId: 'safe-peer',
+        contactUsername: 'Safe Bob',
+        messages: [
+          ThreadMessage(
+            id: 'safe-msg-1',
+            text: 'Context can change safely',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ValueListenableBuilder<bool>(
+              valueListenable: showFeed,
+              builder: (context, isVisible, _) {
+                if (!isVisible) {
+                  return const SizedBox.shrink();
+                }
+                return MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(viewInsets: EdgeInsets.zero),
+                  child: FeedScreen(
+                    username: 'Alice',
+                    feedItems: [item],
+                    feedLoaded: true,
+                    activeTab: 'feed',
+                    onSwitchView: (_) {},
+                    onToggleExpand: (_) {},
+                    onReactionSelected: (_, _) {},
+                    onQuoteReply: (_, _) {},
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.longPress(find.text('Context can change safely'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+      await tester.pump();
+
+      expect(clipboardCalls, 1);
+
+      showFeed.value = false;
+      await tester.pump();
+
+      clipboardCompleter.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('Message copied to clipboard'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('media-only long-press hides copy action', (tester) async {
     setPhoneViewport(tester);
 
@@ -978,4 +1255,55 @@ void main() {
     expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
     expect(find.byKey(MessageContextOverlay.copyActionKey), findsNothing);
   });
+
+  testWidgets(
+    'whitespace-only long-press hides edit and copy but keeps reply and delete available in feed',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final item = ThreadFeedItem(
+        id: 'thread_spaces',
+        timestamp: DateTime.utc(2026, 3, 1, 10, 10),
+        contactPeerId: 'spaces-peer',
+        contactUsername: 'Space Bob',
+        messages: [
+          ThreadMessage(
+            id: 'spaces-incoming',
+            text: 'Earlier incoming',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 10, 0),
+            isIncoming: true,
+          ),
+          ThreadMessage(
+            id: 'spaces-outgoing',
+            text: '   \n\t  ',
+            time: '12:10',
+            timestamp: DateTime.utc(2026, 3, 1, 10, 10),
+            isIncoming: false,
+            status: 'delivered',
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [item],
+          expandedCardId: 'thread_spaces',
+          onReactionSelected: (_, _) {},
+          onEditMessage: (_, __) {},
+          onDeleteMessage: (_, __) {},
+        ),
+      );
+      await tester.pump();
+
+      await tester.longPress(find.byType(MessageBubble).last);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.deleteActionKey), findsOneWidget);
+    },
+  );
 }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
+import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
 
 const _senderPeerId = '12D3KooWSender';
@@ -36,6 +38,7 @@ void main() {
   late StreamController<ChatMessage> reactionStreamController;
   late FakeBridge bridge;
   late FakeContactRepository contactRepo;
+  late FakeMessageRepository messageRepo;
   late FakeReactionRepository reactionRepo;
   late ReactionListener listener;
 
@@ -67,10 +70,24 @@ void main() {
         scannedAt: '2026-01-01T00:00:00.000Z',
       ),
     ]);
+    messageRepo = FakeMessageRepository()
+      ..seed([
+        const ConversationMessage(
+          id: 'msg-1',
+          contactPeerId: _senderPeerId,
+          senderPeerId: _senderPeerId,
+          text: 'hello',
+          timestamp: '2026-02-27T10:00:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-27T10:00:00.000Z',
+        ),
+      ]);
     reactionRepo = FakeReactionRepository();
 
     listener = ReactionListener(
       reactionStream: reactionStreamController.stream,
+      messageRepo: messageRepo,
       reactionRepo: reactionRepo,
       contactRepo: contactRepo,
       bridge: bridge,
@@ -239,6 +256,33 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 100));
 
       expect(received, isEmpty);
+    });
+
+    test('does not broadcast when the target message is missing', () async {
+      bridge.responses['message.decrypt'] = {
+        'ok': true,
+        'plaintext': jsonEncode({
+          'id': 'r1',
+          'messageId': 'missing-msg',
+          'emoji': '👍',
+          'action': 'add',
+          'senderPeerId': _senderPeerId,
+          'timestamp': '2026-02-27T10:00:00.000Z',
+        }),
+      };
+
+      final received = <MessageReaction>[];
+      final changes = <ReactionChange>[];
+      listener.incomingReactionStream.listen(received.add);
+      listener.incomingReactionChangeStream.listen(changes.add);
+      listener.start();
+
+      reactionStreamController.add(_makeV2ReactionMessage());
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(received, isEmpty);
+      expect(changes, isEmpty);
+      expect(reactionRepo.saveReactionCallCount, 0);
     });
 
     test('start is idempotent', () {

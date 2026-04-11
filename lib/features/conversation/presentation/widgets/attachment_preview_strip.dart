@@ -71,6 +71,10 @@ class _Thumbnail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mediaType = isLikelyVideoPath(file.path) ? 'video' : 'image';
+    final showsGifBadge =
+        !isUploading &&
+        mediaType == 'image' &&
+        file.path.toLowerCase().endsWith('.gif');
     return SizedBox(
       width: 72,
       height: 72,
@@ -120,6 +124,29 @@ class _Thumbnail extends StatelessWidget {
                       strokeWidth: 2,
                       color: Colors.white70,
                     ),
+                  ),
+                ),
+              ),
+            ),
+          if (showsGifBadge)
+            Positioned(
+              left: 6,
+              bottom: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color.fromRGBO(0, 0, 0, 0.7),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  'GIF',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),

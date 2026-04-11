@@ -34,6 +34,13 @@ enum HandleChatMessageResult {
 
   /// Edit references an original message that is not stored locally.
   editMissingOriginal,
+
+  /// Sender identifiers do not agree or the edit does not belong to the
+  /// original author.
+  unauthorized,
+
+  /// Edit was ignored because it is stale, duplicate, or targets a deleted row.
+  ignoredEdit,
 }
 
 /// Parses an incoming P2P ChatMessage for chat_message type,
@@ -73,6 +80,7 @@ handleIncomingChatMessage({
   MessagePayload? payload;
 
   final v2Envelope = MessagePayload.parseEncryptedEnvelope(message.content);
+  final envelopeSenderPeerId = v2Envelope?['senderPeerId'] as String?;
   if (v2Envelope != null) {
     // v2 encrypted message
     if (bridge == null || ownMlKemSecretKey == null) {
@@ -139,6 +147,31 @@ handleIncomingChatMessage({
 
   final textPreview = buildTextPreview(payload.text);
 
+  // 2a. Require the stream sender and decrypted payload sender to agree.
+  final senderMismatch =
+      message.from != payload.senderPeerId ||
+      (v2Envelope != null && envelopeSenderPeerId != payload.senderPeerId);
+  if (senderMismatch) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_SENDER_MISMATCH',
+      details: {
+        'streamFrom': message.from.length > 10
+            ? message.from.substring(0, 10)
+            : message.from,
+        'envelopeFrom': envelopeSenderPeerId == null
+            ? '<missing>'
+            : (envelopeSenderPeerId.length > 10
+                  ? envelopeSenderPeerId.substring(0, 10)
+                  : envelopeSenderPeerId),
+        'payloadFrom': payload.senderPeerId.length > 10
+            ? payload.senderPeerId.substring(0, 10)
+            : payload.senderPeerId,
+      },
+    );
+    return (HandleChatMessageResult.unauthorized, null, null);
+  }
+
   // 2. Check sender is a known contact
   final contact = await contactRepo.getContact(payload.senderPeerId);
   if (contact == null) {
@@ -156,7 +189,18 @@ handleIncomingChatMessage({
 
   // 3. Check for duplicate / same-ID edit update
   final existingMessage = await messageRepo.getMessage(payload.id);
-  if (existingMessage != null && !payload.isEdit) {
+  final shouldMaterializeDeferredEdit =
+      existingMessage != null &&
+      !payload.isEdit &&
+      _isHiddenIncomingEditPlaceholder(existingMessage);
+  final shouldPreserveDeletedPlaceholder =
+      existingMessage != null &&
+      !payload.isEdit &&
+      _isIncomingDeletedPlaceholder(existingMessage);
+  if (existingMessage != null &&
+      !payload.isEdit &&
+      !shouldMaterializeDeferredEdit &&
+      !shouldPreserveDeletedPlaceholder) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_RECEIVE_DUPLICATE',
@@ -165,12 +209,50 @@ handleIncomingChatMessage({
     return (HandleChatMessageResult.duplicate, null, null);
   }
   if (existingMessage == null && payload.isEdit) {
+    final stagedEdit = _buildHiddenIncomingEditPlaceholder(
+      payload: payload,
+      transport: transport,
+    );
+    await messageRepo.saveMessage(stagedEdit);
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL',
       details: {'id': payload.id.substring(0, 8)},
     );
     return (HandleChatMessageResult.editMissingOriginal, null, null);
+  }
+
+  if (payload.isEdit && existingMessage != null) {
+    if (existingMessage.senderPeerId != payload.senderPeerId) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_EDIT_UNAUTHORIZED',
+        details: {'id': payload.id.substring(0, 8)},
+      );
+      return (HandleChatMessageResult.unauthorized, null, null);
+    }
+    if (existingMessage.isDeleted) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_EDIT_IGNORED_DELETED',
+        details: {'id': payload.id.substring(0, 8)},
+      );
+      return (HandleChatMessageResult.ignoredEdit, null, null);
+    }
+    final incomingEditedAt = payload.editedAt ?? payload.timestamp;
+    final currentEditedAt = existingMessage.editedAt;
+    if (currentEditedAt != null &&
+        !_isIncomingEditNewer(
+          incomingEditedAt: incomingEditedAt,
+          currentEditedAt: currentEditedAt,
+        )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_EDIT_IGNORED_STALE',
+        details: {'id': payload.id.substring(0, 8)},
+      );
+      return (HandleChatMessageResult.ignoredEdit, null, null);
+    }
   }
 
   // 4. Detect + persist contact name change
@@ -192,7 +274,22 @@ handleIncomingChatMessage({
   }
 
   // 5. Persist message
-  final conversationMessage = payload.isEdit && existingMessage != null
+  final resultAfterSave = shouldPreserveDeletedPlaceholder
+      ? HandleChatMessageResult.duplicate
+      : HandleChatMessageResult.chatMessage;
+  final conversationMessage = shouldMaterializeDeferredEdit
+      ? _materializeIncomingOriginalFromHiddenEdit(
+          hiddenEditMessage: existingMessage!,
+          payload: payload,
+          transport: transport,
+        )
+      : shouldPreserveDeletedPlaceholder
+      ? _mergeIncomingOriginalIntoDeletedPlaceholder(
+          deletedMessage: existingMessage!,
+          payload: payload,
+          transport: transport,
+        )
+      : payload.isEdit && existingMessage != null
       ? existingMessage.copyWith(
           senderPeerId: payload.senderPeerId,
           text: payload.text,
@@ -211,10 +308,26 @@ handleIncomingChatMessage({
           transport: transport,
         );
   await messageRepo.saveMessage(conversationMessage);
+  if (shouldMaterializeDeferredEdit) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_EDIT_MATERIALIZED',
+      details: {'id': payload.id.substring(0, 8)},
+    );
+  }
+  if (shouldPreserveDeletedPlaceholder) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_ORIGINAL_IGNORED_AFTER_DELETE',
+      details: {'id': payload.id.substring(0, 8)},
+    );
+  }
 
   // 6. Persist media attachment metadata and collect parsed attachments
   final parsedAttachments = <MediaAttachment>[];
-  if (mediaAttachmentRepo != null && payload.media != null) {
+  if (!shouldPreserveDeletedPlaceholder &&
+      mediaAttachmentRepo != null &&
+      payload.media != null) {
     for (final mediaJson in payload.media!) {
       final attachment = MediaAttachment.fromJson(
         mediaJson,
@@ -232,6 +345,8 @@ handleIncomingChatMessage({
       ? conversationMessage.copyWith(media: parsedAttachments)
       : conversationMessage;
 
+  final storedTextPreview = buildTextPreview(conversationMessage.text);
+
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_RECEIVE_STORED',
@@ -240,14 +355,102 @@ handleIncomingChatMessage({
       'from': payload.senderPeerId.length > 10
           ? payload.senderPeerId.substring(0, 10)
           : payload.senderPeerId,
-      'textPreview': textPreview,
+      'textPreview': storedTextPreview,
     },
   );
   logChatIncoming(
     messageId: payload.id,
     fromPeerId: payload.senderPeerId,
     status: 'delivered',
-    text: payload.text,
+    text: conversationMessage.text,
   );
+  if (resultAfterSave != HandleChatMessageResult.chatMessage) {
+    return (resultAfterSave, null, updatedContact);
+  }
   return (HandleChatMessageResult.chatMessage, hydratedMessage, updatedContact);
+}
+
+bool _isHiddenIncomingEditPlaceholder(ConversationMessage message) {
+  return message.isIncoming &&
+      message.isHidden &&
+      !message.isDeleted &&
+      message.editedAt != null;
+}
+
+bool _isIncomingDeletedPlaceholder(ConversationMessage message) {
+  return message.isIncoming && message.isDeleted;
+}
+
+ConversationMessage _buildHiddenIncomingEditPlaceholder({
+  required MessagePayload payload,
+  String? transport,
+}) {
+  final editedAt = payload.editedAt ?? payload.timestamp;
+  return payload
+      .toConversationMessage(
+        contactPeerId: payload.senderPeerId,
+        isIncoming: true,
+        status: 'delivered',
+        editedAt: editedAt,
+        transport: transport,
+      )
+      .copyWith(hiddenAt: editedAt);
+}
+
+ConversationMessage _materializeIncomingOriginalFromHiddenEdit({
+  required ConversationMessage hiddenEditMessage,
+  required MessagePayload payload,
+  String? transport,
+}) {
+  final original = payload.toConversationMessage(
+    contactPeerId: payload.senderPeerId,
+    isIncoming: true,
+    status: 'delivered',
+    transport: transport,
+  );
+  return original.copyWith(
+    text: hiddenEditMessage.text,
+    createdAt: hiddenEditMessage.createdAt,
+    editedAt: hiddenEditMessage.editedAt,
+    quotedMessageId:
+        hiddenEditMessage.quotedMessageId ?? original.quotedMessageId,
+    transport: transport ?? hiddenEditMessage.transport ?? original.transport,
+    hiddenAt: null,
+  );
+}
+
+ConversationMessage _mergeIncomingOriginalIntoDeletedPlaceholder({
+  required ConversationMessage deletedMessage,
+  required MessagePayload payload,
+  String? transport,
+}) {
+  final original = payload.toConversationMessage(
+    contactPeerId: payload.senderPeerId,
+    isIncoming: true,
+    status: deletedMessage.status,
+    transport: transport,
+  );
+  return original.copyWith(
+    text: '',
+    createdAt: deletedMessage.createdAt,
+    editedAt: deletedMessage.editedAt,
+    quotedMessageId: deletedMessage.quotedMessageId ?? original.quotedMessageId,
+    deletedAt: deletedMessage.deletedAt,
+    deletedByPeerId: deletedMessage.deletedByPeerId,
+    hiddenAt: deletedMessage.hiddenAt,
+    transport: transport ?? deletedMessage.transport ?? original.transport,
+    media: const [],
+  );
+}
+
+bool _isIncomingEditNewer({
+  required String incomingEditedAt,
+  required String currentEditedAt,
+}) {
+  final incoming = DateTime.tryParse(incomingEditedAt);
+  final current = DateTime.tryParse(currentEditedAt);
+  if (incoming != null && current != null) {
+    return incoming.isAfter(current);
+  }
+  return incomingEditedAt.compareTo(currentEditedAt) > 0;
 }

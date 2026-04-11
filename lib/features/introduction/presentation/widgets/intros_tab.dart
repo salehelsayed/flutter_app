@@ -15,6 +15,7 @@ class IntrosTab extends StatelessWidget {
   final String ownPeerId;
   final void Function(String peerId)? onSendMessage;
   final Set<String> blockedPeerIds;
+  final Set<String> processingIntroductionIds;
 
   const IntrosTab({
     super.key,
@@ -25,6 +26,7 @@ class IntrosTab extends StatelessWidget {
     this.ownPeerId = '',
     this.onSendMessage,
     this.blockedPeerIds = const {},
+    this.processingIntroductionIds = const {},
   });
 
   String _displayName(String? username, {String? fallbackPeerId}) {
@@ -128,6 +130,9 @@ class IntrosTab extends StatelessWidget {
                       displayUsername: displayUsername,
                       displayPeerId: displayPeerId,
                       showActions: showActions,
+                      isProcessing: processingIntroductionIds.contains(
+                        intro.id,
+                      ),
                       onAccept: showActions ? () => onAccept(intro.id) : null,
                       onPass: showActions ? () => onPass(intro.id) : null,
                       ownPartyStatus: ownPartyStatus,

@@ -222,5 +222,62 @@ void main() {
 
       await sub.cancel();
     });
+
+    test(
+      '5g. offline inbox quote reply preserves quotedMessageId after receiver restart',
+      () async {
+        final bobReceived = <ConversationMessage>[];
+        final bobSub = bob.chatListener.incomingMessageStream.listen(
+          bobReceived.add,
+        );
+
+        final (initialResult, _) = await alice.sendMessage(
+          bob.peerId,
+          'Original for offline quote',
+        );
+        expect(initialResult, SendChatMessageResult.success);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final originalId = bobReceived.single.id;
+        expect(originalId, isNotEmpty);
+
+        bob.setOnline(false);
+
+        final (offlineResult, _) = await alice.sendQuoteReply(
+          bob.peerId,
+          'Reply after restart',
+          originalId,
+        );
+        expect(offlineResult, SendChatMessageResult.success);
+        expect(network.inboxCount(bob.peerId), 1);
+
+        await bobSub.cancel();
+
+        final persistedBobRepo = bob.messageRepo;
+        final persistedBobContacts = bob.contactRepo;
+        bob.dispose();
+
+        bob = TestUser.create(
+          peerId: '12D3KooWBobPeerIdxxx00000000002',
+          username: 'Bob',
+          network: network,
+          messageRepo: persistedBobRepo,
+          contactRepo: persistedBobContacts,
+        );
+        bob.start();
+        bob.setOnline(true);
+
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 1);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final bobConvo = await bob.loadConversationWith(alice.peerId);
+        expect(bobConvo, hasLength(2));
+
+        final restoredReply = bobConvo.last;
+        expect(restoredReply.text, 'Reply after restart');
+        expect(restoredReply.quotedMessageId, originalId);
+      },
+    );
   });
 }

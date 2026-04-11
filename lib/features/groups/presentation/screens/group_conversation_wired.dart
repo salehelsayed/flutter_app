@@ -19,6 +19,7 @@ import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -58,6 +59,10 @@ class _PreparedGroupMediaUpload {
     required this.pendingAttachment,
     required this.absoluteDurablePath,
   });
+}
+
+class _RejectedPendingGroupMediaException implements Exception {
+  const _RejectedPendingGroupMediaException();
 }
 
 /// Wired widget connecting GroupConversationScreen to business logic.
@@ -602,6 +607,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     ImageQualityPreference? videoQualityPreference,
     bool ownsProcessingLifecycle = true,
   }) async {
+    if (_mimeFromPath(path) == 'image/gif') {
+      final fileSize = File(path).lengthSync();
+      if (fileSize > kMaxGifFileSize) {
+        _showGifTooLargeMessage();
+        throw const _RejectedPendingGroupMediaException();
+      }
+    }
+
     final processor = widget.imageProcessor;
     final isVideo = processor?.isProcessableVideo(path) ?? false;
     if (isVideo && ownsProcessingLifecycle) {
@@ -637,6 +650,16 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         );
       }
     }
+  }
+
+  void _showGifTooLargeMessage() {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('GIF files larger than 25 MB cannot be added.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _loadIdentity() async {
@@ -1699,11 +1722,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               processingTotal: processingTotal,
             );
           }
-          final result = await _preparePendingMedia(
-            xf.path,
-            ownsProcessingLifecycle: !useBatchProcessing,
-          );
-          media.add(result);
+          try {
+            final result = await _preparePendingMedia(
+              xf.path,
+              ownsProcessingLifecycle: !useBatchProcessing,
+            );
+            media.add(result);
+          } on _RejectedPendingGroupMediaException {
+            continue;
+          }
         }
       } finally {
         if (useBatchProcessing && didStartBatchProcessing && mounted) {

@@ -353,11 +353,21 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     if (result.failureCount > 0) {
       parts.add('failed for ${_formatTargetCount(result.failureCount)}');
     }
-    if (parts.isEmpty) {
+    if (parts.isEmpty && !result.hasSkippedOversizedGifs) {
       return 'Nothing was shared.';
     }
-    final sentence = parts.join(', ');
-    return '${sentence[0].toUpperCase()}${sentence.substring(1)}.';
+    final summary = <String>[];
+    if (parts.isNotEmpty) {
+      final sentence = parts.join(', ');
+      summary.add('${sentence[0].toUpperCase()}${sentence.substring(1)}.');
+    }
+    if (result.hasSkippedOversizedGifs) {
+      final count = result.skippedOversizedGifCount;
+      summary.add(
+        'Skipped $count oversized GIF${count == 1 ? '' : 's'}.',
+      );
+    }
+    return summary.join(' ');
   }
 
   String _formatTargetCount(int count) {

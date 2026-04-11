@@ -892,24 +892,6 @@ abstract class AppLocalizations {
   /// **'Write a comment...'**
   String get comment_hint;
 
-  /// No description provided for @group_create_title.
-  ///
-  /// In en, this message translates to:
-  /// **'Create Group'**
-  String get group_create_title;
-
-  /// No description provided for @group_name_hint.
-  ///
-  /// In en, this message translates to:
-  /// **'Enter group name'**
-  String get group_name_hint;
-
-  /// No description provided for @group_desc_hint.
-  ///
-  /// In en, this message translates to:
-  /// **'What is this group about?'**
-  String get group_desc_hint;
-
   /// No description provided for @group_name_optional.
   ///
   /// In en, this message translates to:

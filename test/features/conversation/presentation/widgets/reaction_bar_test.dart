@@ -24,8 +24,7 @@ void main() {
       expect(find.byIcon(Icons.add), findsOneWidget);
     });
 
-    testWidgets('fires onReactionSelected with correct emoji',
-        (tester) async {
+    testWidgets('fires onReactionSelected with correct emoji', (tester) async {
       String? selectedEmoji;
       await tester.pumpWidget(
         MaterialApp(
@@ -62,6 +61,35 @@ void main() {
       await tester.tap(find.byIcon(Icons.add));
       expect(plusTapped, isTrue);
     });
+
+    testWidgets(
+      'non-preset currentEmoji does not falsely highlight any preset chip',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: ReactionBar(
+                currentEmoji: '😀',
+                onReactionSelected: (_) {},
+                onPlusTap: () {},
+                onDismiss: () {},
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final selectedContainers = tester
+            .widgetList<Container>(find.byType(Container))
+            .where((container) {
+              final decoration = container.decoration;
+              return decoration is BoxDecoration &&
+                  decoration.color == const Color.fromRGBO(78, 205, 196, 0.20);
+            });
+
+        expect(selectedContainers, isEmpty);
+      },
+    );
 
     testWidgets('fires onDismiss on barrier tap', (tester) async {
       var dismissed = false;

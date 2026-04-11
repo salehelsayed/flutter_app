@@ -30,6 +30,52 @@ final Uint8List _tinyPng = Uint8List.fromList([
   0xAE, 0x42, 0x60, 0x82,
 ]);
 
+final Uint8List _tinyGif = Uint8List.fromList([
+  0x47,
+  0x49,
+  0x46,
+  0x38,
+  0x39,
+  0x61,
+  0x01,
+  0x00,
+  0x01,
+  0x00,
+  0x80,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0xFF,
+  0xFF,
+  0xFF,
+  0x21,
+  0xF9,
+  0x04,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x2C,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x02,
+  0x02,
+  0x44,
+  0x01,
+  0x00,
+  0x3B,
+]);
+
 void main() {
   Widget wrap(Widget child) => MaterialApp(
     locale: const Locale('en'),
@@ -744,12 +790,15 @@ void main() {
   group('CollapsedModeCardBody media thumbnail', () {
     late Directory tmpDir;
     late String imagePath;
+    late String gifPath;
     late String videoPath;
 
     setUp(() {
       tmpDir = Directory.systemTemp.createTempSync('thumb_test_');
       imagePath = '${tmpDir.path}/photo.png';
       File(imagePath).writeAsBytesSync(_tinyPng);
+      gifPath = '${tmpDir.path}/photo.gif';
+      File(gifPath).writeAsBytesSync(_tinyGif);
       videoPath = '${tmpDir.path}/clip.mp4';
       File(videoPath).writeAsBytesSync(const [0x00, 0x00, 0x00, 0x18]);
       File(derivedVideoThumbnailPath(videoPath)).writeAsBytesSync(_tinyPng);
@@ -878,6 +927,44 @@ void main() {
       expect(find.byType(Image), findsOneWidget);
       // "Photo" label should show
       expect(find.text('Photo'), findsOneWidget);
+    });
+
+    testWidgets('media-only GIF message shows thumbnail + GIF label', (
+      tester,
+    ) async {
+      final thread = ThreadFeedItem(
+        id: 'thread_gif',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        contactPeerId: 'peer1',
+        contactUsername: 'Solz',
+        messages: [
+          ThreadMessage(
+            id: 'm1',
+            text: '',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            media: [
+              MediaAttachment(
+                id: 'g1',
+                messageId: 'm1',
+                mime: 'image/gif',
+                size: 1000,
+                mediaType: 'image',
+                localPath: gifPath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: thread)));
+
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.text('GIF'), findsOneWidget);
     });
 
     testWidgets('shows thumbnail when message has downloaded video + text', (
@@ -1053,6 +1140,47 @@ void main() {
       expect(find.byType(Image), findsOneWidget);
       // "Photo" label should show
       expect(find.text('Photo'), findsOneWidget);
+    });
+
+    testWidgets('group card media-only GIF message shows thumbnail + GIF label', (
+      tester,
+    ) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g-gif',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm1',
+            text: '',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Hisam',
+            senderPeerId: 'peer-hisam',
+            media: [
+              MediaAttachment(
+                id: 'gif-1',
+                messageId: 'gm1',
+                mime: 'image/gif',
+                size: 1000,
+                mediaType: 'image',
+                localPath: gifPath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+
+      expect(find.byType(MediaThumbnailImage), findsOneWidget);
+      expect(find.text('GIF'), findsOneWidget);
     });
 
     testWidgets(

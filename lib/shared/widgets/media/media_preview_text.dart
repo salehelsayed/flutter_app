@@ -9,11 +9,20 @@ import 'media_display_helpers.dart';
 String mediaPreviewText(List<MediaAttachment> media) {
   if (media.isEmpty) return '';
 
-  final imageCount = media.where((a) => a.mediaType == 'image').length;
+  final gifCount = media.where((a) => a.isAnimated).length;
+  final imageCount = media
+      .where((a) => a.mediaType == 'image' && !a.isAnimated)
+      .length;
   final videoCount = media.where((a) => a.mediaType == 'video').length;
   final audioCount = media.where((a) => a.mediaType == 'audio').length;
 
   final segments = <String>[];
+
+  if (gifCount == 1) {
+    segments.add('GIF');
+  } else if (gifCount > 1) {
+    segments.add('$gifCount GIFs');
+  }
 
   if (imageCount == 1) {
     segments.add('Photo');

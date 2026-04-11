@@ -61,6 +61,8 @@ class MediaAttachment {
     this.uploadRetryCount,
   });
 
+  bool get isAnimated => mime == 'image/gif';
+
   /// Infers the logical media type from a MIME string.
   static String mediaTypeFromMime(String mime) {
     if (mime.startsWith('image/')) return 'image';

@@ -9,18 +9,16 @@ void main() {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
-            body: ReactionDisplay(
-              reactions: [],
-              ownPeerId: 'my-peer',
-            ),
+            body: ReactionDisplay(reactions: [], ownPeerId: 'my-peer'),
           ),
         ),
       );
       expect(find.byType(Wrap), findsNothing);
     });
 
-    testWidgets('renders emoji chips grouped by emoji with counts',
-        (tester) async {
+    testWidgets('renders emoji chips grouped by emoji with counts', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -62,8 +60,9 @@ void main() {
       expect(find.text('❤️'), findsOneWidget);
     });
 
-    testWidgets('highlights chip when ownPeerId matches sender',
-        (tester) async {
+    testWidgets('highlights chip when ownPeerId matches sender', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -97,8 +96,7 @@ void main() {
       expect(tealBorderContainers, isNotEmpty);
     });
 
-    testWidgets('fires onReactionTap with emoji string on tap',
-        (tester) async {
+    testWidgets('fires onReactionTap with emoji string on tap', (tester) async {
       String? tappedEmoji;
       await tester.pumpWidget(
         MaterialApp(
@@ -123,6 +121,32 @@ void main() {
 
       await tester.tap(find.text('👍'));
       expect(tappedEmoji, '👍');
+    });
+
+    testWidgets('renders non-preset emoji chips inline without fallback', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ReactionDisplay(
+              reactions: [
+                MessageReaction(
+                  id: 'r-custom',
+                  messageId: 'msg-1',
+                  emoji: '😀',
+                  senderPeerId: 'sender-1',
+                  timestamp: '2026-02-27T10:00:00.000Z',
+                  createdAt: '2026-02-27T10:00:01.000Z',
+                ),
+              ],
+              ownPeerId: 'my-peer',
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('😀'), findsOneWidget);
     });
   });
 }

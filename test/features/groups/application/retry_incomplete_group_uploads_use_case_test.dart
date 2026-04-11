@@ -248,6 +248,63 @@ void main() {
     );
 
     test(
+      'reuploads only pending GIF attachments while preserving done JPEG siblings',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-gif-1',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: '',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _doneAttachment(id: 'done-jpeg', messageId: 'msg-gif-1'),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-gif',
+            messageId: 'msg-gif-1',
+            localPath: 'pending_uploads/msg-gif-1/funny.gif',
+            mime: 'image/gif',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-gif',
+            messageId: 'msg-gif-1',
+            mime: 'image/gif',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        expect(uploadFn.callCount, 1);
+        expect(uploadFn.lastMime, 'image/gif');
+        expect(uploadFn.lastBlobId, 'pending-gif');
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:publish',
+        );
+        expect(publishMsg, contains('"mime":"image/gif"'));
+      },
+    );
+
+    test(
       'emits RETRY_INCOMPLETE_GROUP_UPLOADS_TIMING with attachment and message counts',
       () async {
         await groupMsgRepo.saveMessage(

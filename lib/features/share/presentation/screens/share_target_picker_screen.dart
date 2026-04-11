@@ -178,6 +178,11 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
   }
 
   Widget _buildPreviewStrip() {
+    final previewPath = widget.sharedFilePaths.isEmpty
+        ? null
+        : widget.sharedFilePaths.first;
+    final isGifPreview =
+        previewPath != null && previewPath.toLowerCase().endsWith('.gif');
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       padding: const EdgeInsets.all(12),
@@ -199,8 +204,8 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                         File(widget.sharedFilePaths.first),
                         key: const ValueKey('share-preview-image'),
                         fit: BoxFit.cover,
-                        cacheWidth: 144,
-                        cacheHeight: 144,
+                        cacheWidth: isGifPreview ? null : 144,
+                        cacheHeight: isGifPreview ? null : 144,
                         filterQuality: FilterQuality.low,
                         errorBuilder: (context, error, stackTrace) => Container(
                           color: const Color.fromRGBO(255, 255, 255, 0.1),

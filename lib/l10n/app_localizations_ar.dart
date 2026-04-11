@@ -430,15 +430,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get comment_hint => 'اكتب تعليقًا...';
 
   @override
-  String get group_create_title => 'إنشاء مجموعة';
-
-  @override
-  String get group_name_hint => 'أدخل اسم المجموعة';
-
-  @override
-  String get group_desc_hint => 'عن ماذا تتحدث هذه المجموعة؟';
-
-  @override
   String get group_name_optional => 'اسم المجموعة (اختياري)';
 
   @override

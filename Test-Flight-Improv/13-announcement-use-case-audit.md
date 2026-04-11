@@ -20,7 +20,7 @@ Announcements are a `GroupType.announcement` where only admins can send, while a
 |---|----------|------|------|---------|-------|
 | 1 | GroupType enum (`chat` / `announcement` / `qa`) | `group_model.dart` | YES | Good | Serialization tested |
 | 2 | Create announcement group | `create_group_use_case.dart` | YES | Good | Session 13 added direct announcement create/use-case, repository round-trip, create-with-members, and picker-route regressions |
-| 3 | Type selector in create UI | `create_group_screen.dart` | YES | Good | Announcement selectable; QA filtered out |
+| 3 | Type-specific create route into picker UI | `orbit_wired.dart`, `create_group_picker_wired.dart` | YES | Good | Orbit routes `GroupType.announcement` into the picker flow; QA remains filtered out |
 | 4 | Group type badge display | `group_type_badge.dart` | YES | Good | Announcement badge rendering covered |
 
 ---

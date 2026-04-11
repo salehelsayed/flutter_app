@@ -97,7 +97,18 @@ Future<RemoveReactionResult> removeReaction({
   try {
     final sent = await p2pService.sendMessage(targetPeerId, jsonString);
     if (!sent) {
-      await p2pService.storeInInbox(targetPeerId, jsonString);
+      final storedInInbox = await p2pService.storeInInbox(
+        targetPeerId,
+        jsonString,
+      );
+      if (!storedInInbox) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'REACTION_REMOVE_SEND_FAILED',
+          details: {'reason': 'direct_and_inbox_failed'},
+        );
+        return RemoveReactionResult.sendFailed;
+      }
     }
   } catch (e) {
     emitFlowEvent(

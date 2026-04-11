@@ -8,18 +8,21 @@ void main() {
     Rect anchorRect = const Rect.fromLTWH(40, 240, 280, 80),
     Size size = const Size(400, 800),
     EdgeInsets viewPadding = EdgeInsets.zero,
+    Locale locale = const Locale('en'),
     Widget? selectedMessage,
     bool showEditAction = false,
     bool showCopyAction = true,
     bool showDeleteAction = false,
     VoidCallback? onDismiss,
+    void Function(String emoji)? onReactionSelected,
+    VoidCallback? onPlusTap,
     VoidCallback? onReplyTap,
     VoidCallback? onEditTap,
     VoidCallback? onCopyTap,
     VoidCallback? onDeleteTap,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: MediaQuery(
@@ -32,8 +35,8 @@ void main() {
             showCopyAction: showCopyAction,
             showDeleteAction: showDeleteAction,
             onDismiss: onDismiss ?? () {},
-            onReactionSelected: (_) {},
-            onPlusTap: () {},
+            onReactionSelected: onReactionSelected ?? (_) {},
+            onPlusTap: onPlusTap ?? () {},
             onReplyTap: onReplyTap ?? () {},
             onEditTap: onEditTap,
             onCopyTap: onCopyTap,
@@ -192,6 +195,41 @@ void main() {
       expect(find.text('Delete'), findsOneWidget);
     });
 
+    testWidgets(
+      'renders reply, edit, copy, then delete in stable keyed order when all actions are enabled',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            showEditAction: true,
+            showDeleteAction: true,
+            onEditTap: () {},
+            onCopyTap: () {},
+            onDeleteTap: () {},
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+
+        final replyFinder = find.byKey(MessageContextOverlay.replyActionKey);
+        final editFinder = find.byKey(MessageContextOverlay.editActionKey);
+        final copyFinder = find.byKey(MessageContextOverlay.copyActionKey);
+        final deleteFinder = find.byKey(MessageContextOverlay.deleteActionKey);
+
+        expect(replyFinder, findsOneWidget);
+        expect(editFinder, findsOneWidget);
+        expect(copyFinder, findsOneWidget);
+        expect(deleteFinder, findsOneWidget);
+
+        final replyTop = tester.getTopLeft(replyFinder).dy;
+        final editTop = tester.getTopLeft(editFinder).dy;
+        final copyTop = tester.getTopLeft(copyFinder).dy;
+        final deleteTop = tester.getTopLeft(deleteFinder).dy;
+
+        expect(replyTop, lessThan(editTop));
+        expect(editTop, lessThan(copyTop));
+        expect(copyTop, lessThan(deleteTop));
+      },
+    );
+
     testWidgets('hides copy action when message text is unavailable', (
       tester,
     ) async {
@@ -236,6 +274,45 @@ void main() {
       expect(deleted, isTrue);
     });
 
+    testWidgets('double tapping copy only invokes the callback once', (
+      tester,
+    ) async {
+      var copyCount = 0;
+      await tester.pumpWidget(buildTestWidget(onCopyTap: () => copyCount++));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+      await tester.pump();
+      await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+      await tester.pump();
+
+      expect(copyCount, 1);
+    });
+
+    testWidgets('double tapping a preset reaction only emits once', (
+      tester,
+    ) async {
+      var reactionCount = 0;
+      String? selectedEmoji;
+      await tester.pumpWidget(
+        buildTestWidget(
+          onReactionSelected: (emoji) {
+            reactionCount++;
+            selectedEmoji = emoji;
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+
+      await tester.tap(find.text('👍'));
+      await tester.pump();
+      await tester.tap(find.text('👍'));
+      await tester.pump();
+
+      expect(reactionCount, 1);
+      expect(selectedEmoji, '👍');
+    });
+
     testWidgets('dismisses when the blurred backdrop is tapped', (
       tester,
     ) async {
@@ -249,6 +326,44 @@ void main() {
       await tester.pump();
 
       expect(dismissed, isTrue);
+    });
+
+    testWidgets('localizes the overlay in Arabic RTL without layout exceptions', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          locale: const Locale('ar'),
+          size: const Size(320, 360),
+          viewPadding: const EdgeInsets.only(top: 24, bottom: 16),
+          anchorRect: const Rect.fromLTWH(24, 268, 272, 92),
+          selectedMessage: buildSelectedMessage(
+            'هذا نص عربي طويل جدا مع رموز تعبيرية 😄 وسطر إضافي للتأكد من بقاء المعاينة داخل حدود الشاشة.',
+          ),
+          showEditAction: true,
+          showDeleteAction: true,
+          onEditTap: () {},
+          onCopyTap: () {},
+          onDeleteTap: () {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.text('رد'), findsOneWidget);
+      expect(find.text('تعديل'), findsOneWidget);
+      expect(find.text('نسخ'), findsOneWidget);
+      expect(find.text('حذف'), findsOneWidget);
+
+      final directionality = tester.widget<Directionality>(
+        find
+            .ancestor(
+              of: find.text('رد'),
+              matching: find.byType(Directionality),
+            )
+            .first,
+      );
+      expect(directionality.textDirection, TextDirection.rtl);
+      expect(tester.takeException(), isNull);
     });
   });
 }

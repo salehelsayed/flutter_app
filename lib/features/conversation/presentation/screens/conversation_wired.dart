@@ -9,6 +9,7 @@ import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
+import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
@@ -130,6 +131,10 @@ class _PreparedConversationMediaUpload {
     required this.pendingAttachment,
     required this.absoluteDurablePath,
   });
+}
+
+class _RejectedPendingMediaException implements Exception {
+  const _RejectedPendingMediaException();
 }
 
 typedef DeleteMessageForEveryoneFn =
@@ -832,6 +837,14 @@ class _ConversationWiredState extends State<ConversationWired> {
     ImageQualityPreference? videoQualityPreference,
     bool ownsProcessingLifecycle = true,
   }) async {
+    if (_mimeFromPath(path) == 'image/gif') {
+      final fileSize = File(path).lengthSync();
+      if (fileSize > kMaxGifFileSize) {
+        _showGifTooLargeMessage();
+        throw const _RejectedPendingMediaException();
+      }
+    }
+
     final processor = widget.imageProcessor;
     final isVideo = processor?.isProcessableVideo(path) ?? false;
     if (isVideo && ownsProcessingLifecycle) {
@@ -867,6 +880,16 @@ class _ConversationWiredState extends State<ConversationWired> {
         );
       }
     }
+  }
+
+  void _showGifTooLargeMessage() {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('GIF files larger than 25 MB cannot be added.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _checkIntroBanner() async {
@@ -2149,11 +2172,15 @@ class _ConversationWiredState extends State<ConversationWired> {
             );
           }
 
-          final result = await _preparePendingMedia(
-            xf.path,
-            ownsProcessingLifecycle: !useBatchProcessing,
-          );
-          media.add(result);
+          try {
+            final result = await _preparePendingMedia(
+              xf.path,
+              ownsProcessingLifecycle: !useBatchProcessing,
+            );
+            media.add(result);
+          } on _RejectedPendingMediaException {
+            continue;
+          }
         }
       } finally {
         if (useBatchProcessing && didStartBatchProcessing && mounted) {

@@ -2106,6 +2106,7 @@ void main() {
 
       final reactionRepo = FakeReactionRepository();
       final fakeReactionListener = _FakeReactionListener(
+        messageRepo: messageRepo,
         reactionRepo: reactionRepo,
         contactRepo: contactRepo,
         bridge: bridge,
@@ -2173,6 +2174,7 @@ void main() {
         final spyMessageRepo = _SpyMessageRepository();
         final reactionRepo = FakeReactionRepository();
         final fakeReactionListener = _FakeReactionListener(
+          messageRepo: spyMessageRepo,
           reactionRepo: reactionRepo,
           contactRepo: spyContactRepo,
           bridge: bridge,
@@ -6160,6 +6162,7 @@ class _FakeReactionListener extends ReactionListener {
   final _reactionChangeEmitter = StreamController<ReactionChange>.broadcast();
 
   _FakeReactionListener({
+    required super.messageRepo,
     required super.reactionRepo,
     required super.contactRepo,
     required super.bridge,

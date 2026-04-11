@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
@@ -21,6 +23,7 @@ import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 void main() {
   Widget buildTestWidget({
     List<ConversationMessage> messages = const [],
+    Locale locale = const Locale('en'),
     ValueChanged<String>? onSend,
     VoidCallback? onBack,
     bool isLoadingMore = false,
@@ -44,12 +47,14 @@ void main() {
     bool isEditingMessage = false,
     VoidCallback? onCancelEdit,
     bool allowEditAction = true,
+    String? ownPeerId = '12D3KooWMyPeerId1234567890',
+    Map<String, List<MessageReaction>> reactions = const {},
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
     ConversationMediaViewerBuilder? mediaViewerBuilder,
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -57,7 +62,7 @@ void main() {
           contactPeerId: '12D3KooWTestPeerId1234567890',
           contactUsername: 'Alice',
           connectionDate: 'February 9, 2026',
-          ownPeerId: '12D3KooWMyPeerId1234567890',
+          ownPeerId: ownPeerId,
           messages: messages,
           onSend: onSend ?? (_) {},
           onBack: onBack ?? () {},
@@ -82,6 +87,7 @@ void main() {
           isEditingMessage: isEditingMessage,
           onCancelEdit: onCancelEdit,
           allowEditAction: allowEditAction,
+          reactions: reactions,
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
           mediaViewerBuilder: mediaViewerBuilder,
@@ -102,13 +108,17 @@ void main() {
     String? deletedByPeerId,
     String? hiddenAt,
     String? transport,
+    String? senderPeerId,
+    String? editedAt,
   }) {
     return ConversationMessage(
       id: id,
       contactPeerId: '12D3KooWTestPeerId1234567890',
-      senderPeerId: isIncoming
-          ? '12D3KooWTestPeerId1234567890'
-          : '12D3KooWMyPeerId1234567890',
+      senderPeerId:
+          senderPeerId ??
+          (isIncoming
+              ? '12D3KooWTestPeerId1234567890'
+              : '12D3KooWMyPeerId1234567890'),
       text: text,
       timestamp: timestamp,
       status: status,
@@ -120,6 +130,7 @@ void main() {
       deletedByPeerId: deletedByPeerId,
       hiddenAt: hiddenAt,
       transport: transport,
+      editedAt: editedAt,
     );
   }
 
@@ -256,6 +267,11 @@ void main() {
             .dy;
         expect(beforeY, lessThan(systemY));
         expect(systemY, lessThan(afterY));
+
+        await tester.longPress(find.text('Connected through Noor'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
       },
     );
 
@@ -370,6 +386,28 @@ void main() {
       expect(find.byType(SwipeToQuoteBubble), findsNothing);
     });
 
+    testWidgets('does not wrap deleted messages with swipe to quote', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'deleted-swipe',
+              text: '',
+              deletedAt: '2026-02-09T15:32:00.000Z',
+              deletedByPeerId: '12D3KooWTestPeerId1234567890',
+            ),
+          ],
+          onQuoteReply: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('This message was deleted'), findsOneWidget);
+      expect(find.byType(SwipeToQuoteBubble), findsNothing);
+    });
+
     testWidgets('renders quoted replies and unavailable fallback in list', (
       tester,
     ) async {
@@ -398,6 +436,175 @@ void main() {
       expect(find.text('Message unavailable'), findsOneWidget);
     });
 
+    testWidgets('renders media preview text for quoted media replies', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'quoted-media-parent',
+              text: '',
+              media: [makeImageAttachment(id: 'quoted-photo-1')],
+            ),
+            makeMessage(
+              id: 'quoted-media-reply',
+              text: 'Reply to a photo',
+              isIncoming: false,
+              quotedMessageId: 'quoted-media-parent',
+            ),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Photo'), findsOneWidget);
+      expect(find.text('Message unavailable'), findsNothing);
+    });
+
+    testWidgets(
+      'quoted replies live-resolve updated parent text after the source is edited',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(id: 'edited-parent', text: 'Original parent text'),
+              makeMessage(
+                id: 'reply-after-edit',
+                text: 'Reply stays stable',
+                isIncoming: false,
+                quotedMessageId: 'edited-parent',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Original parent text'), findsWidgets);
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'edited-parent',
+                text: 'Edited parent text',
+                editedAt: '2026-02-09T15:40:00.000Z',
+              ),
+              makeMessage(
+                id: 'reply-after-edit',
+                text: 'Reply stays stable',
+                isIncoming: false,
+                quotedMessageId: 'edited-parent',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Edited parent text'), findsWidgets);
+        expect(find.text('Original parent text'), findsNothing);
+        expect(find.text('Reply stays stable'), findsOneWidget);
+        expect(find.text('Message unavailable'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'after restart, conversation screen rebuilds stored reply edit delete and reaction state without stale pre-restart UI',
+      (tester) async {
+        const parentId = 'restart-parent';
+        const replyId = 'restart-reply';
+
+        final preRestartMessages = [
+          makeMessage(id: parentId, text: 'Quote source before restart'),
+          makeMessage(
+            id: 'restart-edited',
+            isIncoming: false,
+            text: 'Editable before restart',
+            timestamp: '2026-02-09T15:31:00.000Z',
+          ),
+          makeMessage(
+            id: 'restart-deleted',
+            text: 'Delete me after restart',
+            timestamp: '2026-02-09T15:32:00.000Z',
+          ),
+        ];
+
+        final postRestartMessages = [
+          makeMessage(id: parentId, text: 'Quote source before restart'),
+          makeMessage(
+            id: 'restart-edited',
+            isIncoming: false,
+            text: 'Edited after restart',
+            timestamp: '2026-02-09T15:31:00.000Z',
+            editedAt: '2026-02-09T15:40:00.000Z',
+          ),
+          makeMessage(
+            id: 'restart-deleted',
+            text: '',
+            timestamp: '2026-02-09T15:32:00.000Z',
+            deletedAt: '2026-02-09T15:41:00.000Z',
+            deletedByPeerId: '12D3KooWTestPeerId1234567890',
+          ),
+          makeMessage(
+            id: replyId,
+            isIncoming: false,
+            text: 'Reply restored after restart',
+            timestamp: '2026-02-09T15:42:00.000Z',
+            quotedMessageId: parentId,
+          ),
+        ];
+
+        final postRestartReactions = {
+          replyId: [
+            MessageReaction(
+              id: 'restart-reaction-1',
+              messageId: replyId,
+              emoji: '🔥',
+              senderPeerId: '12D3KooWTestPeerId1234567890',
+              timestamp: '2026-02-09T15:43:00.000Z',
+              createdAt: '2026-02-09T15:43:00.000Z',
+            ),
+          ],
+        };
+
+        await tester.pumpWidget(
+          buildTestWidget(messages: preRestartMessages, initialLoadDone: true),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Editable before restart'), findsOneWidget);
+        expect(find.text('Delete me after restart'), findsOneWidget);
+        expect(find.text('Reply restored after restart'), findsNothing);
+        expect(find.text('(edited)'), findsNothing);
+        expect(find.text('This message was deleted'), findsNothing);
+        expect(find.text('🔥'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: postRestartMessages,
+            reactions: postRestartReactions,
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Editable before restart'), findsNothing);
+        expect(find.text('Delete me after restart'), findsNothing);
+        expect(find.text('Edited after restart'), findsOneWidget);
+        expect(find.text('Reply restored after restart'), findsOneWidget);
+        expect(find.text('Quote source before restart'), findsWidgets);
+        expect(find.text('(edited)'), findsOneWidget);
+        expect(find.text('This message was deleted'), findsOneWidget);
+        expect(find.text('🔥'), findsOneWidget);
+      },
+    );
+
     testWidgets('header shows contact name', (tester) async {
       await tester.pumpWidget(buildTestWidget());
       await tester.pump();
@@ -406,12 +613,14 @@ void main() {
     });
 
     testWidgets(
-      'long-press on incoming text shows overlay with reactions, reply, and copy',
+      'long-press on incoming text shows the overlay and backdrop dismisses without side effects',
       (tester) async {
+        String? quotedId;
         await tester.pumpWidget(
           buildTestWidget(
             messages: [makeMessage(id: 'incoming-1', text: 'Context menu me')],
             initialLoadDone: true,
+            onQuoteReply: (messageId) => quotedId = messageId,
           ),
         );
         await pumpFrames(tester);
@@ -454,6 +663,14 @@ void main() {
 
         expect(reactionRect.bottom, lessThanOrEqualTo(selectedRect.top));
         expect(selectedRect.bottom, lessThanOrEqualTo(menuRect.top));
+
+        await tester.tapAt(const Offset(16, 16));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+        expect(quotedId, isNull);
+        expect(find.text('Message copied to clipboard'), findsNothing);
       },
     );
 
@@ -499,6 +716,35 @@ void main() {
       expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
     });
 
+    testWidgets('rapid repeat long-press keeps a single overlay active', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage(id: 'repeat-1', text: 'Repeat overlay')],
+          initialLoadDone: true,
+          onQuoteReply: (_) {},
+        ),
+      );
+      await pumpFrames(tester);
+
+      final messageFinder = find.byKey(const ValueKey('msg-repeat-1'));
+      await tester.longPress(messageFinder);
+      await tester.longPress(messageFinder, warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(MessageContextOverlay.backdropKey),
+        warnIfMissed: false,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+    });
+
     testWidgets(
       'edit action appears for the last sent text row even when a newer incoming row exists',
       (tester) async {
@@ -536,6 +782,47 @@ void main() {
       },
     );
 
+    testWidgets(
+      'edit action skips deleted outgoing rows and still targets the latest live outgoing message',
+      (tester) async {
+        String? editedId;
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'outgoing-live',
+                isIncoming: false,
+                text: 'Still editable',
+              ),
+              makeMessage(
+                id: 'outgoing-deleted',
+                isIncoming: false,
+                text: '',
+                timestamp: '2026-02-09T15:31:00.000Z',
+                deletedAt: '2026-02-09T15:31:30.000Z',
+                deletedByPeerId: '12D3KooWMyPeerId1234567890',
+              ),
+            ],
+            initialLoadDone: true,
+            onEditMessage: (messageId) => editedId = messageId,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('This message was deleted'), findsOneWidget);
+
+        await tester.longPress(find.text('Still editable'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsOneWidget);
+
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+
+        expect(editedId, 'outgoing-live');
+      },
+    );
+
     testWidgets('edit action stays hidden for older sent rows', (tester) async {
       await tester.pumpWidget(
         buildTestWidget(
@@ -564,41 +851,438 @@ void main() {
       expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
     });
 
-    testWidgets('copy action copies exact text and dismisses the overlay', (
-      tester,
-    ) async {
-      String? copiedText;
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-        if (call.method == 'Clipboard.setData') {
-          copiedText =
-              (call.arguments as Map<Object?, Object?>)['text'] as String?;
-        }
-        return null;
-      });
-      addTearDown(
-        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
-      );
+    testWidgets(
+      'edit action stays hidden when edit mode is disabled or the callback is not wired',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'editable-disabled',
+                isIncoming: false,
+                text: 'Disabled edit',
+              ),
+            ],
+            initialLoadDone: true,
+            onEditMessage: (_) {},
+            allowEditAction: false,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Disabled edit'));
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'editable-unwired',
+                isIncoming: false,
+                text: 'Unwired edit',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Unwired edit'));
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'edit action stays hidden when own identity is missing, the row is incoming, or the row is owned by another peer',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'missing-identity',
+                isIncoming: false,
+                text: 'Missing identity',
+              ),
+            ],
+            initialLoadDone: true,
+            ownPeerId: null,
+            onEditMessage: (_) {},
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Missing identity'));
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'incoming-row',
+                isIncoming: true,
+                text: 'Incoming',
+              ),
+            ],
+            initialLoadDone: true,
+            onEditMessage: (_) {},
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Incoming'));
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+
+        await tester.tapAt(const Offset(10, 10));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'foreign-row',
+                isIncoming: false,
+                text: 'Foreign outgoing',
+                senderPeerId: '12D3KooWAnotherPeer1234567890',
+              ),
+            ],
+            initialLoadDone: true,
+            onEditMessage: (_) {},
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Foreign outgoing'));
+        await tester.pump(const Duration(milliseconds: 250));
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+      },
+    );
+
+    Future<void> expectBusyOverlayState(
+      WidgetTester tester, {
+      required String description,
+      List<File> pendingAttachments = const [],
+      bool isUploading = false,
+      bool isSending = false,
+      ConversationComposerViewState? composerState,
+    }) async {
+      ValueNotifier<ConversationComposerViewState>? composerListenable;
+      if (composerState != null) {
+        composerListenable = ValueNotifier(composerState);
+        addTearDown(composerListenable.dispose);
+      }
 
       await tester.pumpWidget(
         buildTestWidget(
-          messages: [makeMessage(id: 'copy-1', text: 'Copy this exactly')],
+          messages: [
+            makeMessage(
+              id: 'busy-outgoing',
+              isIncoming: false,
+              text: 'Busy outgoing message',
+            ),
+          ],
           initialLoadDone: true,
+          pendingAttachments: pendingAttachments,
+          isUploading: isUploading,
+          isSending: isSending,
+          composerStateListenable: composerListenable,
+          onQuoteReply: (_) {},
+          onEditMessage: (_) {},
+          onDeleteMessage: (_) {},
         ),
       );
       await pumpFrames(tester);
 
-      await tester.longPress(find.text('Copy this exactly'));
-      await tester.pump(const Duration(milliseconds: 250));
-      await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
-      await tester.pump();
+      await tester.longPress(find.text('Busy outgoing message'));
       await tester.pump(const Duration(milliseconds: 250));
 
-      expect(copiedText, 'Copy this exactly');
+      expect(
+        find.byKey(MessageContextOverlay.replyActionKey),
+        findsOneWidget,
+        reason: description,
+      );
+      expect(
+        find.byKey(MessageContextOverlay.copyActionKey),
+        findsOneWidget,
+        reason: description,
+      );
+      expect(
+        find.byKey(MessageContextOverlay.deleteActionKey),
+        findsOneWidget,
+        reason: description,
+      );
+      expect(
+        find.byKey(MessageContextOverlay.editActionKey),
+        findsNothing,
+        reason: description,
+      );
+
+      await tester.tap(find.byKey(MessageContextOverlay.backdropKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
       expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
-      expect(find.text('Message copied to clipboard'), findsOneWidget);
-    });
+    }
+
+    testWidgets(
+      'pending attachments keep reply copy and delete available while edit stays hidden',
+      (tester) async {
+        final pendingAttachment = File(
+          '/tmp/conversation_busy_overlay_pending.jpg',
+        );
+
+        await expectBusyOverlayState(
+          tester,
+          description: 'pending attachments keep non-edit actions visible',
+          pendingAttachments: [pendingAttachment],
+        );
+      },
+    );
+
+    testWidgets(
+      'uploading attachments keep reply copy and delete available while edit stays hidden',
+      (tester) async {
+        final pendingAttachment = File(
+          '/tmp/conversation_uploading_overlay_pending.jpg',
+        );
+
+        await expectBusyOverlayState(
+          tester,
+          description: 'uploading attachments keep non-edit actions visible',
+          pendingAttachments: [pendingAttachment],
+          isUploading: true,
+        );
+      },
+    );
+
+    testWidgets(
+      'sending keeps reply copy and delete available while edit stays hidden',
+      (tester) async {
+        await expectBusyOverlayState(
+          tester,
+          description: 'sending keeps non-edit actions visible',
+          isSending: true,
+        );
+      },
+    );
+
+    testWidgets(
+      'processing keeps reply copy and delete available while edit stays hidden',
+      (tester) async {
+        await expectBusyOverlayState(
+          tester,
+          description: 'processing keeps non-edit actions visible',
+          composerState: const ConversationComposerViewState(
+            isProcessing: true,
+            processingProgress: 0.4,
+          ),
+        );
+      },
+    );
+
+    testWidgets(
+      'recording keeps reply copy and delete available while edit stays hidden',
+      (tester) async {
+        await expectBusyOverlayState(
+          tester,
+          description: 'recording keeps non-edit actions visible',
+          composerState: const ConversationComposerViewState(
+            recordingState: VoiceRecordingState.recording,
+            recordingDuration: Duration(seconds: 3),
+          ),
+        );
+      },
+    );
+
+    testWidgets(
+      'copy action copies exact multiline text, replaces the prior snackbar, and dismisses the overlay',
+      (tester) async {
+        const copiedMessage = 'Line one\nEmoji 😄\nمرحبا بالعالم';
+        String? copiedText;
+        var clipboardCalls = 0;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardCalls++;
+            copiedText =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
+          }
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(id: 'copy-1', text: 'First copy'),
+              makeMessage(
+                id: 'copy-2',
+                text: copiedMessage,
+                timestamp: '2026-02-09T15:31:00.000Z',
+              ),
+            ],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('First copy'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(copiedText, 'First copy');
+        expect(find.byType(SnackBar), findsOneWidget);
+        expect(find.text('Message copied to clipboard'), findsOneWidget);
+
+        await tester.longPress(find.textContaining('Emoji 😄'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(clipboardCalls, 2);
+        expect(copiedText, copiedMessage);
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+        expect(find.byType(SnackBar), findsOneWidget);
+        expect(find.text('Message copied to clipboard'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'copy action localizes the snackbar in Arabic while preserving mixed-script clipboard text',
+      (tester) async {
+        const copiedMessage = 'مرحبا Hello\nEmoji 😄';
+        String? copiedText;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedText =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
+          }
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            locale: const Locale('ar'),
+            messages: [makeMessage(id: 'copy-ar', text: copiedMessage)],
+            initialLoadDone: true,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.textContaining('مرحبا Hello'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(copiedText, copiedMessage);
+        expect(find.byType(SnackBar), findsOneWidget);
+        expect(find.text('تم نسخ الرسالة إلى الحافظة'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'copy action stays safe when the conversation screen is disposed during the clipboard await',
+      (tester) async {
+        final showScreen = ValueNotifier(true);
+        final clipboardCompleter = Completer<void>();
+        var clipboardCalls = 0;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            clipboardCalls++;
+            await clipboardCompleter.future;
+          }
+          return null;
+        });
+        addTearDown(() {
+          if (!clipboardCompleter.isCompleted) {
+            clipboardCompleter.complete();
+          }
+          showScreen.dispose();
+          messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+        });
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: ValueListenableBuilder<bool>(
+                valueListenable: showScreen,
+                builder: (context, isVisible, _) {
+                  if (!isVisible) {
+                    return const SizedBox.shrink();
+                  }
+                  return ConversationScreen(
+                    contactPeerId: '12D3KooWTestPeerId1234567890',
+                    contactUsername: 'Alice',
+                    connectionDate: 'February 9, 2026',
+                    ownPeerId: '12D3KooWMyPeerId1234567890',
+                    messages: [
+                      makeMessage(
+                        id: 'copy-dispose',
+                        text: 'Dispose during copy',
+                      ),
+                    ],
+                    onSend: (_) {},
+                    onBack: () {},
+                    initialLoadDone: true,
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Dispose during copy'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+        await tester.pump();
+
+        expect(clipboardCalls, 1);
+
+        showScreen.value = false;
+        await tester.pump();
+
+        clipboardCompleter.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.text('Message copied to clipboard'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('media-only long-press hides copy action', (tester) async {
       await tester.pumpWidget(
@@ -623,6 +1307,41 @@ void main() {
       expect(find.byKey(MessageContextOverlay.copyActionKey), findsNothing);
     });
 
+    testWidgets(
+      'whitespace-only long-press hides edit and copy but keeps reply and delete available',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'spaces-only',
+                isIncoming: false,
+                text: '   \n\t  ',
+              ),
+            ],
+            initialLoadDone: true,
+            onEditMessage: (_) {},
+            onDeleteMessage: (_) {},
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.byType(LetterCard));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsNothing);
+        expect(
+          find.byKey(MessageContextOverlay.deleteActionKey),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('delete action is available on normal visible rows', (
       tester,
     ) async {
@@ -644,6 +1363,89 @@ void main() {
       await tester.pump();
 
       expect(deletedId, 'delete-row');
+    });
+
+    testWidgets(
+      'delete taps dismiss the overlay before opening one next-frame sheet even under a rapid double tap',
+      (tester) async {
+        var deleteCalls = 0;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => ConversationScreen(
+                  contactPeerId: '12D3KooWTestPeerId1234567890',
+                  contactUsername: 'Alice',
+                  connectionDate: 'February 9, 2026',
+                  ownPeerId: '12D3KooWMyPeerId1234567890',
+                  messages: [
+                    makeMessage(
+                      id: 'delete-sequencing',
+                      isIncoming: false,
+                      text: 'Delete with sheet',
+                    ),
+                  ],
+                  onSend: (_) {},
+                  onBack: () {},
+                  initialLoadDone: true,
+                  onDeleteMessage: (_) {
+                    deleteCalls++;
+                    showModalBottomSheet<void>(
+                      context: context,
+                      builder: (_) => const SizedBox(
+                        height: 120,
+                        child: Center(child: Text('Delete sheet')),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.longPress(find.text('Delete with sheet'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        final deleteAction = find.byKey(MessageContextOverlay.deleteActionKey);
+        expect(deleteAction, findsOneWidget);
+
+        await tester.tap(deleteAction);
+        await tester.tap(deleteAction, warnIfMissed: false);
+        await tester.pump();
+
+        expect(deleteCalls, 1);
+        expect(find.text('Delete sheet'), findsNothing);
+
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(deleteCalls, 1);
+        expect(find.text('Delete sheet'), findsOneWidget);
+      },
+    );
+
+    testWidgets('delete action stays hidden when the callback is not wired', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [makeMessage(id: 'no-delete-row', text: 'No delete hook')],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.text('No delete hook'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.deleteActionKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
     });
 
     testWidgets('deleted rows render placeholder and stay inert', (
