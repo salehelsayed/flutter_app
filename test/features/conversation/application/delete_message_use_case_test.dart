@@ -3,6 +3,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_media_file_manager.dart';
@@ -11,6 +12,25 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
+
+class _UnackedDeleteP2PService extends FakeP2PService {
+  _UnackedDeleteP2PService({
+    required super.peerId,
+    required super.network,
+    this.transport = 'direct',
+  });
+
+  final String transport;
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    return SendMessageResult(sent: true, acked: false, transport: transport);
+  }
+}
 
 void main() {
   late FakeMessageRepository messageRepo;
@@ -156,6 +176,52 @@ void main() {
         );
 
         p2pService.dispose();
+      },
+    );
+
+    test(
+      'deleteMessageForEveryone keeps a visible sent tombstone when live delivery is unacked and inbox fallback also fails',
+      () async {
+        final original = makeMessage();
+        messageRepo.seed([original]);
+
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final p2pService = _UnackedDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+          transport: 'direct',
+        );
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.id, original.id);
+        expect(tombstone.text, isEmpty);
+        expect(tombstone.status, 'sent');
+        expect(tombstone.isDeleted, isTrue);
+        expect(tombstone.isHidden, isFalse);
+        expect(tombstone.hiddenAt, isNull);
+        expect(tombstone.transport, 'direct');
+        expect(tombstone.wireEnvelope, contains('"type":"message_deletion"'));
+
+        final stored = await messageRepo.getMessage(original.id);
+        expect(stored, isNotNull);
+        expect(stored!.status, 'sent');
+        expect(stored.isHidden, isFalse);
+        expect(stored.hiddenAt, isNull);
+        expect(
+          await messageRepo.getMessagesForContact(original.contactPeerId),
+          hasLength(1),
+        );
+
+        p2pService.dispose();
+        recipient.dispose();
       },
     );
   });

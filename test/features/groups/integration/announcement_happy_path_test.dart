@@ -230,4 +230,98 @@ void main() {
       expect(storedReactions.single.senderPeerId, reader.peerId);
     },
   );
+
+  testWidgets(
+    'announcement admin can send GIF media and reader receives image/gif read-only',
+    (tester) async {
+      final network = FakeGroupPubSubNetwork();
+      final adminBridge = PassthroughCryptoBridge();
+      final readerBridge = PassthroughCryptoBridge();
+
+      const groupId = 'group-ann-gif';
+      adminBridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': groupId,
+        'topicName': 'topic-$groupId',
+        'groupKey': 'group-key-ann-gif',
+        'keyEpoch': 0,
+      };
+
+      final admin = GroupTestUser.create(
+        peerId: 'peer-admin',
+        username: 'Admin',
+        network: network,
+        bridge: adminBridge,
+      );
+      final reader = GroupTestUser.create(
+        peerId: 'peer-reader',
+        username: 'Reader',
+        network: network,
+        bridge: readerBridge,
+      );
+      addTearDown(() {
+        admin.dispose();
+        reader.dispose();
+      });
+
+      final created = await createGroup(
+        bridge: admin.bridge,
+        groupRepo: admin.groupRepo,
+        name: 'Announcements',
+        type: GroupType.announcement,
+        creatorPeerId: admin.peerId,
+        creatorPublicKey: admin.publicKey,
+        creatorMlKemPublicKey: 'mlkem-${admin.peerId}',
+      );
+
+      network.subscribe(created.id, admin.peerId);
+      await admin.addMember(groupId: created.id, invitee: reader);
+      admin.start();
+      reader.start();
+
+      final (sendResult, _) = await admin.sendGroupMessageViaBridge(
+        groupId: created.id,
+        text: '',
+        mediaAttachments: const [
+          MediaAttachment(
+            id: 'ann-gif-1',
+            messageId: '',
+            mime: 'image/gif',
+            size: 4096,
+            mediaType: 'image',
+            localPath: '/tmp/announcement.gif',
+            downloadStatus: 'done',
+            createdAt: '2026-04-09T09:00:00.000Z',
+          ),
+        ],
+      );
+      expect(sendResult, SendGroupMessageResult.success);
+
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final readerGroup = await reader.groupRepo.getGroup(created.id);
+      final readerMessages = await reader.loadGroupMessages(created.id);
+      expect(readerMessages, hasLength(1));
+      final deliveredMedia = await reader.mediaAttachmentRepo
+          .getAttachmentsForMessage(readerMessages.single.id);
+      expect(deliveredMedia, hasLength(1));
+      expect(deliveredMedia.single.mime, 'image/gif');
+      expect(deliveredMedia.single.isAnimated, isTrue);
+
+      await tester.pumpWidget(
+        _buildConversation(
+          group: readerGroup!,
+          messages: readerMessages,
+          ownPeerId: reader.peerId,
+          canWrite: false,
+        ),
+      );
+
+      expect(
+        find.text('Only admins can send messages in this group'),
+        findsOneWidget,
+      );
+      expect(find.text('Write something...'), findsNothing);
+    },
+  );
 }

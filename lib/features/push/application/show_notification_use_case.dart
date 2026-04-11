@@ -24,7 +24,7 @@ String notificationBodyForMessage(String text, List<MediaAttachment> media) {
   if (!allSameType) return 'Media';
 
   return switch (firstType) {
-    'image' => 'Photo',
+    'image' => media.every((a) => a.isAnimated) ? 'GIF' : 'Photo',
     'video' => 'Video',
     'audio' => 'Voice message',
     'file' => 'File',

@@ -2,7 +2,7 @@
 
 ## Summary
 
-The project is clean, but the earlier pass overstated removable code. Only a **small set of files** currently looks low-risk to remove immediately. Several earlier candidates are still referenced by tests or smoke flows, so they are **not** “safe to remove” as a quick cleanup batch.
+The project is clean, but the earlier pass overstated removable code. Only a **small set of files** currently looks low-risk to remove immediately. Several earlier candidates are still referenced by tests or smoke flows, so they are **not** “safe to remove” as a quick cleanup batch. The old standalone create-group screen path has already been removed from `lib/`.
 
 ---
 
@@ -18,14 +18,13 @@ These are not wired into production code, but they are manual `flutter run -t` e
 
 ---
 
-## Category 2: Likely Orphaned Files (3 files)
+## Category 2: Likely Orphaned Files (2 files)
 
 These are the best current cleanup candidates.
 
 | File | Kind | Notes |
 |------|------|-------|
 | `lib/features/groups/presentation/widgets/group_compose_area.dart` | Widget | Current group UI goes through the newer conversation screen/wired flow |
-| `lib/features/groups/presentation/screens/create_group_wired.dart` | Screen | Current creation path is `create_group_with_members` + `create_group_picker_wired` |
 | `lib/features/posts/application/post_pass_follow_on_support.dart` | Helper | No active callers found; newer post follow-on flow covers delivery |
 
 ---
@@ -68,4 +67,4 @@ These are the best current cleanup candidates.
 | **2** | Manual smoke entry points | 3 | Workflow-dependent |
 | **3** | Test-backed candidates from earlier report | Many | Medium/High |
 
-**Total removable now:** ~3 files with good confidence, plus 3 manual entry points only after workflow confirmation.
+**Total removable now:** ~2 files with good confidence, plus 3 manual entry points only after workflow confirmation.

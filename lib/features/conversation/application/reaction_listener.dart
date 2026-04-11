@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -16,6 +17,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 /// MessageReactions to the UI layer.
 class ReactionListener {
   final Stream<ChatMessage> reactionStream;
+  final MessageRepository messageRepo;
   final ReactionRepository reactionRepo;
   final ContactRepository contactRepo;
   final Bridge bridge;
@@ -28,6 +30,7 @@ class ReactionListener {
 
   ReactionListener({
     required this.reactionStream,
+    required this.messageRepo,
     required this.reactionRepo,
     required this.contactRepo,
     required this.bridge,
@@ -104,6 +107,7 @@ class ReactionListener {
 
       final (result, change) = await handleIncomingReaction(
         message: message,
+        messageRepo: messageRepo,
         reactionRepo: reactionRepo,
         contactRepo: contactRepo,
         bridge: bridge,

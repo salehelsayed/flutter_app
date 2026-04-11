@@ -3,6 +3,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -16,14 +17,18 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
@@ -47,6 +52,7 @@ import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../domain/repositories/fake_media_attachment_repository.dart';
+import '../../domain/repositories/fake_reaction_repository.dart';
 
 const _tinyPngBytes = <int>[
   0x89,
@@ -118,6 +124,52 @@ const _tinyPngBytes = <int>[
   0x42,
   0x60,
   0x82,
+];
+
+const _tinyGifBytes = <int>[
+  0x47,
+  0x49,
+  0x46,
+  0x38,
+  0x39,
+  0x61,
+  0x01,
+  0x00,
+  0x01,
+  0x00,
+  0x80,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0xFF,
+  0xFF,
+  0xFF,
+  0x21,
+  0xF9,
+  0x04,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x2C,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x02,
+  0x02,
+  0x44,
+  0x01,
+  0x00,
+  0x3B,
 ];
 
 class FakeIdentityRepository implements IdentityRepository {
@@ -250,6 +302,8 @@ class FakeMessageRepository
     implements MessageRepository, MessageRepositoryChangeSource {
   final Map<String, ConversationMessage> store = {};
   int getMessagesPageCalls = 0;
+  int saveMessageCallCount = 0;
+  int deleteMessageCallCount = 0;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
 
@@ -283,6 +337,7 @@ class FakeMessageRepository
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
+    saveMessageCallCount++;
     store[message.id] = message;
     _messageChangeController.add(message);
   }
@@ -318,6 +373,7 @@ class FakeMessageRepository
 
   @override
   Future<int> deleteMessage(String id) async {
+    deleteMessageCallCount++;
     final removed = store.remove(id);
     return removed == null ? 0 : 1;
   }
@@ -401,6 +457,43 @@ class _FakeIncomingConversationListener extends ChatMessageListener {
   }
 }
 
+class _FakeReactionListener extends ReactionListener {
+  final _reactionEmitter = StreamController<MessageReaction>.broadcast();
+  final _reactionChangeEmitter = StreamController<ReactionChange>.broadcast();
+
+  _FakeReactionListener({
+    required super.messageRepo,
+    required super.reactionRepo,
+    required super.contactRepo,
+    required super.bridge,
+  }) : super(
+         reactionStream: const Stream.empty(),
+         getOwnMlKemSecretKey: () async => null,
+       );
+
+  @override
+  Stream<MessageReaction> get incomingReactionStream => _reactionEmitter.stream;
+
+  @override
+  Stream<ReactionChange> get incomingReactionChangeStream =>
+      _reactionChangeEmitter.stream;
+
+  void emitReaction(MessageReaction reaction) {
+    _reactionEmitter.add(reaction);
+    _reactionChangeEmitter.add(ReactionChange.upsert(reaction));
+  }
+
+  void emitReactionChange(ReactionChange change) =>
+      _reactionChangeEmitter.add(change);
+
+  @override
+  void dispose() {
+    _reactionEmitter.close();
+    _reactionChangeEmitter.close();
+    super.dispose();
+  }
+}
+
 class SlowInitialPageMessageRepository extends FakeMessageRepository {
   final Completer<void> firstPageGate = Completer<void>();
 
@@ -423,6 +516,8 @@ class FakeP2PService implements P2PService {
   final bool localPeer;
   final bool localMediaResult;
   int sendLocalMediaCallCount = 0;
+  int sendMessageCallCount = 0;
+  int storeInInboxCallCount = 0;
 
   FakeP2PService({this.localPeer = false, this.localMediaResult = false});
 
@@ -451,7 +546,10 @@ class FakeP2PService implements P2PService {
       [];
 
   @override
-  Future<bool> sendMessage(String peerId, String message) async => true;
+  Future<bool> sendMessage(String peerId, String message) async {
+    sendMessageCallCount++;
+    return true;
+  }
 
   @override
   Future<SendMessageResult> sendMessageWithReply(
@@ -470,7 +568,10 @@ class FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message) async {
+    storeInInboxCallCount++;
+    return false;
+  }
 
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
@@ -615,6 +716,8 @@ void main() {
     SendVoiceMessageFn? sendVoiceMessageFn,
     MediaAttachmentRepository? mediaAttachmentRepo,
     ContactRepository? contactRepo,
+    ReactionRepository? reactionRepo,
+    ReactionListener? reactionListener,
     MediaFileManager? mediaFileManager,
     FakeAudioRecorderService? audioRecorderService,
     ImageProcessor? imageProcessor,
@@ -648,6 +751,8 @@ void main() {
           uploadMediaFn: uploadMediaFn ?? uploadMedia,
           sendVoiceMessageFn: sendVoiceMessageFn ?? sendVoiceMessage,
           contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          reactionListener: reactionListener,
           mediaAttachmentRepo: mediaAttachmentRepo,
           mediaFileManager: mediaFileManager,
           audioRecorderService: audioRecorderService,
@@ -1499,6 +1604,145 @@ void main() {
       },
     );
 
+    testWidgets(
+      'local-peer GIF transport is attempted before relay upload fallback',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+        final tempDir = Directory.systemTemp.createTempSync('conv_local_gif_');
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final attachment = File('${tempDir.path}/local.gif')
+          ..writeAsBytesSync(_tinyGifBytes);
+        final callOrder = <String>[];
+        mediaAttachmentRepo.onSaveAttachment = (attachment) =>
+            callOrder.add('save:${attachment.downloadStatus}');
+        final p2pService = TrackingLocalMediaP2PService(
+          callOrder: callOrder,
+          localPeer: true,
+          localMediaResult: true,
+        );
+        String? sentMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          sentMessageId = messageId;
+          if (mediaAttachments != null && mediaAttachmentRepo != null) {
+            for (final attachment in mediaAttachments) {
+              await mediaAttachmentRepo.saveAttachment(
+                attachment.copyWith(messageId: messageId!),
+              );
+            }
+          }
+
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (
+            SendChatMessageResult.success,
+            delivered.copyWith(media: mediaAttachments ?? const []),
+          );
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+          bridge: FakeBridge(),
+          p2pService: p2pService,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+              }) async {
+                callOrder.add('uploadMedia');
+                return MediaAttachment(
+                  id: blobId ?? 'unexpected-upload',
+                  messageId: '',
+                  mime: mime,
+                  size: _tinyGifBytes.length,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                );
+              },
+          initialAttachments: [attachment],
+        );
+
+        await tester.enterText(find.byType(TextField), 'funny');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => callOrder.contains('sendLocalMedia'));
+
+        expect(
+          callOrder,
+          containsAllInOrder(['save:upload_pending', 'sendLocalMedia']),
+        );
+        expect(callOrder.where((entry) => entry == 'uploadMedia'), isEmpty);
+        expect(p2pService.sendLocalMediaCallCount, 1);
+
+        final optimisticAttachment = mediaAttachmentRepo.allSavedAttachments
+            .firstWhere(
+              (attachment) => attachment.downloadStatus == 'upload_pending',
+            );
+        expect(optimisticAttachment.localPath, attachment.path);
+        expect(optimisticAttachment.mime, 'image/gif');
+
+        expect(sentMessageId, isNotNull);
+        final finalAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(sentMessageId!);
+        expect(finalAttachments.single.mime, 'image/gif');
+        expect(finalAttachments.single.isAnimated, isTrue);
+
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
     testWidgets('shows two ticks when inbox delivered message is returned', (
       tester,
     ) async {
@@ -2221,6 +2465,95 @@ void main() {
     });
 
     testWidgets(
+      'clearing quote removes the preview and the next send has no quotedMessageId',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final incoming = ConversationMessage(
+          id: 'incoming-clear-quote',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Quote then clear me',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(incoming);
+
+        String? capturedQuotedMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          capturedQuotedMessageId = quotedMessageId;
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+            quotedMessageId: quotedMessageId,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (SendChatMessageResult.success, delivered);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+        );
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onQuoteReply!.call('incoming-clear-quote');
+        await tester.pump();
+
+        expect(find.text('Replying to'), findsOneWidget);
+        await tester.tap(find.byIcon(Icons.close_rounded));
+        await tester.pump();
+
+        expect(find.text('Replying to'), findsNothing);
+
+        await tester.enterText(find.byType(TextField), 'No quote left');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(capturedQuotedMessageId, isNull);
+
+        final saved = messageRepo.store.values
+            .where((message) => message.text == 'No quote left')
+            .first;
+        expect(saved.quotedMessageId, isNull);
+      },
+    );
+
+    testWidgets(
       'long-press reply on an outgoing message requests focus and sends quotedMessageId',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -2385,6 +2718,301 @@ void main() {
       },
     );
 
+    testWidgets(
+      'edit action clears active quote mode before entering edit mode',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'incoming-quoted-parent',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'Quoted parent',
+            timestamp: '2026-02-09T15:29:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:29:01.000Z',
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'editable-after-quote',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeIdentity().peerId,
+            text: 'Edit me after replying',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onQuoteReply!.call('incoming-quoted-parent');
+        await tester.pump();
+
+        expect(find.text('Replying to'), findsOneWidget);
+
+        await tester.longPress(find.text('Edit me after replying'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+
+        expect(find.text('Replying to'), findsNothing);
+        expect(
+          find.byKey(ConversationScreen.editModeBannerKey),
+          findsOneWidget,
+        );
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Edit me after replying',
+        );
+      },
+    );
+
+    testWidgets(
+      'pending attachments suppress edit while reply, copy, and delete remain available',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final outgoing = ConversationMessage(
+          id: 'busy-overlay-1',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Overlay stays useful while busy',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(outgoing);
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conversation_overlay_busy_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final pendingFile = File('${tempDir.path}/pending.png');
+        pendingFile.writeAsBytesSync(_tinyPngBytes);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          initialPendingMedia: [
+            PendingComposerMedia(
+              file: pendingFile,
+              budgetBytes: pendingFile.lengthSync(),
+            ),
+          ],
+        );
+
+        await tester.longPress(find.text('Overlay stays useful while busy'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.deleteActionKey),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'copy action leaves repo, bridge, and p2p collaborators untouched',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
+        final outgoing = ConversationMessage(
+          id: 'copy-isolation-row',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Copy without side effects',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(outgoing);
+
+        String? copiedText;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedText =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
+          }
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: bridge,
+          p2pService: p2pService,
+        );
+
+        final baselineSaveCalls = messageRepo.saveMessageCallCount;
+        final baselineDeleteCalls = messageRepo.deleteMessageCallCount;
+        final baselineBridgeCalls = bridge.sendCallCount;
+        final baselineSendCalls = p2pService.sendMessageCallCount;
+        final baselineInboxCalls = p2pService.storeInInboxCallCount;
+
+        await tester.longPress(find.text('Copy without side effects'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(copiedText, 'Copy without side effects');
+        expect(messageRepo.saveMessageCallCount, baselineSaveCalls);
+        expect(messageRepo.deleteMessageCallCount, baselineDeleteCalls);
+        expect(bridge.sendCallCount, baselineBridgeCalls);
+        expect(p2pService.sendMessageCallCount, baselineSendCalls);
+        expect(p2pService.storeInInboxCallCount, baselineInboxCalls);
+      },
+    );
+
+    testWidgets(
+      'copy remains local-only when delete wins during the async clipboard path',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
+        final outgoing = ConversationMessage(
+          id: 'copy-delete-race-row',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Copy while delete wins',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(outgoing);
+
+        final clipboardCompleter = Completer<void>();
+        String? copiedText;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(SystemChannels.platform, (
+          call,
+        ) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedText =
+                (call.arguments as Map<Object?, Object?>)['text'] as String?;
+            await clipboardCompleter.future;
+          }
+          return null;
+        });
+        addTearDown(
+          () =>
+              messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: bridge,
+          p2pService: p2pService,
+        );
+
+        final baselineSaveCalls = messageRepo.saveMessageCallCount;
+        final baselineDeleteCalls = messageRepo.deleteMessageCallCount;
+        final baselineBridgeCalls = bridge.sendCallCount;
+        final baselineSendCalls = p2pService.sendMessageCallCount;
+        final baselineInboxCalls = p2pService.storeInInboxCallCount;
+
+        await tester.longPress(find.text('Copy while delete wins'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+        await tester.pump();
+
+        await messageRepo.saveMessage(
+          outgoing.copyWith(
+            text: '',
+            deletedAt: '2026-03-31T11:15:00.000Z',
+            deletedByPeerId: outgoing.senderPeerId,
+            media: const [],
+          ),
+        );
+        await pumpUntil(
+          tester,
+          () => find.text('This message was deleted').evaluate().isNotEmpty,
+        );
+
+        clipboardCompleter.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(copiedText, 'Copy while delete wins');
+        expect(find.text('Copy while delete wins'), findsNothing);
+        expect(find.text('This message was deleted'), findsOneWidget);
+        expect(messageRepo.saveMessageCallCount, baselineSaveCalls + 1);
+        expect(messageRepo.deleteMessageCallCount, baselineDeleteCalls);
+        expect(bridge.sendCallCount, baselineBridgeCalls);
+        expect(p2pService.sendMessageCallCount, baselineSendCalls);
+        expect(p2pService.storeInInboxCallCount, baselineInboxCalls);
+      },
+    );
+
     testWidgets('identical-text edit submit is a no-op', (tester) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final messageRepo = FakeMessageRepository();
@@ -2442,6 +3070,65 @@ void main() {
       expect(editCalls, 0);
       expect(messageRepo.store['editable-noop']?.editedAt, isNull);
       expect(find.byKey(ConversationScreen.editModeBannerKey), findsNothing);
+    });
+
+    testWidgets('starting a reply clears active edit mode', (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'editable-before-reply',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Edit me first',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'incoming-reply-target',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Then reply to me',
+          timestamp: '2026-02-09T15:31:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:31:01.000Z',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.longPress(find.text('Edit me first'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+      await tester.pump();
+
+      expect(find.byKey(ConversationScreen.editModeBannerKey), findsOneWidget);
+
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      screen.onQuoteReply!.call('incoming-reply-target');
+      await tester.pump();
+
+      expect(find.byKey(ConversationScreen.editModeBannerKey), findsNothing);
+      expect(find.text('Replying to'), findsOneWidget);
+      expect(find.text('Then reply to me'), findsWidgets);
     });
 
     testWidgets(
@@ -2623,6 +3310,96 @@ void main() {
       expect(find.byKey(ConversationWired.deleteCancelKey), findsOneWidget);
     });
 
+    testWidgets('identity-missing rows only offer delete-for-me and cancel', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(null);
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'identity-missing-delete-options',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Identity missing delete options',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.longPress(find.text('Identity missing delete options'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await pumpUntil(
+        tester,
+        () =>
+            find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+      );
+
+      expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+      expect(find.byKey(ConversationWired.deleteForEveryoneKey), findsNothing);
+      expect(find.byKey(ConversationWired.deleteCancelKey), findsOneWidget);
+    });
+
+    testWidgets('sender-mismatch rows only offer delete-for-me and cancel', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'sender-mismatch-delete-options',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: 'someone-else',
+          text: 'Sender mismatch delete options',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.longPress(find.text('Sender mismatch delete options'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await pumpUntil(
+        tester,
+        () =>
+            find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+      );
+
+      expect(find.byKey(ConversationWired.deleteForMeKey), findsOneWidget);
+      expect(find.byKey(ConversationWired.deleteForEveryoneKey), findsNothing);
+      expect(find.byKey(ConversationWired.deleteCancelKey), findsOneWidget);
+    });
+
     testWidgets('failed outgoing rows only offer delete-for-me and cancel', (
       tester,
     ) async {
@@ -2723,6 +3500,204 @@ void main() {
       expect(messageRepo.store.containsKey('delete-for-me-row'), isFalse);
       expect(find.text('Connected!'), findsWidgets);
     });
+
+    testWidgets('canceling the delete sheet leaves the message unchanged', (
+      tester,
+    ) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+      await messageRepo.saveMessage(
+        ConversationMessage(
+          id: 'delete-cancel-row',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Do not delete me',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        ),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+      );
+
+      await tester.longPress(find.text('Do not delete me'));
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+      await pumpUntil(
+        tester,
+        () =>
+            find.byKey(ConversationWired.deleteSheetKey).evaluate().isNotEmpty,
+      );
+
+      tester
+          .widget<InkWell>(
+            find.descendant(
+              of: find.byKey(ConversationWired.deleteCancelKey),
+              matching: find.byType(InkWell),
+            ),
+          )
+          .onTap!();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(ConversationWired.deleteSheetKey), findsNothing);
+      expect(find.text('Do not delete me'), findsOneWidget);
+      expect(messageRepo.store.containsKey('delete-cancel-row'), isTrue);
+      expect(messageRepo.store['delete-cancel-row']?.isDeleted, isFalse);
+    });
+
+    testWidgets(
+      'deleting the message currently being edited exits edit mode immediately',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-editing-row',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeIdentity().peerId,
+            text: 'Delete me while editing',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        await tester.longPress(
+          find.byKey(const ValueKey('msg-delete-editing-row')),
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+
+        expect(
+          find.byKey(ConversationScreen.editModeBannerKey),
+          findsOneWidget,
+        );
+
+        await tester.longPress(
+          find.byKey(const ValueKey('msg-delete-editing-row')),
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(ConversationWired.deleteSheetKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+        tester
+            .widget<InkWell>(
+              find.descendant(
+                of: find.byKey(ConversationWired.deleteForMeKey),
+                matching: find.byType(InkWell),
+              ),
+            )
+            .onTap!();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(ConversationScreen.editModeBannerKey), findsNothing);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '',
+        );
+        expect(messageRepo.store.containsKey('delete-editing-row'), isFalse);
+      },
+    );
+
+    testWidgets(
+      'deleting the message currently being quoted exits quote mode immediately',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'delete-quoted-row',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'Delete me while quoted',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          ),
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onQuoteReply!.call('delete-quoted-row');
+        await tester.pump();
+
+        expect(find.text('Replying to'), findsOneWidget);
+
+        await tester.longPress(
+          find.byKey(const ValueKey('msg-delete-quoted-row')),
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(ConversationWired.deleteSheetKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+        tester
+            .widget<InkWell>(
+              find.descendant(
+                of: find.byKey(ConversationWired.deleteForMeKey),
+                matching: find.byType(InkWell),
+              ),
+            )
+            .onTap!();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.text('Replying to'), findsNothing);
+      },
+    );
 
     testWidgets('hidden outgoing tombstones are removed from the Orbit list', (
       tester,
@@ -2826,7 +3801,145 @@ void main() {
     );
 
     testWidgets(
-      'incoming deleted tombstones refresh into the Orbit placeholder',
+      'incoming reactions refresh the open Orbit conversation and stay correct after reopen',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final reactionRepo = FakeReactionRepository();
+        final fakeReactionListener = _FakeReactionListener(
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          contactRepo: FakeContactRepository(),
+          bridge: FakeBridge(),
+        );
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final original = ConversationMessage(
+          id: 'incoming-reaction-row',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'React to me',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(original);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          reactionListener: fakeReactionListener,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(find.text('🔥'), findsNothing);
+
+        final reaction = MessageReaction(
+          id: 'reaction-1',
+          messageId: original.id,
+          emoji: '🔥',
+          senderPeerId: original.senderPeerId,
+          timestamp: '2026-03-31T10:05:00.000Z',
+          createdAt: '2026-03-31T10:05:00.000Z',
+        );
+        await reactionRepo.saveReaction(reaction);
+        fakeReactionListener.emitReaction(reaction);
+
+        await pumpUntil(tester, () => find.text('🔥').evaluate().isNotEmpty);
+
+        expect(find.text('🔥'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          reactionListener: fakeReactionListener,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(find.text('🔥'), findsOneWidget);
+        await tester.pump(const Duration(milliseconds: 500));
+      },
+    );
+
+    testWidgets(
+      'incoming edited messages refresh the open Orbit conversation and stay correct after reopen',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = _FakeIncomingConversationListener(
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final original = ConversationMessage(
+          id: 'incoming-edit-refresh',
+          contactPeerId: makeContact().peerId,
+          senderPeerId: makeContact().peerId,
+          text: 'Original incoming edit text',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        await messageRepo.saveMessage(original);
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(find.text('Original incoming edit text'), findsOneWidget);
+
+        final edited = original.copyWith(
+          text: 'Edited incoming text',
+          editedAt: '2026-03-31T10:06:00.000Z',
+        );
+        await messageRepo.saveMessage(edited);
+        chatListener.emitIncomingMessage(edited);
+
+        await pumpUntil(
+          tester,
+          () => find.text('Edited incoming text').evaluate().isNotEmpty,
+        );
+
+        expect(find.text('Original incoming edit text'), findsNothing);
+        expect(find.text('Edited incoming text'), findsOneWidget);
+        expect(find.text('(edited)'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(find.text('Edited incoming text'), findsOneWidget);
+        expect(find.text('(edited)'), findsOneWidget);
+        await tester.pump(const Duration(milliseconds: 500));
+      },
+    );
+
+    testWidgets(
+      'incoming deleted tombstones refresh into the Orbit placeholder and stay correct after reopen',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
         final messageRepo = FakeMessageRepository();
@@ -2870,6 +3983,21 @@ void main() {
 
         expect(find.text('Original incoming text'), findsNothing);
         expect(find.text('This message was deleted'), findsOneWidget);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+        );
+
+        expect(find.text('Original incoming text'), findsNothing);
+        expect(find.text('This message was deleted'), findsOneWidget);
+        await tester.pump(const Duration(milliseconds: 500));
       },
     );
 

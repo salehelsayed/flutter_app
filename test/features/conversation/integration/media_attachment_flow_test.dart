@@ -114,6 +114,41 @@ void main() {
       },
     );
 
+    test('GIF send/receive preserves image/gif and animated metadata', () async {
+      final attachment = makeAttachment(
+        id: 'blob-gif-001',
+        mime: 'image/gif',
+        size: 4096,
+      );
+
+      final bobReceived = <ConversationMessage>[];
+      final sub = bob.chatListener.incomingMessageStream.listen(
+        bobReceived.add,
+      );
+
+      final (result, _) = await alice.sendMessageWithMedia(
+        bob.peerId,
+        '',
+        [attachment],
+      );
+      expect(result, SendChatMessageResult.success);
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(bobReceived, hasLength(1));
+      final receivedAttachment = bobReceived.single.media.single;
+      expect(receivedAttachment.mime, 'image/gif');
+      expect(receivedAttachment.mediaType, 'image');
+      expect(receivedAttachment.isAnimated, isTrue);
+
+      final persisted = await bobMediaRepo.getPendingDownloads();
+      expect(persisted, hasLength(1));
+      expect(persisted.single.mime, 'image/gif');
+      expect(persisted.single.isAnimated, isTrue);
+
+      await sub.cancel();
+    });
+
     test(
       'successful outgoing media send replaces stale upload_pending placeholder rows',
       () async {

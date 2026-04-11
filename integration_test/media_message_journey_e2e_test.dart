@@ -1,7 +1,7 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
@@ -11,18 +11,17 @@ import 'package:path/path.dart' as p;
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
-import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
-import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 
 import '../test/core/bridge/fake_bridge.dart';
 import '../test/core/services/fake_p2p_service.dart' as core_fake_p2p;
@@ -37,7 +36,13 @@ import '../test/shared/fakes/in_memory_contact_repository.dart';
 import '../test/shared/fakes/in_memory_media_attachment_repository.dart';
 import '../test/shared/fakes/in_memory_message_repository.dart';
 
+const bool _runGifManualAcceptance = bool.fromEnvironment(
+  'GIF_MANUAL_ACCEPTANCE',
+);
+
 enum _JourneyDevice { ibra, saleh }
+
+enum _JourneyFixtureKind { png, gif }
 
 class _TrackingDurableMediaFileManager extends FakeMediaFileManager {
   _TrackingDurableMediaFileManager(this.rootDir);
@@ -312,19 +317,28 @@ class _JourneyHarness {
   final FakeMediaPicker ibraMediaPicker;
   final FakeMediaPicker salehMediaPicker;
 
-  static Future<_JourneyHarness> create() async {
+  static Future<_JourneyHarness> create({
+    _JourneyFixtureKind fixtureKind = _JourneyFixtureKind.png,
+  }) async {
     final rootDir = await Directory.systemTemp.createTemp('media_journey_e2e_');
     final ibraDir = Directory(p.join(rootDir.path, 'ibra'))..createSync();
     final salehDir = Directory(p.join(rootDir.path, 'saleh'))..createSync();
-    final oneToOneImage = await _writePngFixture(
+    final oneToOneImage = await _writeFixture(
       rootDir,
-      'ibra_to_saleh_journey.png',
+      fixtureKind: fixtureKind,
+      pngName: 'ibra_to_saleh_journey.png',
+      gifName: 'ibra_to_saleh_journey.gif',
     );
-    final groupImage = await _writePngFixture(
+    final groupImage = await _writeFixture(
       rootDir,
-      'ibra_group_journey.png',
+      fixtureKind: fixtureKind,
+      pngName: 'ibra_group_journey.png',
+      gifName: 'ibra_group_journey.gif',
     );
-    final downloadBytes = _minimalPngBytes();
+    final downloadBytes = switch (fixtureKind) {
+      _JourneyFixtureKind.gif => _minimalAnimatedGifBytes(),
+      _JourneyFixtureKind.png => _minimalPngBytes(),
+    };
 
     final oneToOneNetwork = FakeP2PNetwork();
     final ibraChatBridge = _DownloadWritingBridge(
@@ -687,7 +701,14 @@ List<int> _minimalPngBytes() {
   );
 }
 
+List<int> _minimalAnimatedGifBytes() {
+  return base64Decode(
+    'R0lGODlhIAAgAIEAAAAA//8AAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQAGQAAACwAAAAAIAAgAAAIbAADCBxIsGAAAAgTKlwIwKDDgQwjJnz4UKJEig4tRsRoUCNDjgU9LgRJUKRCkhBNIkQpUOVKli4bwnTJ8iDNmSprxtR5E+VOnCZ55gQqUmhQoh6NFkWqUWlSphadNoV6kepGqx+xjtR6kmvCgAAh+QQBGQACACwAAAAAIAAgAIEAAP//AAAAAAAAAAAIbAABCBxIsCCAAAgTKlwYwKDDgQwjJnz4UKJEig4tRsRoUCNDjgU9LgRJUKRCkhBNIkQpUOVKli4bwnTJ8iDNmSprxtR5E+VOnCZ55gQqUmhQoh6NFkWqUWlSphadNoV6kepGqx+xjtR6kmvCgAA7',
+  );
+}
+
 String _extensionForMime(String mime) {
+  if (mime == 'image/gif') return '.gif';
   if (mime == 'image/png') return '.png';
   if (mime == 'image/jpeg') return '.jpg';
   if (mime == 'audio/mp4' || mime == 'audio/x-m4a') return '.m4a';
@@ -696,9 +717,22 @@ String _extensionForMime(String mime) {
   return '';
 }
 
-Future<File> _writePngFixture(Directory tempDir, String name) async {
-  final file = File(p.join(tempDir.path, name));
-  await file.writeAsBytes(_minimalPngBytes(), flush: true);
+Future<File> _writeFixture(
+  Directory tempDir, {
+  required _JourneyFixtureKind fixtureKind,
+  required String pngName,
+  required String gifName,
+}) async {
+  final fileName = switch (fixtureKind) {
+    _JourneyFixtureKind.png => pngName,
+    _JourneyFixtureKind.gif => gifName,
+  };
+  final bytes = switch (fixtureKind) {
+    _JourneyFixtureKind.png => _minimalPngBytes(),
+    _JourneyFixtureKind.gif => _minimalAnimatedGifBytes(),
+  };
+  final file = File(p.join(tempDir.path, fileName));
+  await file.writeAsBytes(bytes, flush: true);
   return file;
 }
 
@@ -853,6 +887,46 @@ Future<void> _expectVisibleMediaMessage(
   );
 }
 
+Future<void> _expectPendingGifPreview(WidgetTester tester) async {
+  await _pumpUntilAsync(tester, () async {
+    return find.byType(AttachmentPreviewStrip).evaluate().isNotEmpty &&
+        find.text('GIF').evaluate().isNotEmpty;
+  });
+  expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+  expect(find.text('GIF'), findsWidgets);
+}
+
+Future<void> _openFirstMediaViewer(WidgetTester tester) async {
+  await _pumpUntilAsync(tester, () async {
+    return find.byType(MediaGridCell).evaluate().isNotEmpty;
+  });
+  await tester.tap(find.byType(MediaGridCell).first);
+  await _pumpFrames(tester, count: 8);
+}
+
+Future<void> _closeFullScreenViewer(WidgetTester tester) async {
+  await _pumpUntilAsync(tester, () async {
+    return find.byIcon(Icons.arrow_back).evaluate().isNotEmpty;
+  });
+  await tester.tap(find.byIcon(Icons.arrow_back));
+  await _pumpFrames(tester, count: 8);
+}
+
+Future<bool> _captureAnimatedScreenProof(
+  IntegrationTestWidgetsFlutterBinding binding,
+  WidgetTester tester, {
+  required String label,
+}) async {
+  final frame0 = await binding.takeScreenshot('${label}_0');
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  await tester.pump();
+  final frame1 = await binding.takeScreenshot('${label}_1');
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  await tester.pump();
+  final frame2 = await binding.takeScreenshot('${label}_2');
+  return !listEquals(frame0, frame1) || !listEquals(frame1, frame2);
+}
+
 Future<void> _waitForOneToOneDelivery(
   WidgetTester tester,
   _JourneyHarness harness, {
@@ -918,7 +992,7 @@ void _logStep(String message) {
 }
 
 void main() {
-  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   group('Media message journey E2E', () {
     testWidgets(
@@ -986,6 +1060,101 @@ void main() {
         await _openThread(tester, group: true);
         await _expectVisibleMediaMessage(tester, text: groupText);
       },
+    );
+
+    testWidgets(
+      'manual GIF acceptance harness records animated proof for picked and received GIF surfaces',
+      (tester) async {
+        final harness = await _JourneyHarness.create(
+          fixtureKind: _JourneyFixtureKind.gif,
+        );
+        addTearDown(harness.dispose);
+
+        if (Platform.isAndroid) {
+          await binding.convertFlutterSurfaceToImage();
+        }
+
+        await tester.pumpWidget(_JourneyHarnessApp(harness: harness));
+        await _pumpFrames(tester);
+
+        const oneToOneText = 'GIF from Ibra to Saleh';
+        final evidence = <String, bool>{};
+        binding.reportData ??= <String, dynamic>{};
+
+        _logStep('Ibra opens the 1:1 thread and picks a local GIF');
+        await _selectDevice(tester, _JourneyDevice.ibra);
+        harness.ibraMediaPicker.multipleMediaResult = [
+          XFile(harness.oneToOneImage.path),
+        ];
+        await _openThread(tester, group: false);
+        await _attachImageFromLibrary(tester);
+        FocusManager.instance.primaryFocus?.unfocus();
+        await _pumpFrames(tester, count: 4);
+        await _expectPendingGifPreview(tester);
+        evidence['picked_preview_strip'] = await _captureAnimatedScreenProof(
+          binding,
+          tester,
+          label: 'gif_preview_strip',
+        );
+        expect(evidence['picked_preview_strip'], isTrue);
+
+        _logStep('Ibra sends the GIF after preview-strip proof');
+        await tester.enterText(find.byType(TextField), oneToOneText);
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 16));
+        await _leaveThread(tester);
+
+        _logStep('The 1:1 GIF delivery settles in the existing media pipeline');
+        await _waitForOneToOneDelivery(tester, harness, text: oneToOneText);
+
+        _logStep(
+          'Ibra reopens the thread and records animated sender surfaces',
+        );
+        await _selectDevice(tester, _JourneyDevice.ibra);
+        await _openThread(tester, group: false);
+        await _expectVisibleMediaMessage(tester, text: oneToOneText);
+        evidence['sender_conversation_grid'] =
+            await _captureAnimatedScreenProof(
+              binding,
+              tester,
+              label: 'gif_sender_conversation',
+            );
+        expect(evidence['sender_conversation_grid'], isTrue);
+        await _openFirstMediaViewer(tester);
+        evidence['sender_full_screen'] = await _captureAnimatedScreenProof(
+          binding,
+          tester,
+          label: 'gif_sender_full_screen',
+        );
+        expect(evidence['sender_full_screen'], isTrue);
+        await _closeFullScreenViewer(tester);
+        await _leaveThread(tester);
+
+        _logStep(
+          'Saleh opens the incoming thread and records animated receiver surfaces',
+        );
+        await _selectDevice(tester, _JourneyDevice.saleh);
+        await _openThread(tester, group: false);
+        await _expectVisibleMediaMessage(tester, text: oneToOneText);
+        evidence['receiver_conversation_grid'] =
+            await _captureAnimatedScreenProof(
+              binding,
+              tester,
+              label: 'gif_receiver_conversation',
+            );
+        expect(evidence['receiver_conversation_grid'], isTrue);
+        await _openFirstMediaViewer(tester);
+        evidence['receiver_full_screen'] = await _captureAnimatedScreenProof(
+          binding,
+          tester,
+          label: 'gif_receiver_full_screen',
+        );
+        expect(evidence['receiver_full_screen'], isTrue);
+
+        binding.reportData!['gif_manual_acceptance'] = evidence;
+      },
+      skip: !_runGifManualAcceptance,
     );
   });
 }

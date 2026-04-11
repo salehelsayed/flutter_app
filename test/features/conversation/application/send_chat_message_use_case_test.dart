@@ -569,6 +569,41 @@ void main() {
       },
     );
 
+    test('sends GIF-only media with image/gif preserved in the wire envelope', () async {
+      final attachment = MediaAttachment(
+        id: 'gif-attachment',
+        messageId: '',
+        mime: 'image/gif',
+        size: 4096,
+        mediaType: 'image',
+        localPath: '/tmp/funny.gif',
+        downloadStatus: 'done',
+        createdAt: '2026-03-15T11:00:00.000Z',
+      );
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: '',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        mediaAttachments: [attachment],
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.media, hasLength(1));
+      expect(message.media.single.mime, 'image/gif');
+      expect(message.media.single.isAnimated, isTrue);
+
+      final envelope = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+      final payload = envelope['payload'] as Map<String, dynamic>;
+      final media = payload['media'] as List<dynamic>;
+      expect(media, hasLength(1));
+      expect((media.single as Map<String, dynamic>)['mime'], 'image/gif');
+    });
+
     test('sends correct JSON envelope via P2P', () async {
       await sendChatMessage(
         p2pService: p2pService,

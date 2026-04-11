@@ -631,6 +631,60 @@ void main() {
       expect(saved.wireEnvelope, isNull);
     });
 
+    test('wire_envelope inbox path preserves GIF metadata for GIF retries', () async {
+      identityRepo.seed(makeIdentity());
+      final msgWithEnvelope = ConversationMessage(
+        id: 'msg-gif-env-001',
+        contactPeerId: 'peer-target',
+        senderPeerId: 'my-peer-id',
+        text: '',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        wireEnvelope: jsonEncode({
+          'type': 'chat_message',
+          'version': '2',
+          'payload': {
+            'id': 'msg-gif-env-001',
+            'text': '',
+            'media': [
+              {
+                'id': 'gif-1',
+                'mime': 'image/gif',
+                'size': 4096,
+                'mediaType': 'image',
+              },
+            ],
+          },
+        }),
+      );
+      messageRepo.seed([msgWithEnvelope]);
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      final count = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+
+      expect(count, 1);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.lastStoreInInboxMessage, contains('"mime":"image/gif"'));
+
+      final saved = messageRepo.lastSavedMessage;
+      expect(saved, isNotNull);
+      expect(saved!.status, 'delivered');
+      expect(saved.transport, 'inbox');
+      expect(saved.wireEnvelope, isNull);
+    });
+
     test('retryFailedMessages skips storeInInbox when message transport '
         'is already inbox', () async {
       identityRepo.seed(makeIdentity());

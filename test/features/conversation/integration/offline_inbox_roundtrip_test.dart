@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 
 // Reuse the integration test infrastructure from two_user_message_exchange_test.dart
 import 'two_user_message_exchange_test.dart';
@@ -232,6 +233,120 @@ void main() {
         );
         expect(bobConvo.length, 1);
         expect(bobConvo.first.text, 'Before reboot');
+      },
+    );
+
+    test(
+      'edit-first inbox drain stays phantom-free until the original arrives and then materializes the edited row',
+      () async {
+        bob.setOnline(false);
+
+        const messageId = 'msg-edit-before-original';
+        final editEnvelope = MessagePayload(
+          id: messageId,
+          text: 'Edited before original',
+          senderPeerId: alice.peerId,
+          senderUsername: alice.username,
+          timestamp: '2026-04-01T09:59:00.000Z',
+          action: MessagePayload.actionEdit,
+          editedAt: '2026-04-01T10:00:00.000Z',
+        ).toJson();
+        final originalEnvelope = MessagePayload(
+          id: messageId,
+          text: 'Original text',
+          senderPeerId: alice.peerId,
+          senderUsername: alice.username,
+          timestamp: '2026-04-01T09:58:00.000Z',
+        ).toJson();
+
+        expect(
+          network.storeInInbox(alice.peerId, bob.peerId, editEnvelope),
+          isTrue,
+        );
+        expect(
+          bob.messageRepo.getMessagesForContact(alice.peerId),
+          completion(isEmpty),
+        );
+        expect(
+          network.storeInInbox(alice.peerId, bob.peerId, originalEnvelope),
+          isTrue,
+        );
+
+        bob.setOnline(true);
+        final emitted = <ConversationMessage>[];
+        final sub = bob.chatListener.incomingMessageStream.listen(emitted.add);
+
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 2);
+
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final bobConvo = await bob.loadConversation(alice.peerId);
+        expect(bobConvo, hasLength(1));
+        expect(bobConvo.single.id, messageId);
+        expect(bobConvo.single.text, 'Edited before original');
+        expect(bobConvo.single.isHidden, isFalse);
+        expect(bobConvo.single.editedAt, '2026-04-01T10:00:00.000Z');
+        expect(emitted, hasLength(1));
+        expect(emitted.single.id, messageId);
+        expect(emitted.single.text, 'Edited before original');
+
+        await sub.cancel();
+      },
+    );
+
+    test(
+      'offline edit delivery survives receiver restart and applies once inbox drain resumes',
+      () async {
+        final (sendResult, original) = await alice.sendMessage(
+          bob.peerId,
+          'Original before offline edit',
+        );
+        expect(sendResult, SendChatMessageResult.success);
+        expect(original, isNotNull);
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final originalId = original!.id;
+        bob.setOnline(false);
+
+        final editEnvelope = MessagePayload(
+          id: originalId,
+          text: 'Edited after restart',
+          senderPeerId: alice.peerId,
+          senderUsername: alice.username,
+          timestamp: original.timestamp,
+          action: MessagePayload.actionEdit,
+          editedAt: '2026-04-01T11:00:00.000Z',
+        ).toJson();
+
+        expect(
+          network.storeInInbox(alice.peerId, bob.peerId, editEnvelope),
+          isTrue,
+        );
+
+        final persistedBobRepo = bob.messageRepo;
+        final persistedBobContacts = bob.contactRepo;
+        bob.dispose();
+
+        bob = TestUser.create(
+          peerId: '12D3KooWBobPeerIdxxx00000000002',
+          username: 'Bob',
+          network: network,
+          messageRepo: persistedBobRepo,
+          contactRepo: persistedBobContacts,
+        );
+        bob.start();
+        bob.setOnline(true);
+
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 1);
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final bobConvo = await bob.loadConversation(alice.peerId);
+        expect(bobConvo, hasLength(1));
+        expect(bobConvo.single.id, originalId);
+        expect(bobConvo.single.text, 'Edited after restart');
+        expect(bobConvo.single.editedAt, '2026-04-01T11:00:00.000Z');
       },
     );
 

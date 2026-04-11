@@ -15,14 +15,16 @@ void main() {
     p2pService = FakeP2PService(
       initialState: const NodeState(isStarted: true, peerId: 'my-peer'),
     );
-    bridge = FakeBridge(initialResponses: {
-      'message.encrypt': {
-        'ok': true,
-        'kem': 'test-kem',
-        'ciphertext': 'test-cipher',
-        'nonce': 'test-nonce',
+    bridge = FakeBridge(
+      initialResponses: {
+        'message.encrypt': {
+          'ok': true,
+          'kem': 'test-kem',
+          'ciphertext': 'test-cipher',
+          'nonce': 'test-nonce',
+        },
       },
-    });
+    );
     reactionRepo = FakeReactionRepository();
   });
 
@@ -126,5 +128,50 @@ void main() {
       expect(result, SendReactionResult.success);
       expect(p2pService.storeInInboxCallCount, 1);
     });
+
+    test('persists non-preset emoji payloads from the picker path', () async {
+      final (result, reaction) = await sendReaction(
+        p2pService: p2pService,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        targetPeerId: 'peer-1',
+        messageId: 'msg-1',
+        emoji: '😀',
+        senderPeerId: 'my-peer',
+        recipientMlKemPublicKey: 'key-1',
+      );
+
+      expect(result, SendReactionResult.success);
+      expect(reaction, isNotNull);
+      expect(reaction!.emoji, '😀');
+      expect(reactionRepo.saveReactionCallCount, 1);
+      expect(reactionRepo.lastSavedReaction!.emoji, '😀');
+      expect(p2pService.sendMessageCallCount, 1);
+    });
+
+    test(
+      'returns sendFailed and does not persist when direct send and inbox store both fail',
+      () async {
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = false;
+
+        final (result, reaction) = await sendReaction(
+          p2pService: p2pService,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          targetPeerId: 'peer-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'my-peer',
+          recipientMlKemPublicKey: 'key-1',
+        );
+
+        expect(result, SendReactionResult.sendFailed);
+        expect(reaction, isNull);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(reactionRepo.saveReactionCallCount, 0);
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      },
+    );
   });
 }

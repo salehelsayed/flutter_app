@@ -7,6 +7,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/attachmen
 void main() {
   late Directory tempDir;
   late List<File> testFiles;
+  late File gifFile;
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('strip_test_');
@@ -17,6 +18,52 @@ void main() {
       await file.writeAsBytes([0xFF, 0xD8, 0xFF, 0xE0]);
       testFiles.add(file);
     }
+    gifFile = File('${tempDir.path}/funny.gif');
+    await gifFile.writeAsBytes(const [
+      0x47,
+      0x49,
+      0x46,
+      0x38,
+      0x39,
+      0x61,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x80,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0xFF,
+      0xFF,
+      0xFF,
+      0x21,
+      0xF9,
+      0x04,
+      0x01,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x2C,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x01,
+      0x00,
+      0x01,
+      0x00,
+      0x00,
+      0x02,
+      0x02,
+      0x44,
+      0x01,
+      0x00,
+      0x3B,
+    ]);
   });
 
   tearDown(() async {
@@ -134,6 +181,37 @@ void main() {
 
       expect(find.byType(Image), findsOneWidget);
       expect(find.byIcon(Icons.close), findsOneWidget);
+    });
+
+    testWidgets('GIF thumbnail shows a GIF badge', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(attachments: [gifFile], onRemove: (_) {}),
+      );
+      await tester.pump();
+
+      expect(find.text('GIF'), findsOneWidget);
+    });
+
+    testWidgets('JPEG thumbnail does not show a GIF badge', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(attachments: [testFiles.first], onRemove: (_) {}),
+      );
+      await tester.pump();
+
+      expect(find.text('GIF'), findsNothing);
+    });
+
+    testWidgets('GIF badge is hidden during upload', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          attachments: [gifFile],
+          isUploading: true,
+          onRemove: (_) {},
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('GIF'), findsNothing);
     });
 
     testWidgets('no remove buttons when onRemove is null', (tester) async {

@@ -518,6 +518,57 @@ void main() {
     expect(find.text('Sent to 1 target, failed for 1 target.'), findsOneWidget);
   });
 
+  testWidgets(
+    'successful send with skipped oversized GIF surfaces warning text',
+    (tester) async {
+      final harness = _buildHarness();
+      final coordinator = _RecordingBatchCoordinator(
+        result: ShareBatchDeliveryResult(
+          results: [
+            ShareBatchTargetResult(
+              target: ShareTargetSelection.contact(activeContact),
+              status: ShareBatchTargetStatus.sent,
+              detail: 'Sent.',
+            ),
+          ],
+          skippedOversizedGifCount: 1,
+          skippedOversizedGifReason: 'GIF files over 25 MB were skipped.',
+        ),
+      );
+
+      harness.contactRepository.addTestContact(activeContact);
+
+      await pumpPicker(
+        tester,
+        contactRepository: harness.contactRepository,
+        groupRepository: harness.groupRepository,
+        messageRepository: harness.messageRepository,
+        mediaAttachmentRepository: harness.mediaAttachmentRepository,
+        identityRepository: harness.identityRepository,
+        chatMessageListener: harness.chatMessageListener,
+        groupMessageRepository: harness.groupMessageRepository,
+        groupMessageListener: harness.groupMessageListener,
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: ['/tmp/shared.gif', '/tmp/shared.jpg'],
+        ),
+        batchShareCoordinator: coordinator,
+      );
+
+      await tester.tap(
+        find.byKey(ValueKey('share-contact-${activeContact.peerId}')),
+      );
+      await tester.pump();
+      await tester.tap(find.text('Send'));
+      await tester.pump();
+
+      expect(
+        find.text('Sent to 1 target. Skipped 1 oversized GIF.'),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('2p: cancel pops back to the previous screen', (tester) async {
     final harness = _buildHarness();
 

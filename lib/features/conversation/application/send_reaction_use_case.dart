@@ -105,7 +105,18 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
   try {
     final sent = await p2pService.sendMessage(targetPeerId, jsonString);
     if (!sent) {
-      await p2pService.storeInInbox(targetPeerId, jsonString);
+      final storedInInbox = await p2pService.storeInInbox(
+        targetPeerId,
+        jsonString,
+      );
+      if (!storedInInbox) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'REACTION_SEND_FAILED',
+          details: {'reason': 'direct_and_inbox_failed'},
+        );
+        return (SendReactionResult.sendFailed, null);
+      }
     }
   } catch (e) {
     emitFlowEvent(
@@ -123,10 +134,7 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
   emitFlowEvent(
     layer: 'FL',
     event: 'REACTION_SEND_SUCCESS',
-    details: {
-      'id': reactionId.substring(0, 8),
-      'emoji': emoji,
-    },
+    details: {'id': reactionId.substring(0, 8), 'emoji': emoji},
   );
 
   return (SendReactionResult.success, reaction);

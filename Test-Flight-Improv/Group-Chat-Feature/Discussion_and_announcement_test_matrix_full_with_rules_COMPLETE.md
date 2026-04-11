@@ -1,0 +1,464 @@
+# Discussion and Announcement Group Test Matrix with Coverage Rules
+
+## Scope
+
+This file is the **complete replacement** for the previous `Discussion_and_announcement_test_matrix_full_with_rules.md`.
+
+It consolidates the attached:
+
+- discussion create C4
+- discussion send C4
+- discussion receive C4
+- invite and join C4
+- recovery and reliability C4
+- discussion and announcement feature audit
+- current discussion and announcement matrix
+- current repo test inventory
+
+The goal is not only transport correctness. The goal is end-to-end **user trust**:
+
+- group state must stay human-readable
+- membership changes must stay visible and converge across peers
+- discussion versus announcement write rules must stay explicit
+- message actions must feel coherent
+- message rendering must stay visually stable
+- invite, replay, retry, resume, and rejoin paths must stay honest
+- offline replay must stay privacy-safe and membership-bound
+- edge-case outcomes must have one explicit owner instead of relying on accidental convergence
+
+This matrix is intentionally broader than the earlier revision. It includes the shipped happy paths, the currently documented trust gaps, and the additional edge cases surfaced by the C4 documents and the test inventory.
+
+## Source bundle used
+
+- `C4-01-Create-Discussion.md`
+- `C4-02-Send-Message.md`
+- `C4-03-Receive-Message.md`
+- `C4-04-Invite-And-Join.md`
+- `C4-05-Recovery-And-Reliability.md`
+- `Discussion-And-Announcement-Feature-Audit.md`
+- `Discussion_and_announcement_test_matrix_full_with_rules.md`
+- `test-inventory.md`
+
+## Actors
+
+- **A** = group creator or current admin
+- **B** = current member or announcement reader
+- **C** = invitee, removed member, re-invitee, or sibling device
+- **D** = prospective member not already in the group
+- **X** = unauthorized peer, unknown inviter, blocked sender, or relay/storage operator
+
+## Status legend
+
+- **Covered** = the repo already has direct or near-direct automated coverage for the user-visible journey.
+- **Partial** = lower-level, adjacent, or indirect coverage exists, but there is still no direct proof of the full user-visible contract.
+- **Open** = the attached docs identify either a missing direct test, a behavior gap, or both.
+- **Unsupported** = the capability is not landed and should stay out of the release gate unless product scope changes.
+
+## Priority guide
+
+- **P0** = release-blocking trust contract
+- **P1** = important before broad rollout or before claiming the feature is complete
+- **P2** = product-dependent or roadmap-only; cover it only if the capability is intentionally in scope
+
+## Minimum discussion and announcement rules and invariants
+
+These are the baseline invariants this matrix assumes:
+
+- Discussion groups allow current members to write.
+- Announcement groups allow only admins to write.
+- Group write/read behavior is membership-based once membership exists. It must not silently fall back to friend-only behavior.
+- Membership changes must converge structurally **and** visibly: member list, badges, permissions, notifications, and timeline should agree.
+- Creator/admin identity should resolve to a human-readable username whenever the username exists.
+- Supported group message actions should appear through one coherent interaction model. Missing edit/delete support must not block reply/copy/inspection if those local-only actions are otherwise supported.
+- The sender-facing status model must stay honest across publish success, publish timeout, no-peer fallback, inbox failure, retry, and resume.
+- Offline replay must not expose plaintext message or membership-event content to relay operators.
+- Offline replay must stay correct for text, quote replies, image, video, GIF/file attachments, and recorded voice.
+- Members added later must only receive the backlog they are entitled to for the relevant membership/key epoch window.
+- Removed or departed members must not continue decrypting newer replay after the valid cutoff.
+- Duplicate live plus replay delivery must enrich or dedupe, not create double visible messages.
+- Supported routes from `Orbit`, `Feed`, group push, and group-invite push must all resolve to the correct surface with the same behavior contract.
+- If a capability is not shipped, the matrix should mark it **Unsupported** rather than silently treating it as a bug.
+
+## Coverage policy used in this matrix
+
+### Coverage legend
+
+- **Required** = should exist before you treat the journey as production-ready
+- **Recommended** = high-value additional proof
+- **N/A** = do not force that layer for this row
+
+### Rules
+
+**Unit**
+Use for logic-heavy pieces:
+
+- identity fallback rules
+- permission and write-role checks
+- replay/dedupe rules
+- membership-cutoff and dissolve-cutoff rules
+- invite validation rules
+- bridge payload shape and namespace rules
+- relay privacy rules
+- retry-owner rules
+- notification suppression rules
+
+**Integration**
+Use for most rows:
+
+- create, invite, accept, decline, remove, re-add, promote, demote, leave
+- discussion send/receive
+- announcement write/read-only behavior
+- quote/media/voice delivery
+- replay, resume, rejoin, retry, retention, and privacy behavior
+- route-target and cross-surface behavior
+- same-user multi-device convergence
+
+**Smoke**
+Keep small and release-blocking. Smoke should prove the core user trust story, not every branch.
+
+**Fake Network**
+Use where network behavior is the main risk:
+
+- mixed connectivity
+- delayed delivery
+- duplicate live plus replay delivery
+- zero-peer behavior
+- partition heal
+- replay pagination
+- post-removal cutoff
+- relay privacy / store-and-forward behavior
+
+**3-Party E2E (3 simulators)**
+Use for the A/B/C flows that users actually perceive:
+
+- A creates a group with B and C
+- A removes or re-invites C while B observes
+- A runs an announcement group where B reads and A writes
+- A accepts or declines invites on one device while sibling-device state stays truthful
+- member list, timeline, badge, and notification behavior converge across devices
+
+### Matrix interpretation
+
+- **Integration** is Required for most rows because trust emerges across UI, local persistence, native bridge, transport, and recovery.
+- UI-heavy rows should usually gain widget/screen proof in practice even though widget coverage is not a dedicated column.
+- Privacy rows need bridge or Go-side proof in addition to Flutter proof because the trust claim depends on payload shape, not just UI behavior.
+- Rows marked **Unsupported** should stay explicitly unsupported until product scope changes.
+- Rows marked **Partial** are the main source of “it probably works, but we do not yet prove the full user-visible contract.”
+
+## Current repo execution note (2026-04-11)
+
+The attached docs consistently show that the current repo is already strong on:
+
+- create happy paths
+- admin-only announcement write control
+- send reliability
+- media and voice send scaffolding
+- invite review accept / decline / expiry
+- promotion / demotion
+- mute
+- dissolve + read-only history
+- resume / rejoin / retry / retention catch-up
+
+The main remaining trust gaps are not “basic group delivery is missing.” They are the places where the product can still feel incomplete, misleading, or under-specified:
+
+- durable add-member and join/accept timeline visibility
+- voluntary-leave timeline visibility
+- creator/admin username fallback to peer ID
+- avatar / identity consistency, especially for non-friends
+- long-press parity versus the mature 1:1 overlay
+- reaction inspection versus reaction mutation
+- create-time partial add / partial invite truth
+- local-only add behavior when no group key exists
+- no-rollback drift after invite-path `updateConfig` / `publish` failure
+- create description and topic namespace bridge-contract gaps
+- locally keyless create success edge case
+- zero-peer plus inbox-fail retry ownership
+- invite-accept reaction deferral
+- invite-accept `bridgeError` convergence proof
+- listener / `reactionRepo` absence during replay
+- relay replay plaintext storage
+- encrypted replay parity and membership-bound access
+- multi-device proof beyond in-memory fakes
+- replay-attack / tamper / key-race / overflow observability gaps
+
+---
+
+## Create, Bootstrap, and Configuration Truth
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CB-001 | Blank-name create auto-generates a stable, readable group name | A selects one or more contacts but leaves name blank. | 1. Start discussion create without a name. 2. Inspect the created group in list and conversation. | The created group gets a stable readable auto-name derived from member usernames, not an empty or unstable placeholder. | P1 | Covered | Required | Required | N/A | N/A | N/A | Covered by `create_group_with_members_use_case_test.dart` auto-name cases and create-picker coverage in `test-inventory.md`. |
+| CB-002 | Create blocks over-limit selection before any local or bridge state is created | A selects more than the shared group-member limit. | 1. Exceed the contract limit. 2. Attempt create. 3. Inspect local groups, members, and bridge side effects. | Create fails honestly before any partial group state, member rows, or bridge create/update calls are committed. | P0 | Covered | Required | Required | Recommended | N/A | N/A | The test inventory shows limit enforcement for create and add paths, and the C4 create flow calls out pre-limit checking before bridge create. |
+| CB-003 | Partial per-member add failure during create yields a truthful successful subset only | A selects B, C, and D, but at least one add-member call fails. | 1. Create the group. 2. Force one member add to fail. 3. Inspect final member list and invite fan-out recipients. | The group is created if that is the intended contract, but only the successfully added subset appears as members, contributes to `groupConfig`, and receives invite fan-out. Failed recipients are not silently shown as added. | P0 | Partial | Required | Required | Recommended | Recommended | Recommended | `C4-01` explicitly says create skips individual add failures, but the current docs do not prove a fully user-visible partial-failure contract. |
+| CB-004 | Create-time invite degradation is explicit when node is stopped, recipient has no ML-KEM key, or direct send fails | A creates a group and selected recipients include one degraded delivery case. | 1. Create the group. 2. Force node-not-running, missing ML-KEM key, or direct-send failure. 3. Observe admin feedback and recipient state. | The product does not silently imply every selected recipient was invited successfully. Per-recipient invite failures remain explicit or are clearly recoverable later. | P0 | Partial | Required | Required | N/A | Recommended | Recommended | `sendGroupInvite()` returns `nodeNotRunning`, `encryptionRequired`, and send-failed outcomes, but the create flow still completes. The current user-visible per-recipient truth contract is not pinned. |
+| CB-005 | Post-create `group:updateConfig` or `members_added` publish failure does not leave ghost local membership | A creates or batch-adds members and a later config sync or publish step fails. | 1. Persist local member rows. 2. Force `group:updateConfig` or `group:publish` failure. 3. Compare local list, validator state, and remote convergence. | The system either rolls back the new local member rows or owns the later convergence path explicitly. It must not leave members who exist only in one local DB snapshot with no truthful user explanation. | P0 | Open | Required | Required | N/A | Recommended | Recommended | `C4-04` explicitly says later update/publish failures do not roll back prior local saves in the invite path. |
+| CB-006 | Create-time description support is honest | The product either supports descriptions during create or intentionally does not. | 1. Start create flow. 2. Inspect create UI, persisted group, invite preview, and later metadata surfaces. | If create-time description is unsupported, the UI and later surfaces stay honest about that omission. If supported later, description round-trips through Dart and Go consistently. | P1 | Open | Required | Recommended | N/A | N/A | N/A | `C4-01` says the active create UI does not expose description and Go `GroupCreate()` does not parse it. |
+| CB-007 | Persisted topic namespace matches the real `/mknoon/group/{groupId}` namespace | A creates a group and later restarts, rejoins, or inspects local group metadata. | 1. Create group. 2. Inspect persisted `topicName`. 3. Restart and rejoin. | The local persisted topic namespace is the same namespace the Go node actually joined, so rejoin, diagnostics, and future tooling cannot drift between `group-$groupId` and `/mknoon/group/$groupId`. | P1 | Open | Required | Recommended | N/A | N/A | N/A | `C4-01` and `test-inventory.md` both call out the topic-name mismatch gap. |
+| CB-008 | Group create never reports success into a locally keyless state | The bridge returns success without `groupKey`, and fallback key generation also fails. | 1. Force missing `groupKey` from `group:create`. 2. Force fallback `group.keygen` failure. 3. Inspect local group, invite, send, and restart behavior. | The app either repairs local key state before returning success or fails the create honestly. It must not save a half-created local group that cannot invite, send truthfully, or rejoin after restart. | P0 | Open | Required | Required | N/A | N/A | N/A | The audit and current matrix explicitly identify this as a remaining bootstrap-integrity gap. |
+
+## Membership Visibility and Invite Lifecycle
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| DV-001 | Create discussion group successfully | A can create groups; B and C are valid invite targets. | 1. A creates a discussion group. 2. B and C sync or accept according to current product flow. | A, B, and C converge on the same discussion group identity, type, members, and write policy. | P0 | Covered | Recommended | Required | Required | N/A | Required | Strong current create coverage is called out in the audit and test inventory. |
+| DV-002 | Create announcement group successfully with admin-only compose | A can create groups; B is a non-admin member. | 1. A creates an announcement group. 2. B opens it. 3. A and B attempt to compose. | The group type is announcement, A can write, B is read-only, and the UI makes that state explicit. | P0 | Covered | Required | Required | Required | N/A | Required | Covered by announcement-path tests and the current matrix. |
+| DV-003 | Adding members shows immediate feedback and a durable in-chat add-members event | A is admin; D is not yet in the group. | 1. A adds one or more members through the shipped picker path. 2. A, B, and D inspect the conversation later. | The inviter gets truthful immediate feedback, and the conversation history shows a durable readable add-members event instead of only a transient snackbar. | P0 | Open | Required | Required | Required | Recommended | Required | The audit and current matrix both flag the missing durable `members_added` timeline behavior. |
+| DV-004 | Accepting a pending invite creates a durable join / acceptance event visible to existing members | A invited C and C sees a pending invite. | 1. C accepts. 2. A and B inspect history and member list. | Membership converges and existing members see a durable event such as `C joined` or `C accepted the invite`. | P0 | Open | Required | Required | Recommended | Recommended | Required | Explicitly called out as missing in the audit and current matrix. |
+| DV-005 | Invite decline and expiry leave no ghost membership or ghost access | A invited D through the current explicit-invite flow. | 1. D declines in one run. 2. Let the invite expire in another. | D never becomes an active member, the group does not appear as joined, and stale invite state is cleaned up per product rules. | P0 | Covered | Required | Required | N/A | Recommended | Required | Already covered by listener, accept/decline, and invite-round-trip tests. |
+| DV-006 | Removing a member updates lists and creates a durable removal event for remaining members | A is admin; C is an active member; B remains in the group. | 1. A removes C. 2. B inspects conversation and member list. | C disappears from active membership, B sees the updated list, and the conversation shows a readable removal event. | P0 | Covered | Recommended | Required | Required | Recommended | Required | Current repo coverage already proves the removal path and recipient-side timeline persistence. |
+| DV-007 | Removed member converges to removed state after offline reconnect | C is offline when A removes C. | 1. A removes C while C is offline. 2. C reconnects and drains replay. | C converges to removed state, loses send/receive access, and does not remain silently joined. | P0 | Covered | Required | Required | N/A | Required | Required | Explicitly covered in replay/recovery and membership smoke coverage. |
+| DV-008 | Voluntary leave creates a durable `X left the group` event visible to remaining members | B is a current member and chooses to leave. | 1. B leaves from the supported surface. 2. A and C inspect history and member state. | Remaining members see a durable readable leave event, and the departed member leaves cleanly without silently disappearing. | P1 | Open | Required | Required | N/A | N/A | Recommended | The audit and current matrix flag this as only partially wired today. |
+| DV-009 | Duplicate invite preview for the same group replaces the earlier pending row instead of duplicating cards | C receives more than one invite preview for the same group before accepting. | 1. Deliver two invites for the same `groupId`. 2. Inspect pending invites. | The later preview replaces the earlier row cleanly. The app does not show duplicate pending cards for the same group. | P1 | Covered | Required | Required | N/A | N/A | N/A | `PendingGroupInviteRepository` upserts by `group_id`; the listener test inventory already calls this out. |
+| DV-010 | Blocked, unknown, or sender-mismatch invites are rejected without ghost pending or joined state | X sends a blocked, unknown, malformed, or sender-mismatch invite. | 1. Deliver invite to the device. 2. Inspect pending invite list and group list. | No pending invite or joined group is created for an invalid sender case. | P0 | Covered | Required | Required | N/A | Recommended | N/A | The C4 invite flow and test inventory both document blocked-sender, unknown-sender, and sender-mismatch guards. |
+| DV-011 | Pending-invite route target opens the review surface until the group is actually joined | The device receives a group-invite push or another route target references a group that is not yet joined. | 1. Tap the invite push or open the route target. 2. Inspect navigation outcome before and after accept. | The app opens the pending-invite review surface until join completes, then later routes to the group conversation normally. | P1 | Covered | Recommended | Required | N/A | N/A | N/A | `resolveGroupNotificationRouteTarget()` and the current C4 invite doc explicitly define this route behavior. |
+| DV-012 | Accepting or declining an invite on one device does not incorrectly clear the sibling device pending row | The same user has two devices with the same pending invite row. | 1. Accept on device 1. 2. Inspect device 2. 3. Repeat with decline in a separate run. | Device-local pending invite state remains truthful per device. One device action does not silently clear the sibling device row. | P1 | Covered | Required | Required | N/A | N/A | Recommended | The accept/decline tests explicitly cover sibling-device pending-row independence. |
+| DV-013 | Partial invite fan-out result is explicit per recipient | A batch invite contains recipients who succeed, fail direct send, or fail even inbox fallback. | 1. Add several members in one batch. 2. Force mixed invite outcomes. 3. Inspect admin feedback and final member/invite state. | The app does not collapse mixed outcomes into a single misleading “all invited” result. It distinguishes local membership, successfully delivered invites, and failed invite sends. | P0 | Partial | Required | Required | Recommended | Recommended | Recommended | `C4-04` says the current UI pops with the locally added count even if some invite sends fail. |
+| DV-014 | Batch add with no latest group key is explicit and does not silently look like completed onboarding | A batch add occurs on a group that lacks usable latest key state. | 1. Batch-add members while no latest key exists. 2. Inspect admin feedback and recipient state. | The app either blocks the flow, repairs key state first, or makes the degraded “local-only add” contract explicit. It must not silently look like normal onboarding. | P0 | Partial | Required | Required | N/A | Recommended | Recommended | The invite path explicitly skips invite fan-out when no key exists, while still locally adding members. |
+| DV-015 | Remove, rotate, and re-invite gives the rejoined member the correct rotated epoch | C was removed earlier and is later re-invited after key rotation. | 1. Remove C. 2. Rotate/re-distribute key. 3. Re-invite C. 4. Verify join and send behavior. | The rejoined member lands on the rotated epoch and resumes truthful participation without stale-key drift. | P0 | Covered | Recommended | Required | N/A | Recommended | Required | The invite-round-trip integration coverage already includes this path. |
+| DV-016 | New-member history boundary stays future-only except for the explicitly allowed post-join replay contract | C joins after prior conversation history exists. | 1. Send messages before C joins. 2. Invite and join C. 3. Inspect what history C can see. | C does not receive unauthorized old history. Only the allowed post-join replay window is recovered. | P0 | Covered | Required | Required | N/A | Recommended | Required | Called out directly by the invite-round-trip integration tests. |
+
+## Identity, Roles, Avatars, and Mixed-Social-Graph Behavior
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ID-001 | Creator/admin identity resolves to username instead of raw peer ID when a username exists | A has a valid username and creates the group. | 1. Create the group. 2. Open member list and admin badge surfaces. | A renders with a human-readable username instead of a truncated peer ID. | P0 | Open | Required | Required | Recommended | N/A | Required | The audit and current matrix both call out the missing creator-username backfill. |
+| ID-002 | Member list and conversation surfaces show consistent participant identity, including avatars, for current members | A, B, and C are in the same group. | 1. Open member list. 2. Open conversation. 3. Compare names and avatars. | Identity is consistent enough that members can tell who is speaking and who is admin, without one surface looking much poorer than the other. | P1 | Partial | Required | Required | N/A | N/A | Required | The audit says conversation uses `UserAvatar` while member rows still degrade to placeholders, especially for non-friends. |
+| ID-003 | Once membership exists, non-friend members can still read and write in the same discussion group | B and C are both active members but are not direct contacts. | 1. B sends. 2. C replies. 3. A verifies both deliveries. | Group messaging works because of membership, not because B and C are friends. | P0 | Partial | Required | Required | Recommended | Recommended | Required | The audit and current matrix both treat the transport as membership-driven, but note missing direct row-owned proof. |
+| ID-004 | Supported onboarding path exists for non-friend participants when product scope says mixed-social-graph groups are allowed | A wants to add or invite D, who is not an active contact. | 1. Try the supported onboarding path. 2. Join through that same path. | The product provides one explicit non-friend-compatible onboarding path, or else it is clearly marked out of scope. | P1 | Open | Required | Required | N/A | Recommended | Required | The attached docs consistently say current onboarding is more constrained than current send/receive behavior. |
+| ID-005 | Admin promotion and demotion update permissions, badges, and visible timeline history consistently | A and B are active members; A is admin. | 1. Promote B. 2. Demote B in a separate run if enabled. 3. Inspect member list and history. | Badges, permissions, and timeline converge quickly across peers. | P0 | Covered | Required | Required | Recommended | Recommended | Required | Explicitly covered by `group_info_wired_test.dart` and listener coverage per the audit. |
+| ID-006 | Sole-admin leave stays blocked until a valid admin state exists | Group has only one admin and remaining members are non-admin writers/readers. | 1. Attempt leave as the sole admin. 2. Inspect final state. | The group does not end up ownerless or ambiguous. The block is explicit and user-visible. | P0 | Covered | Required | Required | Recommended | N/A | Recommended | Membership smoke and leave-group coverage already prove the sole-admin guard. |
+| ID-007 | Explicit admin transfer or ownership handoff behaves cleanly if the feature exists | Group has one primary admin and one eligible successor. | 1. Transfer ownership. 2. Verify final role and permission state. | Exactly one clear handoff outcome exists. | P2 | Unsupported | Required | Required | N/A | Recommended | Required | The audit and current matrix both say explicit ownership handoff is not yet landed. |
+| ID-008 | Duplicate re-add, duplicate invite, or stale membership replay does not create duplicate member rows or duplicate timeline spam | D was invited twice, re-added, or receives stale membership artifacts. | 1. Attempt duplicate add/re-add paths. 2. Replay stale membership payloads. 3. Inspect member list and history. | Structural membership stays de-duplicated and the timeline does not get spammed by duplicate membership rows. | P1 | Partial | Required | Required | N/A | Recommended | Recommended | The inventory proves duplicate add/duplicate invite guards, but not the full no-timeline-spam contract. |
+| ID-009 | Invite-carried avatar metadata persists and resolves cleanly after accept | The invite contains avatar blob metadata. | 1. Accept the invite. 2. Inspect persisted group metadata and avatar display. | The accepted group preserves avatar metadata and resolves a truthful avatar state instead of dropping or mislabeling it. | P1 | Partial | Required | Required | N/A | N/A | Recommended | Lower-level invite tests prove metadata persistence and download path, but full surface proof remains indirect. |
+| ID-010 | Non-friend fallback identity and avatar remain readable when full avatar sharing is unavailable | A group contains at least one non-friend participant. | 1. Open member list and conversation. 2. Inspect non-friend surfaces. | Even when a full profile photo cannot be resolved, the fallback identity remains readable and intentional instead of broken-looking or anonymous. | P1 | Partial | Required | Required | N/A | N/A | Recommended | This is the trust-preserving fallback contract implied by the audit’s non-friend identity gap. |
+
+## Long-Press Context Actions and Overlay Parity
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CX-001 | Long-pressing a supported group message opens one coherent context surface, not only a detached reaction bar | A group conversation is open and contains a non-deleted message. | 1. Long-press an incoming message. 2. Long-press an outgoing message. | The pressed message remains visually identifiable and the user sees one coherent context surface with selected-message focus plus the approved action set. | P1 | Open | Recommended | Required | N/A | N/A | Recommended | The audit and current matrix both call out the 1:1 overlay parity gap. |
+| CX-002 | Group long-press reply entry reaches the existing quote-reply path for supported messages | Quote replies are supported in the group and the user can still write. | 1. Long-press a supported message. 2. Enter reply from the context surface. | Long-press can enter the existing quote-reply flow instead of forcing users to discover swipe only. | P1 | Open | Required | Required | N/A | N/A | Recommended | Reply transport already exists; the missing part is the group UI host path. |
+| CX-003 | Group long-press copy action copies exact text for supported rows and dismisses cleanly | A visible group message contains non-empty text. | 1. Long-press. 2. Tap Copy. 3. Repeat for multiline, emoji, and RTL text. | Exact text is copied locally and the context surface dismisses once. | P1 | Open | Required | Required | N/A | N/A | N/A | This is a local UI affordance, not a transport limitation. |
+| CX-004 | Unsupported group edit/delete actions stay honestly hidden without blocking the rest of the context surface | Group per-message edit/delete are unsupported. | 1. Long-press a normal row. 2. Inspect available actions. | The group surface still opens for supported actions such as reply/copy/inspection even while edit/delete remain absent. | P1 | Partial | Required | Required | N/A | N/A | N/A | The product already lacks group edit/delete; the gap is blocking the whole surface instead of only those actions. |
+| CX-005 | Local-only long-press actions remain available even when reactions are unavailable | Reactions are disabled or `reactionRepo` is null. | 1. Open group with text rows. 2. Disable reactions. 3. Long-press again. | Local-only actions still appear; long-press does not disappear just because reaction handling is unavailable. | P1 | Open | Required | Required | N/A | N/A | N/A | The current group UI disables long-press entirely when reaction callbacks are absent. |
+| CX-006 | Any future group long-press overlay preserves swipe-to-quote, reaction toggles, and current row rendering | The product adds a richer long-press surface. | 1. Long-press a row. 2. Reply from it. 3. Swipe-to-quote an incoming row. 4. Toggle a reaction. | The new surface does not regress existing swipe, reaction, or row-render behavior. | P1 | Open | N/A | Required | N/A | N/A | Recommended | This preservation bar is called out in the current matrix. |
+| CX-007 | Group action parity stays consistent regardless of whether the conversation was entered from `Orbit`, `Feed`, or a notification anchor | The same group can be opened through several entry points. | 1. Open from `Orbit`. 2. Open from `Feed`. 3. Open from push/message anchor. 4. Compare long-press behavior. | The same message-level action contract holds regardless of entry point. | P1 | Partial | N/A | Required | N/A | N/A | Recommended | Reaction parity is explicitly called out in the audit; broader action parity should be pinned too. |
+
+## Message Rendering and Visual Stability
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| UI-001 | Each group message renders as one clear bubble without a doubled or stacked-card artifact | A discussion or announcement group contains incoming and outgoing messages, including quote state, reactions, and media. | 1. Open the group. 2. Inspect normal rows. 3. Inspect quote/reaction/media rows. 4. Reopen and verify again. | Every message row renders as one stable visual container. No row appears as two overlapping rounded shells or a duplicated card background. | P1 | Open | N/A | Required | N/A | N/A | Recommended | User screenshots plus the audit already confirm the defect; no direct visual regression test exists yet. |
+| UI-002 | Row-shell stability survives quote enrichment, reaction updates, media auto-download, and replay enrichment | A row changes state after first render. | 1. Render a row. 2. Enrich it with quote/media/reaction/download updates. 3. Inspect the same row again. | State changes do not create a second shell, duplicate bubble background, or stacked visual artifact. | P1 | Partial | N/A | Required | N/A | N/A | Recommended | Existing tests prove upsert, scroll preservation, and reaction/media updates, but not a dedicated visual-shell regression contract. |
+
+## Reaction Transparency and Participant Identity
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| RX-001 | Tapping a visible group reaction chip reveals which members reacted and with which emoji | A group message has reactions from at least two members. | 1. Open the group from `Orbit`. 2. Tap a visible reaction chip or grouped emoji count. 3. Repeat after entering from `Feed`. | The user sees a readable participant detail view that maps reactions to human-readable identity instead of only showing emoji counts. | P1 | Open | Required | Required | N/A | N/A | Recommended | The audit and current matrix both call out missing reaction-participant disclosure. |
+| RX-002 | Inspecting a group reaction cluster is non-destructive and does not silently remove the viewer's own reaction | The message includes the viewer's reaction plus others. | 1. Tap a chip the viewer already used. 2. Repeat on a same-emoji multi-user chip. | First-tap inspection does not remove or replace the viewer's reaction. Mutation, if supported, is explicit. | P1 | Open | Required | Required | N/A | N/A | Recommended | Today the chip tap is wired to mutation-first behavior. |
+| RX-003 | Reaction participant identity stays readable even when reaction rows only persist peer IDs or when reactors are non-friends | At least one reactor lacks eagerly cached display identity. | 1. Open the reaction detail view. 2. Compare identities against member list and conversation surfaces. | The inspection surface resolves readable identity from group state instead of blank rows or opaque raw state. | P1 | Open | Required | Required | N/A | N/A | Recommended | The current model stores peer IDs, not display usernames, so readable lookup must be proven. |
+| RX-004 | Reaction inspection parity is preserved across `Orbit` and `Feed` entry points | The same group is visible in both surfaces. | 1. Open from `Orbit`. 2. Inspect reaction cluster. 3. Open from `Feed`. 4. Inspect the same cluster again. | Inspection behavior, identity resolution, and dismissal semantics match across entry points. | P1 | Open | Required | Required | N/A | N/A | Recommended | Explicitly called out in the audit and current matrix. |
+| RX-005 | Inline Feed group-thread reactions and permissions behave coherently if inline interaction stays in scope | Feed shows a `GroupThreadFeedItem` with enabled callbacks. | 1. Stay on the inline card. 2. Long-press preview. 3. Tap a reaction chip. 4. Repeat on discussion and announcement-reader cards. | The inline Feed card follows one honest contract instead of silently diverging from the full conversation. | P1 | Open | N/A | Required | N/A | N/A | Recommended | `feed_screen.dart` has its own group-specific reaction path, so it needs its own proof. |
+| RX-006 | Live, replayed, and post-rotation reactions remain truthful after resume/rejoin | A group has reactions, then experiences replay, resume, or key rotation. | 1. Add reactions. 2. Resume/rejoin/recover. 3. Inspect reaction state. | Reaction state remains truthful after recovery and does not regress to stale counts or duplicated reactors. | P1 | Partial | Required | Required | N/A | Recommended | Recommended | Live reaction round-trip is covered; replay and invite-accept immediacy are still not fully proven. |
+
+## Messaging, Compose, Media, Voice, and Delivery Truth
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| MM-001 | Discussion members can send text, media, replies, and reactions to all current members | A, B, and C are active discussion-group members. | 1. Send text. 2. Send image/video/voice. 3. Reply and react. | All current members see the same content once, and the sender sees truthful local state. | P0 | Covered | Recommended | Required | Required | Recommended | Required | Strong current coverage exists across send, receive, reaction, and smoke tests. |
+| MM-002 | Announcement groups enforce admin-only compose while readers still see and react | A is admin; B and C are non-admin readers. | 1. B attempts to compose. 2. A sends. 3. B reacts or reads. | Non-admin compose is blocked, admin send succeeds, and reader experience remains intact. | P0 | Covered | Required | Required | Required | Recommended | Required | This is one of the strongest current shipped contracts. |
+| MM-003 | Voice-only send is supported, empty non-media send is blocked, and announcement readers never expose stale send/record controls | The composer supports durable voice flow. | 1. Send a voice note with empty text. 2. Attempt empty non-media send. 3. Open as announcement reader. | Voice-only send works, empty non-media send fails, and readers do not leak stale send or record controls. | P1 | Covered | Required | Required | N/A | N/A | Recommended | The test inventory has direct wired-path proof for these guards. |
+| MM-004 | Quote reply survives send, render, failure, and retry paths without losing user intent | A reply target exists. | 1. Enter quote reply. 2. Send successfully. 3. Repeat with upload or publish failure. 4. Retry. | The parent context is preserved when needed, restored after failure, and rendered correctly after delivery. | P1 | Covered | Required | Required | N/A | N/A | Recommended | Current tests cover quote send, render, and failure-restoration behavior. |
+| MM-005 | Media upload failure leaves a truthful failed/retryable row, and targeted retry/delete only affects that row | The group sends one or more media attachments and the upload or publish path fails. | 1. Fail upload or publish. 2. Inspect failed row. 3. Use retry/delete controls. | The failed row is honest, retryable, and isolated. Targeted retry/delete does not mutate unrelated rows. | P1 | Covered | Required | Required | N/A | Recommended | N/A | The wired-path tests already cover targeted retry/delete and durable media staging. |
+| MM-006 | The sender-facing state machine stays honest across publish success, publish timeout, no-peer fallback, inbox failure, and retry | A send may traverse any of the documented status branches. | 1. Exercise publish OK, timeout, no-peers, inbox success, inbox failure, and mixed branches. 2. Inspect row status and stored retry material. | The sender sees truthful `sent`, `pending`, `failed`, or `successNoPeers` behavior with one explicit retry owner. | P0 | Covered | Required | Required | Required | Recommended | Recommended | The send use-case matrix is already heavily covered in tests. |
+| MM-007 | Publish timeout plus inbox success remains successful in UI and storage | The bridge publish call times out but inbox custody succeeds. | 1. Force bridge timeout with inbox success. 2. Inspect final UI and DB row. | The row ends in successful state rather than failed or stranded `sending`. | P0 | Covered | Required | Required | N/A | Recommended | N/A | Explicitly covered in the send use case and wired UI tests. |
+| MM-008 | Publish-success pending rows finalize only through an owned path, not silent drift | Publish succeeds but inbox is still running or already failed. | 1. Force a pending branch. 2. Observe immediate state. 3. Let background finalization or retry close it. | The row becomes `sent` only through the intended background completion or retry path, and stays honestly pending otherwise. | P1 | Partial | Required | Required | N/A | Recommended | N/A | The send C4 documents the distinction, but the full user-visible contract is not yet singled out as a dedicated row. |
+| MM-009 | Zero-peer plus inbox-fail sends recover through one explicit retry owner and never get stranded between retry lanes | The topic has zero peers and inbox store fails too. | 1. Send with `topicPeers == 0`. 2. Force inbox failure. 3. Run shipped retry orchestration. | The row is intentionally owned by one supported retry path. It never sits forever as “retryable in theory” but unreachable in practice. | P1 | Open | Required | Required | N/A | Recommended | N/A | The audit and current matrix both call out this retry-owner precision gap. |
+| MM-010 | Discussion and announcement sends survive background, route unmount, and zero-peer fallback with honest final status | The initiating route may disappear mid-send. | 1. Start send. 2. Background or unmount. 3. Repeat with zero live peers. | The row converges honestly and is not stranded in `sending`. | P0 | Partial | Required | Required | Required | Recommended | N/A | Strong coverage exists, but the test inventory still records skipped bg-task edge cases. |
+| MM-011 | Legacy `topicPeers == null` bridge compatibility preserves truthful terminal state | The bridge behaves like an older contract and omits peer count. | 1. Force `topicPeers == null` and missing-key legacy response variants. 2. Inspect final status. | The app preserves honest final state under the legacy contract and does not regress on old bridge responses. | P1 | Covered | Required | Required | N/A | N/A | N/A | Directly covered in send use-case tests per the inventory. |
+| MM-012 | Send rules during active group recovery are explicit and intentional | Recovery is active while the user attempts to send. | 1. Trigger recovery. 2. Attempt discussion send. 3. Attempt announcement admin send. | The product follows one intentional contract for each type and surfaces honest feedback. It does not allow stale callbacks to bypass the rule. | P1 | Partial | Required | Required | N/A | N/A | Recommended | Tests prove announcement recovery guards and stale callback protection; the broader end-user contract still deserves a row. |
+| MM-013 | Non-friend member media delivery works the same as friend media delivery once membership exists | B and C are in the same group but are not contacts. | 1. B sends image/video/voice. 2. C receives and opens it. | Media fan-out follows membership state rather than friendship state. | P0 | Partial | Recommended | Required | Recommended | Recommended | Required | The audit already identifies this as membership-driven in code but not yet row-owned as a direct regression. |
+| MM-014 | Share-to-group respects write eligibility and partial-failure truth across writable groups | The user opens the share flow with multiple targets. | 1. Open share picker. 2. Inspect available groups. 3. Send to mixed targets. | Only writable groups are offered, announcement reader groups stay excluded, and partial failures preserve truthful target selection state. | P1 | Covered | Required | Recommended | N/A | N/A | N/A | The test inventory includes share-target filtering, partial-failure truth, and background-task group share coverage. |
+| MM-015 | Announcement sends after key rotation still use the new epoch and remain deliverable | The announcement group rotated key and the admin sends again. | 1. Rotate key. 2. Send announcement. 3. Verify reader delivery. | The send uses the new epoch and remains deliverable to legitimate readers. | P1 | Covered | Required | Required | N/A | Recommended | Recommended | Covered by rotation and resume-recovery announcement tests in the inventory. |
+
+## Receive, Rendering, Notification, and Conversation Integrity
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| RC-001 | Live receive plus replay dedupe prevents duplicate visible rows when pubsub and inbox both deliver the same message | A message can arrive by live pubsub and later by relay replay. | 1. Deliver live. 2. Drain replay. 3. Inspect the conversation. | The user sees one message, not two. | P0 | Covered | Required | Required | Recommended | Required | Recommended | Strongly covered in handle-incoming and resume-recovery tests. |
+| RC-002 | Duplicate replay enriches missing quote/media metadata rather than creating a second row | A message first arrives without all enrichments. | 1. Deliver the row. 2. Deliver duplicate with quote/media info. 3. Inspect the existing row. | The existing row is enriched in place instead of duplicated. | P1 | Covered | Required | Required | N/A | Recommended | N/A | Explicitly covered by incoming-message tests. |
+| RC-003 | Unknown-group, unauthorized-sender, post-removal, and post-dissolve messages do not appear beyond allowed cutoffs | The device receives stale or invalid traffic. | 1. Deliver unknown-group traffic. 2. Deliver post-removal or post-dissolve traffic. 3. Repeat with pre-cutoff delayed traffic. | Invalid traffic is dropped; allowed pre-cutoff delayed traffic still behaves correctly. | P0 | Covered | Required | Required | N/A | Recommended | Recommended | The inventory shows direct cutoff and dissolve-boundary coverage. |
+| RC-004 | Sequential messages, delayed delivery, and burst traffic preserve ordering and avoid user-visible loss within supported capacity | A sender emits several messages, including delayed and burst cases. | 1. Send sequential messages. 2. Delay some deliveries. 3. Burst several sends. | Ordering remains coherent and supported burst behavior does not visibly lose normal messages. | P1 | Covered | Recommended | Required | Recommended | Recommended | Recommended | Current smoke coverage includes ordering, delayed delivery, and burst handling. |
+| RC-005 | A sibling device for the same user stores own live publishes as local sent history | The same user is joined on two devices. | 1. Send from device 1. 2. Inspect device 2 history. | Device 2 stores the publish as local sent history rather than as a confusing incoming row. | P1 | Covered | Required | Required | N/A | N/A | Recommended | The multi-device convergence tests already prove this behavior. |
+| RC-006 | Media auto-download and row upsert do not create duplicate rows or destroy scroll/context | A received message later gains download completion or upserted data. | 1. Receive media row. 2. Let auto-download complete or upsert run. 3. Inspect scroll position and row duplication. | The same row updates in place without duplicate bubbles or disruptive scroll jumps. | P1 | Partial | N/A | Required | N/A | N/A | Recommended | Existing tests prove upsert optimization and scroll preservation, but not one dedicated end-user contract row. |
+| RC-007 | Notification anchors open the group and highlight the targeted message context | The user opens the group from a message-targeted notification. | 1. Trigger route payload with target message. 2. Open the conversation. | The conversation opens to the correct group and highlights the targeted message context. | P1 | Covered | N/A | Required | N/A | N/A | N/A | Explicitly covered by group conversation wired tests. |
+| RC-008 | Notification truth suppresses own-message, active-conversation, and recent-remote-push duplicate alerts | The device can receive the same message through more than one notification path. | 1. Ingest own message. 2. Ingest while the group is open. 3. Ingest after a recent remote push announcement. | No redundant local alert is shown, while persistence and unread truth remain intact. | P1 | Covered | Required | Required | N/A | N/A | Recommended | Already covered by listener notification tests and the existing matrix. |
+| RC-009 | Decryption failure or payload-parse failure creates no ghost message and remains diagnosable | The Go node encounters undecryptable or malformed group payload. | 1. Deliver tampered or malformed payload. 2. Inspect UI and diagnostics. | No visible ghost row is created. The failure remains diagnosable through owned telemetry or event handling. | P1 | Partial | Required | Recommended | N/A | Recommended | N/A | `C4-03` says Go emits diagnostic events, but Dart does not explicitly route them today. |
+| RC-010 | Dispatcher overflow or high-burst receive load has an owned contract and monitoring story | A high-volume receive burst pushes the native event queue toward capacity. | 1. Flood the receive path. 2. Inspect delivered rows and diagnostics. | The product either proves supported capacity or surfaces overflow explicitly. It must not silently look like app-level success while dropping user-visible traffic. | P1 | Open | Required | Recommended | N/A | Recommended | N/A | `C4-03` documents a bounded dispatcher queue with drop-on-overflow behavior, but no direct proof exists in the current matrix. |
+
+## Recovery, Replay, Retention, and Offline Privacy
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| RY-001 | Cold-start rejoin and drain re-establish live delivery exactly once | The app restarts after prior group activity. | 1. Restart. 2. Rejoin topics. 3. Drain backlog. 4. Receive new live traffic. | Live delivery resumes and missed backlog is recovered once, without duplication. | P0 | Covered | Recommended | Required | Recommended | Recommended | Recommended | Startup-rejoin smoke coverage already exists. |
+| RY-002 | Foreground resume runs rejoin, drain, stuck-send recovery, upload retry, failed-send retry, and inbox retry in the intended order | Recovery is enabled and the app resumes with pending group work. | 1. Resume the app. 2. Observe ordered recovery steps. | The recovery sequence is ordered, fault-isolated, and does not silently skip a retry class. | P1 | Covered | Required | Required | N/A | N/A | N/A | The lifecycle tests explicitly pin the ordered resume flow. |
+| RY-003 | Paused / hidden lifecycle pre-commits `sending` rows to failed so later recovery can pick them up | The app is suspended mid-send. | 1. Leave rows in `sending`. 2. Pause or hide the app. 3. Resume later. | Pending rows become retryable instead of staying stranded in `sending`. | P0 | Covered | Required | Required | N/A | N/A | N/A | `handleAppPaused` group tests explicitly cover this preventive reliability hook. |
+| RY-004 | Watchdog or node-requested recovery acknowledges only after a clean rejoin | Go requests recovery or watchdog restart occurred. | 1. Trigger recovery request. 2. Rejoin successfully. 3. Observe acknowledgement. 4. Repeat with rejoin error. | Recovery acknowledgement only clears the native pending flag after a clean rejoin. | P1 | Covered | Required | Required | N/A | N/A | N/A | Pending retrier and recovery tests already pin the ack semantics. |
+| RY-005 | Archived groups still drain/rejoin as intended while dissolved groups stay read-only and skipped from rejoin | The user has archived and dissolved groups. | 1. Resume or restart. 2. Inspect archived and dissolved behavior. | Archived groups remain recoverable if still valid; dissolved groups remain read-only and are not incorrectly rejoined for sending. | P1 | Covered | Required | Required | N/A | N/A | Recommended | The inventory explicitly notes archived inclusion and dissolved exclusion in recovery tests. |
+| RY-006 | Multi-page cursor drain recovers backlog exactly once across pages and cursor continuation | One group has more than one inbox page of backlog. | 1. Drain page 1. 2. Continue with cursor. 3. Inspect final history. | Pagination recovers the full retained backlog exactly once without cursor duplication. | P1 | Covered | Required | Required | N/A | Recommended | Recommended | Existing recovery tests already cover multi-page drain and cursor continuation. |
+| RY-007 | Partition heal and delayed delivery converge without duplicates and resume live delivery | Connectivity drops and later heals. | 1. Partition the sender/receiver. 2. Send during partition. 3. Heal. 4. Inspect replay and later live traffic. | Missed backlog replays in order, later live delivery resumes, and duplicate rows do not appear. | P0 | Partial | Required | Required | Recommended | Required | Recommended | Recovery tests include partition-heal behavior, but the inventory still flags no dedicated multi-simulator proof. |
+| RY-008 | Recovery does not burst all joined groups at once | The device belongs to many groups. | 1. Resume or watchdog-recover. 2. Observe recovery fan-out. | Recovery remains bounded and does not create a burst that makes the app look unstable. | P1 | Covered | Recommended | Required | N/A | N/A | N/A | The recovery integration tests already call out multi-group throttle behavior. |
+| RY-009 | Long-offline mixed-window recovery keeps retained backlog, drops expired non-system backlog, still applies old system membership events, and surfaces truthful retention messaging | The device was offline across both retained and expired backlog windows. | 1. Reconnect after a mixed-window gap. 2. Drain replay. 3. Inspect history, member state, banner, and list summary. | Retained backlog is recovered, expired non-system backlog stays gone, old system events still converge final state, and UI messaging stays truthful. | P1 | Covered | Required | Required | N/A | Required | Recommended | Already covered in the current matrix and in recovery tests. |
+| RY-010 | Replay without `GroupMessageListener` or without `reactionRepo` never silently claims full convergence | The app replays backlog in a degraded dependency state. | 1. Drain backlog without listener. 2. Repeat without `reactionRepo`. 3. Inspect group state. | The supported app path either never allows this silently, or it owns and surfaces the degraded convergence contract explicitly. | P1 | Open | Required | Required | N/A | Recommended | N/A | `C4-05` explicitly says system side effects are not replayed without the listener and reactions are skipped without `reactionRepo`. |
+| RY-011 | Invite-accept drain includes offline reactions in the same user-visible catch-up window, or the deferred model is explicitly owned | C accepts a pending invite while reaction backlog already exists. | 1. Accept the invite. 2. Inspect immediate post-accept conversation. 3. Repeat after later global recovery. | The user does not get a silently reaction-less immediate history. If reactions are deferred, that deferral is explicit and later closure is proven. | P1 | Open | Required | Required | N/A | Recommended | Recommended | The audit and current matrix both call out this immediate-catch-up gap. |
+| RY-012 | Invite acceptance that returns `bridgeError` still converges to a live joined group without needing the invite row again | Group persistence succeeds locally but native join times out/errors. | 1. Accept the invite. 2. Force join timeout/error after persistence. 3. Trigger startup/resume/recovery later. | The group is treated as accepted-but-degraded, later rejoin closes the gap promptly, and user-facing state stays honest while waiting. | P1 | Open | Required | Required | N/A | Recommended | Recommended | Explicitly identified by the audit and current matrix. |
+| RY-013 | Offline group replay payloads stored on the relay are opaque to relay operators | Replay uses relay-backed group inbox storage. | 1. Send while peers are offline. 2. Inspect stored relay payload. | Relay storage does not expose plaintext message or membership-event content beyond the intentionally approved minimal wrapper. | P0 | Open | Required | Required | N/A | Required | N/A | The attached docs explicitly state current replay payloads are still plaintext. |
+| RY-014 | Encrypted replay remains seamless for text, replies, image, video, GIF/file, and recorded voice | One or more members are offline and representative content is sent. | 1. Send text, reply, image, video, GIF/file, and voice while someone is offline. 2. Reconnect and drain replay. | Legitimate members recover the same readable conversation with correct metadata, downloads, rendering, and status. | P0 | Open | Required | Required | Required | Required | Required | The audit and current matrix call this out as a required future contract, not yet a landed implementation. |
+| RY-015 | Encrypted replay respects add/remove/leave membership boundaries | Membership changes happen while peers are offline. | 1. Send while B is offline. 2. Add D or remove C or let C leave. 3. Send more. 4. Reconnect peers. | Newly added members do not recover unauthorized older backlog, and removed/departed peers do not decrypt newer replay. | P0 | Open | Required | Required | N/A | Required | Required | This is the membership-window promise implied by the audit and invariants. |
+| RY-016 | Encrypted replay remains reliable through retry, resume, cursor drain, reconnect, and dedupe | Replay still needs all current recovery machinery after encryption hardening. | 1. Store encrypted replay payloads. 2. Trigger retries, resume, pagination, and reconnect. 3. Drain fully. | Encryption does not create a degraded or permanently stuck replay path. Reliability matches the current plaintext replay path. | P0 | Open | Required | Required | Recommended | Required | Required | The current docs treat this as a future parity requirement, not a shipped contract. |
+
+## Multi-Device and Cross-Surface Convergence
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| MD-001 | Same-user live publishes on a sibling device store as local sent history without duplicate unread or notification confusion | The same user is joined on two devices. | 1. Send from device 1. 2. Inspect device 2 history, unread state, and notifications. | Device 2 stores the row as local sent history and does not behave like a second independent recipient. | P1 | Covered | Required | Required | N/A | N/A | Recommended | Multi-device convergence tests already cover same-user sent-history behavior. |
+| MD-002 | Membership updates converge across sibling devices without duplicate local membership or role drift | The same user is joined on two devices and membership changes occur. | 1. Add/remove/promote/demote. 2. Inspect both devices. | Both devices converge to the same authoritative membership and role map without duplicate self rows. | P1 | Covered | Required | Required | N/A | N/A | Recommended | Explicitly covered by multi-device convergence tests. |
+| MD-003 | Mute, unread, and local notifications stay device-local across sibling devices | The same user is joined on two devices. | 1. Mute on device 1. 2. Read/clear on device 1. 3. Inspect device 2. | Device-local state remains device-local while shared group state stays shared. | P1 | Covered | Required | Required | N/A | N/A | Recommended | Called out directly in the multi-device convergence tests. |
+| MD-004 | True device/simulator multi-device E2E proves sibling-device behavior beyond in-memory fakes | The repo claims multi-device convergence. | 1. Run the same-user multi-device flows on real simulators/devices. 2. Compare with in-memory results. | The multi-device contract is proven outside the in-memory fake stack. | P1 | Open | N/A | Recommended | N/A | N/A | Required | `test-inventory.md` explicitly calls out true multi-device E2E as missing. |
+| MD-005 | Message-level behavior stays consistent when entering the same group from `Orbit`, `Feed`, or push | The same group is reachable through several surfaces. | 1. Open from `Orbit`. 2. Open from `Feed`. 3. Open from push. | The conversation surface honors the same message-action, reaction, and notification-anchor contract in all cases. | P1 | Partial | N/A | Required | N/A | N/A | Recommended | The audit explicitly requires entry-point parity, but direct proof is incomplete. |
+| MD-006 | Group-message and group-invite push routes navigate to the correct surface | The device receives both group-message and group-invite pushes. | 1. Open a group-message push. 2. Open a group-invite push. | Group-message push opens the group route. Group-invite push opens the review surface. | P1 | Covered | N/A | Required | N/A | N/A | N/A | Current notification-route and push-navigation tests already cover the mapping. |
+
+## Security, Validator, Bridge-Contract, and Observability
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| SV-001 | Only current members can publish discussion messages; unauthorized peers do not create visible rows | X is not a current member. | 1. X attempts raw publish or forged membership event. 2. Inspect recipients. | Unauthorized traffic is rejected and creates no visible group message. | P0 | Covered | Required | Required | N/A | Recommended | Recommended | The validator and membership-smoke coverage together already prove the membership gate story. |
+| SV-002 | Announcement readers cannot bypass write restrictions via stale callbacks or raw publish | B is a non-admin reader in an announcement group. | 1. Attempt compose through stale UI or raw send path. 2. Inspect recipients. | Reader writes remain blocked and no ghost announcement appears. | P0 | Covered | Required | Required | N/A | Recommended | Recommended | The current tests already cover read-only mode plus stale callback protection. |
+| SV-003 | Removed members are only accepted for delayed pre-cutoff traffic, not post-cutoff traffic | A member was removed and delayed traffic is possible. | 1. Deliver a pre-cutoff delayed envelope. 2. Deliver a post-cutoff one. | Pre-cutoff delayed traffic is handled correctly; post-cutoff traffic is rejected. | P0 | Covered | Required | Required | N/A | Recommended | Recommended | Directly covered in incoming-message and resume-recovery tests. |
+| SV-004 | Replay attack with tampered timestamps or reordered envelopes does not create duplicate visible messages or bypass cutoffs | X replays old traffic with altered sequencing hints. | 1. Replay duplicates with changed order or timestamps. 2. Inspect rows and cutoffs. | Replay does not create a second visible row or bypass removal/dissolve boundaries. | P1 | Open | Required | Recommended | N/A | Recommended | N/A | `test-inventory.md` explicitly calls this out as a security coverage gap. |
+| SV-005 | Tampered payload, wrong key, tampered nonce, or tampered ciphertext creates no visible message and yields diagnosable rejection | The device receives malformed encrypted group traffic. | 1. Deliver tampered ciphertext, nonce, or wrong-key payload. 2. Inspect UI and diagnostics. | The message is rejected, no ghost row is created, and the failure is observable in the owned diagnostic path. | P1 | Partial | Required | Recommended | N/A | Recommended | N/A | Go-side crypto coverage exists, but the inventory still notes missing dedicated group-message app-level rejection proof. |
+| SV-006 | Previous-key grace during rotation accepts legitimate in-flight traffic without reopening indefinite stale-key access | A key rotation happens while some traffic is still in flight. | 1. Rotate key. 2. Deliver one legitimate in-flight old-epoch message within grace. 3. Deliver stale traffic outside the valid window. | Legitimate in-flight traffic survives the grace window, but indefinite stale-key acceptance does not. | P1 | Open | Required | Recommended | N/A | Recommended | N/A | `C4-03` documents current-or-previous-key grace behavior, but the attached inventory does not show this pinned as a direct user-visible contract. |
+| SV-007 | Concurrent key-rotation races across admins converge to one final usable epoch | More than one admin can trigger rotation-relevant changes. | 1. Trigger competing rotation activity. 2. Inspect final key state and sendability. | The group ends with one usable epoch and does not split into incompatible key truth. | P1 | Open | Required | Recommended | N/A | Recommended | Recommended | The inventory explicitly calls out key-rotation race coverage as missing. |
+| SV-008 | Concurrent remove/promote or remove/rotate conflicts converge to one final visible member/admin map and usable key state | Membership and role changes race. | 1. Race remove/promote or remove/rotate. 2. Inspect final state on all peers. | The final state is deterministic, visible, and still usable for later sends. | P1 | Partial | Required | Required | N/A | Recommended | Recommended | Some convergence coverage exists today, but not the full stress space. |
+| SV-009 | Description pass-through between Dart and Go is explicit and tested if create-time description is supported | The product claims create-time description support. | 1. Create with description. 2. Inspect persisted group, invites, and join state. | Description either round-trips correctly or the capability remains explicitly unsupported. | P2 | Open | Required | Recommended | N/A | N/A | N/A | `test-inventory.md` explicitly flags description pass-through as a Go/Dart boundary gap. |
+| SV-010 | Topic namespace / `topicName` contract between Go and Dart is explicit and tested | The group create bridge response is inspected. | 1. Create group. 2. Compare bridge response, persisted topic name, and real joined namespace. | Dart and Go agree on the canonical topic namespace. | P1 | Open | Required | Recommended | N/A | N/A | N/A | Explicitly called out by `C4-01` and the test inventory. |
+| SV-011 | Flow-event names and payload shapes for group timing/recovery/retry observability are pinned | The repo emits group-specific flow events. | 1. Trigger send, rejoin, retry, and drain flows. 2. Inspect emitted event names and payloads. | Observability contracts are stable enough that regressions are catchable. | P2 | Open | Required | Recommended | N/A | N/A | N/A | `test-inventory.md` explicitly calls out missing flow-event contract inventory coverage. |
+| SV-012 | Native dispatcher overflow or dropped diagnostics are surfaced to monitoring instead of remaining silent | The native dispatcher reaches overflow conditions. | 1. Flood the dispatcher. 2. Inspect monitoring and diagnostics. | Event loss or diagnostic loss does not remain silent. | P2 | Open | Required | Recommended | N/A | Recommended | N/A | This follows from the bounded-dispatcher behavior documented in `C4-03`. |
+
+## Quality-of-Life and Higher-Level Product Capabilities
+
+| Test ID | Scenario | Preconditions | Steps | Expected Result | Priority | Current status | Unit | Integration | Smoke | Fake Network | 3-Party E2E | Notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| UX-001 | Per-group mute suppresses notifications without dropping delivery | B is an active member and has muted the group. | 1. B mutes the group. 2. A sends new messages. | Messages still arrive and unread state stays truthful, but B receives no group notifications while mute is active. | P1 | Covered | Required | Required | N/A | N/A | Required | Strong current coverage already exists for mute behavior. |
+| UX-002 | Dissolving the group keeps history readable but blocks further writing | A is allowed to dissolve the group. | 1. A dissolves the group. 2. Members reopen it later. | History remains readable per current product policy, but the group is clearly read-only and no one can keep sending. | P1 | Covered | Required | Required | N/A | Recommended | Required | Already covered in dissolve and membership/replay tests. |
+| UX-003 | Search inside group history works if the feature exists | Group has enough message history to search. | 1. Search for known terms. 2. Open a result. | Search returns relevant group results and opens the intended context. | P2 | Unsupported | Required | Required | N/A | N/A | Recommended | The audit and inventory both say group search is not landed. |
+| UX-004 | Pinning and unpinning important messages works if the feature exists | Group has at least one pin-eligible message. | 1. Pin. 2. Reopen. 3. Unpin. | Pinned state is visible and reversible. | P2 | Unsupported | Required | Required | N/A | Recommended | Recommended | Not landed according to the audit. |
+| UX-005 | Per-message edit, delete, or tombstone works if the feature exists | The group contains an eligible message. | 1. Edit or delete a message. 2. Observe sender and recipients. | The row transitions predictably and recipients converge on the same visible result. | P2 | Unsupported | Required | Required | N/A | Recommended | Recommended | Not landed according to the audit. |
+| UX-006 | Read receipts or reader counts work if the feature exists | The group has readers and a sent message. | 1. Send. 2. Read on some peers. | Reader state is truthful and privacy-aware. | P2 | Unsupported | Required | Required | N/A | Recommended | Recommended | Not landed according to the audit. |
+| UX-007 | Member-level moderation such as mute or ban works if the feature exists | Group has admin and target member. | 1. Admin moderates target. 2. Observe send/read behavior. | The moderated member sees the correct restriction and the rest of the group converges on the same policy. | P2 | Unsupported | Required | Required | N/A | Recommended | Required | Not landed according to the audit. |
+| UX-008 | Scheduled announcements, edit-after-send, delete-after-send, or analytics work if the feature exists | Announcement tooling exists. | 1. Schedule or edit an announcement. 2. Observe readers later. | The behavior is predictable, auditable, and consistent. | P2 | Unsupported | Required | Required | N/A | Recommended | Required | Not landed according to the audit. |
+| UX-009 | End-to-end push trigger path for group message and group invite is verified on real device if push is in scope | The product claims push for group message and group invite. | 1. Trigger a real group-message push. 2. Trigger a real group-invite push. 3. Inspect device behavior. | Real push delivery matches the already-tested route mapping. | P1 | Open | N/A | Recommended | N/A | N/A | Required | The inventory says routing is tested but full FCM/APNs trigger delivery is not. |
+| UX-010 | Share-target picker shows only writable groups and respects announcement read-only filtering | The user opens the share surface with groups available. | 1. Open share target picker. 2. Inspect visible groups. 3. Try sending. | Only writable groups appear, and announcement-reader groups stay excluded. | P1 | Covered | Required | Recommended | N/A | N/A | N/A | Explicitly covered by cross-feature share tests in the inventory. |
+
+## Recommended smoke suite
+
+### Smoke suite for the **current shipped surface**
+
+Use these as the smallest trustworthy release gate for what the repo already claims today:
+
+- **DV-001** — create discussion group successfully
+- **DV-002** — create announcement group successfully with admin-only compose
+- **DV-005** — invite decline / expiry leaves no ghost membership
+- **DV-006** — removing a member updates lists and creates a durable removal event
+- **MM-001** — discussion members can send text, media, replies, and reactions
+- **MM-002** — announcement groups enforce admin-only compose while readers still see and react
+- **MM-006** — sender-facing state machine stays honest across publish / inbox branches
+- **MM-010** — sends survive background, unmount, and zero-peer fallback
+- **RC-001** — live + replay dedupe prevents duplicate visible rows
+- **RY-001** — cold-start rejoin and drain re-establish live delivery exactly once
+- **RY-009** — mixed-window recovery keeps retained backlog and truthful retention messaging
+- **UX-001** — mute suppresses notifications without dropping delivery
+
+### Smoke suite for the **target trust-complete surface**
+
+Use these before claiming the feature is fully trustworthy for broad rollout:
+
+- **CB-005** — no ghost membership after config/publish failure
+- **CB-008** — create never succeeds into locally keyless state
+- **DV-003** — add-members durable timeline
+- **DV-004** — invite-accept durable join / acceptance timeline
+- **DV-008** — voluntary leave durable timeline
+- **DV-013** — partial invite fan-out result is explicit
+- **DV-014** — local-only add with no key is explicit
+- **ID-001** — creator/admin username backfill
+- **CX-001** — coherent long-press surface
+- **CX-005** — local-only long-press actions survive when reactions are unavailable
+- **UI-001** — single-shell message rendering
+- **RX-001** — reaction participant inspection
+- **RX-002** — inspection is non-destructive
+- **RY-010** — replay without listener / `reactionRepo` cannot silently claim full convergence
+- **RY-011** — invite-accept replay includes reactions or explicitly owns deferral
+- **RY-012** — invite-accept `bridgeError` later converges
+- **RY-013** — relay replay payloads are opaque
+- **RY-014** — encrypted replay parity for text/media/voice
+- **RY-015** — membership-bound encrypted replay access
+- **SV-004** — replay-attack resistance
+- **SV-005** — tampered group payload rejection
+- **SV-007** — key-rotation race convergence
+- **SV-010** — topic namespace bridge contract
+
+## Notes for implementation
+
+- For every membership row, assert both **structural truth** and **human-visible truth**. A member list change without a readable timeline event is still a trust gap.
+- Do not collapse voluntary-leave broadcasting into generic cleanup by default. `leaveGroup()` is reused for remote cleanup too, so naïve broadcasting can create false `left the group` rows.
+- For long-press parity, separate UI-host scope from transport scope. Selected-message preview, reply entry, copy, and action ordering are mostly UI-host concerns.
+- For reaction transparency, keep **inspection** and **mutation** as distinct user-visible contracts.
+- For cross-surface rows, do not assume a fix in `GroupConversationWired` automatically proves the inline `Feed` card contract.
+- For create-time degradation rows, do not allow “group created” to silently imply “all selected recipients were onboarded.”
+- For bootstrap rows, prove that create either persists usable local key state or fails honestly.
+- For retry-owner rows, prove which retry job owns the branch. Do not rely on accidental later convergence.
+- For invite-accept replay rows, prove the **first** user-visible catch-up window, not only eventual later recovery.
+- For invite-accept `bridgeError`, do not overclaim permanent orphaning. The required proof is narrower: accepted-but-degraded state must later converge through owned recovery or an explicit retry path.
+- For replay/privacy rows, inspect the actual stored relay payload or bridge request shape, not only the UI outcome.
+- For encrypted replay, prove both privacy and continuity across text, quote, image, video, GIF/file, and recorded voice.
+- For non-friend rows, prove both transport behavior and surface behavior. It is not enough for delivery to work if identity surfaces still look broken.
+- For UI-shell rows, add visual or golden-style proof rather than only logical content proof.
+- For rows marked **Unsupported**, keep them explicitly unsupported until product scope changes instead of silently converting them into implied bugs.
+
+## Suggested implementation order for gap closure
+
+1. **Truth-first visibility**
+   - DV-003
+   - DV-004
+   - DV-008
+   - ID-001
+   - UI-001
+
+2. **Action-surface coherence**
+   - CX-001
+   - CX-002
+   - CX-003
+   - CX-005
+   - RX-001
+   - RX-002
+
+3. **Bootstrap and onboarding correctness**
+   - CB-005
+   - CB-008
+   - DV-013
+   - DV-014
+
+4. **Invite-accept and replay convergence**
+   - RY-010
+   - RY-011
+   - RY-012
+
+5. **Privacy and adversarial correctness**
+   - RY-013
+   - RY-014
+   - RY-015
+   - SV-004
+   - SV-005
+   - SV-007
+   - SV-010

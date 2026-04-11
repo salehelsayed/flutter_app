@@ -470,12 +470,14 @@ void main() {
     });
 
     test(
-      'returns editMissingOriginal when edit has no stored original',
+      'stores a hidden placeholder when edit has no stored original',
       () async {
         final message = buildP2PMessage(
           buildValidChatJson(
+            text: 'Edited text',
             action: MessagePayload.actionEdit,
             editedAt: '2026-02-09T16:00:00.000Z',
+            quotedMessageId: 'quoted-001',
           ),
         );
 
@@ -487,7 +489,96 @@ void main() {
 
         expect(result, HandleChatMessageResult.editMissingOriginal);
         expect(msg, isNull);
-        expect(messageRepo.saved, isEmpty);
+        expect(messageRepo.saved, hasLength(1));
+        final placeholder = messageRepo.saved.single;
+        expect(placeholder.id, 'msg-uuid-001');
+        expect(placeholder.text, 'Edited text');
+        expect(placeholder.isHidden, isTrue);
+        expect(placeholder.isDeleted, isFalse);
+        expect(placeholder.editedAt, '2026-02-09T16:00:00.000Z');
+        expect(placeholder.quotedMessageId, 'quoted-001');
+      },
+    );
+
+    test(
+      'materializes a hidden staged edit when the original arrives later',
+      () async {
+        await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(
+              text: 'Edited text',
+              action: MessagePayload.actionEdit,
+              editedAt: '2026-02-09T16:00:00.000Z',
+              quotedMessageId: 'quoted-001',
+            ),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final placeholderCreatedAt = messageRepo.saved.single.createdAt;
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(
+              text: 'Original text',
+              quotedMessageId: 'quoted-001',
+            ),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(msg, isNotNull);
+        expect(msg!.id, 'msg-uuid-001');
+        expect(msg.text, 'Edited text');
+        expect(msg.isHidden, isFalse);
+        expect(msg.isDeleted, isFalse);
+        expect(msg.editedAt, '2026-02-09T16:00:00.000Z');
+        expect(msg.quotedMessageId, 'quoted-001');
+        expect(msg.timestamp, '2026-02-09T15:30:00.000Z');
+        expect(msg.createdAt, placeholderCreatedAt);
+        expect(messageRepo.saved, hasLength(2));
+        expect(messageRepo.saved.last.isHidden, isFalse);
+      },
+    );
+
+    test(
+      'late originals do not resurrect an already deleted incoming row',
+      () async {
+        const deletedPlaceholder = ConversationMessage(
+          id: 'msg-uuid-001',
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: '',
+          timestamp: '2026-02-09T16:05:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T16:05:01.000Z',
+          deletedAt: '2026-02-09T16:05:00.000Z',
+          deletedByPeerId: senderPeerId,
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-uuid-001': deletedPlaceholder},
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(text: 'Original text that should stay deleted'),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.duplicate);
+        expect(msg, isNull);
+        expect(messageRepo.saved, hasLength(1));
+        final stored = messageRepo.saved.single;
+        expect(stored.isDeleted, isTrue);
+        expect(stored.text, isEmpty);
+        expect(stored.timestamp, '2026-02-09T15:30:00.000Z');
+        expect(stored.deletedAt, '2026-02-09T16:05:00.000Z');
+        expect(stored.deletedByPeerId, senderPeerId);
       },
     );
 
@@ -530,6 +621,180 @@ void main() {
       expect(msg.quotedMessageId, original.quotedMessageId);
       expect(msg.editedAt, '2026-02-09T16:00:00.000Z');
       expect(messageRepo.saved.single.text, 'Edited text');
+    });
+
+    test(
+      'rejects edits when the envelope sender mismatches the payload sender',
+      () async {
+        const original = ConversationMessage(
+          id: 'msg-uuid-001',
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'Original text',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-uuid-001': original},
+        );
+        final message = ChatMessage(
+          from: 'mismatched-envelope-sender',
+          to: 'my-peer',
+          content: buildValidChatJson(
+            text: 'Edited text',
+            action: MessagePayload.actionEdit,
+            editedAt: '2026-02-09T16:00:00.000Z',
+          ),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.unauthorized);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+        expect(
+          (await messageRepo.getMessage('msg-uuid-001'))!.text,
+          'Original text',
+        );
+      },
+    );
+
+    test(
+      'rejects edits from a sender who did not author the original row',
+      () async {
+        const original = ConversationMessage(
+          id: 'msg-uuid-001',
+          contactPeerId: senderPeerId,
+          senderPeerId: 'different-author',
+          text: 'Original text',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-uuid-001': original},
+        );
+        final message = buildP2PMessage(
+          buildValidChatJson(
+            text: 'Edited text',
+            action: MessagePayload.actionEdit,
+            editedAt: '2026-02-09T16:00:00.000Z',
+          ),
+        );
+
+        final (result, msg, _) = await handleIncomingChatMessage(
+          message: message,
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleChatMessageResult.unauthorized);
+        expect(msg, isNull);
+        expect(messageRepo.saved, isEmpty);
+        expect(
+          (await messageRepo.getMessage('msg-uuid-001'))!.text,
+          'Original text',
+        );
+      },
+    );
+
+    test(
+      'ignores duplicate and stale edits once a newer edit is already stored',
+      () async {
+        const original = ConversationMessage(
+          id: 'msg-uuid-001',
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: 'Newest text',
+          timestamp: '2026-02-09T15:30:00.000Z',
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: '2026-02-09T15:30:01.000Z',
+          editedAt: '2026-02-09T16:00:00.000Z',
+        );
+        messageRepo = FakeMessageRepository(
+          existingMessages: {'msg-uuid-001': original},
+        );
+
+        final duplicate = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(
+              text: 'Duplicate newest text',
+              action: MessagePayload.actionEdit,
+              editedAt: '2026-02-09T16:00:00.000Z',
+            ),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final stale = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(
+              text: 'Older text',
+              action: MessagePayload.actionEdit,
+              editedAt: '2026-02-09T15:59:00.000Z',
+            ),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(duplicate.$1, HandleChatMessageResult.ignoredEdit);
+        expect(stale.$1, HandleChatMessageResult.ignoredEdit);
+        expect(messageRepo.saved, isEmpty);
+
+        final stored = await messageRepo.getMessage('msg-uuid-001');
+        expect(stored, isNotNull);
+        expect(stored!.text, 'Newest text');
+        expect(stored.editedAt, '2026-02-09T16:00:00.000Z');
+      },
+    );
+
+    test('ignores late edits for messages that are already deleted', () async {
+      const original = ConversationMessage(
+        id: 'msg-uuid-001',
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: '',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-02-09T15:30:01.000Z',
+        deletedAt: '2026-02-09T16:05:00.000Z',
+        deletedByPeerId: senderPeerId,
+      );
+      messageRepo = FakeMessageRepository(
+        existingMessages: {'msg-uuid-001': original},
+      );
+
+      final (result, msg, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(
+          buildValidChatJson(
+            text: 'Resurrected text',
+            action: MessagePayload.actionEdit,
+            editedAt: '2026-02-09T16:06:00.000Z',
+          ),
+        ),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+      );
+
+      expect(result, HandleChatMessageResult.ignoredEdit);
+      expect(msg, isNull);
+      expect(messageRepo.saved, isEmpty);
+      final stored = await messageRepo.getMessage('msg-uuid-001');
+      expect(stored, isNotNull);
+      expect(stored!.isDeleted, isTrue);
+      expect(stored.text, isEmpty);
     });
 
     group('v2 encrypted envelopes', () {
@@ -617,6 +882,40 @@ void main() {
           isFalse,
         );
       });
+
+      test(
+        'rejects edit payloads when encrypted envelope sender mismatches decrypted payload sender',
+        () async {
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': true,
+              'plaintext': jsonEncode({
+                'id': 'msg-uuid-001',
+                'text': 'Edited text',
+                'senderPeerId': senderPeerId,
+                'senderUsername': 'Alice',
+                'timestamp': '2026-02-09T15:30:00.000Z',
+                'action': 'edit',
+                'editedAt': '2026-02-09T16:00:00.000Z',
+              }),
+            };
+          final message = buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(senderId: 'different-envelope-sender'),
+          );
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+          );
+
+          expect(result, HandleChatMessageResult.unauthorized);
+          expect(msg, isNull);
+          expect(messageRepo.saved, isEmpty);
+        },
+      );
 
       test(
         'decrypts v2 envelope and persists message for known contact',
@@ -756,7 +1055,7 @@ void main() {
         buildValidChatJson(id: 'msg-log-001', text: 'Incoming log text'),
       );
 
-      final lines = await capturePrintedLines(() async {
+      final lines = await captureDebugPrintedLines(() async {
         await handleIncomingChatMessage(
           message: message,
           messageRepo: messageRepo,

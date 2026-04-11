@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
@@ -43,8 +44,14 @@ class ShareBatchTargetResult {
 
 class ShareBatchDeliveryResult {
   final List<ShareBatchTargetResult> results;
+  final int skippedOversizedGifCount;
+  final String? skippedOversizedGifReason;
 
-  const ShareBatchDeliveryResult({required this.results});
+  const ShareBatchDeliveryResult({
+    required this.results,
+    this.skippedOversizedGifCount = 0,
+    this.skippedOversizedGifReason,
+  });
 
   int get sentCount => results
       .where((result) => result.status == ShareBatchTargetStatus.sent)
@@ -62,6 +69,8 @@ class ShareBatchDeliveryResult {
 
   bool get hasCompletions => sentCount + queuedCount > 0;
 
+  bool get hasSkippedOversizedGifs => skippedOversizedGifCount > 0;
+
   Set<String> get failedTargetKeys => results
       .where((result) => result.status == ShareBatchTargetStatus.failed)
       .map((result) => result.target.key)
@@ -76,7 +85,19 @@ abstract class ShareBatchDeliveryCoordinator {
 }
 
 typedef ProcessSharedMediaFn =
-    Future<List<PendingComposerMedia>> Function(ShareIntent shareIntent);
+    Future<ProcessedShareMediaBatch> Function(ShareIntent shareIntent);
+
+class ProcessedShareMediaBatch {
+  final List<PendingComposerMedia> processedMedia;
+  final int skippedOversizedGifCount;
+  final String? skippedOversizedGifReason;
+
+  const ProcessedShareMediaBatch({
+    required this.processedMedia,
+    this.skippedOversizedGifCount = 0,
+    this.skippedOversizedGifReason,
+  });
+}
 
 typedef SendToContactFn =
     Future<ShareBatchTargetResult> Function({
@@ -154,9 +175,10 @@ class DefaultShareBatchDeliveryCoordinator
       );
     }
 
-    final processedMedia = await (processSharedMediaFn ?? _processSharedMedia)(
+    final processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
       shareIntent,
     );
+    final processedMedia = processedBatch.processedMedia;
     final results = <ShareBatchTargetResult>[];
 
     for (final target in targets) {
@@ -178,21 +200,30 @@ class DefaultShareBatchDeliveryCoordinator
       results.add(result);
     }
 
-    return ShareBatchDeliveryResult(results: results);
+    return ShareBatchDeliveryResult(
+      results: results,
+      skippedOversizedGifCount: processedBatch.skippedOversizedGifCount,
+      skippedOversizedGifReason: processedBatch.skippedOversizedGifReason,
+    );
   }
 
-  Future<List<PendingComposerMedia>> _processSharedMedia(
+  Future<ProcessedShareMediaBatch> _processSharedMedia(
     ShareIntent shareIntent,
   ) async {
     if (!shareIntent.hasFiles) {
-      return const [];
+      return const ProcessedShareMediaBatch(processedMedia: []);
     }
 
     final processed = <PendingComposerMedia>[];
+    var skippedOversizedGifCount = 0;
     for (final path in shareIntent.filePaths) {
       try {
         final file = File(path);
         if (!file.existsSync()) {
+          continue;
+        }
+        if (_isOversizedGif(path, file)) {
+          skippedOversizedGifCount++;
           continue;
         }
         processed.add(
@@ -208,13 +239,23 @@ class DefaultShareBatchDeliveryCoordinator
         if (!file.existsSync()) {
           continue;
         }
+        if (_isOversizedGif(path, file)) {
+          skippedOversizedGifCount++;
+          continue;
+        }
         processed.add(
           PendingComposerMedia(file: file, budgetBytes: file.lengthSync()),
         );
       }
     }
 
-    return processed;
+    return ProcessedShareMediaBatch(
+      processedMedia: processed,
+      skippedOversizedGifCount: skippedOversizedGifCount,
+      skippedOversizedGifReason: skippedOversizedGifCount > 0
+          ? 'GIF files over 25 MB were skipped.'
+          : null,
+    );
   }
 
   Future<ShareBatchTargetResult> _sendToContact({
@@ -417,6 +458,13 @@ class DefaultShareBatchDeliveryCoordinator
       await callBgEnd(bridge, bgTaskId);
     }
   }
+}
+
+bool _isOversizedGif(String path, File file) {
+  if (_mimeFromPath(path) != 'image/gif') {
+    return false;
+  }
+  return file.lengthSync() > kMaxGifFileSize;
 }
 
 String _mimeFromPath(String path) {

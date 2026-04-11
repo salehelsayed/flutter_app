@@ -5,10 +5,11 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 
-MediaAttachment _attachment(String mediaType) => MediaAttachment(
+MediaAttachment _attachment(String mediaType, {String? mime}) => MediaAttachment(
   id: 'attach-1',
   messageId: 'msg-1',
-  mime: switch (mediaType) {
+  mime: mime ??
+      switch (mediaType) {
     'image' => 'image/jpeg',
     'video' => 'video/mp4',
     'audio' => 'audio/aac',
@@ -66,6 +67,13 @@ void main() {
       expect(notificationBodyForMessage('', [_attachment('image')]), 'Photo');
     });
 
+    test('returns GIF for GIF-only message', () {
+      expect(
+        notificationBodyForMessage('', [_attachment('image', mime: 'image/gif')]),
+        'GIF',
+      );
+    });
+
     // --- video-only ---
 
     test('returns Video for video-only message', () {
@@ -105,6 +113,16 @@ void main() {
       );
     });
 
+    test('returns Photo for mixed GIF and photo attachments', () {
+      expect(
+        notificationBodyForMessage('', [
+          _attachment('image', mime: 'image/gif'),
+          _attachment('image'),
+        ]),
+        'Photo',
+      );
+    });
+
     test('returns Media for mixed image and video attachments', () {
       expect(
         notificationBodyForMessage('', [
@@ -136,6 +154,13 @@ void main() {
     test('group image-only message body is "Alice: Photo"', () {
       final body = notificationBodyForMessage('', [_attachment('image')]);
       expect('Alice: $body', 'Alice: Photo');
+    });
+
+    test('group GIF-only message body is "Alice: GIF"', () {
+      final body = notificationBodyForMessage('', [
+        _attachment('image', mime: 'image/gif'),
+      ]);
+      expect('Alice: $body', 'Alice: GIF');
     });
 
     test('group audio-only message body is "Alice: Voice message"', () {
@@ -170,6 +195,25 @@ void main() {
 
       expect(notificationService.shown, hasLength(1));
       expect(notificationService.shown.first.messageText, 'Photo');
+    });
+
+    test('gif-only 1:1 message shows "GIF" as notification body', () async {
+      final notificationService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        messageText: notificationBodyForMessage('', [
+          _attachment('image', mime: 'image/gif'),
+        ]),
+      );
+
+      expect(notificationService.shown, hasLength(1));
+      expect(notificationService.shown.first.messageText, 'GIF');
     });
 
     test(

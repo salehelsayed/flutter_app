@@ -12,6 +12,7 @@ class IntroRow extends StatelessWidget {
   final String displayUsername;
   final String? displayPeerId;
   final bool showActions;
+  final bool isProcessing;
   final VoidCallback? onAccept;
   final VoidCallback? onPass;
   final IntroductionStatus? ownPartyStatus;
@@ -25,6 +26,7 @@ class IntroRow extends StatelessWidget {
     required this.displayUsername,
     this.displayPeerId,
     required this.showActions,
+    this.isProcessing = false,
     this.onAccept,
     this.onPass,
     this.ownPartyStatus,
@@ -36,10 +38,7 @@ class IntroRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final introducerUsername = introduction.introducerUsername ?? 'someone';
-    const attributionStyle = TextStyle(
-      fontSize: 12,
-      color: Color(0x66FFFFFF),
-    );
+    const attributionStyle = TextStyle(fontSize: 12, color: Color(0x66FFFFFF));
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -72,10 +71,7 @@ class IntroRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Row(
                   children: [
-                    const Text(
-                      'Introduced by',
-                      style: attributionStyle,
-                    ),
+                    const Text('Introduced by', style: attributionStyle),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
@@ -100,18 +96,19 @@ class IntroRow extends StatelessWidget {
               children: [
                 // Pass button
                 _ActionButton(
+                  buttonKey: ValueKey('intro-pass-${introduction.id}'),
                   label: 'Pass',
-                  onTap: onPass,
-                  backgroundColor: const Color(0x14FFFFFF),
-                  textColor: const Color(0x99FFFFFF),
+                  onTap: isProcessing ? null : onPass,
+                  isPrimary: false,
                 ),
                 const SizedBox(width: 8),
                 // Accept button
                 _ActionButton(
-                  label: 'Accept',
-                  onTap: onAccept,
-                  backgroundColor: const Color(0xFF1DB954),
-                  textColor: Colors.black,
+                  buttonKey: ValueKey('intro-accept-${introduction.id}'),
+                  label: isProcessing ? 'Accepting...' : 'Accept',
+                  onTap: isProcessing ? null : onAccept,
+                  isPrimary: true,
+                  isProcessing: isProcessing,
                 ),
               ],
             )
@@ -120,7 +117,8 @@ class IntroRow extends StatelessWidget {
               'Unavailable',
               style: TextStyle(fontSize: 11, color: Color(0x66FFFFFF)),
             )
-          else if (introduction.status == IntroductionOverallStatus.mutualAccepted)
+          else if (introduction.status ==
+              IntroductionOverallStatus.mutualAccepted)
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -130,7 +128,10 @@ class IntroRow extends StatelessWidget {
                   GestureDetector(
                     onTap: onSendMessage,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFF1DB954),
                         borderRadius: BorderRadius.circular(8),
@@ -149,7 +150,7 @@ class IntroRow extends StatelessWidget {
               ],
             )
           else if (ownPartyStatus == IntroductionStatus.accepted &&
-                   introduction.status == IntroductionOverallStatus.pending)
+              introduction.status == IntroductionOverallStatus.pending)
             Text(
               'Waiting for ${waitingForUsername ?? 'them'}',
               style: const TextStyle(fontSize: 11, color: Color(0x66FFFFFF)),
@@ -164,36 +165,66 @@ class IntroRow extends StatelessWidget {
 
 class _ActionButton extends StatelessWidget {
   final String label;
+  final Key? buttonKey;
+  final bool isPrimary;
+  final bool isProcessing;
   final VoidCallback? onTap;
-  final Color backgroundColor;
-  final Color textColor;
 
   const _ActionButton({
     required this.label,
+    this.buttonKey,
+    required this.isPrimary,
     required this.onTap,
-    required this.backgroundColor,
-    required this.textColor,
+    this.isProcessing = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(8),
+    final child = isProcessing && isPrimary
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(label),
+            ],
+          )
+        : Text(label);
+
+    if (isPrimary) {
+      return FilledButton(
+        key: buttonKey,
+        onPressed: onTap,
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, 40),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          backgroundColor: const Color(0xFF1DB954),
+          foregroundColor: Colors.black,
+          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: textColor,
-          ),
-        ),
+        child: child,
+      );
+    }
+
+    return OutlinedButton(
+      key: buttonKey,
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(0, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        foregroundColor: const Color(0x99FFFFFF),
+        side: const BorderSide(color: Color(0x1FFFFFFF)),
+        backgroundColor: const Color(0x14FFFFFF),
+        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
       ),
+      child: child,
     );
   }
 }

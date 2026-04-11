@@ -66,6 +66,8 @@ class TestUser {
     required String username,
     required FakeP2PNetwork network,
     MediaAttachmentRepository? mediaAttachmentRepo,
+    InMemoryMessageRepository? messageRepo,
+    InMemoryContactRepository? contactRepo,
     Bridge? bridge,
     Future<String?> Function()? getOwnMlKemSecretKey,
     bool withReactions = false,
@@ -74,8 +76,8 @@ class TestUser {
   }) {
     final effectiveBridge = bridge ?? PassthroughCryptoBridge();
     final p2p = FakeP2PService(peerId: peerId, network: network);
-    final msgRepo = InMemoryMessageRepository();
-    final contactRepo = InMemoryContactRepository();
+    final msgRepo = messageRepo ?? InMemoryMessageRepository();
+    final contactsRepo = contactRepo ?? InMemoryContactRepository();
 
     // When withReactions, use IncomingMessageRouter to split streams
     IncomingMessageRouter? router;
@@ -91,8 +93,9 @@ class TestUser {
         reactionRepo = FakeReactionRepository();
         reactionListener = ReactionListener(
           reactionStream: router.reactionStream,
+          messageRepo: msgRepo,
           reactionRepo: reactionRepo,
-          contactRepo: contactRepo,
+          contactRepo: contactsRepo,
           bridge: effectiveBridge,
           getOwnMlKemSecretKey:
               getOwnMlKemSecretKey ?? () async => 'test-own-mlkem-sk',
@@ -102,7 +105,7 @@ class TestUser {
         messageDeletionListener = MessageDeletionListener(
           deletionStream: router.messageDeletionStream,
           messageRepo: msgRepo,
-          contactRepo: contactRepo,
+          contactRepo: contactsRepo,
           reactionRepo: reactionRepo,
           mediaAttachmentRepo: mediaAttachmentRepo,
           bridge: effectiveBridge,
@@ -117,7 +120,7 @@ class TestUser {
     final listener = ChatMessageListener(
       chatMessageStream: chatStream,
       messageRepo: msgRepo,
-      contactRepo: contactRepo,
+      contactRepo: contactsRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
       bridge: effectiveBridge,
       getOwnMlKemSecretKey:
@@ -129,7 +132,7 @@ class TestUser {
       username: username,
       p2pService: p2p,
       messageRepo: msgRepo,
-      contactRepo: contactRepo,
+      contactRepo: contactsRepo,
       chatListener: listener,
       bridge: effectiveBridge,
       mediaAttachmentRepo: mediaAttachmentRepo,

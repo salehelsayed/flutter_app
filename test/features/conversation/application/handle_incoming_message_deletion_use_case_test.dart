@@ -171,6 +171,81 @@ void main() {
       },
     );
 
+    test(
+      'blocked sender delete still tombstones an already stored authored message',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        await contactRepo.blockContact('peer-alice');
+
+        final original = makeMessage(
+          id: 'msg-1',
+          contactPeerId: 'peer-alice',
+          senderPeerId: 'peer-alice',
+        );
+        messageRepo.seed([original]);
+
+        final payload = MessageDeletionPayload(
+          messageId: 'msg-1',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: payload.toJson(),
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(result, HandleMessageDeletionResult.success);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.id, 'msg-1');
+        expect(tombstone.isDeleted, isTrue);
+        expect(tombstone.deletedByPeerId, 'peer-alice');
+      },
+    );
+
+    test(
+      'blocked sender delete does not stage a missing-message tombstone',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        await contactRepo.blockContact('peer-alice');
+
+        final payload = MessageDeletionPayload(
+          messageId: 'missing-msg',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: payload.toJson(),
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(result, HandleMessageDeletionResult.ignoredMissingMessage);
+        expect(tombstone, isNull);
+        expect(await messageRepo.getMessage('missing-msg'), isNull);
+      },
+    );
+
     test('rejects spoofed delete requests for another sender', () async {
       contactRepo.seed([makeContact('peer-alice')]);
       messageRepo.seed([
@@ -209,16 +284,150 @@ void main() {
       expect(stored!.isDeleted, isFalse);
     });
 
-    test('ignores delete requests for missing messages', () async {
+    test(
+      'rejects delete requests when envelope sender mismatches payload sender',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        messageRepo.seed([
+          makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ]);
+
+        final payload = MessageDeletionPayload(
+          messageId: 'msg-1',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'different-envelope-sender',
+            to: 'peer-bob',
+            content: payload.toJson(),
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(result, HandleMessageDeletionResult.unauthorized);
+        expect(tombstone, isNull);
+        final stored = await messageRepo.getMessage('msg-1');
+        expect(stored, isNotNull);
+        expect(stored!.isDeleted, isFalse);
+      },
+    );
+
+    test(
+      'rejects delete requests when encrypted envelope sender mismatches payload sender',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        messageRepo.seed([
+          makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ]);
+
+        final payload = MessageDeletionPayload(
+          messageId: 'msg-1',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+        final encryptedEnvelope = MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: 'different-envelope-sender',
+          kem: 'fake-kem',
+          ciphertext: payload.toInnerJson(),
+          nonce: 'fake-nonce',
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: encryptedEnvelope,
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'self-secret',
+        );
+
+        expect(result, HandleMessageDeletionResult.unauthorized);
+        expect(tombstone, isNull);
+        final stored = await messageRepo.getMessage('msg-1');
+        expect(stored, isNotNull);
+        expect(stored!.isDeleted, isFalse);
+      },
+    );
+
+    test(
+      'creates a tombstone placeholder when delete arrives before the original',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+
+        final payload = MessageDeletionPayload(
+          messageId: 'missing-message',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: payload.toJson(),
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+
+        expect(result, HandleMessageDeletionResult.success);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.id, 'missing-message');
+        expect(tombstone.text, isEmpty);
+        expect(tombstone.isDeleted, isTrue);
+        expect(tombstone.isHidden, isFalse);
+        expect(tombstone.deletedAt, '2026-03-31T10:05:00.000Z');
+        final stored = await messageRepo.getMessage('missing-message');
+        expect(stored, isNotNull);
+        expect(stored!.isDeleted, isTrue);
+        expect(stored.text, isEmpty);
+      },
+    );
+
+    test('duplicate authorized delete deliveries are idempotent', () async {
       contactRepo.seed([makeContact('peer-alice')]);
+      messageRepo.seed([
+        makeMessage(
+          id: 'msg-1',
+          contactPeerId: 'peer-alice',
+          senderPeerId: 'peer-alice',
+        ),
+      ]);
 
       final payload = MessageDeletionPayload(
-        messageId: 'missing-message',
+        messageId: 'msg-1',
         senderPeerId: 'peer-alice',
         timestamp: '2026-03-31T10:05:00.000Z',
       );
 
-      final (result, tombstone) = await handleIncomingMessageDeletion(
+      final first = await handleIncomingMessageDeletion(
         message: ChatMessage(
           from: 'peer-alice',
           to: 'peer-bob',
@@ -228,10 +437,131 @@ void main() {
         ),
         messageRepo: messageRepo,
         contactRepo: contactRepo,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+      final saveCallsAfterFirst = messageRepo.saveMessageCallCount;
+
+      final second = await handleIncomingMessageDeletion(
+        message: ChatMessage(
+          from: 'peer-alice',
+          to: 'peer-bob',
+          content: payload.toJson(),
+          timestamp: '2026-03-31T10:05:00.000Z',
+          isIncoming: true,
+        ),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
       );
 
-      expect(result, HandleMessageDeletionResult.ignoredMissingMessage);
-      expect(tombstone, isNull);
+      expect(first.$1, HandleMessageDeletionResult.success);
+      expect(second.$1, HandleMessageDeletionResult.success);
+      expect(messageRepo.saveMessageCallCount, saveCallsAfterFirst);
+
+      final stored = await messageRepo.getMessage('msg-1');
+      expect(stored, isNotNull);
+      expect(stored!.isDeleted, isTrue);
     });
+
+    test(
+      'returns decryptionFailed when encrypted delete lacks key material',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        messageRepo.seed([
+          makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ]);
+
+        final payload = MessageDeletionPayload(
+          messageId: 'msg-1',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+        final encryptedEnvelope = MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: 'peer-alice',
+          kem: 'fake-kem',
+          ciphertext: payload.toInnerJson(),
+          nonce: 'fake-nonce',
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: encryptedEnvelope,
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(result, HandleMessageDeletionResult.decryptionFailed);
+        expect(tombstone, isNull);
+        expect((await messageRepo.getMessage('msg-1'))?.isDeleted, isFalse);
+      },
+    );
+
+    test(
+      'returns decryptionFailed when encrypted delete cannot be decrypted',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        messageRepo.seed([
+          makeMessage(
+            id: 'msg-1',
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ]);
+
+        final payload = MessageDeletionPayload(
+          messageId: 'msg-1',
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-03-31T10:05:00.000Z',
+        );
+        final encryptedEnvelope = MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: 'peer-alice',
+          kem: 'fake-kem',
+          ciphertext: payload.toInnerJson(),
+          nonce: 'fake-nonce',
+        );
+        final bridge = FakeBridge(
+          initialResponses: {
+            'message.decrypt': {'ok': false, 'errorCode': 'bad_key'},
+          },
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: encryptedEnvelope,
+            timestamp: '2026-03-31T10:05:00.000Z',
+            isIncoming: true,
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          bridge: bridge,
+          ownMlKemSecretKey: 'self-secret',
+        );
+
+        expect(result, HandleMessageDeletionResult.decryptionFailed);
+        expect(tombstone, isNull);
+        expect((await messageRepo.getMessage('msg-1'))?.isDeleted, isFalse);
+      },
+    );
   });
 }

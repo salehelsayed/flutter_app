@@ -93,7 +93,7 @@ class _FakeMessageRepository implements MessageRepository {
 
   @override
   Future<ConversationMessage?> getMessage(String id) async {
-    for (final message in saved) {
+    for (final message in saved.reversed) {
       if (message.id == id) {
         return message;
       }
@@ -613,7 +613,65 @@ void main() {
         );
 
         expect(outcome.state, ChatMessageProcessState.editMissingOriginal);
-        expect(messageRepo.saved, isEmpty);
+        expect(messageRepo.saved, hasLength(1));
+        expect(messageRepo.saved.single.isHidden, isTrue);
+      },
+    );
+
+    test(
+      'suppresses phantom UI on edit-first delivery and emits the edited row when the original arrives later',
+      () async {
+        const senderPeerId = 'sender-peer-edit-late-original';
+        contactRepo.seedContact(_makeContact(senderPeerId));
+        final listener = createListener();
+        final emitted = <ConversationMessage>[];
+        listener.incomingMessageStream.listen(emitted.add);
+
+        final editPayload = jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': 'msg-edit-late-original',
+            'text': 'Edited before original',
+            'senderPeerId': senderPeerId,
+            'senderUsername': 'Alice',
+            'timestamp': '2026-04-01T09:59:00.000Z',
+            'action': 'edit',
+            'editedAt': '2026-04-01T10:00:00.000Z',
+          },
+        });
+
+        final firstOutcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: senderPeerId,
+            to: '',
+            content: editPayload,
+            timestamp: '2026-04-01T10:00:00.000Z',
+            isIncoming: true,
+          ),
+        );
+
+        expect(firstOutcome.state, ChatMessageProcessState.editMissingOriginal);
+        expect(emitted, isEmpty);
+        expect(messageRepo.saved, hasLength(1));
+        expect(messageRepo.saved.single.isHidden, isTrue);
+
+        final secondOutcome = await listener.processIncomingMessage(
+          _makeChatMessage(
+            from: senderPeerId,
+            id: 'msg-edit-late-original',
+            text: 'Original text',
+          ),
+        );
+
+        expect(secondOutcome.state, ChatMessageProcessState.stored);
+        expect(emitted, hasLength(1));
+        expect(emitted.single.id, 'msg-edit-late-original');
+        expect(emitted.single.text, 'Edited before original');
+        expect(emitted.single.isHidden, isFalse);
+        expect(emitted.single.editedAt, '2026-04-01T10:00:00.000Z');
+        expect(messageRepo.saved.last.isHidden, isFalse);
+        expect(messageRepo.saved.last.text, 'Edited before original');
       },
     );
 

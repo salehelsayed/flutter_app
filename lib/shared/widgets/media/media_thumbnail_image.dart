@@ -88,11 +88,13 @@ class _MediaThumbnailImageState extends State<MediaThumbnailImage> {
   }
 
   Widget _buildImage(String path) {
+    final isGifImage =
+        widget.mediaType == 'image' && path.toLowerCase().endsWith('.gif');
     return Image.file(
       File(path),
       fit: widget.fit,
-      cacheWidth: widget.cacheWidth,
-      cacheHeight: widget.cacheHeight,
+      cacheWidth: isGifImage ? null : widget.cacheWidth,
+      cacheHeight: isGifImage ? null : widget.cacheHeight,
       errorBuilder: (context, error, stackTrace) =>
           widget.error ?? widget.placeholder ?? const SizedBox.shrink(),
     );

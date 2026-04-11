@@ -81,12 +81,15 @@ void main() {
   late _FakeBridge bridge;
   late Directory tempDir;
   late File tempFile;
+  late File gifFile;
 
   setUp(() async {
     bridge = _FakeBridge();
     tempDir = await Directory.systemTemp.createTemp('upload_test_');
     tempFile = File('${tempDir.path}/test_image.jpg');
     await tempFile.writeAsBytes(List.filled(1024, 0xFF)); // 1KB dummy file
+    gifFile = File('${tempDir.path}/test_animation.gif');
+    await gifFile.writeAsBytes(List.filled(512, 0x47));
   });
 
   tearDown(() async {
@@ -241,6 +244,24 @@ void main() {
       expect(result.durationMs, 30000);
     });
 
+    test('uploads GIF with mime image/gif and preserves animated metadata', () async {
+      final result = await uploadMedia(
+        bridge: bridge,
+        localFilePath: gifFile.path,
+        mime: 'image/gif',
+        recipientPeerId: 'recipient',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.mime, 'image/gif');
+      expect(result.mediaType, 'image');
+      expect(result.isAnimated, isTrue);
+
+      final payload = bridge.lastRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['mime'], 'image/gif');
+      expect(payload['filePath'], gifFile.path);
+    });
+
     test('null dimensions when not provided', () async {
       final result = await uploadMedia(
         bridge: bridge,
@@ -334,6 +355,7 @@ class _FakeMediaFileManager extends MediaFileManager {
     const m = {
       'image/jpeg': '.jpg',
       'image/png': '.png',
+      'image/gif': '.gif',
       'video/mp4': '.mp4',
       'audio/mpeg': '.mp3',
     };

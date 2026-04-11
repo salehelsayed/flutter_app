@@ -31,6 +31,7 @@ class OrbitIntrosViewData {
   final Map<String, String> introducerUsernames;
   final String ownPeerId;
   final List<PendingGroupInvite> pendingGroupInvites;
+  final Set<String> processingIntroductionIds;
   final Set<String> processingPendingInviteIds;
   final void Function(String introductionId) onAccept;
   final void Function(String introductionId) onPass;
@@ -45,6 +46,7 @@ class OrbitIntrosViewData {
     required this.introducerUsernames,
     required this.ownPeerId,
     this.pendingGroupInvites = const [],
+    this.processingIntroductionIds = const {},
     this.processingPendingInviteIds = const {},
     required this.onAccept,
     required this.onPass,
@@ -782,6 +784,7 @@ class OrbitScreen extends StatelessWidget {
           displayUsername: displayUsername,
           displayPeerId: displayPeerId,
           showActions: showActions,
+          isProcessing: data.processingIntroductionIds.contains(intro.id),
           onAccept: showActions ? () => data.onAccept(intro.id) : null,
           onPass: showActions ? () => data.onPass(intro.id) : null,
           ownPartyStatus: ownPartyStatus,

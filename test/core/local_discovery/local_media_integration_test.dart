@@ -105,6 +105,43 @@ void main() {
       await sub.cancel();
     });
 
+    test('sender uploads GIF, receiver gets file at local path with image/gif preserved', () async {
+      const size = 768;
+      final gifBytes = List<int>.generate(size, (index) => index % 255);
+      final file = File('${tempDirA.path}/funny.gif')..writeAsBytesSync(gifBytes);
+      final expectedHash = sha256.convert(gifBytes).toString();
+
+      final mediaReadyEvents = <LocalMediaReady>[];
+      final sub = serverB.mediaReadyStream!.listen(mediaReadyEvents.add);
+
+      final result = await serverA.sendMedia(
+        host: 'localhost',
+        port: portB,
+        toPeerId: 'receiverPeer',
+        filePath: file.path,
+        mediaId: 'e2e-gif-1',
+        mime: 'image/gif',
+        fromPeerId: 'senderPeer',
+        filename: 'funny.gif',
+      );
+
+      expect(result, isTrue);
+
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      expect(mediaReadyEvents, hasLength(1));
+      final ready = mediaReadyEvents.first;
+      expect(ready.mime, 'image/gif');
+      expect(ready.filename, 'funny.gif');
+      expect(ready.localPath, endsWith('.gif'));
+
+      final receivedBytes = await File(ready.localPath).readAsBytes();
+      final receivedHash = sha256.convert(receivedBytes).toString();
+      expect(receivedHash, expectedHash);
+
+      await sub.cancel();
+    });
+
     test(
         'sender uploads voice message with durationMs and waveform metadata',
         () async {

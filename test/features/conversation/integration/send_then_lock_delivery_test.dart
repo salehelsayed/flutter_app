@@ -1325,6 +1325,87 @@ void main() {
     );
 
     test(
+      '7bb. failed edit survives lock and recovers on resume with same-id edited state',
+      () async {
+        final (sendResult, sentMessage) = await alice.sendMessage(
+          bob.peerId,
+          'Original before edit',
+        );
+        expect(sendResult, SendChatMessageResult.success);
+        expect(sentMessage, isNotNull);
+
+        await waitForBob();
+
+        network.deliveryFails = true;
+        network.inboxDisabled = true;
+
+        final recipient = await alice.contactRepo.getContact(bob.peerId);
+        expect(recipient, isNotNull);
+
+        final (editResult, failedEdit) = await editChatMessage(
+          p2pService: alice.p2pService,
+          messageRepo: alice.messageRepo,
+          originalMessage: sentMessage!,
+          updatedText: 'Edited after lock',
+          senderUsername: alice.username,
+          bridge: alice.bridge,
+          recipientMlKemPublicKey: recipient!.mlKemPublicKey,
+        );
+
+        expect(editResult, SendChatMessageResult.sendFailed);
+        expect(failedEdit, isNotNull);
+        expect(failedEdit!.id, sentMessage.id);
+        expect(failedEdit.status, 'failed');
+        expect(failedEdit.text, 'Edited after lock');
+        expect(failedEdit.editedAt, isNotNull);
+        expect(failedEdit.wireEnvelope, isNotNull);
+
+        final beforePause = await alice.loadConversationWith(bob.peerId);
+        expect(beforePause, hasLength(1));
+        expect(beforePause.single.id, sentMessage.id);
+        expect(beforePause.single.text, 'Edited after lock');
+        expect(beforePause.single.editedAt, failedEdit.editedAt);
+
+        network.deliveryFails = false;
+        network.inboxDisabled = false;
+        bob.setOnline(false);
+
+        await alice.simulatePause();
+        final afterPause = await alice.messageRepo.getMessage(sentMessage.id);
+        expect(afterPause?.status, 'failed');
+
+        await alice.simulateResume(
+          retryFailedMessagesFn: retryAliceFailedMessages,
+        );
+
+        final recoveredMessage = await alice.messageRepo.getMessage(
+          sentMessage.id,
+        );
+        expect(recoveredMessage, isNotNull);
+        expect(recoveredMessage!.status, 'delivered');
+        expect(recoveredMessage.transport, 'inbox');
+        expect(recoveredMessage.text, 'Edited after lock');
+        expect(recoveredMessage.editedAt, failedEdit.editedAt);
+
+        bob.setOnline(true);
+        final drained = await bob.drainOfflineInbox();
+        expect(drained, 1);
+        await waitForBob();
+
+        await bobHarness.expectMessageCount(alice.peerId, 1);
+        await bobHarness.expectLatestMessageText(
+          alice.peerId,
+          'Edited after lock',
+        );
+        final bobMessages = await bob.messageRepo.getMessagesForContact(
+          alice.peerId,
+        );
+        expect(bobMessages.single.id, sentMessage.id);
+        expect(bobMessages.single.editedAt, isNotNull);
+      },
+    );
+
+    test(
       '7c. failed delete-for-everyone stays visible through pause and hides only after resume delivery',
       () async {
         final (sendResult, sentMessage) = await alice.sendMessage(

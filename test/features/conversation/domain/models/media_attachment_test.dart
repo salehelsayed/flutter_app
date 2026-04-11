@@ -155,6 +155,19 @@ void main() {
         expect(restored.mediaType, 'image');
       });
 
+      test('fromJson keeps GIF attachments animated when mediaType is omitted', () {
+        final json = {
+          'id': 'blob-gif',
+          'mime': 'image/gif',
+          'size': 4096,
+        };
+
+        final restored = MediaAttachment.fromJson(json);
+
+        expect(restored.mediaType, 'image');
+        expect(restored.isAnimated, isTrue);
+      });
+
       test('fromJson defaults mime to application/octet-stream when null', () {
         final json = {
           'id': 'blob-no-mime',
@@ -201,6 +214,31 @@ void main() {
         expect(MediaAttachment.mediaTypeFromMime('application/pdf'), 'file');
         expect(MediaAttachment.mediaTypeFromMime('text/plain'), 'file');
         expect(MediaAttachment.mediaTypeFromMime('application/octet-stream'), 'file');
+      });
+    });
+
+    group('isAnimated', () {
+      test('returns true for image/gif', () {
+        expect(
+          testAttachment.copyWith(mime: 'image/gif', mediaType: 'image').isAnimated,
+          isTrue,
+        );
+      });
+
+      test('returns false for static images and non-image media', () {
+        expect(testAttachment.isAnimated, isFalse);
+        expect(
+          testAttachment.copyWith(mime: 'image/png', mediaType: 'image').isAnimated,
+          isFalse,
+        );
+        expect(
+          testAttachment.copyWith(mime: 'video/mp4', mediaType: 'video').isAnimated,
+          isFalse,
+        );
+        expect(
+          testAttachment.copyWith(mime: 'audio/aac', mediaType: 'audio').isAnimated,
+          isFalse,
+        );
       });
     });
 

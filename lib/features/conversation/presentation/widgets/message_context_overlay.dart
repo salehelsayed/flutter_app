@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
-class MessageContextOverlay extends StatelessWidget {
+class MessageContextOverlay extends StatefulWidget {
   static const overlayKey = ValueKey('message-context-overlay');
   static const backdropKey = ValueKey('message-context-backdrop');
   static const reactionBarKey = ValueKey('message-context-reaction-bar');
@@ -53,6 +53,19 @@ class MessageContextOverlay extends StatelessWidget {
   });
 
   @override
+  State<MessageContextOverlay> createState() => _MessageContextOverlayState();
+}
+
+class _MessageContextOverlayState extends State<MessageContextOverlay> {
+  bool _handledAction = false;
+
+  void _handleOnce(VoidCallback action) {
+    if (_handledAction) return;
+    _handledAction = true;
+    action();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final size = mediaQuery.size;
@@ -60,60 +73,74 @@ class MessageContextOverlay extends StatelessWidget {
     final bottomPadding = mediaQuery.viewPadding.bottom + 8;
     final actionCount =
         1 +
-        (showEditAction ? 1 : 0) +
-        (showCopyAction ? 1 : 0) +
-        (showDeleteAction ? 1 : 0);
-    final menuHeight = actionCount * _menuActionHeight;
-    final selectedMessageWidth = anchorRect.width > 0
-        ? anchorRect.width
+        (widget.showEditAction ? 1 : 0) +
+        (widget.showCopyAction ? 1 : 0) +
+        (widget.showDeleteAction ? 1 : 0);
+    final menuHeight = actionCount * MessageContextOverlay._menuActionHeight;
+    final selectedMessageWidth = widget.anchorRect.width > 0
+        ? widget.anchorRect.width
         : size.width - 32;
-    final selectedMessageHeight = anchorRect.height > 0
-        ? anchorRect.height
+    final selectedMessageHeight = widget.anchorRect.height > 0
+        ? widget.anchorRect.height
         : 120.0;
     final anchorAlignment = Alignment(
-      ((anchorRect.center.dx / size.width) * 2 - 1).clamp(-1.0, 1.0),
+      ((widget.anchorRect.center.dx / size.width) * 2 - 1).clamp(-1.0, 1.0),
       -1,
     );
     final minSelectedMessageTop =
-        topPadding + _reactionBarHeight + _verticalGap;
+        topPadding +
+        MessageContextOverlay._reactionBarHeight +
+        MessageContextOverlay._verticalGap;
     final maxSelectedMessageTop =
         size.height -
         bottomPadding -
         menuHeight -
-        _verticalGap -
+        MessageContextOverlay._verticalGap -
         selectedMessageHeight;
-    final selectedMessageTop = selectedMessage != null
+    final selectedMessageTop = widget.selectedMessage != null
         ? _clampToViewport(
-            anchorRect.top,
+            widget.anchorRect.top,
             min: minSelectedMessageTop,
             max: maxSelectedMessageTop,
           )
         : null;
     final reactionBarTop = selectedMessageTop != null
-        ? selectedMessageTop - _reactionBarHeight - _verticalGap
+        ? selectedMessageTop -
+              MessageContextOverlay._reactionBarHeight -
+              MessageContextOverlay._verticalGap
         : _clampToViewport(
-            anchorRect.top - _reactionBarHeight - _verticalGap,
+            widget.anchorRect.top -
+                MessageContextOverlay._reactionBarHeight -
+                MessageContextOverlay._verticalGap,
             min: topPadding,
-            max: size.height - _reactionBarHeight - bottomPadding,
+            max:
+                size.height -
+                MessageContextOverlay._reactionBarHeight -
+                bottomPadding,
           );
     final menuTop = selectedMessageTop != null
-        ? selectedMessageTop + selectedMessageHeight + _verticalGap
+        ? selectedMessageTop +
+              selectedMessageHeight +
+              MessageContextOverlay._verticalGap
         : _clampToViewport(
-            anchorRect.bottom + _verticalGap,
-            min: reactionBarTop + _reactionBarHeight + _verticalGap,
+            widget.anchorRect.bottom + MessageContextOverlay._verticalGap,
+            min:
+                reactionBarTop +
+                MessageContextOverlay._reactionBarHeight +
+                MessageContextOverlay._verticalGap,
             max: size.height - menuHeight - bottomPadding,
           );
 
     return Material(
-      key: overlayKey,
+      key: MessageContextOverlay.overlayKey,
       color: Colors.transparent,
       child: Stack(
         children: [
           Positioned.fill(
             child: GestureDetector(
-              key: backdropKey,
+              key: MessageContextOverlay.backdropKey,
               behavior: HitTestBehavior.opaque,
-              onTap: onDismiss,
+              onTap: () => _handleOnce(widget.onDismiss),
               child: ClipRect(
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
@@ -122,7 +149,7 @@ class MessageContextOverlay extends StatelessWidget {
               ),
             ),
           ),
-          if (selectedMessageTop != null && selectedMessage != null)
+          if (selectedMessageTop != null && widget.selectedMessage != null)
             Padding(
               padding: EdgeInsets.only(top: selectedMessageTop),
               child: Align(
@@ -131,7 +158,7 @@ class MessageContextOverlay extends StatelessWidget {
                   width: selectedMessageWidth,
                   height: selectedMessageHeight,
                   child: KeyedSubtree(
-                    key: selectedMessageKey,
+                    key: MessageContextOverlay.selectedMessageKey,
                     child: ClipRect(
                       child: IgnorePointer(
                         child: FittedBox(
@@ -139,7 +166,7 @@ class MessageContextOverlay extends StatelessWidget {
                           alignment: Alignment.topCenter,
                           child: SizedBox(
                             width: selectedMessageWidth,
-                            child: selectedMessage!,
+                            child: widget.selectedMessage!,
                           ),
                         ),
                       ),
@@ -153,12 +180,13 @@ class MessageContextOverlay extends StatelessWidget {
             child: Align(
               alignment: anchorAlignment,
               child: ReactionBar(
-                key: reactionBarKey,
-                currentEmoji: currentEmoji,
+                key: MessageContextOverlay.reactionBarKey,
+                currentEmoji: widget.currentEmoji,
                 inline: true,
-                onReactionSelected: onReactionSelected,
-                onPlusTap: onPlusTap,
-                onDismiss: onDismiss,
+                onReactionSelected: (emoji) =>
+                    _handleOnce(() => widget.onReactionSelected(emoji)),
+                onPlusTap: () => _handleOnce(widget.onPlusTap),
+                onDismiss: () => _handleOnce(widget.onDismiss),
               ),
             ),
           ),
@@ -169,14 +197,20 @@ class MessageContextOverlay extends StatelessWidget {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 220),
                 child: _ContextMenuCard(
-                  key: menuKey,
-                  showEditAction: showEditAction,
-                  showCopyAction: showCopyAction,
-                  showDeleteAction: showDeleteAction,
-                  onReplyTap: onReplyTap,
-                  onEditTap: onEditTap,
-                  onCopyTap: onCopyTap,
-                  onDeleteTap: onDeleteTap,
+                  key: MessageContextOverlay.menuKey,
+                  showEditAction: widget.showEditAction,
+                  showCopyAction: widget.showCopyAction,
+                  showDeleteAction: widget.showDeleteAction,
+                  onReplyTap: () => _handleOnce(widget.onReplyTap),
+                  onEditTap: widget.onEditTap != null
+                      ? () => _handleOnce(widget.onEditTap!)
+                      : null,
+                  onCopyTap: widget.onCopyTap != null
+                      ? () => _handleOnce(widget.onCopyTap!)
+                      : null,
+                  onDeleteTap: widget.onDeleteTap != null
+                      ? () => _handleOnce(widget.onDeleteTap!)
+                      : null,
                 ),
               ),
             ),

@@ -44,6 +44,7 @@ handleIncomingMessageDeletion({
   final v2Envelope = MessageDeletionPayload.parseEncryptedEnvelope(
     message.content,
   );
+  final envelopeSenderPeerId = v2Envelope?['senderPeerId'] as String?;
   if (v2Envelope != null) {
     if (bridge == null || ownMlKemSecretKey == null) {
       return (HandleMessageDeletionResult.decryptionFailed, null);
@@ -74,14 +75,86 @@ handleIncomingMessageDeletion({
     return (HandleMessageDeletionResult.notMessageDeletion, null);
   }
 
+  final senderMismatch =
+      message.from != payload.senderPeerId ||
+      (v2Envelope != null && envelopeSenderPeerId != payload.senderPeerId);
+  if (senderMismatch) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_SENDER_MISMATCH',
+      details: {
+        'messageId': payload.messageId.length > 8
+            ? payload.messageId.substring(0, 8)
+            : payload.messageId,
+        'streamFrom': message.from.length > 10
+            ? message.from.substring(0, 10)
+            : message.from,
+        'envelopeFrom': envelopeSenderPeerId == null
+            ? '<missing>'
+            : (envelopeSenderPeerId.length > 10
+                  ? envelopeSenderPeerId.substring(0, 10)
+                  : envelopeSenderPeerId),
+        'payloadFrom': payload.senderPeerId.length > 10
+            ? payload.senderPeerId.substring(0, 10)
+            : payload.senderPeerId,
+      },
+    );
+    return (HandleMessageDeletionResult.unauthorized, null);
+  }
+
   final contact = await contactRepo.getContact(payload.senderPeerId);
   if (contact == null) {
     return (HandleMessageDeletionResult.unknownSender, null);
   }
 
   final targetMessage = await messageRepo.getMessage(payload.messageId);
+  final blockedSenderOwnsStoredMessage =
+      contact.isBlocked &&
+      targetMessage != null &&
+      targetMessage.senderPeerId == payload.senderPeerId;
+  if (contact.isBlocked && !blockedSenderOwnsStoredMessage) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_BLOCKED_IGNORED',
+      details: {
+        'messageId': payload.messageId.length > 8
+            ? payload.messageId.substring(0, 8)
+            : payload.messageId,
+      },
+    );
+    return (
+      targetMessage == null
+          ? HandleMessageDeletionResult.ignoredMissingMessage
+          : HandleMessageDeletionResult.unauthorized,
+      null,
+    );
+  }
+
   if (targetMessage == null) {
-    return (HandleMessageDeletionResult.ignoredMissingMessage, null);
+    final tombstone = ConversationMessage(
+      id: payload.messageId,
+      contactPeerId: payload.senderPeerId,
+      senderPeerId: payload.senderPeerId,
+      text: '',
+      timestamp: payload.timestamp,
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      deletedAt: payload.timestamp,
+      deletedByPeerId: payload.senderPeerId,
+      transport: message.transport,
+    );
+    await messageRepo.saveMessage(tombstone);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_STAGED_TOMBSTONE',
+      details: {
+        'messageId': payload.messageId.length > 8
+            ? payload.messageId.substring(0, 8)
+            : payload.messageId,
+      },
+    );
+    return (HandleMessageDeletionResult.success, tombstone);
   }
 
   if (targetMessage.senderPeerId != payload.senderPeerId) {

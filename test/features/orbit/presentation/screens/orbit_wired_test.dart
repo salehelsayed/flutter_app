@@ -1599,6 +1599,111 @@ void main() {
     });
 
     testWidgets(
+      'accepting an intro shows processing immediately and ignores duplicate taps',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = _BlockingIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'intro-peer-id',
+            createdAt: '2026-03-25T12:00:00.000Z',
+          ),
+        );
+        introRepo.acceptGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final acceptFinder = find.byKey(
+          const ValueKey('intro-accept-orbit-intro'),
+        );
+
+        await tester.tap(acceptFinder);
+        await tester.pump();
+
+        expect(find.text('Accepting...'), findsOneWidget);
+        expect(introRepo.acceptedUpdates, 1);
+        expect(tester.widget<FilledButton>(acceptFinder).onPressed, isNull);
+        expect(
+          tester
+              .widget<OutlinedButton>(
+                find.byKey(const ValueKey('intro-pass-orbit-intro')),
+              )
+              .onPressed,
+          isNull,
+        );
+
+        await tester.tap(acceptFinder);
+        await tester.pump();
+
+        expect(introRepo.acceptedUpdates, 1);
+
+        introRepo.acceptGate!.complete();
+        await pumpOrbitFrames(tester, count: 8);
+      },
+    );
+
+    testWidgets(
+      'passing an intro disables both actions immediately and ignores duplicate taps',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = _BlockingIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'intro-peer-id',
+            createdAt: '2026-03-25T12:00:00.000Z',
+          ),
+        );
+        introRepo.passGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final passFinder = find.byKey(const ValueKey('intro-pass-orbit-intro'));
+
+        await tester.tap(passFinder);
+        await tester.pump();
+
+        expect(introRepo.passedUpdates, 1);
+        expect(tester.widget<OutlinedButton>(passFinder).onPressed, isNull);
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.byKey(const ValueKey('intro-accept-orbit-intro')),
+              )
+              .onPressed,
+          isNull,
+        );
+
+        await tester.tap(passFinder);
+        await tester.pump();
+
+        expect(introRepo.passedUpdates, 1);
+
+        introRepo.passGate!.complete();
+        await pumpOrbitFrames(tester, count: 8);
+      },
+    );
+
+    testWidgets(
       'live intro delete confirmation removes the row, clears the badge, and marks route-return refresh',
       (tester) async {
         setLargeTestSurface(tester);
@@ -2376,6 +2481,50 @@ class _SequencedIntroductionRepository extends InMemoryIntroductionRepository {
       () => Completer<void>(),
     );
     return waiter.future;
+  }
+}
+
+class _BlockingIntroductionRepository extends InMemoryIntroductionRepository {
+  Completer<void>? acceptGate;
+  Completer<void>? passGate;
+  int acceptedUpdates = 0;
+  int passedUpdates = 0;
+
+  @override
+  Future<void> updateRecipientStatus(
+    String id,
+    IntroductionStatus status,
+  ) async {
+    await _maybeBlock(status);
+    return super.updateRecipientStatus(id, status);
+  }
+
+  @override
+  Future<void> updateIntroducedStatus(
+    String id,
+    IntroductionStatus status,
+  ) async {
+    await _maybeBlock(status);
+    return super.updateIntroducedStatus(id, status);
+  }
+
+  Future<void> _maybeBlock(IntroductionStatus status) async {
+    if (status == IntroductionStatus.accepted) {
+      acceptedUpdates++;
+      final gate = acceptGate;
+      if (gate != null) {
+        await gate.future;
+      }
+      return;
+    }
+
+    if (status == IntroductionStatus.passed) {
+      passedUpdates++;
+      final gate = passGate;
+      if (gate != null) {
+        await gate.future;
+      }
+    }
   }
 }
 

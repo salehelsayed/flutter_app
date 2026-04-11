@@ -140,6 +140,32 @@ void main() {
       expect(capturedIntent!.filePaths, ['/tmp/raw-video.mp4']);
     });
 
+    testWidgets('5e2: GIF shares pass raw file paths to the picker', (
+      tester,
+    ) async {
+      final shareIntentService = ShareIntentService(resetShareIntent: () {});
+      shareIntentService.isSettled = true;
+      ShareIntent? capturedIntent;
+
+      await tester.pumpWidget(
+        _HandleShareHarness(
+          shareIntentService: shareIntentService,
+          homeLabel: 'feed',
+          intent: const ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: ['/tmp/raw-animation.gif'],
+          ),
+          onRouteBuilt: (intent) => capturedIntent = intent,
+        ),
+      );
+
+      await tester.tap(find.text('share now'));
+      await tester.pumpAndSettle();
+
+      expect(capturedIntent, isNotNull);
+      expect(capturedIntent!.filePaths, ['/tmp/raw-animation.gif']);
+    });
+
     testWidgets('5f: picker cancel returns to the previous screen', (
       tester,
     ) async {

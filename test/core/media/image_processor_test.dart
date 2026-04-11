@@ -27,6 +27,11 @@ void main() {
       expect(processor.isProcessableImage('doc.pdf'), false);
       expect(processor.isProcessableImage('audio.aac'), false);
     });
+
+    test('returns false for .gif to preserve animation', () {
+      expect(processor.isProcessableImage('funny.gif'), false);
+      expect(processor.isProcessableImage('funny.GIF'), false);
+    });
   });
 
   group('processImage', () {
@@ -155,6 +160,30 @@ void main() {
       );
 
       expect(result, '/tmp/photo.jpg');
+    });
+
+    test('returns original path unchanged for .gif files', () async {
+      var compressCalled = false;
+      final processor = ImageProcessor(
+        compressFile: ({
+          required String path,
+          required int quality,
+          required bool keepExif,
+          int minWidth = 1920,
+          int minHeight = 1080,
+        }) async {
+          compressCalled = true;
+          return XFile('${path}_compressed.jpg');
+        },
+      );
+
+      final result = await processor.processImage(
+        inputPath: '/tmp/funny.gif',
+        quality: ImageQualityPreference.compressed,
+      );
+
+      expect(result, '/tmp/funny.gif');
+      expect(compressCalled, isFalse);
     });
   });
 

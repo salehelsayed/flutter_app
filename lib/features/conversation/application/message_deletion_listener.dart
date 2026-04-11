@@ -76,20 +76,6 @@ class MessageDeletionListener {
 
   Future<void> _onMessage(ChatMessage message) async {
     try {
-      final senderContact = await contactRepo.getContact(message.from);
-      if (senderContact != null && senderContact.isBlocked) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_DELETE_LISTENER_BLOCKED_REJECT',
-          details: {
-            'from': message.from.length > 10
-                ? message.from.substring(0, 10)
-                : message.from,
-          },
-        );
-        return;
-      }
-
       final ownSecretKey = getOwnMlKemSecretKey != null
           ? await getOwnMlKemSecretKey!()
           : null;

@@ -253,6 +253,40 @@ void main() {
       },
     );
 
+    test('sends GIF media_offer with image/gif mime and filename metadata', () async {
+      final file = File('${tempDir.path}/funny.gif')
+        ..writeAsBytesSync(List<int>.filled(256, 0x47));
+
+      Map<String, dynamic>? receivedOffer;
+      final (server, port) = await _startMockReceiver(
+        onOffer: (ws, offer) {
+          receivedOffer = offer;
+        },
+      );
+
+      final (ws, ackStream) = await _connectWs(port);
+
+      await sender.sendMedia(
+        host: 'localhost',
+        port: port,
+        ws: ws,
+        ackStream: ackStream,
+        filePath: file.path,
+        mediaId: 'media-gif-1',
+        mime: 'image/gif',
+        fromPeerId: 'sender',
+        toPeerId: 'receiver',
+        filename: 'funny.gif',
+      );
+
+      expect(receivedOffer, isNotNull);
+      expect(receivedOffer!['mime'], 'image/gif');
+      expect(receivedOffer!['filename'], 'funny.gif');
+
+      await ws.close();
+      await server.close(force: true);
+    });
+
     test(
       'uploads file via HTTP PUT with Bearer token and correct Content-Length',
       () async {

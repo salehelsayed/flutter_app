@@ -40,6 +40,37 @@ void main() {
       final result = mediaPreviewText([_makeAttachment(mediaType: 'video', mime: 'video/mp4')]);
       expect(result, 'Video');
     });
+
+    test('returns "GIF" for a single GIF attachment', () {
+      final result = mediaPreviewText([
+        _makeAttachment(mediaType: 'image', mime: 'image/gif'),
+      ]);
+      expect(result, 'GIF');
+    });
+
+    test('returns "2 GIFs" for multiple GIF attachments', () {
+      final result = mediaPreviewText([
+        _makeAttachment(mediaType: 'image', mime: 'image/gif'),
+        _makeAttachment(mediaType: 'image', mime: 'image/gif'),
+      ]);
+      expect(result, '2 GIFs');
+    });
+
+    test('returns "GIF · Photo" for GIF + photo media', () {
+      final result = mediaPreviewText([
+        _makeAttachment(mediaType: 'image', mime: 'image/gif'),
+        _makeAttachment(mediaType: 'image', mime: 'image/jpeg'),
+      ]);
+      expect(result, 'GIF · Photo');
+    });
+
+    test('returns "GIF · Video" for GIF + video media', () {
+      final result = mediaPreviewText([
+        _makeAttachment(mediaType: 'image', mime: 'image/gif'),
+        _makeAttachment(mediaType: 'video', mime: 'video/mp4'),
+      ]);
+      expect(result, 'GIF · Video');
+    });
   });
 
   group('mediaPreviewIcon', () {

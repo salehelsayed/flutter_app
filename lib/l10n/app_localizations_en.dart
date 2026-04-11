@@ -434,15 +434,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get comment_hint => 'Write a comment...';
 
   @override
-  String get group_create_title => 'Create Group';
-
-  @override
-  String get group_name_hint => 'Enter group name';
-
-  @override
-  String get group_desc_hint => 'What is this group about?';
-
-  @override
   String get group_name_optional => 'Group name (optional)';
 
   @override

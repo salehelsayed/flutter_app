@@ -33,12 +33,16 @@ class MediaGridCell extends StatelessWidget {
             _buildContent(),
             if (attachment.mediaType == 'video')
               VideoThumbnailOverlay(durationMs: attachment.durationMs),
+            if (_showsGifBadge) _buildGifBadge(),
             if (showOverlayCount && overlayCount > 0) _buildOverlayCount(),
           ],
         ),
       ),
     );
   }
+
+  bool get _showsGifBadge =>
+      attachment.isAnimated && attachment.downloadStatus == 'done';
 
   Widget _buildContent() {
     final isImage = attachment.mediaType == 'image';
@@ -111,6 +115,28 @@ class MediaGridCell extends StatelessWidget {
             fontSize: 18,
             fontWeight: FontWeight.w600,
             color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGifBadge() {
+    return Positioned(
+      left: 8,
+      bottom: 8,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        decoration: BoxDecoration(
+          color: const Color.fromRGBO(0, 0, 0, 0.7),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: const Text(
+          'GIF',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),

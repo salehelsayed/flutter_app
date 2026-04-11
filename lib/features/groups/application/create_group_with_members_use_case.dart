@@ -31,8 +31,8 @@ class CreateGroupWithMembersResult {
 /// Creates a new group, adds selected contacts as members, updates config,
 /// broadcasts a system message, and sends P2P invites.
 ///
-/// Combines the logic from CreateGroupWired._onCreate and
-/// ContactPickerWired._inviteSelected into one testable function.
+/// Combines the routed create-group picker flow and invite fanout into one
+/// testable function.
 Future<CreateGroupWithMembersResult> createGroupWithMembers({
   required Bridge bridge,
   required GroupRepository groupRepo,

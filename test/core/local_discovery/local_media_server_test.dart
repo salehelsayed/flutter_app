@@ -233,6 +233,7 @@ void main() {
         for (final mime in [
           'image/jpeg',
           'image/png',
+          'image/gif',
           'video/mp4',
           'audio/aac',
           'application/pdf',
