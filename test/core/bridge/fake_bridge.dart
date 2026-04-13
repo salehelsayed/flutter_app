@@ -68,6 +68,20 @@ class FakeBridge implements Bridge {
     lastCommand = cmd;
     if (cmd != null) commandLog.add(cmd);
 
+    if (cmd == 'group.encrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      return jsonEncode({
+        'ok': true,
+        'ciphertext': payload['plaintext'],
+        'nonce': 'fake-group-nonce',
+      });
+    }
+
+    if (cmd == 'group.decrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
+    }
+
     // Return pre-canned response or default success
     if (cmd != null && responses.containsKey(cmd)) {
       return jsonEncode(responses[cmd]!);

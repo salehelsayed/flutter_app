@@ -19,6 +19,8 @@ require (
 // gosigar uses libproc.h which is macOS-only (not in iOS SDK).
 // Replace with a stub that returns zero-value memory stats.
 replace github.com/elastic/gosigar => ./stub/gosigar
+replace github.com/libp2p/go-libp2p-pubsub => ./third_party/go-libp2p-pubsub
+replace github.com/libp2p/go-libp2p-pubsub => ./third_party/go-libp2p-pubsub
 
 require (
 	github.com/benbjohnson/clock v1.3.5 // indirect

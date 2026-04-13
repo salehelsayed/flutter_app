@@ -19,6 +19,7 @@ import 'package:flutter_app/features/identity/domain/repositories/identity_repos
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
+import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
@@ -143,6 +144,9 @@ PendingGroupInvite makePendingInvite({
   String groupName = 'Book Club',
   DateTime? receivedAt,
 }) {
+  final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
+  final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
+  final inviteTimestamp = createdAt.add(const Duration(minutes: 5));
   final payload = GroupInvitePayload(
     id: 'invite-$groupId',
     groupId: groupId,
@@ -162,16 +166,16 @@ PendingGroupInvite makePendingInvite({
         },
       ],
       'createdBy': '12D3KooWAlice',
-      'createdAt': '2026-03-02T00:00:00.000Z',
+      'createdAt': createdAt.toIso8601String(),
     },
     senderPeerId: '12D3KooWAlice',
     senderUsername: 'Alice',
-    timestamp: '2026-03-02T12:00:00.000Z',
+    timestamp: inviteTimestamp.toIso8601String(),
   );
 
   return PendingGroupInvite.fromPayload(
     payload,
-    receivedAt: receivedAt ?? DateTime.utc(2026, 4, 5, 12),
+    receivedAt: effectiveReceivedAt,
   );
 }
 
@@ -224,7 +228,10 @@ void main() {
       pendingInviteStreamController.close();
     });
 
-    Widget buildWidget() {
+    Widget buildWidget({
+      GroupMessageListener? groupMessageListener,
+      FakeReactionRepository? reactionRepo,
+    }) {
       return MaterialApp(
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -232,14 +239,15 @@ void main() {
         home: GroupListWired(
           groupRepo: groupRepo,
           msgRepo: msgRepo,
-          groupMessageListener: FakeGroupMessageListener(
-            messageStreamController.stream,
-          ),
+          groupMessageListener:
+              groupMessageListener ??
+              FakeGroupMessageListener(messageStreamController.stream),
           bridge: bridge,
           identityRepo: identityRepo,
           contactRepo: contactRepo,
           p2pService: p2pService,
           groupInviteListener: groupInviteListener,
+          reactionRepo: reactionRepo,
         ),
       );
     }
@@ -415,7 +423,24 @@ void main() {
     testWidgets(
       'accepting a pending invite joins the group and removes the row',
       (tester) async {
+        final backlogTimestamp = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 5))
+            .toIso8601String();
+        final reactionTimestamp = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 4))
+            .toIso8601String();
         final invite = makePendingInvite();
+        final reactionRepo = FakeReactionRepository();
+        final replayListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => testIdentity.peerId,
+          reactionRepo: reactionRepo,
+        );
+        addTearDown(replayListener.dispose);
         await pendingInviteRepo.savePendingInvite(invite);
         bridge.responses['group:inboxRetrieveCursor'] = {
           'ok': true,
@@ -429,14 +454,36 @@ void main() {
                 'senderUsername': 'Alice',
                 'keyEpoch': 1,
                 'text': 'Welcome back',
-                'timestamp': '2026-03-02T13:00:00.000Z',
+                'timestamp': backlogTimestamp,
+              }),
+            },
+            {
+              'from': '12D3KooWAlice',
+              'message': jsonEncode({
+                'groupId': invite.groupId,
+                'type': 'group_reaction',
+                'senderId': '12D3KooWAlice',
+                'reaction': jsonEncode({
+                  'id': 'invite-reaction-1',
+                  'messageId': 'offline-msg-1',
+                  'emoji': '👍',
+                  'action': 'add',
+                  'senderPeerId': '12D3KooWAlice',
+                  'timestamp': reactionTimestamp,
+                }),
+                'timestamp': reactionTimestamp,
               }),
             },
           ],
           'cursor': '',
         };
 
-        await tester.pumpWidget(buildWidget());
+        await tester.pumpWidget(
+          buildWidget(
+            groupMessageListener: replayListener,
+            reactionRepo: reactionRepo,
+          ),
+        );
         await pumpFrames(tester);
 
         await tester.tap(
@@ -455,6 +502,55 @@ void main() {
         );
         expect(find.text('Book Club'), findsOneWidget);
         expect(find.text('Joined Book Club'), findsOneWidget);
+        expect(await msgRepo.getMessage('offline-msg-1'), isNotNull);
+
+        final reactions = await reactionRepo.getReactionsForMessage(
+          'offline-msg-1',
+        );
+        expect(reactions, hasLength(1));
+        expect(reactions.single.senderPeerId, '12D3KooWAlice');
+        expect(reactions.single.emoji, '👍');
+      },
+    );
+
+    testWidgets(
+      'bridgeError accept keeps the joined group and shows recovery warning',
+      (tester) async {
+        final invite = makePendingInvite();
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+        bridge.responses['group:publish'] = {
+          'ok': false,
+          'errorCode': 'PUBLISH_FAILED',
+        };
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(find.text('Book Club'), findsOneWidget);
+        expect(
+          find.text('Joined Book Club, but recovery is still catching up'),
+          findsOneWidget,
+        );
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+
+        final latestMessage = await msgRepo.getLatestMessage(invite.groupId);
+        expect(latestMessage, isNotNull);
+        expect(latestMessage!.text, 'Admin joined the group');
       },
     );
 

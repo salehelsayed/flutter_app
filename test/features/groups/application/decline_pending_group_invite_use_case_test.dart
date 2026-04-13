@@ -10,6 +10,9 @@ void main() {
   late InMemoryPendingGroupInviteRepository pendingInviteRepo;
 
   PendingGroupInvite makeInvite({DateTime? receivedAt}) {
+    final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
+    final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
+    final inviteTimestamp = createdAt.add(const Duration(minutes: 5));
     final payload = GroupInvitePayload(
       id: 'invite-1',
       groupId: 'grp-abc123',
@@ -20,15 +23,15 @@ void main() {
         'groupType': 'chat',
         'members': const [],
         'createdBy': '12D3KooWAlice',
-        'createdAt': '2026-03-02T00:00:00.000Z',
+        'createdAt': createdAt.toIso8601String(),
       },
       senderPeerId: '12D3KooWAlice',
       senderUsername: 'Alice',
-      timestamp: '2026-03-02T12:00:00.000Z',
+      timestamp: inviteTimestamp.toIso8601String(),
     );
     return PendingGroupInvite.fromPayload(
       payload,
-      receivedAt: receivedAt ?? DateTime.utc(2026, 4, 5, 13, 0),
+      receivedAt: effectiveReceivedAt,
     );
   }
 

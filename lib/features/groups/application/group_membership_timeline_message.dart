@@ -1,6 +1,95 @@
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 
+String _humanList(List<String> values) {
+  if (values.isEmpty) return 'members';
+  if (values.length == 1) return values.single;
+  if (values.length == 2) {
+    return '${values.first} and ${values.last}';
+  }
+  final head = values.sublist(0, values.length - 1).join(', ');
+  return '$head, and ${values.last}';
+}
+
+String buildMembersAddedTimelineText(
+  String senderUsername,
+  List<String?> addedUsernames,
+) {
+  final actor = senderUsername.trim().isNotEmpty
+      ? senderUsername.trim()
+      : 'Admin';
+  final subjects = addedUsernames
+      .map((username) => username?.trim() ?? '')
+      .where((username) => username.isNotEmpty)
+      .toList(growable: false);
+  final subject = subjects.isEmpty ? 'members' : _humanList(subjects);
+  return '$actor added $subject';
+}
+
+GroupMessage buildMembersAddedTimelineMessage({
+  required String groupId,
+  required List<({String peerId, String? username})> addedMembers,
+  required String senderId,
+  required String senderUsername,
+  required DateTime eventAt,
+}) {
+  final normalizedEventAt = eventAt.toUtc();
+  final effectiveSenderId = senderId.isNotEmpty ? senderId : 'system';
+  final memberKey = addedMembers
+      .map((member) => member.peerId.isNotEmpty ? member.peerId : 'unknown')
+      .join(',');
+  return GroupMessage(
+    id:
+        'sys-members_added:$groupId:$memberKey:'
+        '$effectiveSenderId:${normalizedEventAt.microsecondsSinceEpoch}',
+    groupId: groupId,
+    senderPeerId: effectiveSenderId,
+    senderUsername: senderUsername.isNotEmpty ? senderUsername : null,
+    text: buildMembersAddedTimelineText(
+      senderUsername,
+      addedMembers.map((member) => member.username).toList(growable: false),
+    ),
+    timestamp: normalizedEventAt,
+    status: 'delivered',
+    isIncoming: true,
+    createdAt: normalizedEventAt,
+  );
+}
+
+String buildMemberJoinedTimelineText(String? joinedUsername) {
+  final subject = joinedUsername != null && joinedUsername.trim().isNotEmpty
+      ? joinedUsername.trim()
+      : 'A member';
+  return '$subject joined the group';
+}
+
+GroupMessage buildMemberJoinedTimelineMessage({
+  required String groupId,
+  required String joinedPeerId,
+  String? joinedUsername,
+  required DateTime eventAt,
+}) {
+  final normalizedEventAt = eventAt.toUtc();
+  final effectiveJoinedPeerId = joinedPeerId.isNotEmpty
+      ? joinedPeerId
+      : 'unknown';
+  return GroupMessage(
+    id:
+        'sys-member_joined:$groupId:$effectiveJoinedPeerId:'
+        '${normalizedEventAt.microsecondsSinceEpoch}',
+    groupId: groupId,
+    senderPeerId: effectiveJoinedPeerId,
+    senderUsername: joinedUsername?.trim().isNotEmpty == true
+        ? joinedUsername!.trim()
+        : null,
+    text: buildMemberJoinedTimelineText(joinedUsername),
+    timestamp: normalizedEventAt,
+    status: 'delivered',
+    isIncoming: true,
+    createdAt: normalizedEventAt,
+  );
+}
+
 String buildMemberRemovedTimelineText(
   String senderUsername,
   String? removedUsername,

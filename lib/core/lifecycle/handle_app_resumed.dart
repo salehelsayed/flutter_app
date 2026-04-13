@@ -40,6 +40,7 @@ Future<bool?> handleAppResumed({
   NearbyLocationService? nearbyLocationService,
   Future<int> Function()? retryPendingPostMediaUploads,
   Future<int> Function()? retryPendingPostDeliveries,
+  Future<int> Function()? retryIncompleteKeyExchangesFn,
   Future<int> Function()? recoverStuckSendingMessagesFn, // Part A
   Future<int> Function()? recoverStuckSendingGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteGroupUploadsFn, // Section 5
@@ -303,12 +304,14 @@ Future<bool?> handleAppResumed({
     if (contactRepo != null && identityRepo != null) {
       final retryStart = DateTime.now();
       debugPrint('[RESUME] Step 4: retryIncompleteKeyExchanges() starting...');
-      final retried = await retryIncompleteKeyExchanges(
-        contactRepo: contactRepo,
-        identityRepo: identityRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+      final retried = retryIncompleteKeyExchangesFn != null
+          ? await retryIncompleteKeyExchangesFn()
+          : await retryIncompleteKeyExchanges(
+              contactRepo: contactRepo,
+              identityRepo: identityRepo,
+              p2pService: p2pService,
+              bridge: bridge,
+            );
       final retryMs = DateTime.now().difference(retryStart).inMilliseconds;
       debugPrint(
         '[RESUME] Step 4: retryIncompleteKeyExchanges() done '

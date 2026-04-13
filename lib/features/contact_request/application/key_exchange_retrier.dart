@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -18,18 +19,28 @@ class KeyExchangeRetrier {
   final ContactRepository contactRepo;
   final IdentityRepository identityRepo;
   final Bridge bridge;
+  final KeyExchangeRetryCoordinator _coordinator;
 
   StreamSubscription? _stateSubscription;
   Timer? _debounceTimer;
   bool _wasOnline = false;
-  bool _isRetrying = false;
 
   KeyExchangeRetrier({
     required this.p2pService,
     required this.contactRepo,
     required this.identityRepo,
     required this.bridge,
-  });
+    KeyExchangeRetryCoordinator? coordinator,
+  }) : _coordinator =
+           coordinator ??
+           KeyExchangeRetryCoordinator(
+             performRetry: () => retryIncompleteKeyExchanges(
+               contactRepo: contactRepo,
+               identityRepo: identityRepo,
+               p2pService: p2pService,
+               bridge: bridge,
+             ),
+           );
 
   /// Starts listening for state transitions.
   void start() {
@@ -58,17 +69,13 @@ class KeyExchangeRetrier {
     return state.isStarted && (state.circuitAddresses as List).isNotEmpty;
   }
 
-  Future<void> _retryIfNeeded() async {
-    if (_isRetrying) return;
-    _isRetrying = true;
+  Future<int> retryNow({required String trigger}) {
+    return _coordinator.retryNow(trigger: trigger);
+  }
 
+  Future<void> _retryIfNeeded() async {
     try {
-      final count = await retryIncompleteKeyExchanges(
-        contactRepo: contactRepo,
-        identityRepo: identityRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+      final count = await retryNow(trigger: 'online_transition');
 
       if (count > 0) {
         emitFlowEvent(
@@ -83,8 +90,6 @@ class KeyExchangeRetrier {
         event: 'KEY_EXCHANGE_RETRIER_ERROR',
         details: {'error': e.toString()},
       );
-    } finally {
-      _isRetrying = false;
     }
   }
 

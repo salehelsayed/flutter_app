@@ -465,7 +465,7 @@ void main() {
   // callGroupEncrypt
   // ---------------------------------------------------------------------------
   group('callGroupEncrypt', () {
-    test('sends group.encrypt with key and plaintext', () async {
+    test('sends group.encrypt with groupKey and plaintext', () async {
       bridge.responses['group.encrypt'] = {
         'ok': true,
         'ciphertext': 'encryptedBase64==',
@@ -486,7 +486,7 @@ void main() {
       expect(sent['cmd'], equals('group.encrypt'));
 
       final payload = sent['payload'] as Map<String, dynamic>;
-      expect(payload['key'], equals('symmetricKeyBase64=='));
+      expect(payload['groupKey'], equals('symmetricKeyBase64=='));
       expect(payload['plaintext'], equals('Hello group plaintext!'));
     });
 
@@ -509,7 +509,7 @@ void main() {
   // callGroupDecrypt
   // ---------------------------------------------------------------------------
   group('callGroupDecrypt', () {
-    test('sends group.decrypt with key, ciphertext, and nonce', () async {
+    test('sends group.decrypt with groupKey, ciphertext, and nonce', () async {
       bridge.responses['group.decrypt'] = {
         'ok': true,
         'plaintext': 'Decrypted hello!',
@@ -528,7 +528,7 @@ void main() {
       expect(sent['cmd'], equals('group.decrypt'));
 
       final payload = sent['payload'] as Map<String, dynamic>;
-      expect(payload['key'], equals('symmetricKeyBase64=='));
+      expect(payload['groupKey'], equals('symmetricKeyBase64=='));
       expect(payload['ciphertext'], equals('ciphertextBase64=='));
       expect(payload['nonce'], equals('nonceBase64=='));
     });

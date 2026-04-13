@@ -32,6 +32,45 @@ import 'dart:math';
 const _goMknoonDir = 'go-mknoon';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
 
+bool _isIosDeviceId(String? deviceId) {
+  if (deviceId == null) return false;
+  return RegExp(
+    r'^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})$',
+    caseSensitive: false,
+  ).hasMatch(deviceId);
+}
+
+List<String> _relayDartDefines() {
+  final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
+  if (relayAddresses == null || relayAddresses.trim().isEmpty) {
+    return const [];
+  }
+  return ['--dart-define=MKNOON_RELAY_ADDRESSES=${relayAddresses.trim()}'];
+}
+
+List<String> _relayCircuitAddresses(String peerId) {
+  final addresses = <String>{};
+
+  void addRelayBase(String? relayBase) {
+    final trimmed = relayBase?.trim() ?? '';
+    if (trimmed.isEmpty) return;
+    final base = trimmed.contains('/p2p-circuit')
+        ? trimmed
+        : '$trimmed/p2p-circuit';
+    addresses.add('$base/p2p/$peerId');
+  }
+
+  final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
+  if (relayAddresses != null && relayAddresses.trim().isNotEmpty) {
+    for (final relayBase in relayAddresses.split(',')) {
+      addRelayBase(relayBase);
+    }
+  }
+  addRelayBase(Platform.environment['MKNOON_RELAY_ADDR']);
+
+  return addresses.toList(growable: false);
+}
+
 // ---------------------------------------------------------------------------
 // TestPeer — reusable from run_transport_e2e.dart
 // ---------------------------------------------------------------------------
@@ -132,7 +171,7 @@ class TestPeer {
   }
 
   Future<void> startNode() async {
-    await commandOk('start');
+    await commandOk('start', {'autoConfirmDirectAck': true});
     await commandWithRetry('wait_relay', {'timeoutSec': 30}, 3);
     await commandWithRetry('wait_circuit', {'timeoutSec': 30}, 3);
   }
@@ -209,6 +248,55 @@ Future<Map<String, dynamic>?> _waitForJsonSignal(
     return null;
   }
   return jsonDecode(content) as Map<String, dynamic>;
+}
+
+Future<bool> _discoverAndDialFlutterPeer(
+  TestPeer peer,
+  String flutterPeerId,
+) async {
+  final ns = 'mknoon:chat:$flutterPeerId';
+  for (var attempt = 1; attempt <= 10; attempt++) {
+    await Future.delayed(Duration(seconds: attempt * 2));
+    try {
+      final disc = await peer.commandOk('discover', {'namespace': ns});
+      final peers = disc['peers'] as List<dynamic>? ?? [];
+      for (final p in peers) {
+        final pMap = p as Map<String, dynamic>;
+        if (pMap['peerId'] == flutterPeerId) {
+          final addrs = (pMap['addresses'] as List<dynamic>)
+              .map((a) => a as String)
+              .toList();
+          await peer.commandOk('dial', {
+            'peerId': flutterPeerId,
+            'addresses': addrs,
+          });
+          return true;
+        }
+      }
+    } catch (_) {}
+  }
+
+  final relayCircuitAddresses = _relayCircuitAddresses(flutterPeerId);
+  if (relayCircuitAddresses.isEmpty) {
+    _log('SOAK', 'Relay circuit fallback unavailable: no relay env configured');
+    return false;
+  }
+
+  _log(
+    'SOAK',
+    'Rendezvous discovery missed Flutter peer; trying relay circuit fallback',
+  );
+  try {
+    await peer.commandOk('dial', {
+      'peerId': flutterPeerId,
+      'addresses': relayCircuitAddresses,
+    });
+    return true;
+  } catch (e) {
+    _log('SOAK', 'Relay circuit dial failed: $e');
+  }
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,9 +397,21 @@ Future<void> main(List<String> args) async {
 
   // 5. Launch Flutter integration test
   _log('SOAK', 'Launching Flutter soak test...');
+  final useFlutterDrive =
+      platform == 'ios' && (deviceId == null || _isIosDeviceId(deviceId));
   final flutterArgs = [
-    'test',
-    'integration_test/soak_e2e_test.dart',
+    if (useFlutterDrive) ...[
+      'drive',
+      '--driver=test_driver/integration_test.dart',
+      '--target=integration_test/soak_e2e_test.dart',
+      '--publish-port',
+    ] else ...[
+      'test',
+      '--no-dds',
+      'integration_test/soak_e2e_test.dart',
+    ],
+    ..._relayDartDefines(),
+    '--dart-define=E2E_SIGNAL_DIR=${_signalDir.path}',
     if (deviceId != null) ...['-d', deviceId],
   ];
   final flutterProcess = await Process.start(
@@ -352,6 +452,33 @@ Future<void> main(List<String> args) async {
 
   final flutterPeerId = flutterPeer['peerId'] as String;
   _log('SOAK', 'Flutter peer: ${flutterPeerId.substring(0, 20)}...');
+  await peer.register();
+  _log('SOAK', 'CLI peer re-registered after Flutter startup');
+
+  final connectedBeforePhase4 = await _discoverAndDialFlutterPeer(
+    peer,
+    flutterPeerId,
+  );
+  if (!connectedBeforePhase4) {
+    _log('SOAK', 'ERROR: Could not discover/dial Flutter peer before Phase 4');
+    _writeSignal('soak_done');
+    await peer.kill();
+    flutterProcess.kill();
+    exit(1);
+  }
+  _log('SOAK', 'Connected to Flutter peer before Phase 4');
+
+  final phase4Ready = await _waitForSignal(
+    'phase4_initial_ready',
+    timeout: const Duration(seconds: 120),
+  );
+  if (phase4Ready == null) {
+    _log('SOAK', 'ERROR: Flutter never confirmed initial CLI discoverability');
+    _writeSignal('soak_done');
+    await peer.kill();
+    flutterProcess.kill();
+    exit(1);
+  }
 
   // 7. Deterministic Phase 4 gate: keep the CLI peer online but remove its
   // personal rendezvous registration so Flutter hits the stale-discoverability
@@ -430,32 +557,7 @@ Future<void> main(List<String> args) async {
   await peer.commandOk('register');
 
   // Discover and dial Flutter peer for the remaining long-running soak loop.
-  final ns = 'mknoon:chat:$flutterPeerId';
-  var dialed = false;
-  for (var attempt = 1; attempt <= 10; attempt++) {
-    await Future.delayed(Duration(seconds: attempt * 2));
-    try {
-      final disc = await peer.commandOk('discover', {'namespace': ns});
-      final peers = disc['peers'] as List<dynamic>? ?? [];
-      for (final p in peers) {
-        final pMap = p as Map<String, dynamic>;
-        if (pMap['peerId'] == flutterPeerId) {
-          final addrs = (pMap['addresses'] as List<dynamic>)
-              .map((a) => a as String)
-              .toList();
-          await peer.commandOk('dial', {
-            'peerId': flutterPeerId,
-            'addresses': addrs,
-          });
-          dialed = true;
-          break;
-        }
-      }
-      if (dialed) break;
-    } catch (e) {
-      _log('SOAK', 'Discovery attempt $attempt failed: $e');
-    }
-  }
+  final dialed = await _discoverAndDialFlutterPeer(peer, flutterPeerId);
 
   if (!dialed) {
     _log('SOAK', 'ERROR: Could not discover/dial Flutter peer');
@@ -510,20 +612,9 @@ Future<void> main(List<String> args) async {
 
       // Re-dial Flutter
       try {
-        final disc = await peer.commandOk('discover', {'namespace': ns});
-        final peers = disc['peers'] as List<dynamic>? ?? [];
-        for (final p in peers) {
-          final pMap = p as Map<String, dynamic>;
-          if (pMap['peerId'] == flutterPeerId) {
-            final addrs = (pMap['addresses'] as List<dynamic>)
-                .map((a) => a as String)
-                .toList();
-            await peer.commandOk('dial', {
-              'peerId': flutterPeerId,
-              'addresses': addrs,
-            });
-            break;
-          }
+        final redialed = await _discoverAndDialFlutterPeer(peer, flutterPeerId);
+        if (!redialed) {
+          _log('SOAK', 'Reconnect re-dial did not find Flutter peer');
         }
       } catch (e) {
         _log('SOAK', 'Re-dial failed: $e');

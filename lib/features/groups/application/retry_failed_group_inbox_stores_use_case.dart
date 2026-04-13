@@ -1,9 +1,9 @@
-import 'dart:convert';
-
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 
 /// Retries inbox store for outgoing group messages where the initial
 /// inbox store failed.
@@ -17,10 +17,14 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 /// For each, reconstructs the inbox store call from persisted JSON payload,
 /// calls `callGroupInboxStore`, and closes the row as fully sent on success.
 ///
-/// Returns the number of successfully retried messages.
+/// When [reactionReplayOutboxRepo] is provided, the same retry pass also
+/// drains retryable sender-owned reaction replay rows after message rows.
+///
+/// Returns the number of successfully retried entries across both owners.
 Future<int> retryFailedGroupInboxStores({
   required Bridge bridge,
   required GroupMessageRepository msgRepo,
+  GroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
   int limit = 20,
 }) async {
   final retryStopwatch = Stopwatch()..start();
@@ -49,7 +53,15 @@ Future<int> retryFailedGroupInboxStores({
   );
 
   final messages = await msgRepo.getMessagesWithFailedInboxStore(limit: limit);
-  if (messages.isEmpty) {
+  final remainingReactionSlots = limit - messages.length;
+  final reactionEntries =
+      reactionReplayOutboxRepo == null || remainingReactionSlots <= 0
+      ? const <GroupReactionReplayOutboxEntry>[]
+      : await reactionReplayOutboxRepo.loadRetryableEntries(
+          limit: remainingReactionSlots,
+        );
+
+  if (messages.isEmpty && reactionEntries.isEmpty) {
     emitFlowEvent(
       layer: 'FL',
       event: 'RETRY_FAILED_GROUP_INBOX_STORES_NONE',
@@ -63,22 +75,9 @@ Future<int> retryFailedGroupInboxStores({
 
   for (final msg in messages) {
     try {
-      final retryPayload =
-          jsonDecode(msg.inboxRetryPayload!) as Map<String, dynamic>;
-      final groupId = retryPayload['groupId'] as String;
-      final inboxMessage = retryPayload['message'] as String;
-      final recipientPeerIds =
-          (retryPayload['recipientPeerIds'] as List<dynamic>?)?.cast<String>();
-      final pushTitle = retryPayload['pushTitle'] as String?;
-      final pushBody = retryPayload['pushBody'] as String?;
-
-      await callGroupInboxStore(
-        bridge,
-        groupId,
-        inboxMessage,
-        recipientPeerIds: recipientPeerIds,
-        pushTitle: pushTitle,
-        pushBody: pushBody,
+      await storeGroupOfflineReplayFromRetryPayload(
+        bridge: bridge,
+        inboxRetryPayload: msg.inboxRetryPayload!,
       );
 
       await msgRepo.updateInboxStored(msg.id, stored: true);
@@ -106,14 +105,88 @@ Future<int> retryFailedGroupInboxStores({
     }
   }
 
+  for (final entry in reactionEntries) {
+    try {
+      await storeGroupOfflineReplayFromRetryPayload(
+        bridge: bridge,
+        inboxRetryPayload: entry.inboxRetryPayload,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_ERROR',
+        details: {
+          'reactionId': entry.reactionId.length > 8
+              ? entry.reactionId.substring(0, 8)
+              : entry.reactionId,
+          'error': e.toString(),
+        },
+      );
+      try {
+        await reactionReplayOutboxRepo!.updateEntryStatus(
+          entry.reactionId,
+          deliveryStatus: GroupReactionReplayOutboxStatus.failed,
+          lastError: e.toString(),
+        );
+      } catch (statusError) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_MARK_FAILED_ERROR',
+          details: {
+            'reactionId': entry.reactionId.length > 8
+                ? entry.reactionId.substring(0, 8)
+                : entry.reactionId,
+            'error': statusError.toString(),
+          },
+        );
+      }
+      continue;
+    }
+
+    try {
+      await reactionReplayOutboxRepo!.updateEntryStatus(
+        entry.reactionId,
+        deliveryStatus: GroupReactionReplayOutboxStatus.stored,
+      );
+      retriedCount++;
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_OK',
+        details: {
+          'reactionId': entry.reactionId.length > 8
+              ? entry.reactionId.substring(0, 8)
+              : entry.reactionId,
+          'action': entry.action,
+        },
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_GROUP_REACTION_REPLAY_MARK_STORED_ERROR',
+        details: {
+          'reactionId': entry.reactionId.length > 8
+              ? entry.reactionId.substring(0, 8)
+              : entry.reactionId,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'RETRY_FAILED_GROUP_INBOX_STORES_DONE',
-    details: {'retried': retriedCount, 'total': messages.length},
+    details: {
+      'retried': retriedCount,
+      'total': messages.length + reactionEntries.length,
+      'messageTotal': messages.length,
+      'reactionTotal': reactionEntries.length,
+    },
   );
   emitRetryTiming(
     outcome: 'complete',
-    total: messages.length,
+    total: messages.length + reactionEntries.length,
     retried: retriedCount,
   );
 

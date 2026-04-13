@@ -6,12 +6,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+
+import '../../../shared/fakes/in_memory_introduction_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -56,6 +61,7 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
 
   @override
   Future<void> addRequest(ContactRequestModel request) async {
+    existingRequest = request;
     lastAdded = request;
   }
 
@@ -65,7 +71,11 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
 
   // Not needed
   @override
-  Future<void> deleteRequest(String peerId) async {}
+  Future<void> deleteRequest(String peerId) async {
+    if (existingRequest?.peerId == peerId) {
+      existingRequest = null;
+    }
+  }
   @override
   Future<List<ContactRequestModel>> getPendingRequests() async => [];
   @override
@@ -105,7 +115,7 @@ class _FakeContactRepository implements ContactRepository {
   @override
   Future<List<ContactModel>> getArchivedContacts() async => [];
   @override
-  Future<int> getContactCount() async => 0;
+  Future<int> getContactCount() async => _contacts.length;
   @override
   Future<void> unarchiveContact(String peerId) async {}
   @override
@@ -160,6 +170,23 @@ ChatMessage _makeRegularMessage({String content = 'Hello, world!'}) {
     content: content,
     timestamp: DateTime.now().toUtc().toIso8601String(),
     isIncoming: true,
+  );
+}
+
+IntroductionModel _pendingIntroFor(String ownPeerId, String otherPeerId) {
+  return IntroductionModel(
+    id: 'intro-listener-recovery',
+    introducerId: 'peer-introducer',
+    recipientId: ownPeerId,
+    introducedId: otherPeerId,
+    recipientStatus: IntroductionStatus.accepted,
+    introducedStatus: IntroductionStatus.pending,
+    status: IntroductionOverallStatus.pending,
+    createdAt: '2026-04-03T12:00:00.000Z',
+    introducerUsername: 'Noor',
+    recipientUsername: 'Receiver',
+    introducedUsername: 'TestUser',
+    introducedPublicKey: _testPublicKey,
   );
 }
 
@@ -849,6 +876,147 @@ void main() {
 
         expect(requests.length, equals(1));
         expect(requests.first.peerId, equals(_testPeerId));
+
+        v2Listener.dispose();
+      },
+    );
+
+    test(
+      'silent intro recovery does not emit requestStream, records the v2 msgId, emits intro refresh once, and forwards key updates',
+      () async {
+        final introRepo = InMemoryIntroductionRepository();
+        final messageRepo = InMemoryMessageRepository();
+        final replayCache = ReplayCache();
+        await introRepo.saveIntroduction(
+          _pendingIntroFor(_testOwnPeerId, _testPeerId),
+        );
+        requestRepo.existingRequest = ContactRequestModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          receivedAt: '2026-04-03T11:00:00Z',
+          status: ContactRequestStatus.pending,
+        );
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2026-04-03T11:00:00Z',
+            mlKemPublicKey: null,
+          ),
+        );
+
+        final recoveredIntros = <IntroductionModel>[];
+        final v2Listener = ContactRequestListener(
+          contactRequestStream: streamController.stream,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnPeerId: () => _testOwnPeerId,
+          getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+          replayCache: replayCache,
+          attemptSilentIntroRecovery: (request) => recoverIntroContactRequest(
+            introRepo: introRepo,
+            requestRepo: requestRepo,
+            contactRepo: contactRepo,
+            ownPeerId: _testOwnPeerId,
+            request: request,
+            messageRepo: messageRepo,
+          ),
+          emitRecoveredIntroductionStatus: recoveredIntros.add,
+        );
+        v2Listener.start();
+
+        final requests = <ContactRequestModel>[];
+        final updates = <ContactModel>[];
+        v2Listener.requestStream.listen(requests.add);
+        v2Listener.contactKeyUpdatedStream.listen(updates.add);
+
+        const msgId = 'intro-recovery-msg';
+        streamController.add(
+          _makeV2Message(msgId: msgId, mlkem: 'recovered-mlkem-key'),
+        );
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        expect(requests, isEmpty);
+        expect(recoveredIntros, hasLength(1));
+        expect(recoveredIntros.single.status, IntroductionOverallStatus.mutualAccepted);
+        expect(updates, hasLength(1));
+        expect(updates.single.peerId, _testPeerId);
+        expect(updates.single.mlKemPublicKey, 'recovered-mlkem-key');
+        expect(replayCache.contains(msgId), isTrue);
+        expect(requestRepo.existingRequest, isNull);
+
+        v2Listener.dispose();
+      },
+    );
+
+    test(
+      'silent intro recovery stays idempotent for same-envelope replay and fresh resend envelopes',
+      () async {
+        final introRepo = InMemoryIntroductionRepository();
+        final messageRepo = InMemoryMessageRepository();
+        final replayCache = ReplayCache();
+        await introRepo.saveIntroduction(
+          _pendingIntroFor(_testOwnPeerId, _testPeerId),
+        );
+        requestRepo.existingRequest = ContactRequestModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          receivedAt: '2026-04-03T11:00:00Z',
+          status: ContactRequestStatus.pending,
+        );
+
+        final recoveredIntros = <IntroductionModel>[];
+        final v2Listener = ContactRequestListener(
+          contactRequestStream: streamController.stream,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          getOwnPeerId: () => _testOwnPeerId,
+          getOwnPrivateKey: () async => 'ownPrivKeyBase64',
+          replayCache: replayCache,
+          attemptSilentIntroRecovery: (request) => recoverIntroContactRequest(
+            introRepo: introRepo,
+            requestRepo: requestRepo,
+            contactRepo: contactRepo,
+            ownPeerId: _testOwnPeerId,
+            request: request,
+            messageRepo: messageRepo,
+          ),
+          emitRecoveredIntroductionStatus: recoveredIntros.add,
+        );
+        v2Listener.start();
+
+        final requests = <ContactRequestModel>[];
+        final updates = <ContactModel>[];
+        v2Listener.requestStream.listen(requests.add);
+        v2Listener.contactKeyUpdatedStream.listen(updates.add);
+
+        streamController.add(_makeV2Message(msgId: 'repair-msg-1'));
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        streamController.add(_makeV2Message(msgId: 'repair-msg-1'));
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        streamController.add(_makeV2Message(msgId: 'repair-msg-2'));
+        await Future.delayed(const Duration(milliseconds: 200));
+
+        expect(requests, isEmpty);
+        expect(updates, isEmpty);
+        expect(recoveredIntros, hasLength(1));
+        expect(await contactRepo.getContactCount(), 1);
+        expect(replayCache.contains('repair-msg-1'), isTrue);
+        expect(replayCache.contains('repair-msg-2'), isTrue);
+        expect(requestRepo.existingRequest, isNull);
 
         v2Listener.dispose();
       },

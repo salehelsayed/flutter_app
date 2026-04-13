@@ -8,10 +8,11 @@ import (
 
 // incomingMessage represents a message received from the network.
 type incomingMessage struct {
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Content   string `json:"content"`
-	Timestamp string `json:"timestamp"`
+	From         string `json:"from"`
+	To           string `json:"to"`
+	Content      string `json:"content"`
+	Timestamp    string `json:"timestamp"`
+	ConfirmNonce string `json:"confirmNonce"`
 }
 
 // messageCollector is a thread-safe buffer for incoming messages.
@@ -41,22 +42,28 @@ func (mc *messageCollector) OnEvent(jsonStr string) {
 
 	if ev.Event == "message:received" {
 		msg := incomingMessage{
-			From:      strVal(ev.Data, "from"),
-			To:        strVal(ev.Data, "to"),
-			Content:   strVal(ev.Data, "content"),
-			Timestamp: strVal(ev.Data, "timestamp"),
+			From:         strVal(ev.Data, "from"),
+			To:           strVal(ev.Data, "to"),
+			Content:      strVal(ev.Data, "content"),
+			Timestamp:    strVal(ev.Data, "timestamp"),
+			ConfirmNonce: strVal(ev.Data, "confirmNonce"),
 		}
 		mc.mu.Lock()
 		mc.messages = append(mc.messages, msg)
 		mc.cond.Broadcast()
 		mc.mu.Unlock()
 
+		if msg.ConfirmNonce != "" && state.autoConfirmDirectAck && state.node != nil {
+			state.node.ResolveDirectConfirm(msg.ConfirmNonce, true)
+		}
+
 		// Also emit as async event on stdout.
 		emitAsyncEvent("message:received", map[string]interface{}{
-			"from":      msg.From,
-			"to":        msg.To,
-			"content":   msg.Content,
-			"timestamp": msg.Timestamp,
+			"from":         msg.From,
+			"to":           msg.To,
+			"content":      msg.Content,
+			"timestamp":    msg.Timestamp,
+			"confirmNonce": msg.ConfirmNonce,
 		})
 	}
 }

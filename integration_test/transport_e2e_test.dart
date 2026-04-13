@@ -1868,7 +1868,7 @@ void main() {
     } finally {
       await stack.teardown();
     }
-  });
+  }, timeout: const Timeout(Duration(minutes: 10)));
 
   if (_phase4Only) {
     return;

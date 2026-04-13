@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -21,6 +24,55 @@ const Duration _frameStep = Duration(milliseconds: 16);
 const int _openFrames = 40; // ~640ms > 420ms route push transition.
 const int _closeFrames = 24; // ~384ms > 280ms reverse transition.
 const int _badgeFrames = 78; // ~1248ms covers 1000ms delay + animation start.
+
+class _FrameTimingCollector {
+  final _timings = <FrameTiming>[];
+  TimingsCallback? _callback;
+
+  void start() {
+    _timings.clear();
+    _callback = (List<FrameTiming> timings) => _timings.addAll(timings);
+    WidgetsBinding.instance.addTimingsCallback(_callback!);
+  }
+
+  Future<Map<String, dynamic>> stopAndReport() async {
+    if (_callback == null) {
+      return <String, dynamic>{'frameCount': 0};
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    WidgetsBinding.instance.removeTimingsCallback(_callback!);
+    _callback = null;
+    if (_timings.isEmpty) {
+      return <String, dynamic>{'frameCount': 0};
+    }
+
+    final buildTimesMs = _timings
+        .map((timing) => timing.buildDuration.inMicroseconds / 1000.0)
+        .toList(growable: false);
+    final rasterTimesMs = _timings
+        .map((timing) => timing.rasterDuration.inMicroseconds / 1000.0)
+        .toList(growable: false);
+    final averageBuildMs =
+        buildTimesMs.reduce((a, b) => a + b) / buildTimesMs.length;
+    final averageRasterMs =
+        rasterTimesMs.reduce((a, b) => a + b) / rasterTimesMs.length;
+
+    return <String, dynamic>{
+      'frameCount': _timings.length,
+      'averageBuildMs': double.parse(averageBuildMs.toStringAsFixed(3)),
+      'averageRasterMs': double.parse(averageRasterMs.toStringAsFixed(3)),
+      'worstBuildMs': double.parse(
+        buildTimesMs.reduce((a, b) => a > b ? a : b).toStringAsFixed(3),
+      ),
+      'worstRasterMs': double.parse(
+        rasterTimesMs.reduce((a, b) => a > b ? a : b).toStringAsFixed(3),
+      ),
+      'missedBuildBudgetCount': buildTimesMs.where((ms) => ms > 16.0).length,
+      'missedRasterBudgetCount': rasterTimesMs.where((ms) => ms > 16.0).length,
+      'captureMode': 'frame_timing_fallback',
+    };
+  }
+}
 
 class _OrbitScenario {
   const _OrbitScenario({
@@ -255,6 +307,11 @@ Map<String, dynamic> _timelineEventSummary(Map<String, dynamic> timeline) {
   };
 }
 
+Future<bool> _canUseVmServiceTimeline() async {
+  final info = await developer.Service.getInfo();
+  return info.serverUri != null;
+}
+
 void _printReportEntry(String key) {
   final data = binding.reportData?[key];
   if (data == null) {
@@ -273,30 +330,57 @@ Future<void> _captureScenario(
   final timelineSummaryKey = '${scenario.id}_timeline_summary';
 
   await _pumpHost(tester, scenario);
-  await binding.watchPerformance(
-    () async => _runScenario(tester, scenario),
-    reportKey: perfKey,
-  );
+  binding.reportData ??= <String, dynamic>{};
+  if (await _canUseVmServiceTimeline()) {
+    await binding.watchPerformance(
+      () async => _runScenario(tester, scenario),
+      reportKey: perfKey,
+    );
+  } else {
+    final collector = _FrameTimingCollector()..start();
+    await _runScenario(tester, scenario);
+    binding.reportData![perfKey] = await collector.stopAndReport();
+  }
   _printReportEntry(perfKey);
 
   await _pumpHost(tester, scenario);
-  await binding.traceAction(
-    () async => _runScenario(tester, scenario),
-    reportKey: timelineKey,
-    streams: const <String>['all'],
-  );
+  if (await _canUseVmServiceTimeline()) {
+    await binding.traceAction(
+      () async => _runScenario(tester, scenario),
+      reportKey: timelineKey,
+      streams: const <String>['all'],
+    );
 
-  final timeline = binding.reportData?[timelineKey] as Map<String, dynamic>;
-  final timelineSummary = _timelineEventSummary(timeline);
-  binding.reportData ??= <String, dynamic>{};
-  binding.reportData![timelineSummaryKey] = timelineSummary;
+    final timeline = binding.reportData?[timelineKey] as Map<String, dynamic>;
+    binding.reportData![timelineSummaryKey] = _timelineEventSummary(timeline);
+  } else {
+    binding.reportData![timelineSummaryKey] = <String, dynamic>{
+      'eventCount': 0,
+      'customPaintEvents': 0,
+      'backdropFilterEvents': 0,
+      'shaderMaskEvents': 0,
+      'phaseMarkerEvents': 0,
+      'interestingEventNames': const <String>[],
+      'captureMode': 'frame_timing_fallback',
+    };
+  }
   _printReportEntry(timelineSummaryKey);
 }
 
 void main() {
-  binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   final originalDebugProfilePaintsEnabled = debugProfilePaintsEnabled;
   debugProfilePaintsEnabled = true;
+  final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  if (skipOnMobileDevice) {
+    testWidgets(
+      'captures Orbit route performance evidence',
+      (_) async {},
+      skip: true,
+    );
+    return;
+  }
+  VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
+  binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   tearDown(() {
     debugProfilePaintsEnabled = originalDebugProfilePaintsEnabled;

@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+const (
+	dispatcherPressureEvent  = "group:dispatcher_pressure"
+	dispatcherOverflowEvent  = "group:dispatcher_overflow"
+	dispatcherPressureFactor = 4
+	dispatcherPressureBase   = 5
+)
+
 // eventItem represents a single event to be dispatched.
 type eventItem struct {
 	eventName string
@@ -50,6 +57,8 @@ var coalescedEventTypes = map[string]bool{
 	"addresses:updated":     true,
 	"relay:state":           true,
 	"media:upload_progress": true,
+	dispatcherPressureEvent: true,
+	dispatcherOverflowEvent: true,
 }
 
 // NewEventDispatcher creates a dispatcher that delivers events to the callback
@@ -91,19 +100,21 @@ func (d *EventDispatcher) Emit(eventName string, data map[string]interface{}) {
 	d.mu.Lock()
 
 	if coalescedEventTypes[eventName] {
-		// Coalesce: replace the previous version of this event type.
-		if _, existed := d.statusLatest[eventName]; existed {
-			d.coalesced++
-		}
-		d.statusLatest[eventName] = item
+		d.setStatusLatestLocked(item)
 	} else {
 		// Lossless: enqueue the event.
 		if len(d.messageQueue) >= d.maxMessageQueueSize {
 			d.dropped++
+			d.setStatusLatestLocked(eventItem{
+				eventName: dispatcherOverflowEvent,
+				data:      d.dispatcherDiagnosticDataLocked("overflow", eventName),
+				timestamp: time.Now(),
+			})
 			log.Printf("[EVENT_DISPATCHER] Queue full (%d), dropping event: %s",
 				d.maxMessageQueueSize, eventName)
 		} else {
 			d.messageQueue = append(d.messageQueue, item)
+			d.maybeRecordPressureLocked(eventName)
 		}
 	}
 
@@ -113,6 +124,49 @@ func (d *EventDispatcher) Emit(eventName string, data map[string]interface{}) {
 	select {
 	case d.notify <- struct{}{}:
 	default:
+	}
+}
+
+func (d *EventDispatcher) setStatusLatestLocked(item eventItem) {
+	if _, existed := d.statusLatest[item.eventName]; existed {
+		d.coalesced++
+	}
+	d.statusLatest[item.eventName] = item
+}
+
+func (d *EventDispatcher) maybeRecordPressureLocked(eventName string) {
+	if d.maxMessageQueueSize <= 0 {
+		return
+	}
+
+	threshold := (d.maxMessageQueueSize * dispatcherPressureFactor) / dispatcherPressureBase
+	if threshold <= 0 {
+		threshold = 1
+	}
+	if len(d.messageQueue) < threshold {
+		return
+	}
+
+	d.setStatusLatestLocked(eventItem{
+		eventName: dispatcherPressureEvent,
+		data:      d.dispatcherDiagnosticDataLocked("near_overflow", eventName),
+		timestamp: time.Now(),
+	})
+}
+
+func (d *EventDispatcher) dispatcherDiagnosticDataLocked(
+	state string,
+	eventName string,
+) map[string]interface{} {
+	return map[string]interface{}{
+		"state":          state,
+		"queueDepth":     len(d.messageQueue),
+		"statusCount":    len(d.statusLatest),
+		"maxQueueSize":   d.maxMessageQueueSize,
+		"droppedCount":   d.dropped,
+		"coalescedCount": d.coalesced,
+		"deliveredCount": d.delivered,
+		"lastEvent":      eventName,
 	}
 }
 

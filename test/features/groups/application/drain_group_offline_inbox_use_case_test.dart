@@ -6,9 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -1309,6 +1311,21 @@ void main() {
         ),
         isTrue,
       );
+      final groupError = events.firstWhere(
+        (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_ERROR',
+      );
+      expect(
+        groupError['details']['error'],
+        contains('Simulated cursor timeout'),
+      );
+      final errorTiming = events.firstWhere(
+        (event) =>
+            event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_TIMING' &&
+            (event['details'] as Map<String, dynamic>)['scope'] == 'group' &&
+            (event['details'] as Map<String, dynamic>)['outcome'] == 'error',
+      );
+      expect(errorTiming['details']['groupId'], 'group-1');
+      expect(errorTiming['details']['elapsedMs'], isA<int>());
       expect(
         events.any(
           (event) =>
@@ -1373,6 +1390,22 @@ void main() {
         )
         .toList();
 
+    final begin = events.firstWhere(
+      (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_BEGIN',
+    );
+    expect(begin['details'], isEmpty);
+
+    final groupDone = events.firstWhere(
+      (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_GROUP_DONE',
+    );
+    expect(groupDone['details']['groupId'], 'group-1');
+    expect(groupDone['details']['messageCount'], 1);
+
+    final done = events.firstWhere(
+      (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_DONE',
+    );
+    expect(done['details']['groupCount'], 1);
+
     final timing = events.lastWhere(
       (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
     );
@@ -1380,6 +1413,7 @@ void main() {
     expect(timing['details']['scope'], 'batch');
     expect(timing['details']['groupCount'], 1);
     expect(timing['details']['drainAllPages'], isTrue);
+    expect(timing['details']['pageSize'], 50);
     expect(timing['details']['elapsedMs'], isA<int>());
   });
 
@@ -1600,6 +1634,118 @@ void main() {
     expect(pending.first.mime, 'image/jpeg');
   });
 
+  test(
+    'drains encrypted replay with quote plus image, video, gif/file, and voice attachments',
+    () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final plaintext = jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'Encrypted mixed media replay',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-encrypted-mixed-media',
+        'quotedMessageId': 'msg-parent-1',
+        'media': [
+          {
+            'id': 'blob-image-1',
+            'mime': 'image/jpeg',
+            'size': 12345,
+            'mediaType': 'image',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+          {
+            'id': 'blob-video-1',
+            'mime': 'video/mp4',
+            'size': 54321,
+            'mediaType': 'video',
+            'durationMs': 9876,
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+          {
+            'id': 'blob-gif-1',
+            'mime': 'image/gif',
+            'size': 4567,
+            'mediaType': 'image',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+          {
+            'id': 'blob-file-1',
+            'mime': 'application/pdf',
+            'size': 8910,
+            'mediaType': 'file',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+          {
+            'id': 'blob-audio-1',
+            'mime': 'audio/mp4',
+            'size': 6543,
+            'mediaType': 'audio',
+            'durationMs': 4321,
+            'waveform': [0.2, 0.8],
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ],
+      });
+
+      final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: plaintext,
+        messageId: 'msg-encrypted-mixed-media',
+      );
+
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 123},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(bridge.commandLog, contains('group.decrypt'));
+
+      final saved = await msgRepo.getMessage('msg-encrypted-mixed-media');
+      expect(saved, isNotNull);
+      expect(saved!.quotedMessageId, 'msg-parent-1');
+
+      final attachments = await mediaRepo.getAttachmentsForMessage(saved.id);
+      expect(attachments, hasLength(5));
+
+      final byId = {for (final attachment in attachments) attachment.id: attachment};
+      expect(byId['blob-image-1']!.mime, 'image/jpeg');
+      expect(byId['blob-image-1']!.mediaType, 'image');
+      expect(byId['blob-video-1']!.mime, 'video/mp4');
+      expect(byId['blob-video-1']!.mediaType, 'video');
+      expect(byId['blob-gif-1']!.mime, 'image/gif');
+      expect(byId['blob-gif-1']!.mediaType, 'image');
+      expect(byId['blob-file-1']!.mime, 'application/pdf');
+      expect(byId['blob-file-1']!.mediaType, 'file');
+      expect(byId['blob-audio-1']!.mime, 'audio/mp4');
+      expect(byId['blob-audio-1']!.mediaType, 'audio');
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // Reaction drain tests
   // ---------------------------------------------------------------------------
@@ -1801,6 +1947,44 @@ void main() {
     // Reaction should be persisted.
     expect(reactionRepo.saveReactionCallCount, 1);
     // Should NOT be saved as a regular message.
+    expect(msgRepo.count, 0);
+  });
+
+  test('ignores replayed group_reaction items with mismatched sender identity',
+      () async {
+    final reactionRepo = FakeReactionRepository();
+
+    final innerReaction = jsonEncode({
+      'id': 'rxn-mismatch-1',
+      'messageId': 'msg-mismatch-1',
+      'emoji': '\u{1F44D}',
+      'action': 'add',
+      'senderPeerId': 'peer-other',
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    final inboxMessage = jsonEncode({
+      'type': 'group_reaction',
+      'senderId': 'peer-sender',
+      'reaction': innerReaction,
+    });
+
+    bridge.addPage('group-1', '', [
+      {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+    ], '');
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+    );
+
+    expect(reactionRepo.saveReactionCallCount, 0);
+    expect(
+      await reactionRepo.getReactionsForMessage('msg-mismatch-1'),
+      isEmpty,
+    );
     expect(msgRepo.count, 0);
   });
 }

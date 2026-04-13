@@ -168,4 +168,49 @@ void main() {
     expect(result, HandleGroupReactionResult.success);
     expect(change, isNotNull);
   });
+
+  test('rejects add when payload sender mismatches outer sender', () async {
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(senderPeerId: 'peer-other'),
+    );
+
+    expect(result, HandleGroupReactionResult.senderMismatch);
+    expect(change, isNull);
+
+    final stored = await reactionRepo.getReactionsForMessage('msg-1');
+    expect(stored, isEmpty);
+  });
+
+  test('rejects remove when payload sender mismatches outer sender', () async {
+    await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(),
+    );
+
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(
+        id: 'r-remove-mismatch',
+        action: 'remove',
+        senderPeerId: 'peer-other',
+      ),
+    );
+
+    expect(result, HandleGroupReactionResult.senderMismatch);
+    expect(change, isNull);
+
+    final stored = await reactionRepo.getReactionsForMessage('msg-1');
+    expect(stored, hasLength(1));
+    expect(stored.single.senderPeerId, 'peer-sender');
+  });
 }

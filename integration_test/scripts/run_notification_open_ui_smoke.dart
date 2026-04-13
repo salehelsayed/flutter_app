@@ -97,12 +97,25 @@ Future<int> _runSmokeForDevice(_DeviceTarget device) async {
     'RUN',
     'Starting notification-open UI smoke on ${device.name} (${device.id})',
   );
-  final process = await Process.start('flutter', [
-    'test',
-    'integration_test/notification_open_ui_smoke_test.dart',
+  final flutterArgs = <String>[
+    if (device.platform == 'ios') ...<String>[
+      'drive',
+      '--driver=test_driver/integration_test.dart',
+      '--target=integration_test/notification_open_ui_smoke_test.dart',
+      '--publish-port',
+    ] else ...<String>[
+      'test',
+      '--no-dds',
+      'integration_test/notification_open_ui_smoke_test.dart',
+    ],
     '-d',
     device.id,
-  ], mode: ProcessStartMode.inheritStdio);
+  ];
+  final process = await Process.start(
+    'flutter',
+    flutterArgs,
+    mode: ProcessStartMode.inheritStdio,
+  );
   final exitCode = await process.exitCode;
   if (exitCode == 0) {
     _log('PASS', '${device.name} (${device.id})');

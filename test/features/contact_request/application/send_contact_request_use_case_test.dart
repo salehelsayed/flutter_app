@@ -231,6 +231,23 @@ void main() {
     expect(sent['payload']['mlkem'], equals('ownMlKemPub'));
   });
 
+  test('default intent marks visible requests as new_request', () async {
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+    );
+
+    expect(result, equals(SendContactRequestResult.success));
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(
+      sent['intent'],
+      equals(ContactRequestSendIntent.newRequest.wireValue),
+    );
+  });
+
   test(
     'sanitizes dangerous bidi controls in outgoing username payload',
     () async {
@@ -400,6 +417,25 @@ void main() {
     expect(sent['encrypted']['nonce'], equals('nonceBase64'));
     // No top-level payload/sig/pk in v2
     expect(sent.containsKey('payload'), isFalse);
+  });
+
+  test('v2: key-exchange retry uses silent retry intent', () async {
+    final result = await sendContactRequest(
+      p2pService: p2pService,
+      identityRepo: identityRepo,
+      bridge: bridge,
+      targetPeerId: 'targetPeer123456789',
+      recipientPublicKey: 'recipientEdPubBase64',
+      intent: ContactRequestSendIntent.keyExchangeRetry,
+    );
+
+    expect(result, equals(SendContactRequestResult.success));
+    final sent =
+        jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+    expect(
+      sent['intent'],
+      equals(ContactRequestSendIntent.keyExchangeRetry.wireValue),
+    );
   });
 
   test('v2: envelope contains valid UUID msgId', () async {

@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -162,6 +164,20 @@ ChatMessage _makeChatMessage(String content, {String? from}) => ChatMessage(
   content: content,
   timestamp: DateTime.now().toIso8601String(),
   isIncoming: true,
+);
+
+IntroductionModel _introModel() => IntroductionModel(
+  id: 'intro-recovery-1',
+  introducerId: '12D3KooWIntroducerPeerId',
+  recipientId: _ownPeerId,
+  introducedId: _senderPeerId,
+  recipientStatus: IntroductionStatus.accepted,
+  introducedStatus: IntroductionStatus.pending,
+  status: IntroductionOverallStatus.pending,
+  createdAt: DateTime.now().toUtc().toIso8601String(),
+  introducerUsername: 'Noor',
+  recipientUsername: 'Own User',
+  introducedUsername: 'Alice',
 );
 
 // ---------------------------------------------------------------------------
@@ -379,6 +395,170 @@ void main() {
 
     expect(result, equals(HandleMessageResult.duplicateRequest));
   });
+
+  test(
+    'silentIntroRecovered: recovery callback runs before alreadyContact short-circuit',
+    () async {
+      contactRepo._contacts[_senderPeerId] = ContactModel(
+        peerId: _senderPeerId,
+        publicKey: 'senderPublicKey',
+        rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+        username: 'Alice',
+        signature: 'sig',
+        scannedAt: DateTime.now().toIso8601String(),
+        mlKemPublicKey: 'existingKey',
+      );
+
+      VerifiedContactRequestEnvelope? capturedRequest;
+      final message = _makeChatMessage(_contactRequestMessage(_validPayload()));
+
+      final (result, request, peerId) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        attemptSilentIntroRecovery: (verifiedRequest) async {
+          capturedRequest = verifiedRequest;
+          return IntroContactRequestRecoveryResult.recovered(
+            introduction: _introModel(),
+            contact: await contactRepo.getContact(_senderPeerId),
+          );
+        },
+      );
+
+      expect(result, HandleMessageResult.silentIntroRecovered);
+      expect(request, isNull);
+      expect(peerId, isNull);
+      expect(capturedRequest?.peerId, _senderPeerId);
+    },
+  );
+
+  test(
+    'silentIntroRecovered: recovery callback runs before duplicateRequest short-circuit',
+    () async {
+      await requestRepo.addRequest(
+        ContactRequestModel(
+          peerId: _senderPeerId,
+          publicKey: 'pk',
+          rendezvous: 'rv',
+          username: 'Alice',
+          signature: 'sig',
+          receivedAt: DateTime.now().toIso8601String(),
+          status: ContactRequestStatus.pending,
+        ),
+      );
+
+      var recoveryCalls = 0;
+      final message = _makeChatMessage(_contactRequestMessage(_validPayload()));
+
+      final (result, request, peerId) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        attemptSilentIntroRecovery: (_) async {
+          recoveryCalls++;
+          return IntroContactRequestRecoveryResult.recovered(
+            introduction: _introModel(),
+          );
+        },
+      );
+
+      expect(result, HandleMessageResult.silentIntroRecovered);
+      expect(request, isNull);
+      expect(peerId, isNull);
+      expect(recoveryCalls, 1);
+    },
+  );
+
+  test(
+    'continueAsContactRequest fallback bypasses a stale pending request row',
+    () async {
+      await requestRepo.addRequest(
+        ContactRequestModel(
+          peerId: _senderPeerId,
+          publicKey: 'pk',
+          rendezvous: 'rv',
+          username: 'Alice',
+          signature: 'sig',
+          receivedAt: DateTime.now().toIso8601String(),
+          status: ContactRequestStatus.pending,
+        ),
+      );
+      final message = _makeChatMessage(_contactRequestMessage(_validPayload()));
+
+      final (result, request, peerId) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        attemptSilentIntroRecovery: (_) async {
+          await requestRepo.deleteRequest(_senderPeerId);
+          return const IntroContactRequestRecoveryResult.continueAsContactRequest();
+        },
+      );
+
+      expect(result, HandleMessageResult.contactRequest);
+      expect(request, isNotNull);
+      expect(peerId, isNull);
+      expect(await requestRepo.getRequest(_senderPeerId), isNotNull);
+    },
+  );
+
+  test(
+    'noMatch guard falls back to the normal contact request path',
+    () async {
+      final message = _makeChatMessage(_contactRequestMessage(_validPayload()));
+
+      final (result, request, peerId) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        attemptSilentIntroRecovery: (_) async =>
+            const IntroContactRequestRecoveryResult.noMatch(),
+      );
+
+      expect(result, HandleMessageResult.contactRequest);
+      expect(request, isNotNull);
+      expect(peerId, isNull);
+    },
+  );
+
+  test(
+    'unknown sender still allows verified silent recovery on the old no-intent path',
+    () async {
+      VerifiedContactRequestEnvelope? capturedRequest;
+      final message = _makeChatMessage(
+        _contactRequestMessage(_validPayload()),
+        from: 'unknown',
+      );
+
+      final (result, request, peerId) = await handleIncomingMessage(
+        message: message,
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+        attemptSilentIntroRecovery: (verifiedRequest) async {
+          capturedRequest = verifiedRequest;
+          return IntroContactRequestRecoveryResult.recovered(
+            introduction: _introModel(),
+          );
+        },
+      );
+
+      expect(result, HandleMessageResult.silentIntroRecovered);
+      expect(request, isNull);
+      expect(peerId, isNull);
+      expect(capturedRequest?.peerId, _senderPeerId);
+      expect(capturedRequest?.publicKey, 'senderPublicKey');
+    },
+  );
 
   test(
     'contactRequest with mlkem key: ML-KEM public key is preserved',

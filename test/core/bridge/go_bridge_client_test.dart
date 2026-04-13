@@ -1,9 +1,11 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +36,8 @@ void main() {
           const MethodChannel('com.mknoon/go_bridge'),
           null,
         );
+    flowEventLoggingEnabled = kDebugMode;
+    debugPrint = debugPrintThrottled;
   });
 
   // ---------------------------------------------------------------------------
@@ -329,6 +333,129 @@ void main() {
         expect(received['sentBytes'], 5);
         expect(received['totalBytes'], 10);
         expect(received['toPeerId'], 'peer-1');
+      },
+    );
+
+    test(
+      'group decryption failure push event reaches diagnostics stream without invoking group message callback',
+      () async {
+        var groupMessageCalls = 0;
+        client.onGroupMessageReceived = (_) {
+          groupMessageCalls++;
+        };
+
+        final eventFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:decryption_failed',
+            'data': {
+              'groupId': 'group-1',
+              'senderId': 'peer-2',
+              'keyEpoch': 3,
+              'localKeyEpoch': 4,
+              'error': 'cipher: message authentication failed',
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        expect(received['event'], 'group:decryption_failed');
+        expect(received['groupId'], 'group-1');
+        expect(received['senderId'], 'peer-2');
+        expect(received['keyEpoch'], 3);
+        expect(received['localKeyEpoch'], 4);
+        expect(received['error'], contains('failed'));
+        expect(groupMessageCalls, 0);
+      },
+    );
+
+    test(
+      'group payload parse failure push event reaches diagnostics stream without invoking group message callback',
+      () async {
+        var groupMessageCalls = 0;
+        client.onGroupMessageReceived = (_) {
+          groupMessageCalls++;
+        };
+
+        final eventFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:payload_parse_failed',
+            'data': {
+              'groupId': 'group-parse',
+              'senderId': 'peer-3',
+              'envelopeType': 'group_message',
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        expect(received['event'], 'group:payload_parse_failed');
+        expect(received['groupId'], 'group-parse');
+        expect(received['senderId'], 'peer-3');
+        expect(received['envelopeType'], 'group_message');
+        expect(groupMessageCalls, 0);
+      },
+    );
+
+    test(
+      'group dispatcher overflow push event reaches diagnostics stream and flow logs without invoking group message callback',
+      () async {
+        var groupMessageCalls = 0;
+        client.onGroupMessageReceived = (_) {
+          groupMessageCalls++;
+        };
+
+        flowEventLoggingEnabled = true;
+        final flowLogs = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            flowLogs.add(message);
+          }
+        };
+
+        final eventFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:dispatcher_overflow',
+            'data': {
+              'state': 'overflow',
+              'queueDepth': 1024,
+              'statusCount': 1,
+              'maxQueueSize': 1024,
+              'droppedCount': 7,
+              'coalescedCount': 3,
+              'deliveredCount': 99,
+              'lastEvent': 'group_message:received',
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        expect(received['event'], 'group:dispatcher_overflow');
+        expect(received['state'], 'overflow');
+        expect(received['queueDepth'], 1024);
+        expect(received['maxQueueSize'], 1024);
+        expect(received['droppedCount'], 7);
+        expect(received['lastEvent'], 'group_message:received');
+        expect(
+          flowLogs.any(
+            (line) =>
+                line.startsWith('[FLOW] ') &&
+                line.contains('GROUP_DISPATCHER_OVERFLOW'),
+          ),
+          isTrue,
+        );
+        expect(groupMessageCalls, 0);
       },
     );
   });

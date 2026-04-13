@@ -82,7 +82,8 @@ class _DelayedMediaDownloadBridge extends FakeBridge {
       commandLog.add(cmd!);
       await downloadGate.future;
       final payload =
-          parsed['payload'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+          parsed['payload'] as Map<String, dynamic>? ??
+          const <String, dynamic>{};
       final outputPath = payload['outputPath'] as String?;
       if (outputPath != null) {
         final file = File(outputPath);
@@ -349,8 +350,12 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
 
-      // System message should NOT be saved as a regular message
-      expect(msgRepo.count, 0);
+      // System message should materialize one durable timeline row, not a raw
+      // duplicate chat payload.
+      expect(msgRepo.count, 1);
+      final latest = await msgRepo.getLatestMessage('group-1');
+      expect(latest, isNotNull);
+      expect(latest!.text, 'Admin added Charlie');
 
       // New member should be saved to the group repo
       final charlie = await groupRepo.getMember('group-1', 'peer-charlie');
@@ -699,7 +704,7 @@ void main() {
         expect(emittedMessages, hasLength(1));
         expect(emittedMessages.single.text, 'Admin added Charlie');
         expect(emittedMessages.single.senderPeerId, 'peer-admin');
-        expect(msgRepo.count, 0);
+        expect(msgRepo.count, 1);
 
         await subscription.cancel();
       },
@@ -977,8 +982,54 @@ void main() {
           .length;
       expect(updateConfigCalls, 1);
 
-      // Not saved as regular message
-      expect(msgRepo.count, 0);
+      expect(msgRepo.count, 1);
+      final saved = await msgRepo.getLatestMessage('group-1');
+      expect(saved, isNotNull);
+      expect(saved!.text, 'Admin added Dave and Eve');
+    });
+
+    test('member_joined saves a durable join timeline event', () async {
+      listener.start(sourceController.stream);
+
+      final messages = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(messages.add);
+
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final sysText = jsonEncode({
+        '__sys': 'member_joined',
+        'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+      });
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-charlie',
+        'senderUsername': 'Charlie',
+        'keyEpoch': 0,
+        'text': sysText,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(messages, hasLength(1));
+      expect(messages.single.text, 'Charlie joined the group');
+      expect(messages.single.senderPeerId, 'peer-charlie');
+      expect(messages.single.senderUsername, 'Charlie');
+      expect(msgRepo.count, 1);
+      final saved = await msgRepo.getLatestMessage('group-1');
+      expect(saved, isNotNull);
+      expect(saved!.text, 'Charlie joined the group');
+
+      await subscription.cancel();
     });
 
     test('unauthorized members_added is ignored', () async {
@@ -1307,7 +1358,10 @@ void main() {
         expect(messages.single.senderPeerId, 'peer-admin');
         expect(messages.single.senderUsername, 'Admin');
         expect(messages.single.isIncoming, isTrue);
-        expect(msgRepo.count, 0);
+        expect(msgRepo.count, 1);
+        final saved = await msgRepo.getLatestMessage('group-1');
+        expect(saved, isNotNull);
+        expect(saved!.text, 'Admin added Charlie');
 
         await subscription.cancel();
       },

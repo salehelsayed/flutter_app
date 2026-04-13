@@ -82,6 +82,20 @@ void main() {
         .toList(growable: false);
   }
 
+  ContactModel makeContact({
+    required String peerId,
+    required String username,
+  }) {
+    return ContactModel(
+      peerId: peerId,
+      publicKey: 'pk-$peerId',
+      rendezvous: '/rv/$peerId',
+      username: username,
+      signature: 'sig-$peerId',
+      scannedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
   group('IntroductionListener', () {
     test('rejects send messages from blocked senders', () async {
       contactRepo.addTestContact(
@@ -398,7 +412,115 @@ void main() {
     );
 
     test(
-      'mutual acceptance shows a local new-connection notification',
+      'introducer-side first accept writes a recipient-thread progress message without a false connection notification',
+      () async {
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-introducer-progress',
+            introducerId: 'own-peer',
+            introducerUsername: 'Me',
+            recipientId: 'peer-B',
+            recipientUsername: 'Lina',
+            introducedId: 'peer-C',
+            introducedUsername: 'Sarah',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: 'peer-B',
+            to: 'own-peer',
+            content: IntroductionPayload(
+              action: 'accept',
+              introductionId: 'intro-introducer-progress',
+              responderId: 'peer-B',
+              responderUsername: 'Lina',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+            ).toJson(),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, IntroductionMessageProcessState.stored);
+
+        final systemMessages = await messageRepo.getMessagesForContact(
+          'peer-B',
+        );
+        expect(systemMessages, hasLength(1));
+        expect(
+          systemMessages.single.text,
+          'Lina accepted your intro to Sarah',
+        );
+
+        expect(notificationService.shownGeneric, isEmpty);
+      },
+    );
+
+    test(
+      'introducer-side mutual acceptance writes a recipient-thread connection message and a role-correct notification',
+      () async {
+        contactRepo.addTestContact(makeContact(peerId: 'peer-B', username: 'Lina'));
+        contactRepo.addTestContact(
+          makeContact(peerId: 'peer-C', username: 'Sarah'),
+        );
+
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-introducer-mutual-notification',
+            introducerId: 'own-peer',
+            introducerUsername: 'Me',
+            recipientId: 'peer-B',
+            recipientUsername: 'Lina',
+            introducedId: 'peer-C',
+            introducedUsername: 'Sarah',
+            recipientStatus: IntroductionStatus.accepted,
+            introducedStatus: IntroductionStatus.pending,
+            status: IntroductionOverallStatus.pending,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: 'peer-C',
+            to: 'own-peer',
+            content: IntroductionPayload(
+              action: 'accept',
+              introductionId: 'intro-introducer-mutual-notification',
+              responderId: 'peer-C',
+              responderUsername: 'Sarah',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+            ).toJson(),
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, IntroductionMessageProcessState.stored);
+
+        final systemMessages = await messageRepo.getMessagesForContact(
+          'peer-B',
+        );
+        expect(systemMessages, hasLength(1));
+        expect(
+          systemMessages.single.text,
+          'Lina and Sarah are now connected',
+        );
+
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(notificationService.shownGeneric.single.title, 'New Connection');
+        expect(
+          notificationService.shownGeneric.single.body,
+          'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
+        );
+        expect(notificationService.shownGeneric.single.payload, 'intros');
+      },
+    );
+
+    test(
+      'participant-side mutual acceptance shows a local new-connection notification',
       () async {
         await introRepo.saveIntroduction(
           IntroductionModel(
@@ -440,6 +562,73 @@ void main() {
           'Sarah also accepted! You\'re now connected.',
         );
         expect(notificationService.shownGeneric.single.payload, 'intros');
+      },
+    );
+
+    test(
+      'duplicate introducer mutual-accept replay does not duplicate recipient-thread messages or notifications',
+      () async {
+        contactRepo.addTestContact(makeContact(peerId: 'peer-B', username: 'Lina'));
+        contactRepo.addTestContact(
+          makeContact(peerId: 'peer-C', username: 'Sarah'),
+        );
+
+        await introRepo.saveIntroduction(
+          IntroductionModel(
+            id: 'intro-duplicate-introducer-accept',
+            introducerId: 'own-peer',
+            introducerUsername: 'Me',
+            recipientId: 'peer-B',
+            recipientUsername: 'Lina',
+            introducedId: 'peer-C',
+            introducedUsername: 'Sarah',
+            recipientStatus: IntroductionStatus.accepted,
+            introducedStatus: IntroductionStatus.pending,
+            status: IntroductionOverallStatus.pending,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        final message = ChatMessage(
+          from: 'peer-C',
+          to: 'own-peer',
+          content: IntroductionPayload(
+            action: 'accept',
+            introductionId: 'intro-duplicate-introducer-accept',
+            responderId: 'peer-C',
+            responderUsername: 'Sarah',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          ).toJson(),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        );
+
+        final first = await listener.processIncomingMessage(message);
+        final second = await listener.processIncomingMessage(message);
+
+        expect(first.state, IntroductionMessageProcessState.stored);
+        expect(second.state, IntroductionMessageProcessState.stored);
+
+        final finalIntro = await introRepo.getIntroduction(
+          'intro-duplicate-introducer-accept',
+        );
+        expect(finalIntro, isNotNull);
+        expect(finalIntro!.status, IntroductionOverallStatus.mutualAccepted);
+
+        final systemMessages = await messageRepo.getMessagesForContact(
+          'peer-B',
+        );
+        expect(systemMessages, hasLength(1));
+        expect(
+          systemMessages.single.text,
+          'Lina and Sarah are now connected',
+        );
+
+        expect(notificationService.shownGeneric, hasLength(1));
+        expect(
+          notificationService.shownGeneric.single.body,
+          'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
+        );
       },
     );
 

@@ -8,6 +8,14 @@ const _goMknoonDir = 'go-mknoon';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
 const _defaultMacOsBundleId = 'com.example.flutterApp';
 
+List<String> _relayDartDefines() {
+  final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
+  if (relayAddresses == null || relayAddresses.trim().isEmpty) {
+    return const [];
+  }
+  return ['--dart-define=MKNOON_RELAY_ADDRESSES=${relayAddresses.trim()}'];
+}
+
 class TestPeer {
   Process? _process;
   final _pending = <Completer<Map<String, dynamic>>>[];
@@ -139,6 +147,13 @@ Future<String> _pickDevice(String? deviceId) async {
   throw StateError('No simulator or mobile device found');
 }
 
+bool _isIosDeviceId(String deviceId) {
+  return RegExp(
+    r'^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})$',
+    caseSensitive: false,
+  ).hasMatch(deviceId);
+}
+
 Future<Map<String, dynamic>> _waitForGroupFixture(
   String path, {
   Duration timeout = const Duration(seconds: 120),
@@ -242,16 +257,30 @@ Future<void> main(List<String> args) async {
     await peer.writeFixture(cliFixturePath);
 
     _log('ORCH', 'Launching Flutter group recovery E2E...');
-    final flutterProcess = await Process.start('flutter', [
-      'test',
-      'integration_test/group_recovery_cli_e2e_test.dart',
+    final flutterArgs = <String>[
+      if (_isIosDeviceId(deviceId)) ...<String>[
+        'drive',
+        '--driver=test_driver/integration_test.dart',
+        '--target=integration_test/group_recovery_cli_e2e_test.dart',
+        '--publish-port',
+      ] else ...<String>[
+        'test',
+        '--no-dds',
+        'integration_test/group_recovery_cli_e2e_test.dart',
+      ],
       '--dart-define=CLI_PEER_FIXTURE=$cliFixturePath',
       '--dart-define=E2E_TEMP_DIR=${sharedDir.path}',
       '--dart-define=E2E_WRITE_DIR=${sharedDir.path}',
       '--dart-define=E2E_DB_NAME=$dbName',
+      ..._relayDartDefines(),
       '-d',
       deviceId,
-    ], mode: ProcessStartMode.inheritStdio);
+    ];
+    final flutterProcess = await Process.start(
+      'flutter',
+      flutterArgs,
+      mode: ProcessStartMode.inheritStdio,
+    );
 
     final groupFixture = await _waitForGroupFixture(groupFixturePath);
     _log('ORCH', 'Group fixture received for ${groupFixture['groupId']}');

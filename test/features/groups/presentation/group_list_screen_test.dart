@@ -38,9 +38,9 @@ void main() {
     senderPeerId: 'peer-alice',
     senderUsername: 'Alice',
     createdBy: 'peer-alice',
-    createdAt: DateTime.utc(2026, 4, 1),
-    receivedAt: DateTime.utc(2026, 4, 5, 12),
-    expiresAt: DateTime.utc(2026, 4, 12, 12),
+    createdAt: DateTime.now().toUtc().subtract(const Duration(days: 1)),
+    receivedAt: DateTime.now().toUtc().subtract(const Duration(hours: 6)),
+    expiresAt: DateTime.now().toUtc().add(const Duration(days: 6)),
   );
 
   final expiredPendingInvite = PendingGroupInvite(

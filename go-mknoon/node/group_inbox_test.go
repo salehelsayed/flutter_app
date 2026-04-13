@@ -85,6 +85,32 @@ func TestBuildGroupInboxStoreRequest_MarshalsPushBody(t *testing.T) {
 	}
 }
 
+func TestBuildGroupInboxStoreRequest_PreservesOpaqueReplayEnvelope(t *testing.T) {
+	envelope := `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":4,"messageId":"msg-opaque-1","ciphertext":"opaque-ciphertext-1","nonce":"opaque-nonce-1"}`
+	req := buildGroupInboxStoreRequest(
+		"group-1",
+		"peer-self",
+		envelope,
+		[]string{"peer-reader"},
+		"Replay Title",
+		"Replay Body",
+	)
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if decoded["message"] != envelope {
+		t.Fatalf("message = %#v, want exact opaque envelope %q", decoded["message"], envelope)
+	}
+}
+
 // ===========================================================================
 // Phase 6: GroupInboxRetrieveWithCursor — cursor stability tests
 // ===========================================================================

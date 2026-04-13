@@ -26,6 +26,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
@@ -71,6 +72,8 @@ class QRScannerWired extends StatelessWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupReactionReplayOutboxRepository?
+  groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
@@ -104,6 +107,7 @@ class QRScannerWired extends StatelessWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
@@ -352,6 +356,8 @@ class QRScannerWired extends StatelessWidget {
                         reactionListener: reactionListener,
                         groupRepository: groupRepository,
                         groupMessageRepository: groupMessageRepository,
+                        groupReactionReplayOutboxRepository:
+                            groupReactionReplayOutboxRepository,
                         groupMessageListener: groupMessageListener,
                         groupInviteListener: groupInviteListener,
                         groupConversationTracker: groupConversationTracker,

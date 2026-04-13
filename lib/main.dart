@@ -35,6 +35,7 @@ import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
 import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
@@ -70,6 +71,7 @@ import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart
 import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
+import 'package:flutter_app/core/database/migrations/054_group_reaction_replay_outbox.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -108,6 +110,7 @@ import 'package:flutter_app/features/contact_request/domain/repositories/contact
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
@@ -121,6 +124,7 @@ import 'package:flutter_app/features/conversation/application/retry_unacked_mess
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
@@ -272,7 +276,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 53,
+    version: 54,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -327,6 +331,7 @@ void main() async {
       await runPendingGroupInvitesMigration(db);
       await runGroupsDissolveColumnsMigration(db);
       await runGroupsBacklogRetentionColumnsMigration(db);
+      await runGroupReactionReplayOutboxMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -482,6 +487,9 @@ void main() async {
       }
       if (oldVersion < 53) {
         await runGroupsBacklogRetentionColumnsMigration(db);
+      }
+      if (oldVersion < 54) {
+        await runGroupReactionReplayOutboxMigration(db);
       }
     },
   );
@@ -775,6 +783,31 @@ void main() async {
     dbDeleteReactionsForContact: (contactPeerId) =>
         dbDeleteReactionsForContact(db, contactPeerId),
   );
+
+  final groupReactionReplayOutboxRepository =
+      GroupReactionReplayOutboxRepositoryImpl(
+        dbUpsertGroupReactionReplayOutboxEntry: (row) =>
+            dbUpsertGroupReactionReplayOutboxEntry(db, row),
+        dbLoadGroupReactionReplayOutboxEntry: (reactionId) =>
+            dbLoadGroupReactionReplayOutboxEntry(db, reactionId),
+        dbLoadRetryableGroupReactionReplayOutboxEntries: ({limit = 20}) =>
+            dbLoadRetryableGroupReactionReplayOutboxEntries(db, limit: limit),
+        dbUpdateGroupReactionReplayOutboxEntryStatus:
+            (
+              reactionId, {
+              required deliveryStatus,
+              lastError,
+              required updatedAt,
+            }) => dbUpdateGroupReactionReplayOutboxEntryStatus(
+              db,
+              reactionId,
+              deliveryStatus: deliveryStatus,
+              lastError: lastError,
+              updatedAt: updatedAt,
+            ),
+        dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
+            dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
+      );
 
   // Create group repository
   final groupRepository = GroupRepositoryImpl(
@@ -1154,6 +1187,17 @@ void main() async {
     bridge: bridge,
     getOwnPeerId: () => p2pService.currentState.peerId ?? '',
     getOwnPrivateKey: () => secureKeyStore.read('identity_private_key'),
+    attemptSilentIntroRecovery: (request) => recoverIntroContactRequest(
+      introRepo: introductionRepository,
+      requestRepo: contactRequestRepository,
+      contactRepo: contactRepository,
+      ownPeerId: p2pService.currentState.peerId ?? '',
+      request: request,
+      messageRepo: messageRepository,
+      bridge: bridge,
+    ),
+    emitRecoveredIntroductionStatus: (intro) =>
+        introductionListener.emitIntroStatusChanged(intro),
     shouldSuppressPresentationForPeerId:
         contactRequestPresentationGate.shouldSuppress,
   );
@@ -1427,6 +1471,7 @@ void main() async {
     retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
       bridge: bridge,
       msgRepo: groupMessageRepository,
+      reactionReplayOutboxRepo: groupReactionReplayOutboxRepository,
     ),
     recoverStuckSendingMessagesFn: () =>
         recoverStuckSendingMessages(messageRepo: messageRepository),
@@ -1579,6 +1624,7 @@ void main() async {
       conversationTracker: conversationTracker,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
+      groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
       groupMessageListener: groupMessageListener,
       groupInviteListener: groupInviteListener,
       groupKeyUpdateListener: groupKeyUpdateListener,
@@ -1722,6 +1768,8 @@ class MyApp extends StatefulWidget {
   final ActiveConversationTracker conversationTracker;
   final GroupRepositoryImpl groupRepository;
   final GroupMessageRepositoryImpl groupMessageRepository;
+  final GroupReactionReplayOutboxRepositoryImpl
+  groupReactionReplayOutboxRepository;
   final GroupMessageListener groupMessageListener;
   final GroupInviteListener groupInviteListener;
   final GroupKeyUpdateListener groupKeyUpdateListener;
@@ -1777,6 +1825,7 @@ class MyApp extends StatefulWidget {
     required this.conversationTracker,
     required this.groupRepository,
     required this.groupMessageRepository,
+    required this.groupReactionReplayOutboxRepository,
     required this.groupMessageListener,
     required this.groupInviteListener,
     required this.groupKeyUpdateListener,
@@ -2106,6 +2155,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               imageProcessor: widget.imageProcessor,
               audioRecorderService: widget.audioRecorderService,
               reactionRepo: widget.reactionRepository,
+              groupReactionReplayOutboxRepository:
+                  widget.groupReactionReplayOutboxRepository,
             ),
           ),
         );
@@ -2153,6 +2204,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionListener: widget.reactionListener,
         groupRepository: widget.groupRepository,
         groupMessageRepository: widget.groupMessageRepository,
+        groupReactionReplayOutboxRepository:
+            widget.groupReactionReplayOutboxRepository,
         groupMessageListener: widget.groupMessageListener,
         groupInviteListener: widget.groupInviteListener,
         groupConversationTracker: widget.groupConversationTracker,
@@ -2348,6 +2401,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,
+        retryIncompleteKeyExchangesFn: () =>
+            widget.keyExchangeRetrier.retryNow(trigger: 'app_resumed'),
         groupRepo: widget.groupRepository,
         groupMsgRepo: widget.groupMessageRepository,
         groupMessageListener: widget.groupMessageListener,
@@ -2407,6 +2462,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
           bridge: widget.bridge,
           msgRepo: widget.groupMessageRepository,
+          reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository,
         ),
       );
       await sweepExpiredPosts(
@@ -2482,6 +2538,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionListener: widget.reactionListener,
         groupRepository: widget.groupRepository,
         groupMessageRepository: widget.groupMessageRepository,
+        groupReactionReplayOutboxRepository:
+            widget.groupReactionReplayOutboxRepository,
         groupMessageListener: widget.groupMessageListener,
         groupInviteListener: widget.groupInviteListener,
         groupConversationTracker: widget.groupConversationTracker,

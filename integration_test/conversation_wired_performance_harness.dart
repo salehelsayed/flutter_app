@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -317,6 +319,7 @@ class _TrackingReactionRepository extends FakeReactionRepository {
 class _TrackingReactionListener extends ReactionListener {
   _TrackingReactionListener({
     required this.recorder,
+    required MessageRepository messageRepo,
     required _TrackingReactionRepository reactionRepo,
     required ContactRepository contactRepo,
     required Bridge bridge,
@@ -326,6 +329,7 @@ class _TrackingReactionListener extends ReactionListener {
        ),
        super(
          reactionStream: const Stream.empty(),
+         messageRepo: messageRepo,
          reactionRepo: reactionRepo,
          contactRepo: contactRepo,
          bridge: bridge,
@@ -645,6 +649,7 @@ Future<_ConversationHarnessEnvironment> _makeEnvironment() async {
   final reactionRepo = _TrackingReactionRepository(recorder);
   final reactionListener = _TrackingReactionListener(
     recorder: recorder,
+    messageRepo: messageRepo,
     reactionRepo: reactionRepo,
     contactRepo: contactRepo,
     bridge: bridge,
@@ -716,6 +721,11 @@ Map<String, dynamic> _timelineSummary(Map<String, dynamic> timeline) {
     'customPaintEvents': countContains('RenderCustomPaint'),
     'backdropFilterEvents': countContains('BackdropFilter'),
   };
+}
+
+Future<bool> _canUseVmServiceTimeline() async {
+  final info = await developer.Service.getInfo();
+  return info.serverUri != null;
 }
 
 void _printReportEntry(String key) {
@@ -957,7 +967,23 @@ Future<void> _captureEvidence(WidgetTester tester) async {
   binding.reportData ??= <String, dynamic>{};
   binding.reportData![phaseFrameSummaryKey] = <String, dynamic>{};
 
-  await binding.watchPerformance(() async {
+  final overallCollector = _FrameTimingCollector();
+  if (await _canUseVmServiceTimeline()) {
+    await binding.watchPerformance(() async {
+      perfEnv.recorder.start();
+      await tester.pumpWidget(
+        _ConversationPerfHost(
+          key: const ValueKey('conversation-perf-host'),
+          environment: perfEnv,
+        ),
+      );
+      await _pumpFrames(tester, count: 8);
+      expect(find.text('Conversation Perf Home'), findsOneWidget);
+      await _runScenario(tester, perfEnv, collectPhaseFrames: true);
+      perfEnv.recorder.stop();
+    }, reportKey: perfKey);
+  } else {
+    overallCollector.start();
     perfEnv.recorder.start();
     await tester.pumpWidget(
       _ConversationPerfHost(
@@ -969,7 +995,8 @@ Future<void> _captureEvidence(WidgetTester tester) async {
     expect(find.text('Conversation Perf Home'), findsOneWidget);
     await _runScenario(tester, perfEnv, collectPhaseFrames: true);
     perfEnv.recorder.stop();
-  }, reportKey: perfKey);
+    binding.reportData![perfKey] = await overallCollector.stopAndReport();
+  }
 
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pumpAndSettle();
@@ -981,24 +1008,46 @@ Future<void> _captureEvidence(WidgetTester tester) async {
   await perfEnv.dispose();
 
   final timelineEnv = await prepareEnvironment();
-  await binding.traceAction(
-    () async {
-      timelineEnv.recorder.start();
-      await tester.pumpWidget(
-        _ConversationPerfHost(
-          key: const ValueKey('conversation-perf-host-timeline'),
-          environment: timelineEnv,
-        ),
-      );
-      await _pumpFrames(tester, count: 8);
-      await _runScenario(tester, timelineEnv, collectPhaseFrames: false);
-      timelineEnv.recorder.stop();
-    },
-    reportKey: timelineKey,
-    streams: const <String>['all'],
-  );
-  final timeline = binding.reportData![timelineKey] as Map<String, dynamic>;
-  binding.reportData![timelineSummaryKey] = _timelineSummary(timeline);
+  if (await _canUseVmServiceTimeline()) {
+    await binding.traceAction(
+      () async {
+        timelineEnv.recorder.start();
+        await tester.pumpWidget(
+          _ConversationPerfHost(
+            key: const ValueKey('conversation-perf-host-timeline'),
+            environment: timelineEnv,
+          ),
+        );
+        await _pumpFrames(tester, count: 8);
+        await _runScenario(tester, timelineEnv, collectPhaseFrames: false);
+        timelineEnv.recorder.stop();
+      },
+      reportKey: timelineKey,
+      streams: const <String>['all'],
+    );
+    final timeline = binding.reportData![timelineKey] as Map<String, dynamic>;
+    binding.reportData![timelineSummaryKey] = _timelineSummary(timeline);
+  } else {
+    timelineEnv.recorder.start();
+    await tester.pumpWidget(
+      _ConversationPerfHost(
+        key: const ValueKey('conversation-perf-host-timeline'),
+        environment: timelineEnv,
+      ),
+    );
+    await _pumpFrames(tester, count: 8);
+    await _runScenario(tester, timelineEnv, collectPhaseFrames: false);
+    timelineEnv.recorder.stop();
+    binding.reportData![timelineSummaryKey] = <String, dynamic>{
+      'eventCount': 0,
+      'conversationPerfMarkerCount': 0,
+      'distinctMarkers': const <String>[],
+      'sceneDisplayLagEvents': 0,
+      'customPaintEvents': 0,
+      'backdropFilterEvents': 0,
+      'captureMode': 'frame_timing_fallback',
+    };
+  }
   _printReportEntry(timelineSummaryKey);
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pumpAndSettle();
@@ -1006,6 +1055,16 @@ Future<void> _captureEvidence(WidgetTester tester) async {
 }
 
 void main() {
+  final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  if (skipOnMobileDevice) {
+    testWidgets(
+      'captures ConversationWired subscription performance evidence',
+      (_) async {},
+      skip: true,
+    );
+    return;
+  }
+  VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
   binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('captures ConversationWired subscription performance evidence', (

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/painting.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -49,7 +50,10 @@ Future<ContactModel?> downloadProfilePicture({
     }
 
     final canonicalPath = p.join(avatarsDir.path, '$ownerPeerId.jpg');
-    final downloadPath = p.join(avatarsDir.path, '$ownerPeerId.raw.jpg');
+    final downloadPath = p.join(
+      avatarsDir.path,
+      '$ownerPeerId.raw.${_uniqueSuffix()}.jpg',
+    );
 
     // 2. Download from relay
     final result = await callP2PProfileDownload(
@@ -103,4 +107,10 @@ Future<ContactModel?> downloadProfilePicture({
     );
     return null;
   }
+}
+
+String _uniqueSuffix() {
+  final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+  final token = Random().nextInt(1 << 32).toRadixString(16);
+  return '$now-$token';
 }

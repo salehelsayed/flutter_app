@@ -53,6 +53,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -98,6 +99,8 @@ class OrbitWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupReactionReplayOutboxRepository?
+  groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
@@ -136,6 +139,7 @@ class OrbitWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
@@ -900,6 +904,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
     setState(() => _processingPendingInviteIds.add(invite.groupId));
     try {
+      final identity = await widget.identityRepo.loadIdentity();
       final (result, group) = await acceptPendingGroupInvite(
         pendingInviteRepo: inviteListener.pendingInviteRepo,
         groupRepo: groupRepository,
@@ -907,7 +912,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         bridge: widget.bridge,
         groupId: invite.groupId,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        reactionRepo: widget.reactionRepository,
         groupMessageListener: groupMessageListener,
+        senderPeerId: identity?.peerId,
+        senderPublicKey: identity?.publicKey,
+        senderPrivateKey: identity?.privateKey,
+        senderUsername: identity?.username,
       );
       if (group != null) {
         _markGroupChanged(group.id);
@@ -1474,6 +1484,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               reactionListener: widget.reactionListener,
               groupRepository: widget.groupRepository,
               groupMessageRepository: widget.groupMessageRepository,
+              groupReactionReplayOutboxRepository:
+                  widget.groupReactionReplayOutboxRepository,
               groupMessageListener: widget.groupMessageListener,
               groupInviteListener: widget.groupInviteListener,
               groupConversationTracker: widget.groupConversationTracker,
@@ -1698,6 +1710,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               audioRecorderService: widget.audioRecorderService,
               groupConversationTracker: widget.groupConversationTracker,
               reactionRepo: widget.reactionRepository,
+              groupReactionReplayOutboxRepository:
+                  widget.groupReactionReplayOutboxRepository,
             ),
           ),
         )
@@ -1737,6 +1751,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               videoQualityPreference: _videoQualityPreference,
               audioRecorderService: widget.audioRecorderService,
               reactionRepo: widget.reactionRepository,
+              groupReactionReplayOutboxRepository:
+                  widget.groupReactionReplayOutboxRepository,
             ),
           ),
         )

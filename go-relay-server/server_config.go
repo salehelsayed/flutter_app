@@ -7,17 +7,20 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 const (
-	relayPrivateKeyEnv = "RELAY_PRIVATE_KEY"
-	relayServerDNSEnv  = "RELAY_SERVER_DNS"
-	relayServerIPEnv   = "RELAY_SERVER_IP"
-	relayWSPortEnv     = "RELAY_WS_PORT"
-	relayTCPPortEnv    = "RELAY_TCP_PORT"
-	relayWSSPortEnv    = "RELAY_WSS_PORT"
-	relayQUICPortEnv   = "RELAY_QUIC_PORT"
+	relayPrivateKeyEnv  = "RELAY_PRIVATE_KEY"
+	relayServerDNSEnv   = "RELAY_SERVER_DNS"
+	relayServerIPEnv    = "RELAY_SERVER_IP"
+	relayWSPortEnv      = "RELAY_WS_PORT"
+	relayTCPPortEnv     = "RELAY_TCP_PORT"
+	relayWSSPortEnv     = "RELAY_WSS_PORT"
+	relayQUICPortEnv    = "RELAY_QUIC_PORT"
+	relayDataDirEnv     = "RELAY_DATA_DIR"
+	defaultRelayDataDir = "/data"
 )
 
 // defaultPrivateKeyRaw is the original hardcoded Ed25519 key.
@@ -40,6 +43,13 @@ type ServerConfig struct {
 	TCPPort    int
 	WSSPort    int
 	QUICPort   int
+}
+
+// StorageConfig holds media/profile data roots.
+type StorageConfig struct {
+	RootDir    string
+	MediaDir   string
+	ProfileDir string
 }
 
 // DefaultServerConfig returns the configuration matching the original
@@ -83,6 +93,74 @@ func loadServerConfigFromEnv() ServerConfig {
 	}
 
 	return cfg
+}
+
+// loadStorageConfigFromEnv chooses a writable storage root.
+//
+// Priority:
+//  1. RELAY_DATA_DIR when explicitly set
+//  2. /data when it is writable/creatable
+//  3. <working-directory>/data as a local-dev fallback
+func loadStorageConfigFromEnv() StorageConfig {
+	cfg, fallbackReason, err := resolveStorageConfig(
+		strings.TrimSpace(os.Getenv(relayDataDirEnv)),
+		os.MkdirAll,
+		os.Getwd,
+	)
+	if err != nil {
+		log.Fatalf("Failed to resolve relay storage config: %v", err)
+	}
+	if fallbackReason != "" {
+		log.Printf(
+			"[STORAGE] Falling back to %s because %s",
+			cfg.RootDir,
+			fallbackReason,
+		)
+	}
+	return cfg
+}
+
+func resolveStorageConfig(
+	explicitRoot string,
+	ensureDir func(string, os.FileMode) error,
+	getwd func() (string, error),
+) (StorageConfig, string, error) {
+	root := strings.TrimSpace(explicitRoot)
+	fallbackReason := ""
+	if root == "" {
+		root = defaultRelayDataDir
+		if err := ensureDir(root, 0755); err != nil {
+			wd, wdErr := getwd()
+			if wdErr != nil {
+				return StorageConfig{}, "", fmt.Errorf(
+					"default storage root %s unavailable (%v) and getwd failed: %w",
+					defaultRelayDataDir,
+					err,
+					wdErr,
+				)
+			}
+			root = filepath.Join(wd, "data")
+			fallbackReason = fmt.Sprintf(
+				"%s is unavailable: %v",
+				defaultRelayDataDir,
+				err,
+			)
+		}
+	}
+
+	if err := ensureDir(root, 0755); err != nil {
+		return StorageConfig{}, "", fmt.Errorf(
+			"storage root %s is unavailable: %w",
+			root,
+			err,
+		)
+	}
+
+	return StorageConfig{
+		RootDir:    root,
+		MediaDir:   filepath.Join(root, "media"),
+		ProfileDir: filepath.Join(root, "profiles"),
+	}, fallbackReason, nil
 }
 
 // IsCustomKey reports whether the config uses a non-default private key.

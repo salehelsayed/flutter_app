@@ -220,6 +220,30 @@ void main() {
           );
         });
 
+        final start = events.firstWhere(
+          (event) => event['event'] == 'RETRY_FAILED_GROUP_MESSAGES_START',
+        );
+        expect(start['details'], isEmpty);
+
+        final found = events.firstWhere(
+          (event) => event['event'] == 'RETRY_FAILED_GROUP_MESSAGES_FOUND',
+        );
+        expect(found['details']['count'], 1);
+
+        final messageSuccess = events.firstWhere(
+          (event) =>
+              event['event'] == 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SUCCESS',
+        );
+        expect(messageSuccess['details']['messageId'], 'msg-retr');
+        expect(messageSuccess['details']['result'], 'success');
+
+        final complete = events.firstWhere(
+          (event) => event['event'] == 'RETRY_FAILED_GROUP_MESSAGES_COMPLETE',
+        );
+        expect(complete['details']['total'], 1);
+        expect(complete['details']['succeeded'], 1);
+        expect(complete['details']['skippedUnsupported'], 0);
+
         final timing = events.lastWhere(
           (event) => event['event'] == 'RETRY_FAILED_GROUP_MESSAGES_TIMING',
         );
@@ -259,6 +283,52 @@ void main() {
         expect(saved.timestamp, DateTime.parse('2026-01-15T12:00:00.000Z'));
         expect(
           bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          1,
+        );
+      },
+    );
+
+    test(
+      'retries a zero-peer plus inbox-fail row through the failed-message retry owner',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await groupRepo.saveGroup(_makeGroup());
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-zero-owner',
+          'topicPeers': 0,
+        };
+
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-zero-owner',
+            text: 'Retry zero-peer owner',
+            timestampIso: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+
+        final count = await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage('msg-zero-owner');
+        expect(saved, isNotNull);
+        expect(saved!.id, 'msg-zero-owner');
+        expect(saved.status, 'sent');
+        expect(saved.inboxStored, isTrue);
+        expect(saved.inboxRetryPayload, isNull);
+        expect(saved.wireEnvelope, isNull);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
+          1,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxStore').length,
           1,
         );
       },
@@ -432,7 +502,9 @@ void main() {
         expect(saved, isNotNull);
         expect(saved!.status, 'sent');
         final publishMsg = bridge.sentMessages.firstWhere(
-          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:publish',
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
         );
         expect(publishMsg, contains('"mime":"image/gif"'));
       },
@@ -473,13 +545,16 @@ void main() {
           ),
         );
 
-        final count = await retryFailedGroupMessages(
-          groupMsgRepo: msgRepo,
-          groupRepo: groupRepo,
-          identityRepo: identityRepo,
-          bridge: bridge,
-          mediaAttachmentRepo: mediaRepo,
-        );
+        late int count;
+        final events = await captureFlowEvents(() async {
+          count = await retryFailedGroupMessages(
+            groupMsgRepo: msgRepo,
+            groupRepo: groupRepo,
+            identityRepo: identityRepo,
+            bridge: bridge,
+            mediaAttachmentRepo: mediaRepo,
+          );
+        });
 
         expect(count, 0);
         expect(
@@ -494,6 +569,22 @@ void main() {
         );
         expect(attachments, hasLength(1));
         expect(attachments.single.downloadStatus, 'upload_pending');
+
+        final skipped = events.firstWhere(
+          (event) =>
+              event['event'] ==
+              'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
+        );
+        expect(skipped['details']['messageId'], 'msg-medi');
+        expect(skipped['details']['reason'], 'incomplete_media_attachments');
+
+        final timing = events.lastWhere(
+          (event) => event['event'] == 'RETRY_FAILED_GROUP_MESSAGES_TIMING',
+        );
+        expect(timing['details']['outcome'], 'complete');
+        expect(timing['details']['total'], 1);
+        expect(timing['details']['succeeded'], 0);
+        expect(timing['details']['skippedUnsupported'], 1);
       },
     );
 

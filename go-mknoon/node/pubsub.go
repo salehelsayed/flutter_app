@@ -781,7 +781,9 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 		return
 	}
 
-	// Build set of already-connected peers.
+	// Build set of peers already visible in the topic mesh. A plain host
+	// connection is not enough for live delivery if the topic still has zero
+	// peers for this group.
 	n.mu.RLock()
 	h := n.host
 	config := n.groupConfigs[groupId]
@@ -792,8 +794,12 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 	selfId := h.ID()
 
 	connectedSet := make(map[peer.ID]struct{})
-	for _, pid := range h.Network().Peers() {
-		connectedSet[pid] = struct{}{}
+	for pid := range n.liveGroupTopicPeerSet(groupId) {
+		peerID, err := peer.Decode(pid)
+		if err != nil {
+			continue
+		}
+		connectedSet[peerID] = struct{}{}
 	}
 
 	newPeers := filterDiscoveredPeers(peers, selfId, connectedSet)
@@ -882,6 +888,37 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 				"error":             err.Error(),
 			})
 		} else {
+			livePeerReady := n.waitForLiveGroupTopicPeer(groupId, pidStr, GroupPublishPartialPeerSettleWait)
+			if !livePeerReady && connectResult.Path == "direct" {
+				if relayErr := n.DialPeerViaRelay(pidStr); relayErr != nil {
+					connectResult.RelayError = relayErr.Error()
+				} else {
+					connectResult.Path = "relay_fallback"
+					connectResult.UsedRelayFallback = true
+					livePeerReady = n.waitForLiveGroupTopicPeer(groupId, pidStr, GroupPublishPartialPeerSettleWait)
+				}
+			}
+			if !livePeerReady {
+				n.finishGroupPeerDial(pidStr, false, time.Now())
+				log.Printf(
+					"[PUBSUB] Group %s: dial %s connected via %s but did not become a live topic peer",
+					groupId,
+					pidShort,
+					connectResult.Path,
+				)
+				n.emitEvent("group:discovery", map[string]interface{}{
+					"groupId":           groupId,
+					"step":              "dial_connected_but_topic_missing",
+					"peerId":            pidShort,
+					"path":              connectResult.Path,
+					"attemptedDirect":   connectResult.AttemptedDirect,
+					"directAddrCount":   connectResult.DirectAddrCount,
+					"usedRelayFallback": connectResult.UsedRelayFallback,
+					"relayError":        connectResult.RelayError,
+				})
+				continue
+			}
+
 			n.finishGroupPeerDial(pidStr, true, time.Now())
 			log.Printf("[PUBSUB] Group %s: connected to %s via %s", groupId, pidShort, connectResult.Path)
 			n.emitEvent("group:discovery", map[string]interface{}{
@@ -915,11 +952,9 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 		return
 	}
 
-	// Build set of already-connected peers.
-	connectedSet := make(map[string]struct{})
-	for _, pid := range h.Network().Peers() {
-		connectedSet[pid.String()] = struct{}{}
-	}
+	// Build set of peers already visible in the topic. A plain host connection
+	// is not enough if the peer has not become a live topic peer yet.
+	connectedSet := n.liveGroupTopicPeerSet(groupId)
 
 	dialed := 0
 	connected := 0
@@ -985,6 +1020,38 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 				"error":             err.Error(),
 			})
 		} else {
+			livePeerReady := n.waitForLiveGroupTopicPeer(groupId, member.PeerId, GroupPublishPartialPeerSettleWait)
+			if !livePeerReady && connectResult.Path == "direct" {
+				if relayErr := n.DialPeerViaRelay(member.PeerId); relayErr != nil {
+					connectResult.RelayError = relayErr.Error()
+				} else {
+					connectResult.Path = "relay_fallback"
+					connectResult.UsedRelayFallback = true
+					livePeerReady = n.waitForLiveGroupTopicPeer(groupId, member.PeerId, GroupPublishPartialPeerSettleWait)
+				}
+			}
+			if !livePeerReady {
+				n.finishGroupPeerDial(member.PeerId, false, time.Now())
+				log.Printf(
+					"[PUBSUB] Group %s: dial %s (%s) connected via %s but did not become a live topic peer",
+					groupId,
+					member.Username,
+					pidShort,
+					connectResult.Path,
+				)
+				n.emitEvent("group:discovery", map[string]interface{}{
+					"groupId":           groupId,
+					"step":              "known_member_topic_missing",
+					"peerId":            pidShort,
+					"path":              connectResult.Path,
+					"attemptedDirect":   connectResult.AttemptedDirect,
+					"directAddrCount":   connectResult.DirectAddrCount,
+					"usedRelayFallback": connectResult.UsedRelayFallback,
+					"relayError":        connectResult.RelayError,
+				})
+				continue
+			}
+
 			n.finishGroupPeerDial(member.PeerId, true, time.Now())
 			connected++
 			switch connectResult.Path {
@@ -1104,33 +1171,79 @@ func (n *Node) dialKnownGroupMembersDirectOnly(groupId string) {
 }
 
 // countConnectedGroupMembers returns the number of group members currently
-// connected to this node (excluding self). This is used by the discovery
-// loop to determine whether to back off or reset the interval.
+// visible in the live topic peer set. This is used by the discovery loop to
+// determine whether to stay in the warm retry cadence or back off.
 func (n *Node) countConnectedGroupMembers(groupId string) int {
 	n.mu.RLock()
 	config, ok := n.groupConfigs[groupId]
-	h := n.host
-	selfId := ""
-	if h != nil {
-		selfId = h.ID().String()
-	}
 	n.mu.RUnlock()
 
-	if !ok || h == nil {
+	if !ok {
 		return 0
 	}
 
+	liveTopicPeers := n.liveGroupTopicPeerSet(groupId)
 	count := 0
-	for _, pid := range h.Network().Peers() {
-		pidStr := pid.String()
-		if pidStr == selfId {
-			continue
-		}
+	for pidStr := range liveTopicPeers {
 		if findMember(config, pidStr) != nil {
 			count++
 		}
 	}
 	return count
+}
+
+func (n *Node) liveGroupTopicPeerSet(groupId string) map[string]struct{} {
+	n.mu.RLock()
+	topic := n.groupTopics[groupId]
+	n.mu.RUnlock()
+
+	livePeers := make(map[string]struct{})
+	if topic == nil {
+		return livePeers
+	}
+
+	for _, pid := range topic.ListPeers() {
+		livePeers[pid.String()] = struct{}{}
+	}
+	return livePeers
+}
+
+func topicHasPeer(topic *pubsub.Topic, peerId string) bool {
+	if topic == nil || peerId == "" {
+		return false
+	}
+
+	for _, pid := range topic.ListPeers() {
+		if pid.String() == peerId {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForTopicPeer(topic *pubsub.Topic, peerId string, timeout time.Duration) bool {
+	if topicHasPeer(topic, peerId) {
+		return true
+	}
+	if topic == nil || peerId == "" || timeout <= 0 {
+		return false
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(GroupPublishPeerPoll)
+		if topicHasPeer(topic, peerId) {
+			return true
+		}
+	}
+	return topicHasPeer(topic, peerId)
+}
+
+func (n *Node) waitForLiveGroupTopicPeer(groupId, peerId string, timeout time.Duration) bool {
+	n.mu.RLock()
+	topic := n.groupTopics[groupId]
+	n.mu.RUnlock()
+	return waitForTopicPeer(topic, peerId, timeout)
 }
 
 func (n *Node) expectedConnectedGroupMembers(groupId string) int {

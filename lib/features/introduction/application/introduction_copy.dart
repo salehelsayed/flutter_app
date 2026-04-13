@@ -57,6 +57,49 @@ String formatIncomingIntroductionMessage({
   return base;
 }
 
+String formatIntroducerAcceptanceProgressSystemMessage({
+  required IntroductionModel introduction,
+  required String? responderId,
+  String? responderUsername,
+}) {
+  final (responderName, otherPartyName) = _resolveIntroducerAcceptanceNames(
+    introduction: introduction,
+    responderId: responderId,
+    responderUsername: responderUsername,
+  );
+  return '$responderName accepted your intro to $otherPartyName';
+}
+
+String formatIntroducerMutualAcceptanceSystemMessage({
+  required IntroductionModel introduction,
+}) {
+  final recipientName = _displayName(
+    introduction.recipientUsername,
+    fallback: 'your contact',
+  );
+  final introducedName = _displayName(
+    introduction.introducedUsername,
+    fallback: 'someone',
+  );
+  return '$recipientName and $introducedName are now connected';
+}
+
+String formatIntroducerMutualAcceptanceNotification({
+  required IntroductionModel introduction,
+  required String? responderId,
+  String? responderUsername,
+}) {
+  final acceptedText = formatIntroducerAcceptanceProgressSystemMessage(
+    introduction: introduction,
+    responderId: responderId,
+    responderUsername: responderUsername,
+  );
+  final connectedText = formatIntroducerMutualAcceptanceSystemMessage(
+    introduction: introduction,
+  );
+  return '$acceptedText. $connectedText';
+}
+
 String formatMutualAcceptanceSystemMessage({
   required String otherUsername,
   required String introducerName,
@@ -64,6 +107,35 @@ String formatMutualAcceptanceSystemMessage({
   final otherName = _displayName(otherUsername, fallback: 'your new contact');
   final introducer = _displayName(introducerName, fallback: 'a friend');
   return 'You and $otherName are now connected — introduced by $introducer';
+}
+
+(String, String) _resolveIntroducerAcceptanceNames({
+  required IntroductionModel introduction,
+  required String? responderId,
+  String? responderUsername,
+}) {
+  final recipientName = _displayName(
+    introduction.recipientUsername,
+    fallback: 'your contact',
+  );
+  final introducedName = _displayName(
+    introduction.introducedUsername,
+    fallback: 'someone',
+  );
+
+  if (responderId == introduction.recipientId) {
+    return (recipientName, introducedName);
+  }
+
+  if (responderId == introduction.introducedId) {
+    return (introducedName, recipientName);
+  }
+
+  final fallbackResponder = _displayName(
+    responderUsername,
+    fallback: 'Someone',
+  );
+  return (fallbackResponder, recipientName);
 }
 
 String _displayName(String? username, {required String fallback}) {

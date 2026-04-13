@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Shows a member's name, role badge, and optional action buttons.
 class GroupMemberRow extends StatelessWidget {
@@ -25,25 +26,7 @@ class GroupMemberRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          // Avatar placeholder
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.08),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                _initial(member.username ?? member.peerId),
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white.withOpacity(0.6),
-                ),
-              ),
-            ),
-          ),
+          UserAvatar(peerId: member.peerId, size: 36, showPhotoFrame: false),
           const SizedBox(width: 12),
           // Name + role
           Expanded(
@@ -118,11 +101,6 @@ class GroupMemberRow extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  String _initial(String name) {
-    if (name.isEmpty) return '?';
-    return name[0].toUpperCase();
   }
 }
 

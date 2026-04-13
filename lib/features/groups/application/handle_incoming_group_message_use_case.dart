@@ -5,6 +5,7 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
@@ -134,6 +135,22 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     // Still process the message — member list may be stale or the message
     // crossed the accepted removal boundary before the persisted cutoff.
   }
+  final sanitizedSenderUsername = sanitizeUsername(senderUsername).trim();
+  if (member != null &&
+      sanitizedSenderUsername.isNotEmpty &&
+      member.username?.trim() != sanitizedSenderUsername) {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: member.groupId,
+        peerId: member.peerId,
+        username: sanitizedSenderUsername,
+        role: member.role,
+        publicKey: member.publicKey,
+        mlKemPublicKey: member.mlKemPublicKey,
+        joinedAt: member.joinedAt,
+      ),
+    );
+  }
 
   // Fallback: content-based dedupe for messages without a messageId.
   final isDuplicate = await msgRepo.existsByContent(
@@ -166,7 +183,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     id: resolvedMessageId,
     groupId: groupId,
     senderPeerId: senderId,
-    senderUsername: senderUsername,
+    senderUsername: sanitizedSenderUsername,
     text: sanitizedText,
     timestamp: parsedTimestamp,
     quotedMessageId: quotedMessageId,

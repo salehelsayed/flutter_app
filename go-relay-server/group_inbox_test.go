@@ -6,9 +6,45 @@ import (
 	"time"
 )
 
+func opaqueGroupReplayEnvelope(messageID string) string {
+	return fmt.Sprintf(
+		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":4,"messageId":"%s","ciphertext":"opaque-ciphertext-%s","nonce":"opaque-nonce-%s"}`,
+		messageID,
+		messageID,
+		messageID,
+	)
+}
+
 // =============================================================================
 // Phase 2: Shared Relay Control State — Group Inbox Store tests
 // =============================================================================
+
+func TestGroupInboxStore_PreservesOpaqueReplayEnvelopeAcrossInstances(t *testing.T) {
+	backend := newMemoryGroupInboxBackend(500, 7*24*time.Hour)
+	storeA := NewGroupInboxStoreWithBackend(backend)
+	storeB := NewGroupInboxStoreWithBackend(backend)
+
+	envelope1 := opaqueGroupReplayEnvelope("msg-opaque-001")
+	envelope2 := opaqueGroupReplayEnvelope("msg-opaque-002")
+
+	if err := storeA.Store("group-opaque", "peer-1", envelope1); err != nil {
+		t.Fatalf("Store envelope1: %v", err)
+	}
+	if err := storeA.Store("group-opaque", "peer-1", envelope2); err != nil {
+		t.Fatalf("Store envelope2: %v", err)
+	}
+
+	msgs := storeB.Retrieve("group-opaque", 0)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 opaque replay envelopes, got %d", len(msgs))
+	}
+	if msgs[0].Message != envelope1 {
+		t.Fatalf("first message = %q, want exact envelope %q", msgs[0].Message, envelope1)
+	}
+	if msgs[1].Message != envelope2 {
+		t.Fatalf("second message = %q, want exact envelope %q", msgs[1].Message, envelope2)
+	}
+}
 
 // TestGroupInboxStore_RetrieveBySinceTimestampAcrossInstances proves that
 // messages stored through one GroupInboxStore instance are visible via

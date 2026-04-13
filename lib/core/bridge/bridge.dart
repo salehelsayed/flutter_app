@@ -50,15 +50,29 @@ abstract class Bridge {
 
 final StreamController<Map<String, dynamic>> _mediaUploadProgressController =
     StreamController<Map<String, dynamic>>.broadcast(sync: true);
+final StreamController<Map<String, dynamic>> _groupDiagnosticEventController =
+    StreamController<Map<String, dynamic>>.broadcast(sync: true);
 
 /// Broadcast stream for relay media-upload progress events emitted by the
 /// active bridge implementation.
 Stream<Map<String, dynamic>> get mediaUploadProgressStream =>
     _mediaUploadProgressController.stream;
 
+/// Broadcast stream for group diagnostic events emitted by the active bridge.
+Stream<Map<String, dynamic>> get groupDiagnosticEventStream =>
+    _groupDiagnosticEventController.stream;
+
 /// Publishes a media-upload progress event to Flutter listeners.
 void emitMediaUploadProgressEvent(Map<String, dynamic> data) {
   _mediaUploadProgressController.add(Map<String, dynamic>.from(data));
+}
+
+/// Publishes a group diagnostic event to Flutter listeners.
+void emitGroupDiagnosticEvent(String eventName, Map<String, dynamic> data) {
+  _groupDiagnosticEventController.add({
+    'event': eventName,
+    ...Map<String, dynamic>.from(data),
+  });
 }
 
 /// Calls the bridge to generate a new identity.
@@ -616,15 +630,9 @@ Future<String> callBlobKeygen(
 }) async {
   final request = {'cmd': 'blob:keygen', 'payload': <String, dynamic>{}};
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'BLOB_KEYGEN_REQUEST',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'BLOB_KEYGEN_REQUEST', details: {});
 
-  final responseJson = await bridge
-      .send(jsonEncode(request))
-      .timeout(timeout);
+  final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   if (response['ok'] != true) {
@@ -656,9 +664,7 @@ Future<({String encryptedPath, String nonce})> callBlobEncrypt(
     details: {'filePath': filePath},
   );
 
-  final responseJson = await bridge
-      .send(jsonEncode(request))
-      .timeout(timeout);
+  final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   if (response['ok'] != true) {
@@ -685,11 +691,7 @@ Future<String> callBlobDecrypt(
 }) async {
   final request = {
     'cmd': 'blob:decrypt',
-    'payload': {
-      'filePath': filePath,
-      'keyBase64': keyBase64,
-      'nonce': nonce,
-    },
+    'payload': {'filePath': filePath, 'keyBase64': keyBase64, 'nonce': nonce},
   };
 
   emitFlowEvent(
@@ -698,9 +700,7 @@ Future<String> callBlobDecrypt(
     details: {'filePath': filePath},
   );
 
-  final responseJson = await bridge
-      .send(jsonEncode(request))
-      .timeout(timeout);
+  final responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   if (response['ok'] != true) {
@@ -728,9 +728,11 @@ Future<String?> callBgBegin(Bridge bridge) async {
 Future<void> callBgEnd(Bridge bridge, String? taskId) async {
   if (taskId == null) return;
   try {
-    await bridge.send(jsonEncode({
-      'cmd': 'bg:end',
-      'payload': {'taskId': taskId},
-    }));
+    await bridge.send(
+      jsonEncode({
+        'cmd': 'bg:end',
+        'payload': {'taskId': taskId},
+      }),
+    );
   } catch (_) {}
 }

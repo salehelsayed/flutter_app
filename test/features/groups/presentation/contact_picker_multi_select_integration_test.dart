@@ -94,8 +94,9 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
 }
 
 void main() {
-  testWidgets('multi-select integration: full batch invite flow',
-      (tester) async {
+  testWidgets('multi-select integration: full batch invite flow', (
+    tester,
+  ) async {
     // Set up repos
     final contactRepo = InMemoryContactRepository();
     contactRepo.addTestContact(contactAlice);
@@ -104,34 +105,40 @@ void main() {
 
     final groupRepo = InMemoryGroupRepository();
     await groupRepo.saveGroup(testGroup);
-    await groupRepo.saveMember(GroupMember(
-      groupId: 'group-1',
-      peerId: 'peer-admin',
-      username: 'Admin',
-      role: MemberRole.admin,
-      joinedAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
     // Bob is already a member
-    await groupRepo.saveMember(GroupMember(
-      groupId: 'group-1',
-      peerId: 'peer-bob',
-      username: 'Bob',
-      role: MemberRole.writer,
-      joinedAt: DateTime.now().toUtc(),
-    ));
-    await groupRepo.saveKey(GroupKeyInfo(
-      groupId: 'group-1',
-      keyGeneration: 1,
-      encryptedKey: 'test-group-key-base64',
-      createdAt: DateTime.now().toUtc(),
-    ));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-bob',
+        username: 'Bob',
+        role: MemberRole.writer,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 1,
+        encryptedKey: 'test-group-key-base64',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
 
     final bridge = PassthroughCryptoBridge();
     final p2pService = FakeP2PService(
       initialState: const NodeState(isStarted: true),
     );
 
-    int? popResult;
+    ContactPickerInviteResult? popResult;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -142,19 +149,21 @@ void main() {
           builder: (context) => Scaffold(
             body: ElevatedButton(
               onPressed: () async {
-                final result = await Navigator.of(context).push<int>(
-                  MaterialPageRoute(
-                    builder: (_) => ContactPickerWired(
-                      groupId: 'group-1',
-                      groupRepo: groupRepo,
-                      contactRepo: contactRepo,
-                      bridge: bridge,
-                      identityRepo:
-                          FakeIdentityRepository(identity: testIdentity),
-                      p2pService: p2pService,
-                    ),
-                  ),
-                );
+                final result = await Navigator.of(context)
+                    .push<ContactPickerInviteResult>(
+                      MaterialPageRoute(
+                        builder: (_) => ContactPickerWired(
+                          groupId: 'group-1',
+                          groupRepo: groupRepo,
+                          contactRepo: contactRepo,
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: testIdentity,
+                          ),
+                          p2pService: p2pService,
+                        ),
+                      ),
+                    );
                 popResult = result;
               },
               child: const Text('Open Picker'),
@@ -204,13 +213,15 @@ void main() {
     expect(peerIds, contains('peer-admin')); // still there
 
     // 2. Exactly 1 group:updateConfig call
-    final updateConfigCalls =
-        bridge.commandLog.where((c) => c == 'group:updateConfig').length;
+    final updateConfigCalls = bridge.commandLog
+        .where((c) => c == 'group:updateConfig')
+        .length;
     expect(updateConfigCalls, equals(1));
 
     // 3. Exactly 1 group:publish call with members_added
-    final publishCalls =
-        bridge.commandLog.where((c) => c == 'group:publish').length;
+    final publishCalls = bridge.commandLog
+        .where((c) => c == 'group:publish')
+        .length;
     expect(publishCalls, equals(1));
 
     final publishMsg = bridge.sentMessages.firstWhere((msg) {
@@ -218,8 +229,7 @@ void main() {
       return parsed['cmd'] == 'group:publish';
     });
     final parsedPublish = jsonDecode(publishMsg) as Map<String, dynamic>;
-    final publishPayload =
-        parsedPublish['payload'] as Map<String, dynamic>;
+    final publishPayload = parsedPublish['payload'] as Map<String, dynamic>;
     final sysText =
         jsonDecode(publishPayload['text'] as String) as Map<String, dynamic>;
     expect(sysText['__sys'], equals('members_added'));
@@ -228,8 +238,7 @@ void main() {
 
     // 4. 2 entries in p2pService.sentMessageLog
     expect(p2pService.sentMessageLog.length, equals(2));
-    final sentPeerIds =
-        p2pService.sentMessageLog.map((e) => e.peerId).toSet();
+    final sentPeerIds = p2pService.sentMessageLog.map((e) => e.peerId).toSet();
     expect(sentPeerIds, contains('peer-alice'));
     expect(sentPeerIds, contains('peer-charlie'));
 
@@ -240,7 +249,8 @@ void main() {
       expect(envelope['version'], equals('2'));
     }
 
-    // 5. Screen popped with result 2
-    expect(popResult, equals(2));
+    expect(popResult, isNotNull);
+    expect(popResult!.membersAdded, equals(2));
+    expect(popResult!.hasWarnings, isFalse);
   });
 }

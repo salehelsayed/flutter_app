@@ -14,12 +14,13 @@ import (
 
 // peerState holds the running state of the test peer.
 type peerState struct {
-	node           *node.Node
-	collector      *messageCollector
-	identity       *identity.Identity
-	privateKeyHex  string
-	mlKemPublicKey string
-	mlKemSecretKey string
+	node                 *node.Node
+	collector            *messageCollector
+	identity             *identity.Identity
+	privateKeyHex        string
+	mlKemPublicKey       string
+	mlKemSecretKey       string
+	autoConfirmDirectAck bool
 }
 
 var state = &peerState{}
@@ -230,6 +231,11 @@ func cmdStart(params map[string]interface{}) map[string]interface{} {
 		autoRegister = ar
 	}
 
+	autoConfirmDirectAck := false
+	if ac, ok := params["autoConfirmDirectAck"].(bool); ok {
+		autoConfirmDirectAck = ac
+	}
+
 	var featureFlags *node.FeatureFlags
 	if rawFlags, ok := params["featureFlags"].(map[string]interface{}); ok {
 		featureFlags = &node.FeatureFlags{
@@ -243,6 +249,7 @@ func cmdStart(params map[string]interface{}) map[string]interface{} {
 
 	state.collector = newMessageCollector()
 	state.node = node.New(state.collector)
+	state.autoConfirmDirectAck = autoConfirmDirectAck
 
 	cfg := node.NodeConfig{
 		PrivateKeyHex:  state.privateKeyHex,
@@ -284,6 +291,7 @@ func cmdStop() map[string]interface{} {
 	}
 	state.node = nil
 	state.collector = nil
+	state.autoConfirmDirectAck = false
 	return okResult(nil)
 }
 

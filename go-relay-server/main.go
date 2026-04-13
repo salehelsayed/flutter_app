@@ -22,7 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const version = "1.2.0"
+const version = "1.3.0"
 
 func main() {
 	// Handle subcommands
@@ -41,6 +41,7 @@ func main() {
 	defer cancel()
 
 	serverCfg := loadServerConfigFromEnv()
+	storageCfg := loadStorageConfigFromEnv()
 
 	// Load private key (Ed25519, 64 bytes: seed + public)
 	privKey, err := crypto.UnmarshalEd25519PrivateKey(serverCfg.PrivateKey)
@@ -99,9 +100,9 @@ func main() {
 	push := stores.Push
 	inbox := stores.Inbox
 	groupInbox := stores.GroupInbox
-	media := NewMediaStore(mediaDataDir)
+	media := NewMediaStore(storageCfg.MediaDir)
 	media.StartCleanup(ctx)
-	profile := NewProfileStore(profileDataDir)
+	profile := NewProfileStore(storageCfg.ProfileDir)
 	biz = newBusinessMetrics()
 
 	// Register protocol handlers
@@ -173,6 +174,12 @@ func main() {
 		limitsCfg.MaxConnectionsPerPeer,
 		limitsCfg.MaxInboxMessagesPerPeer,
 		limitsCfg.MaxGroupInboxMessages,
+	)
+	log.Printf(
+		"Storage config: root=%s media=%s profiles=%s",
+		storageCfg.RootDir,
+		storageCfg.MediaDir,
+		storageCfg.ProfileDir,
 	)
 
 	log.Printf("Peer ID: %s", h.ID())

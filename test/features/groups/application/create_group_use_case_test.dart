@@ -21,7 +21,7 @@ void main() {
     bridge.responses['group:create'] = {
       'ok': true,
       'groupId': 'test-group-id',
-      'topicName': 'group-test-group-id',
+      'topicName': '/mknoon/group/test-group-id',
       'groupKey': 'test-group-key-base64',
       'keyEpoch': 1,
     };
@@ -46,6 +46,7 @@ void main() {
     expect(result.name, 'Test Group');
     expect(result.type, GroupType.chat);
     expect(result.id, 'test-group-id');
+    expect(result.topicName, '/mknoon/group/test-group-id');
     expect(result.myRole, GroupRole.admin);
   });
 
@@ -112,6 +113,92 @@ void main() {
     expect(key!.encryptedKey, 'test-group-key-base64');
     expect(key.keyGeneration, 1);
   });
+
+  test('persists the creator username on the admin membership row', () async {
+    await createGroup(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      name: 'Test Group',
+      type: GroupType.chat,
+      creatorPeerId: 'peer-123',
+      creatorPublicKey: 'pk-123',
+      creatorMlKemPublicKey: 'mlkem-pk-123',
+      creatorUsername: 'Admin',
+    );
+
+    final members = await groupRepo.getMembers('test-group-id');
+    expect(members, hasLength(1));
+    expect(members.single.peerId, 'peer-123');
+    expect(members.single.username, 'Admin');
+    expect(members.single.role, MemberRole.admin);
+  });
+
+  test(
+    'fails honestly and rolls back when no usable group key is available',
+    () async {
+      bridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': 'test-group-id',
+        'topicName': '/mknoon/group/test-group-id',
+      };
+      bridge.responses['group.keygen'] = {
+        'ok': false,
+        'errorCode': 'KEYGEN_FAILED',
+        'errorMessage': 'missing key material',
+      };
+
+      await expectLater(
+        createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'Keyless Group',
+          type: GroupType.chat,
+          creatorPeerId: 'peer-123',
+          creatorPublicKey: 'pk-123',
+          creatorMlKemPublicKey: 'mlkem-pk-123',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('no usable group key'),
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getGroup('test-group-id'), isNull);
+      expect(await groupRepo.getMembers('test-group-id'), isEmpty);
+      expect(await groupRepo.getLatestKey('test-group-id'), isNull);
+    },
+  );
+
+  test(
+    'uses the canonical /mknoon/group fallback when the bridge omits topicName',
+    () async {
+      bridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': 'test-group-id',
+        'groupKey': 'test-group-key-base64',
+        'keyEpoch': 1,
+      };
+
+      final result = await createGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        name: 'Fallback Topic Group',
+        type: GroupType.chat,
+        creatorPeerId: 'peer-123',
+        creatorPublicKey: 'pk-123',
+        creatorMlKemPublicKey: 'mlkem-pk-123',
+      );
+
+      expect(result.topicName, '/mknoon/group/test-group-id');
+
+      final savedGroup = await groupRepo.getGroup('test-group-id');
+      expect(savedGroup, isNotNull);
+      expect(savedGroup!.topicName, '/mknoon/group/test-group-id');
+    },
+  );
 
   test(
     'creates announcement group with announcement bridge payload and admin metadata',

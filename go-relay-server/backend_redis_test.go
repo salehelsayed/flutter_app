@@ -262,3 +262,42 @@ func TestRedisGroupInboxBackend_CursorStableAcrossClients(t *testing.T) {
 		t.Fatalf("unexpected final page message: %q", page3[0].Message)
 	}
 }
+
+func TestRedisGroupInboxBackend_PreservesOpaqueReplayEnvelopeAcrossClients(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	backendA := newRedisGroupInboxBackend(newTestRedisClient(t, server), "phase2:", 500, 7*24*time.Hour)
+	backendB := newRedisGroupInboxBackend(newTestRedisClient(t, server), "phase2:", 500, 7*24*time.Hour)
+
+	envelope1 := opaqueGroupReplayEnvelope("msg-opaque-redis-001")
+	envelope2 := opaqueGroupReplayEnvelope("msg-opaque-redis-002")
+
+	if err := backendA.Store("group-opaque", "peer-1", envelope1); err != nil {
+		t.Fatalf("Store envelope1: %v", err)
+	}
+	if err := backendA.Store("group-opaque", "peer-1", envelope2); err != nil {
+		t.Fatalf("Store envelope2: %v", err)
+	}
+
+	page1, cursor1 := backendB.RetrieveCursor("group-opaque", "", 1)
+	if len(page1) != 1 {
+		t.Fatalf("expected 1 message in page 1, got %d", len(page1))
+	}
+	if page1[0].Message != envelope1 {
+		t.Fatalf("page1 message = %q, want exact envelope %q", page1[0].Message, envelope1)
+	}
+	if cursor1 == "" {
+		t.Fatal("expected non-empty cursor after first opaque replay page")
+	}
+
+	page2, cursor2 := backendA.RetrieveCursor("group-opaque", cursor1, 1)
+	if len(page2) != 1 {
+		t.Fatalf("expected 1 message in page 2, got %d", len(page2))
+	}
+	if page2[0].Message != envelope2 {
+		t.Fatalf("page2 message = %q, want exact envelope %q", page2[0].Message, envelope2)
+	}
+	if cursor2 != "" {
+		t.Fatalf("expected empty cursor after final opaque replay page, got %q", cursor2)
+	}
+}

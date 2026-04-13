@@ -5,8 +5,10 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
@@ -15,6 +17,7 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_payload.d
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1320,6 +1323,328 @@ void main() {
         listener.dispose();
         await groupInviteStreamController.close();
         adminP2P.dispose();
+      },
+    );
+
+    test(
+      'accept publishes a durable join event that existing members can render',
+      () async {
+        final receiverBridge = PassthroughCryptoBridge();
+        final receiverGroupRepo = InMemoryGroupRepository();
+        final receiverPendingInviteRepo =
+            InMemoryPendingGroupInviteRepository();
+        final receiverMsgRepo = InMemoryGroupMessageRepository();
+
+        await receiverPendingInviteRepo.savePendingInvite(
+          PendingGroupInvite.fromPayload(
+            GroupInvitePayload(
+              id: 'invite-join-event',
+              groupId: _groupId,
+              groupKey: _groupKey,
+              keyEpoch: _keyEpoch,
+              groupConfig: _makeGroupConfig(),
+              senderPeerId: _adminPeerId,
+              senderUsername: 'Admin',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+            ),
+            receivedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final adminGroupRepo = InMemoryGroupRepository();
+        final adminMsgRepo = InMemoryGroupMessageRepository();
+        final adminGroup = GroupModel(
+          id: _groupId,
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$_groupId',
+          description: 'Integration test group',
+          createdAt: DateTime.utc(2026, 3, 2),
+          createdBy: _adminPeerId,
+          myRole: GroupRole.admin,
+        );
+        await adminGroupRepo.saveGroup(adminGroup);
+        await adminGroupRepo.saveMember(
+          GroupMember(
+            groupId: _groupId,
+            peerId: _adminPeerId,
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'adminPubKey64',
+            mlKemPublicKey: _adminMlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 3, 2),
+          ),
+        );
+        await adminGroupRepo.saveMember(
+          GroupMember(
+            groupId: _groupId,
+            peerId: _receiverPeerId,
+            username: 'Receiver',
+            role: MemberRole.writer,
+            publicKey: 'receiverPubKey64',
+            mlKemPublicKey: _receiverMlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 3, 2, 0, 1),
+          ),
+        );
+
+        final adminListenerStream = StreamController<Map<String, dynamic>>();
+        final adminListener = GroupMessageListener(
+          groupRepo: adminGroupRepo,
+          msgRepo: adminMsgRepo,
+          bridge: FakeBridge(),
+          getSelfPeerId: () async => _adminPeerId,
+        );
+        adminListener.start(adminListenerStream.stream);
+
+        final (acceptResult, _) = await acceptPendingGroupInvite(
+          pendingInviteRepo: receiverPendingInviteRepo,
+          groupRepo: receiverGroupRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          groupId: _groupId,
+          senderPeerId: _receiverPeerId,
+          senderPublicKey: 'receiverPubKey64',
+          senderPrivateKey: 'receiverPrivKey64',
+          senderUsername: 'Receiver',
+        );
+
+        expect(acceptResult, AcceptPendingGroupInviteResult.success);
+        expect(receiverBridge.commandLog, contains('group:publish'));
+
+        final publishMessage = receiverBridge.sentMessages.firstWhere((
+          message,
+        ) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final publishPayload =
+            (jsonDecode(publishMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysText = publishPayload['text'] as String;
+
+        adminListenerStream.add({
+          'groupId': _groupId,
+          'senderId': _receiverPeerId,
+          'senderUsername': 'Receiver',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        final latestMessage = await adminMsgRepo.getLatestMessage(_groupId);
+        expect(latestMessage, isNotNull);
+        expect(latestMessage!.text, 'Receiver joined the group');
+
+        await adminListenerStream.close();
+        adminListener.dispose();
+      },
+    );
+
+    test(
+      'bridgeError accept later rejoin and drain converge without the pending invite row',
+      () async {
+        final receiverBridge = FakeBridge();
+        final receiverGroupRepo = InMemoryGroupRepository();
+        final receiverPendingInviteRepo =
+            InMemoryPendingGroupInviteRepository();
+        final receiverMsgRepo = InMemoryGroupMessageRepository();
+        final adminGroupRepo = InMemoryGroupRepository();
+        final adminMsgRepo = InMemoryGroupMessageRepository();
+        final adminGroup = GroupModel(
+          id: _groupId,
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$_groupId',
+          description: 'Integration test group',
+          createdAt: DateTime.utc(2026, 3, 2),
+          createdBy: _adminPeerId,
+          myRole: GroupRole.admin,
+        );
+        await adminGroupRepo.saveGroup(adminGroup);
+        await adminGroupRepo.saveMember(
+          GroupMember(
+            groupId: _groupId,
+            peerId: _adminPeerId,
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'adminPubKey64',
+            mlKemPublicKey: _adminMlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 3, 2),
+          ),
+        );
+        await adminGroupRepo.saveMember(
+          GroupMember(
+            groupId: _groupId,
+            peerId: _receiverPeerId,
+            username: 'Receiver',
+            role: MemberRole.writer,
+            publicKey: 'receiverPubKey64',
+            mlKemPublicKey: _receiverMlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 3, 2, 0, 1),
+          ),
+        );
+        final adminListenerStream = StreamController<Map<String, dynamic>>();
+        final adminListener = GroupMessageListener(
+          groupRepo: adminGroupRepo,
+          msgRepo: adminMsgRepo,
+          bridge: FakeBridge(),
+          getSelfPeerId: () async => _adminPeerId,
+        );
+        adminListener.start(adminListenerStream.stream);
+        addTearDown(() async {
+          await adminListenerStream.close();
+          adminListener.dispose();
+        });
+        final replayListener = GroupMessageListener(
+          groupRepo: receiverGroupRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          getSelfPeerId: () async => _receiverPeerId,
+        );
+        addTearDown(replayListener.dispose);
+
+        await receiverPendingInviteRepo.savePendingInvite(
+          PendingGroupInvite.fromPayload(
+            GroupInvitePayload(
+              id: 'invite-bridge-error',
+              groupId: _groupId,
+              groupKey: _groupKey,
+              keyEpoch: _keyEpoch,
+              groupConfig: _makeGroupConfig(),
+              senderPeerId: _adminPeerId,
+              senderUsername: 'Admin',
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+            ),
+            receivedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        receiverBridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'JOIN_FAILED',
+        };
+
+        final (acceptResult, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: receiverPendingInviteRepo,
+          groupRepo: receiverGroupRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          groupId: _groupId,
+          senderPeerId: _receiverPeerId,
+          senderPublicKey: 'receiverPubKey64',
+          senderPrivateKey: 'receiverPrivKey64',
+          senderUsername: 'Receiver',
+        );
+
+        expect(acceptResult, AcceptPendingGroupInviteResult.bridgeError);
+        expect(group, isNotNull);
+        expect(await receiverPendingInviteRepo.getPendingInvite(_groupId), isNull);
+        expect(await receiverGroupRepo.getGroup(_groupId), isNotNull);
+        expect(receiverBridge.commandLog, contains('group:publish'));
+        expect(receiverBridge.commandLog, contains('group:inboxStore'));
+
+        final publishMessage = receiverBridge.sentMessages.firstWhere((
+          message,
+        ) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final publishPayload =
+            (jsonDecode(publishMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysText = publishPayload['text'] as String;
+
+        adminListenerStream.add({
+          'groupId': _groupId,
+          'senderId': _receiverPeerId,
+          'senderUsername': 'Receiver',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        final adminLatestMessage = await adminMsgRepo.getLatestMessage(_groupId);
+        expect(adminLatestMessage, isNotNull);
+        expect(adminLatestMessage!.text, 'Receiver joined the group');
+
+        final receiverHistoryAfterAccept = await receiverMsgRepo.getMessagesPage(
+          _groupId,
+          limit: 10,
+        );
+        expect(
+          receiverHistoryAfterAccept.where(
+            (message) => message.text == 'Receiver joined the group',
+          ),
+          hasLength(1),
+        );
+
+        final replayTimestamp = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(minutes: 2))
+            .toIso8601String();
+        receiverBridge.responses['group:join'] = {'ok': true};
+        receiverBridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': [
+            {
+              'from': _adminPeerId,
+              'message': jsonEncode({
+                'groupId': _groupId,
+                'messageId': 'bridge-error-recovered-msg',
+                'senderId': _adminPeerId,
+                'senderUsername': 'Admin',
+                'keyEpoch': _keyEpoch,
+                'text': 'Recovered after bridge error',
+                'timestamp': replayTimestamp,
+              }),
+            },
+          ],
+          'cursor': '',
+        };
+
+        final rejoinResult = await rejoinGroupTopics(
+          bridge: receiverBridge,
+          groupRepo: receiverGroupRepo,
+          reason: RejoinReason.inPlaceRecovery,
+        );
+        expect(rejoinResult.joinedGroupCount, 1);
+        expect(rejoinResult.errorCount, 0);
+
+        await drainGroupOfflineInboxForGroup(
+          bridge: receiverBridge,
+          groupRepo: receiverGroupRepo,
+          msgRepo: receiverMsgRepo,
+          groupId: _groupId,
+          groupMessageListener: replayListener,
+        );
+
+        final recoveredMessage = await receiverMsgRepo.getMessage(
+          'bridge-error-recovered-msg',
+        );
+        expect(recoveredMessage, isNotNull);
+        expect(recoveredMessage!.text, 'Recovered after bridge error');
+        expect(await receiverPendingInviteRepo.getPendingInvite(_groupId), isNull);
+
+        final receiverHistoryAfterRecovery = await receiverMsgRepo.getMessagesPage(
+          _groupId,
+          limit: 20,
+        );
+        expect(
+          receiverHistoryAfterRecovery.where(
+            (message) => message.text == 'Receiver joined the group',
+          ),
+          hasLength(1),
+        );
+
+        final joinCommands = receiverBridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:join')
+            .toList();
+        expect(joinCommands, hasLength(2));
       },
     );
   });

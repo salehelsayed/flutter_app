@@ -8,6 +8,7 @@ import 'bridge.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../utils/flow_event_emitter.dart';
+import '../utils/push_diagnostics_logger.dart';
 
 /// Dart bridge client that communicates with the Go native library
 /// via Flutter platform channels.
@@ -332,8 +333,27 @@ class GoBridgeClient extends Bridge {
           break;
 
         // Forward Go diagnostic events to FLOW logs for debugging.
+        case 'group:decryption_failed':
+        case 'group:payload_parse_failed':
         case 'group:discovery':
         case 'group:publish_debug':
+        case 'group:dispatcher_pressure':
+        case 'group:dispatcher_overflow':
+          if (eventName == 'group:decryption_failed' ||
+              eventName == 'group:payload_parse_failed' ||
+              eventName == 'group:dispatcher_pressure' ||
+              eventName == 'group:dispatcher_overflow') {
+            emitGroupDiagnosticEvent(eventName!, eventData);
+          }
+          if (eventName == 'group:dispatcher_pressure' ||
+              eventName == 'group:dispatcher_overflow') {
+            logPushDiagnostic(
+              eventName!.replaceAll(':', '_'),
+              details: eventData.map(
+                (key, value) => MapEntry(key, value as Object?),
+              ),
+            );
+          }
           emitFlowEvent(
             layer: 'GO',
             event: eventName!.replaceAll(':', '_').toUpperCase(),

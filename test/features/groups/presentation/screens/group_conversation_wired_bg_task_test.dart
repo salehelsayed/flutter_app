@@ -131,6 +131,16 @@ class _OrderRecordingBridge extends FakeBridge {
         return bgBeginResponse;
       case 'bg:end':
         return '';
+      case 'group.encrypt':
+        final payload = decoded['payload'] as Map<String, dynamic>;
+        return jsonEncode({
+          'ok': true,
+          'ciphertext': payload['plaintext'],
+          'nonce': 'fake-group-nonce',
+        });
+      case 'group.decrypt':
+        final payload = decoded['payload'] as Map<String, dynamic>;
+        return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
       case 'group:publish':
         return jsonEncode({
           'ok': true,
@@ -258,6 +268,16 @@ Future<void> _pumpGroupConversationWired(
       mediaAttachmentRepo ?? InMemoryMediaAttachmentRepository();
 
   await effectiveGroupRepo.saveGroup(effectiveGroup);
+  if (await effectiveGroupRepo.getLatestKey(effectiveGroup.id) == null) {
+    await effectiveGroupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: effectiveGroup.id,
+        keyGeneration: 1,
+        encryptedKey: 'test-group-key-1',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+  }
   await effectiveGroupRepo.saveMember(
     GroupMember(
       groupId: effectiveGroup.id,
@@ -297,6 +317,16 @@ Future<void> _sendText(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField), text);
   await tester.pump();
   await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+}
+
+Map<String, dynamic> _decodeReplayPayload(Map<String, dynamic> inboxPayload) {
+  final envelope =
+      jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+  final ciphertext = envelope['ciphertext'];
+  if (envelope['kind'] == 'group_offline_replay' && ciphertext is String) {
+    return jsonDecode(ciphertext) as Map<String, dynamic>;
+  }
+  return envelope;
 }
 
 void main() {
@@ -795,9 +825,7 @@ void main() {
             (jsonDecode(inboxMessage) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
         expect(inboxPayload['pushBody'], equals('Alice sent a voice message'));
-        final innerEnvelope =
-            jsonDecode(inboxPayload['message'] as String)
-                as Map<String, dynamic>;
+        final innerEnvelope = _decodeReplayPayload(inboxPayload);
         expect(innerEnvelope['text'], isEmpty);
 
         final publishMessage = bridge.sentMessages.firstWhere(
@@ -1169,11 +1197,12 @@ void main() {
         final inboxPayload =
             (jsonDecode(inboxMessage) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
-        final inboxEnvelope =
+        final replayEnvelope =
             jsonDecode(inboxPayload['message'] as String)
                 as Map<String, dynamic>;
-        expect(inboxEnvelope['messageId'], sentMessageId);
-        expect(inboxEnvelope['keyEpoch'], 7);
+        expect(replayEnvelope['messageId'], sentMessageId);
+        expect(replayEnvelope['keyEpoch'], 7);
+        final inboxEnvelope = _decodeReplayPayload(inboxPayload);
         final inboxMedia =
             (inboxEnvelope['media'] as List).single as Map<String, dynamic>;
         expect(inboxMedia['id'], uploadedBlobId);

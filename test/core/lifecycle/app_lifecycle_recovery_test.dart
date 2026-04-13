@@ -150,6 +150,36 @@ void main() {
       runningP2P.dispose();
     });
 
+    test('uses injected key-exchange retry callback when provided', () async {
+      final runningP2P = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-1234567890',
+        ),
+      );
+      final contactRepo = FakeContactRepository()
+        ..seed([_makeContact('target-peer-1234567890')]);
+      final identityRepo = FakeIdentityRepository()..seed(_makeIdentity());
+      var callbackCount = 0;
+
+      await handleAppResumed(
+        bridge: bridge,
+        p2pService: runningP2P,
+        contactRepo: contactRepo,
+        identityRepo: identityRepo,
+        retryIncompleteKeyExchangesFn: () async {
+          callbackCount += 1;
+          return 7;
+        },
+      );
+
+      expect(callbackCount, 1);
+      expect(runningP2P.sendMessageWithReplyCallCount, 0);
+      expect(runningP2P.storeInInboxCallCount, 0);
+      expect(bridge.sendCallCount, 0);
+      runningP2P.dispose();
+    });
+
     test('does not retry key exchange when repos are not provided', () async {
       final runningP2P = FakeP2PService(
         initialState: const NodeState(

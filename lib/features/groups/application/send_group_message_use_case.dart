@@ -9,6 +9,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -360,13 +361,45 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
   });
-  final inboxRetryPayload = jsonEncode({
-    'groupId': groupId,
-    'message': inboxPayload,
-    if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
-    if (pushTitle.isNotEmpty) 'pushTitle': pushTitle,
-    if (pushBody.isNotEmpty) 'pushBody': pushBody,
-  });
+  String? replayEnvelope;
+  String? inboxRetryPayload;
+  if (latestKey != null) {
+    try {
+      replayEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: inboxPayload,
+        keyInfo: latestKey,
+        messageId: resolvedMessageId,
+      );
+      inboxRetryPayload = jsonEncode({
+        'groupId': groupId,
+        'message': replayEnvelope,
+        if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
+        if (pushTitle.isNotEmpty) 'pushTitle': pushTitle,
+        if (pushBody.isNotEmpty) 'pushBody': pushBody,
+      });
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_REPLAY_ENVELOPE_FAILED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'error': e.toString(),
+        },
+      );
+    }
+  } else {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_REPLAY_KEY_MISSING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+  }
 
   // 4. Pre-persist outgoing row with status 'sending' BEFORE bridge call
   final prePersistMessage = GroupMessage(
@@ -403,17 +436,22 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   );
   bool? inboxResult;
   final inboxFuture =
-      _tryInboxStore(
-        bridge: bridge,
-        groupId: groupId,
-        inboxPayload: inboxPayload,
-        recipientPeerIds: recipientPeerIds.isNotEmpty ? recipientPeerIds : null,
-        pushTitle: pushTitle,
-        pushBody: pushBody,
-      ).then((value) {
-        inboxResult = value;
-        return value;
-      });
+      (replayEnvelope == null
+              ? Future<bool>.value(false)
+              : _tryInboxStore(
+                  bridge: bridge,
+                  groupId: groupId,
+                  inboxPayload: replayEnvelope,
+                  recipientPeerIds: recipientPeerIds.isNotEmpty
+                      ? recipientPeerIds
+                      : null,
+                  pushTitle: pushTitle,
+                  pushBody: pushBody,
+                ))
+          .then((value) {
+            inboxResult = value;
+            return value;
+          });
 
   // 6. Await publish — determines success/failure
   Map<String, dynamic>? publishResult;

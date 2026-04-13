@@ -50,6 +50,7 @@ import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart
 import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
+import 'package:flutter_app/core/database/migrations/054_group_reaction_replay_outbox.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -123,6 +124,7 @@ void main() {
     await runPendingGroupInvitesMigration(db);
     await runGroupsDissolveColumnsMigration(db);
     await runGroupsBacklogRetentionColumnsMigration(db);
+    await runGroupReactionReplayOutboxMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -137,6 +139,7 @@ void main() {
     expect(groupCols53, contains('last_backlog_expired_at'));
     expect(groupCols53, contains('last_backlog_retained_at'));
     expect(await getTableNames(db), contains('pending_group_invites'));
+    expect(await getTableNames(db), contains('group_reaction_replay_outbox'));
   }
 
   Future<void> runUpgradePathFromV1(
@@ -181,6 +184,7 @@ void main() {
     await runPendingGroupInvitesMigration(db);
     await runGroupsDissolveColumnsMigration(db);
     await runGroupsBacklogRetentionColumnsMigration(db);
+    await runGroupReactionReplayOutboxMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {

@@ -12,11 +12,15 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart'
+    as group_react;
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -41,6 +45,7 @@ import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/group_test_user.dart';
+import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
@@ -64,13 +69,13 @@ class _CursorInboxBridge extends FakeBridge {
   Future<String> send(String message) async {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
     final cmd = parsed['cmd'] as String?;
-    if (cmd != null) commandLog.add(cmd);
-    sendCallCount++;
-    lastSentMessage = message;
-    sentMessages.add(message);
-    lastCommand = cmd;
-
     if (cmd == 'group:inboxRetrieveCursor') {
+      if (cmd != null) commandLog.add(cmd);
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+
       final payload = parsed['payload'] as Map<String, dynamic>;
       final groupId = payload['groupId'] as String;
       final cursor = payload['cursor'] as String? ?? '';
@@ -91,11 +96,7 @@ class _CursorInboxBridge extends FakeBridge {
       });
     }
 
-    // Default: return ok for other commands (group:join, etc.)
-    if (cmd != null && responses.containsKey(cmd)) {
-      return jsonEncode(responses[cmd]!);
-    }
-    return jsonEncode({'ok': true});
+    return super.send(message);
   }
 }
 
@@ -187,6 +188,36 @@ List<Map<String, dynamic>> bridgePayloads(FakeBridge bridge, String command) {
       .toList(growable: false);
 }
 
+Map<String, dynamic> _storedGroupReplayEnvelope(String storedMessage) {
+  return jsonDecode(storedMessage) as Map<String, dynamic>;
+}
+
+Map<String, dynamic> _decodedGroupReplayPayload(String storedMessage) {
+  final envelope = _storedGroupReplayEnvelope(storedMessage);
+  final ciphertext = envelope['ciphertext'];
+  if (envelope['kind'] == 'group_offline_replay' && ciphertext is String) {
+    return jsonDecode(ciphertext) as Map<String, dynamic>;
+  }
+  return envelope;
+}
+
+void _addRelayStoredMessagePage({
+  required _CursorInboxBridge receiverBridge,
+  required String groupId,
+  required String fromPeerId,
+  required String storedMessage,
+  String cursor = '',
+  String nextCursor = '',
+}) {
+  receiverBridge.addPage(groupId, cursor, [
+    {
+      'from': fromPeerId,
+      'message': storedMessage,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    },
+  ], nextCursor);
+}
+
 void _injectInboxMessageFromLatestStore({
   required FakeBridge senderBridge,
   required _CursorInboxBridge receiverBridge,
@@ -198,9 +229,23 @@ void _injectInboxMessageFromLatestStore({
       (inboxPayload['recipientPeerIds'] as List<dynamic>? ?? const [])
           .cast<String>();
   expect(recipients, contains(receiverPeerId));
-  final inboxEnvelope =
-      jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
-  receiverBridge.addPage(groupId, '', [inboxEnvelope], '');
+  final storedMessage = inboxPayload['message'] as String;
+  final decodedPayload = _decodedGroupReplayPayload(storedMessage);
+  var fromPeerId = decodedPayload['senderId'] as String? ?? '';
+  if (fromPeerId.isEmpty) {
+    try {
+      final publishPayload = latestBridgePayload(senderBridge, 'group:publish');
+      fromPeerId = publishPayload['senderPeerId'] as String? ?? '';
+    } on StateError {
+      fromPeerId = '';
+    }
+  }
+  _addRelayStoredMessagePage(
+    receiverBridge: receiverBridge,
+    groupId: groupId,
+    fromPeerId: fromPeerId,
+    storedMessage: storedMessage,
+  );
 }
 
 class _Section10IdentityRepository implements IdentityRepository {
@@ -283,6 +328,22 @@ class _Section10MirroringBridge extends FakeBridge {
         return 'section10-bg-task';
       case 'bg:end':
         return '';
+      case 'group.encrypt':
+        if (!responses.containsKey(cmd)) {
+          final payload = parsed['payload'] as Map<String, dynamic>;
+          return jsonEncode({
+            'ok': true,
+            'ciphertext': payload['plaintext'],
+            'nonce': 'fake-group-nonce',
+          });
+        }
+        return jsonEncode(responses[cmd]!);
+      case 'group.decrypt':
+        if (!responses.containsKey(cmd)) {
+          final payload = parsed['payload'] as Map<String, dynamic>;
+          return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
+        }
+        return jsonEncode(responses[cmd]!);
       case 'group:publish':
         return _handlePublish(parsed['payload'] as Map<String, dynamic>);
       case 'group:inboxStore':
@@ -981,8 +1042,9 @@ Future<void> _section10WidgetVoiceLifecycleProof(
   expect(sent.status, 'sent');
   final inboxPayload = latestBridgePayload(senderBridge, 'group:inboxStore');
   expect(inboxPayload['pushBody'], 'Alice sent a voice message');
-  final inboxEnvelope =
-      jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+  final inboxEnvelope = _decodedGroupReplayPayload(
+    inboxPayload['message'] as String,
+  );
   expect(inboxEnvelope['text'], isEmpty);
   _expectOrdered(senderBridge.operationLog, 'bridge:bg:begin', 'uploadMediaFn');
   _expectOrdered(
@@ -1319,6 +1381,389 @@ void main() {
 
         pubsubController.close();
         bob.dispose();
+      },
+    );
+
+    test(
+      'live reaction replay on resume keeps a single truthful stored reaction after rejoin',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'admin-reaction-resume-peer',
+          username: 'Admin',
+          network: network,
+          bridge: _CursorInboxBridge(),
+          reactionRepo: FakeReactionRepository(),
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-reaction-resume-peer',
+          username: 'Bob',
+          network: network,
+          reactionRepo: FakeReactionRepository(),
+        );
+        final adminBridge = admin.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-reaction-resume';
+        final joinedAt = DateTime.now().toUtc();
+
+        await admin.createGroup(groupId: groupId, name: 'Reaction Resume');
+        await admin.addMember(groupId: groupId, invitee: bob);
+
+        Future<void> saveKey(GroupTestUser user, int generation) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: generation,
+              encryptedKey: 'k$generation',
+              createdAt: joinedAt,
+            ),
+          );
+        }
+
+        await saveKey(admin, 1);
+        await saveKey(bob, 1);
+
+        admin.start();
+        bob.start();
+
+        final (sendResult, sentMessage) = await admin.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'Reaction target',
+        );
+        expect(sendResult, SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+
+        await pump();
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        final received = bobMessages.firstWhere(
+          (message) => message.id == sentMessage!.id,
+        );
+
+        final liveReactionChange =
+            admin.groupMessageListener.groupReactionChangeStream.first;
+        final (reactionResult, reaction) = await bob.sendGroupReactionViaBridge(
+          groupId: groupId,
+          messageId: received.id,
+          emoji: '🔥',
+        );
+        expect(reactionResult, group_react.SendGroupReactionResult.success);
+        expect(reaction, isNotNull);
+
+        final liveChange = await liveReactionChange;
+        expect(liveChange.messageId, received.id);
+        expect(liveChange.senderPeerId, bob.peerId);
+
+        var adminReactions = await admin.reactionRepo!.getReactionsForMessage(
+          received.id,
+        );
+        expect(adminReactions, hasLength(1));
+        expect(adminReactions.single.emoji, '🔥');
+        expect(adminReactions.single.senderPeerId, bob.peerId);
+
+        final inboxPayload = latestBridgePayload(
+          bob.bridge,
+          'group:inboxStore',
+        );
+        final replayMessage = inboxPayload['message'] as String;
+        final replayEnvelope = _storedGroupReplayEnvelope(replayMessage);
+        expect(replayEnvelope['kind'], 'group_offline_replay');
+        expect(replayEnvelope['payloadType'], 'group_reaction');
+
+        network.unsubscribe(groupId, admin.peerId);
+        adminBridge.addPage(groupId, '', [
+          {
+            'from': bob.peerId,
+            'message': replayMessage,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        ], '');
+
+        await rejoinGroupTopics(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          reason: RejoinReason.startup,
+        );
+        network.subscribe(groupId, admin.peerId);
+
+        await drainGroupOfflineInbox(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          msgRepo: admin.msgRepo,
+          reactionRepo: admin.reactionRepo,
+        );
+
+        adminReactions = await admin.reactionRepo!.getReactionsForMessage(
+          received.id,
+        );
+        expect(adminReactions, hasLength(1));
+        expect(adminReactions.single.emoji, '🔥');
+        expect(adminReactions.single.senderPeerId, bob.peerId);
+        expect(admin.bridge.commandLog, contains('group:join'));
+
+        admin.dispose();
+        bob.dispose();
+      },
+    );
+
+    test(
+      'post-rotation reaction replay after rejoin keeps the truthful reactor on the rotated message',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'admin-reaction-rotation-peer',
+          username: 'Admin',
+          network: network,
+          bridge: _CursorInboxBridge(),
+          reactionRepo: FakeReactionRepository(),
+        );
+        final reader = GroupTestUser.create(
+          peerId: 'reader-reaction-rotation-peer',
+          username: 'Reader',
+          network: network,
+          reactionRepo: FakeReactionRepository(),
+        );
+        final adminBridge = admin.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-reaction-rotation';
+        final joinedAt = DateTime.now().toUtc();
+
+        await admin.createGroup(groupId: groupId, name: 'Reaction Rotation');
+        await admin.addMember(groupId: groupId, invitee: reader);
+
+        Future<void> saveKey(GroupTestUser user, int generation) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: generation,
+              encryptedKey: 'k$generation',
+              createdAt: joinedAt,
+            ),
+          );
+        }
+
+        await saveKey(admin, 1);
+        await saveKey(reader, 1);
+
+        admin.start();
+        reader.start();
+
+        await saveKey(admin, 2);
+        await saveKey(reader, 2);
+
+        final (sendResult, sentMessage) = await admin.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'After rotation reaction target',
+        );
+        expect(sendResult, SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.keyGeneration, 2);
+
+        await pump();
+        final readerMessages = await reader.loadGroupMessages(groupId);
+        final delivered = readerMessages.firstWhere(
+          (message) => message.id == sentMessage.id,
+        );
+        expect(delivered.keyGeneration, 2);
+
+        network.unsubscribe(groupId, admin.peerId);
+
+        final (reactionResult, reaction) = await reader
+            .sendGroupReactionViaBridge(
+              groupId: groupId,
+              messageId: delivered.id,
+              emoji: '👍',
+            );
+        expect(reactionResult, group_react.SendGroupReactionResult.success);
+        expect(reaction, isNotNull);
+
+        final inboxPayload = latestBridgePayload(
+          reader.bridge,
+          'group:inboxStore',
+        );
+        final replayMessage = inboxPayload['message'] as String;
+        final replayEnvelope = _storedGroupReplayEnvelope(replayMessage);
+        expect(replayEnvelope['kind'], 'group_offline_replay');
+        expect(replayEnvelope['payloadType'], 'group_reaction');
+
+        adminBridge.addPage(groupId, '', [
+          {
+            'from': reader.peerId,
+            'message': replayMessage,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+        ], '');
+        expect(
+          await admin.reactionRepo!.getReactionsForMessage(delivered.id),
+          isEmpty,
+        );
+
+        await rejoinGroupTopics(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          reason: RejoinReason.startup,
+        );
+        network.subscribe(groupId, admin.peerId);
+
+        await drainGroupOfflineInbox(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          msgRepo: admin.msgRepo,
+          reactionRepo: admin.reactionRepo,
+        );
+
+        final recoveredReactions = await admin.reactionRepo!
+            .getReactionsForMessage(delivered.id);
+        expect(recoveredReactions, hasLength(1));
+        expect(recoveredReactions.single.emoji, '👍');
+        expect(recoveredReactions.single.senderPeerId, reader.peerId);
+        expect(admin.bridge.commandLog, contains('group:join'));
+
+        admin.dispose();
+        reader.dispose();
+      },
+    );
+
+    test(
+      'resume retry replays failed reaction add/remove stores and converges to the final removed state',
+      () async {
+        final adminBridge = _Section10MirroringBridge(
+          network: network,
+          msgRepo: InMemoryGroupMessageRepository(),
+          groupRepo: InMemoryGroupRepository(),
+        );
+        final admin = GroupTestUser.create(
+          peerId: 'admin-reaction-retry-peer',
+          username: 'Admin',
+          network: network,
+          bridge: adminBridge,
+          reactionRepo: FakeReactionRepository(),
+        );
+        final reader = GroupTestUser.create(
+          peerId: 'reader-reaction-retry-peer',
+          username: 'Reader',
+          network: network,
+          bridge: _CursorInboxBridge(),
+          reactionRepo: FakeReactionRepository(),
+        );
+        final readerBridge = reader.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-reaction-retry-resume';
+        await admin.createGroup(groupId: groupId, name: 'Reaction Retry');
+        await admin.addMember(groupId: groupId, invitee: reader);
+        await _saveKey(admin, groupId, 1, 'k1');
+        await _saveKey(reader, groupId, 1, 'k1');
+
+        admin.start();
+        reader.start();
+
+        final (sendResult, sentMessage) = await admin.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'Reaction retry target',
+        );
+        expect(sendResult, SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+
+        await pump();
+        final readerMessages = await reader.loadGroupMessages(groupId);
+        final delivered = readerMessages.firstWhere(
+          (message) => message.id == sentMessage!.id,
+        );
+
+        network.unsubscribe(groupId, reader.peerId);
+        adminBridge.inboxStoreFailuresRemaining = 2;
+
+        final (addResult, addReaction) = await group_react.sendGroupReaction(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          msgRepo: admin.msgRepo,
+          reactionRepo: admin.reactionRepo!,
+          reactionReplayOutboxRepo: admin.reactionReplayOutboxRepo,
+          groupId: groupId,
+          messageId: delivered.id,
+          emoji: '🔥',
+          senderPeerId: admin.peerId,
+          senderPublicKey: admin.publicKey,
+          senderPrivateKey: admin.privateKey,
+        );
+        expect(addResult, group_react.SendGroupReactionResult.success);
+        expect(addReaction, isNotNull);
+
+        final removeResult = await removeGroupReaction(
+          bridge: admin.bridge,
+          groupRepo: admin.groupRepo,
+          reactionRepo: admin.reactionRepo!,
+          reactionReplayOutboxRepo: admin.reactionReplayOutboxRepo,
+          groupId: groupId,
+          messageId: delivered.id,
+          emoji: '🔥',
+          senderPeerId: admin.peerId,
+          senderPublicKey: admin.publicKey,
+          senderPrivateKey: admin.privateKey,
+        );
+        expect(removeResult, RemoveGroupReactionResult.success);
+
+        await pump();
+
+        final pendingEntries = await admin.reactionReplayOutboxRepo
+            .loadRetryableEntries(limit: 10);
+        expect(pendingEntries, hasLength(2));
+        expect(
+          pendingEntries.map((entry) => entry.action),
+          containsAll(<String>['add', 'remove']),
+        );
+
+        final inboxStoreCountBeforeRetry = bridgePayloads(
+          admin.bridge,
+          'group:inboxStore',
+        ).length;
+
+        await simulateBackgroundForegroundCycle(
+          bridge: admin.bridge,
+          p2pService: FakeP2PService(),
+          messageRepo: InMemoryMessageRepository(),
+          groupMsgRepo: admin.msgRepo,
+          retryFailedGroupInboxStoresFn: () => retryFailedGroupInboxStores(
+            bridge: admin.bridge,
+            msgRepo: admin.msgRepo,
+            reactionReplayOutboxRepo: admin.reactionReplayOutboxRepo,
+          ),
+        );
+
+        final retriedInboxStores = bridgePayloads(
+          admin.bridge,
+          'group:inboxStore',
+        ).skip(inboxStoreCountBeforeRetry).toList(growable: false);
+        expect(retriedInboxStores, hasLength(2));
+
+        readerBridge.addPage(groupId, '', [
+          {
+            'from': admin.peerId,
+            'message': retriedInboxStores[0]['message'] as String,
+            'timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+          {
+            'from': admin.peerId,
+            'message': retriedInboxStores[1]['message'] as String,
+            'timestamp': DateTime.now().millisecondsSinceEpoch + 1,
+          },
+        ], '');
+
+        await drainGroupOfflineInbox(
+          bridge: reader.bridge,
+          groupRepo: reader.groupRepo,
+          msgRepo: reader.msgRepo,
+          reactionRepo: reader.reactionRepo,
+        );
+
+        final recoveredReactions = await reader.reactionRepo!
+            .getReactionsForMessage(delivered.id);
+        expect(
+          recoveredReactions,
+          isEmpty,
+          reason: 'offline reader should converge to the final removed state',
+        );
+
+        final retryableAfterResume = await admin.reactionReplayOutboxRepo
+            .loadRetryableEntries(limit: 10);
+        expect(retryableAfterResume, isEmpty);
       },
     );
 
@@ -1738,14 +2183,9 @@ void main() {
         await admin.addMember(groupId: groupId, invitee: reader);
         await admin.addMember(groupId: groupId, invitee: onlineReader);
 
-        await reader.groupRepo.saveKey(
-          GroupKeyInfo(
-            groupId: groupId,
-            keyGeneration: 1,
-            encryptedKey: 'test-key',
-            createdAt: DateTime.now().toUtc(),
-          ),
-        );
+        await _saveKey(admin, groupId, 1, 'test-key');
+        await _saveKey(reader, groupId, 1, 'test-key');
+        await _saveKey(onlineReader, groupId, 1, 'test-key');
 
         admin.start();
         reader.start();
@@ -2030,6 +2470,136 @@ void main() {
       '10-F acceptance uses real GroupConversationWired sender path after key rotation',
       (tester) async {
         await _section10WidgetRotationLifecycleProof(tester, network);
+      },
+    );
+
+    testWidgets(
+      'MM-012 acceptance uses real GroupConversationWired sender path to keep discussion sendable and announcement admin blocked during active recovery',
+      (tester) async {
+        addTearDown(groupRecoveryGate.resetForTest);
+
+        Future<void> expectDiscussionAllowed({
+          required String groupId,
+          required String name,
+          required String draftText,
+        }) async {
+          final sender = GroupTestUser.create(
+            peerId: '$groupId-peer',
+            username: 'Alice',
+            network: network,
+          );
+          addTearDown(sender.dispose);
+
+          await sender.createGroup(
+            groupId: groupId,
+            name: name,
+            type: GroupType.chat,
+          );
+          await _saveKey(sender, groupId, 1, 'k1');
+
+          await _pumpSection10SenderWidget(
+            tester,
+            sender: sender,
+            groupId: groupId,
+            bridge: sender.bridge,
+          );
+
+          groupRecoveryGate.begin();
+          try {
+            await _sendText(tester, draftText);
+            await _pumpFrames(tester, count: 20);
+          } finally {
+            groupRecoveryGate.end();
+          }
+
+          expect(
+            sender.bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            hasLength(1),
+          );
+          expect(
+            sender.bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(1),
+          );
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller?.text,
+            isEmpty,
+          );
+          expect(find.text(draftText), findsOneWidget);
+          expect(
+            (await sender.msgRepo.getMessagesPage(groupId, limit: 20)).where(
+              (message) => !message.isIncoming && message.text == draftText,
+            ),
+            hasLength(1),
+          );
+
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+
+        Future<void> expectAnnouncementBlocked({
+          required String groupId,
+          required String name,
+          required String draftText,
+        }) async {
+          final sender = GroupTestUser.create(
+            peerId: '$groupId-peer',
+            username: 'Alice',
+            network: network,
+          );
+          addTearDown(sender.dispose);
+
+          await sender.createGroup(
+            groupId: groupId,
+            name: name,
+            type: GroupType.announcement,
+          );
+          await _saveKey(sender, groupId, 1, 'k1');
+
+          await _pumpSection10SenderWidget(
+            tester,
+            sender: sender,
+            groupId: groupId,
+            bridge: sender.bridge,
+          );
+
+          groupRecoveryGate.begin();
+          try {
+            await _sendText(tester, draftText);
+            await _pumpFrames(tester, count: 20);
+          } finally {
+            groupRecoveryGate.end();
+          }
+
+          expect(
+            sender.bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            isEmpty,
+          );
+          expect(
+            sender.bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            isEmpty,
+          );
+          expect(find.text(draftText), findsOneWidget);
+          expect(
+            (await sender.msgRepo.getMessagesPage(groupId, limit: 20)).where(
+              (message) => !message.isIncoming && message.text == draftText,
+            ),
+            isEmpty,
+          );
+
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+
+        await expectDiscussionAllowed(
+          groupId: 'group-recovery-send-chat',
+          name: 'Recovery Chat',
+          draftText: 'Discussion recovery send',
+        );
+        await expectAnnouncementBlocked(
+          groupId: 'group-recovery-send-announce',
+          name: 'Recovery Announcement',
+          draftText: 'Announcement recovery block',
+        );
       },
     );
 
@@ -2337,6 +2907,88 @@ void main() {
     );
 
     test(
+      'multi page replay with a tampered timestamp still keeps one stored row',
+      () async {
+        final user = GroupTestUser.create(
+          peerId: 'user-peer',
+          username: 'User',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final userBridge = user.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-nodup-timestamp';
+        const sharedMsgId = 'msg-shared-timestamp';
+        // Keep the replay payload comfortably inside the retention window so
+        // this test continues to exercise messageId dedupe instead of aging
+        // into backlog-expiry behavior as the calendar advances.
+        final originalTimestamp = DateTime.now().toUtc().subtract(
+          const Duration(hours: 2),
+        );
+        final tamperedTimestamp = originalTimestamp.add(
+          const Duration(minutes: 10),
+        );
+
+        await user.createGroup(groupId: groupId, name: 'No Dup Timestamp');
+        await user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-key',
+            createdAt: originalTimestamp,
+          ),
+        );
+
+        userBridge.addPage(groupId, '', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Same message',
+            'timestamp': originalTimestamp.toIso8601String(),
+            'messageId': sharedMsgId,
+          },
+        ], 'cursor-2');
+
+        userBridge.addPage(groupId, 'cursor-2', [
+          {
+            'groupId': groupId,
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': 'Same message',
+            'timestamp': tamperedTimestamp.toIso8601String(),
+            'messageId': sharedMsgId,
+          },
+        ], '');
+
+        user.start();
+
+        await drainGroupOfflineInbox(
+          bridge: user.bridge,
+          groupRepo: user.groupRepo,
+          msgRepo: user.msgRepo,
+        );
+
+        final msgs = await user.msgRepo.getMessagesPage(groupId);
+        expect(msgs, hasLength(1));
+        expect(
+          msgs.single.id,
+          sharedMsgId,
+          reason: 'Tampered replay must not materialize a second row',
+        );
+        expect(
+          msgs.single.timestamp,
+          originalTimestamp,
+          reason: 'Replay must not rewrite the accepted timestamp ordering',
+        );
+
+        user.dispose();
+      },
+    );
+
+    test(
       'long-offline mixed-window recovery keeps retained backlog and never resurrects expired pages',
       () async {
         final user = GroupTestUser.create(
@@ -2627,6 +3279,122 @@ void main() {
               (message) => message.text == 'Publish despite inbox failure',
             ),
             isTrue,
+          );
+
+          admin.dispose();
+          bob.dispose();
+        },
+      );
+
+      test(
+        'zero-peer inbox failure stays owned by failed-message retry and recovers in place',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            inboxStoreFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-zero-peer-failed-retry-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-zero-peer-failed-retry-peer',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final bobBridge = bob.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-zero-peer-failed-retry';
+          await admin.createGroup(groupId: groupId, name: 'Zero Peer Retry');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(bob, groupId, 1, 'k1');
+          network.unsubscribe(groupId, bob.peerId);
+
+          admin.start();
+          bob.start();
+
+          final (initialResult, initialMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'Zero peers need message retry',
+              );
+
+          expect(initialResult, SendGroupMessageResult.error);
+          expect(initialMessage, isNotNull);
+          expect(initialMessage!.status, 'failed');
+          expect(initialMessage.inboxStored, isFalse);
+          expect(initialMessage.inboxRetryPayload, isNotNull);
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            hasLength(1),
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(1),
+          );
+
+          final inboxRetried = await retryFailedGroupInboxStores(
+            bridge: admin.bridge,
+            msgRepo: admin.msgRepo,
+          );
+          expect(inboxRetried, 0);
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(1),
+          );
+
+          final messageRetried = await retryFailedGroupMessages(
+            groupMsgRepo: admin.msgRepo,
+            groupRepo: admin.groupRepo,
+            identityRepo: _Section10IdentityRepository(_identityForUser(admin)),
+            bridge: admin.bridge,
+            mediaAttachmentRepo: admin.mediaAttachmentRepo,
+          );
+          expect(messageRetried, 1);
+
+          final recovered = await admin.msgRepo.getMessage(initialMessage.id);
+          expect(recovered, isNotNull);
+          expect(recovered!.id, initialMessage.id);
+          expect(recovered.status, 'sent');
+          expect(recovered.inboxStored, isTrue);
+          expect(recovered.inboxRetryPayload, isNull);
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            hasLength(2),
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(2),
+          );
+
+          _injectInboxMessageFromLatestStore(
+            senderBridge: admin.bridge,
+            receiverBridge: bobBridge,
+            receiverPeerId: bob.peerId,
+            groupId: groupId,
+          );
+
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+          );
+
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where(
+              (message) =>
+                  message.isIncoming &&
+                  message.id == initialMessage.id &&
+                  message.text == 'Zero peers need message retry',
+            ),
+            hasLength(1),
           );
 
           admin.dispose();
@@ -3087,18 +3855,20 @@ void main() {
             );
           }
 
-          final firstEnvelope =
-              jsonDecode(inboxStores[0]['message'] as String)
-                  as Map<String, dynamic>;
-          final secondEnvelope =
-              jsonDecode(inboxStores[1]['message'] as String)
-                  as Map<String, dynamic>;
-          partitionBridge.addPage(groupId, '', [
-            firstEnvelope,
-          ], 'cursor-partition-page-2');
-          partitionBridge.addPage(groupId, 'cursor-partition-page-2', [
-            secondEnvelope,
-          ], '');
+          _addRelayStoredMessagePage(
+            receiverBridge: partitionBridge,
+            groupId: groupId,
+            fromPeerId: admin.peerId,
+            storedMessage: inboxStores[0]['message'] as String,
+            nextCursor: 'cursor-partition-page-2',
+          );
+          _addRelayStoredMessagePage(
+            receiverBridge: partitionBridge,
+            groupId: groupId,
+            fromPeerId: admin.peerId,
+            storedMessage: inboxStores[1]['message'] as String,
+            cursor: 'cursor-partition-page-2',
+          );
 
           await rejoinGroupTopics(
             bridge: partitionedReader.bridge,

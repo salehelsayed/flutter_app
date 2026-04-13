@@ -111,9 +111,16 @@ Future<void> main(List<String> args) async {
   final deviceId = await _pickDevice(requestedDevice, platform);
   _log('ORCH', 'Running stable-ID smoke on simulator/emulator: $deviceId');
 
+  final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
+  final relayDartDefines =
+      relayAddresses == null || relayAddresses.trim().isEmpty
+      ? const <String>[]
+      : ['--dart-define=MKNOON_RELAY_ADDRESSES=${relayAddresses.trim()}'];
+
   final process = await Process.start('flutter', [
     'test',
     'integration_test/media_stable_id_smoke_test.dart',
+    ...relayDartDefines,
     '-d',
     deviceId,
   ], mode: ProcessStartMode.inheritStdio);
@@ -125,6 +132,7 @@ Future<void> main(List<String> args) async {
       [
         'test',
         'integration_test/media_stable_id_smoke_test.dart',
+        ...relayDartDefines,
         '-d',
         deviceId,
       ],

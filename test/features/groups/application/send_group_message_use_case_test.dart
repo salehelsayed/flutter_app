@@ -180,6 +180,32 @@ Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
   return (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
 }
 
+Map<String, dynamic> _decodedGroupInboxReplayPayload(FakeBridge bridge) {
+  final inboxPayload = _lastGroupInboxStorePayload(bridge);
+  final envelope =
+      jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+  final ciphertext = envelope['ciphertext'];
+  if (ciphertext is String && envelope['kind'] == 'group_offline_replay') {
+    return jsonDecode(ciphertext) as Map<String, dynamic>;
+  }
+  return envelope;
+}
+
+Future<void> _saveGroupKey(
+  InMemoryGroupRepository groupRepo,
+  String groupId, {
+  int generation = 1,
+}) async {
+  await groupRepo.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: generation,
+      encryptedKey: 'test-group-key-$generation',
+      createdAt: DateTime.now().toUtc(),
+    ),
+  );
+}
+
 void main() {
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -202,6 +228,7 @@ void main() {
     groupRecoveryGate.resetForTest();
 
     await groupRepo.saveGroup(testGroup);
+    await _saveGroupKey(groupRepo, testGroup.id);
 
     bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-123'};
   });
@@ -231,6 +258,12 @@ void main() {
   });
 
   test('emits GROUP_SEND_MSG_TIMING with group and media metadata', () async {
+    bridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'msg-flow-proof',
+      'topicPeers': 1,
+    };
+
     final events = await captureFlowEvents(() async {
       await sendGroupMessage(
         bridge: bridge,
@@ -244,6 +277,20 @@ void main() {
         senderUsername: 'Alice',
       );
     });
+
+    final begin = events.firstWhere(
+      (event) => event['event'] == 'GROUP_SEND_MSG_USE_CASE_BEGIN',
+    );
+    expect(begin['details']['groupId'], 'group-1');
+    expect(begin['details']['textLength'], 'Hello group!'.length);
+
+    final success = events.firstWhere(
+      (event) => event['event'] == 'GROUP_SEND_MSG_USE_CASE_SUCCESS',
+    );
+    expect(success['details']['messageId'], hasLength(8));
+    expect(success['details']['topicPeers'], 1);
+    expect(success['details']['inboxOk'], isTrue);
+    expect(success['details']['inboxPending'], isFalse);
 
     final timing = events.lastWhere(
       (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
@@ -308,6 +355,7 @@ void main() {
       myRole: GroupRole.member,
     );
     await groupRepo.saveGroup(announcementGroup);
+    await _saveGroupKey(groupRepo, announcementGroup.id);
 
     final (result, message) = await sendGroupMessage(
       bridge: bridge,
@@ -358,6 +406,33 @@ void main() {
     },
   );
 
+  test('allows discussion send while group recovery is in progress', () async {
+    groupRecoveryGate.begin();
+    try {
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Recovery blocked',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.text, 'Recovery blocked');
+    } finally {
+      groupRecoveryGate.end();
+    }
+
+    expect(bridge.commandLog, contains('group:publish'));
+    expect(bridge.commandLog, contains('group:inboxStore'));
+    expect(msgRepo.count, 1);
+  });
+
   test(
     'blocks announcement send while group recovery is in progress',
     () async {
@@ -371,6 +446,7 @@ void main() {
         myRole: GroupRole.admin,
       );
       await groupRepo.saveGroup(announcementGroup);
+      await _saveGroupKey(groupRepo, announcementGroup.id);
 
       groupRecoveryGate.begin();
       try {
@@ -443,13 +519,7 @@ void main() {
           (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
       expect(publishPayload['quotedMessageId'], 'msg-parent-1');
 
-      final inboxMsg = bridge.sentMessages.firstWhere(
-        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:inboxStore',
-      );
-      final inboxPayload =
-          (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
-      final innerPayload =
-          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      final innerPayload = _decodedGroupInboxReplayPayload(bridge);
       expect(innerPayload['quotedMessageId'], 'msg-parent-1');
 
       final saved = await msgRepo.getMessage(message.id);
@@ -496,8 +566,7 @@ void main() {
       expect(inboxPayload['pushBody'], equals('Alice: $sanitizedText'));
       expect(inboxPayload['pushBody'], isNot(contains('\u202E')));
 
-      final innerPayload =
-          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      final innerPayload = _decodedGroupInboxReplayPayload(bridge);
       expect(innerPayload['text'], sanitizedText);
     },
   );
@@ -810,6 +879,7 @@ void main() {
     () async {
       final slowGroupRepo = _DelayedGroupRepository();
       await slowGroupRepo.saveGroup(testGroup);
+      await _saveGroupKey(slowGroupRepo, testGroup.id);
       await slowGroupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-1',
@@ -942,13 +1012,7 @@ void main() {
       );
 
       // Verify inbox store received media in payload
-      final inboxMsg = bridge.sentMessages.firstWhere(
-        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:inboxStore',
-      );
-      final inboxPayload =
-          (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
-      final innerPayload =
-          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      final innerPayload = _decodedGroupInboxReplayPayload(bridge);
       expect(innerPayload['media'], isNotNull);
       expect((innerPayload['media'] as List).length, 1);
     });
@@ -1004,15 +1068,12 @@ void main() {
       final publishPayload =
           (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
       final publishMedia = publishPayload['media'] as List<dynamic>;
-      expect((publishMedia.single as Map<String, dynamic>)['mime'], 'image/gif');
-
-      final inboxMsg = bridge.sentMessages.firstWhere(
-        (m) => (jsonDecode(m) as Map)['cmd'] == 'group:inboxStore',
+      expect(
+        (publishMedia.single as Map<String, dynamic>)['mime'],
+        'image/gif',
       );
-      final inboxPayload =
-          (jsonDecode(inboxMsg) as Map)['payload'] as Map<String, dynamic>;
-      final innerPayload =
-          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+
+      final innerPayload = _decodedGroupInboxReplayPayload(bridge);
       final inboxMedia = innerPayload['media'] as List<dynamic>;
       expect((inboxMedia.single as Map<String, dynamic>)['mime'], 'image/gif');
     });
@@ -1181,6 +1242,7 @@ void main() {
           myRole: GroupRole.admin,
         );
         await groupRepo.saveGroup(announcementGroup);
+        await _saveGroupKey(groupRepo, announcementGroup.id);
         await groupRepo.saveKey(
           GroupKeyInfo(
             groupId: 'group-announce-voice',
@@ -1321,6 +1383,7 @@ void main() {
           myRole: GroupRole.admin,
         );
         await groupRepo.saveGroup(announcementGroup);
+        await _saveGroupKey(groupRepo, announcementGroup.id);
 
         bridge.responses['group:publish'] = {
           'ok': true,
@@ -1359,6 +1422,7 @@ void main() {
           myRole: GroupRole.admin,
         );
         await groupRepo.saveGroup(announcementGroup);
+        await _saveGroupKey(groupRepo, announcementGroup.id);
         await groupRepo.saveKey(
           GroupKeyInfo(
             groupId: 'group-announce-rotated',
@@ -1426,6 +1490,7 @@ void main() {
           myRole: GroupRole.member,
         );
         await groupRepo.saveGroup(announcementGroup);
+        await _saveGroupKey(groupRepo, announcementGroup.id);
 
         final (result, message) = await sendGroupMessage(
           bridge: bridge,
@@ -1542,6 +1607,7 @@ void main() {
         myRole: GroupRole.member,
       );
       await groupRepo.saveGroup(announcementGroup);
+      await _saveGroupKey(groupRepo, announcementGroup.id);
 
       final (result, _) = await sendGroupMessage(
         bridge: bridge,
@@ -1616,24 +1682,50 @@ void main() {
         'topicPeers': 0,
       };
 
-      final (result, message) = await sendGroupMessage(
-        bridge: failBridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        groupId: 'group-1',
-        text: 'Zero peers, inbox fail',
-        senderPeerId: 'peer-1',
-        senderPublicKey: 'pk-1',
-        senderPrivateKey: 'sk-1',
-        senderUsername: 'Alice',
-        messageId: 'msg-zero-fail',
-      );
+      late SendGroupMessageResult result;
+      late GroupMessage? message;
+      final events = await captureFlowEvents(() async {
+        (result, message) = await sendGroupMessage(
+          bridge: failBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Zero peers, inbox fail',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-zero-fail',
+        );
+      });
 
       expect(result, SendGroupMessageResult.error);
+      expect(message, isNotNull);
       // The pre-persisted row should exist with 'failed' status
       final saved = await msgRepo.getMessage('msg-zero-fail');
       expect(saved, isNotNull);
       expect(saved!.status, 'failed');
+
+      final inboxStoreFailed = events.firstWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_INBOX_STORE_FAILED',
+      );
+      expect(
+        inboxStoreFailed['details']['error'],
+        contains('Relay inbox store failed'),
+      );
+
+      final zeroPeersFailed = events.firstWhere(
+        (event) =>
+            event['event'] == 'GROUP_SEND_MSG_USE_CASE_ZERO_PEERS_INBOX_FAILED',
+      );
+      expect(zeroPeersFailed['details']['messageId'], 'msg-zero');
+
+      final timing = events.lastWhere(
+        (event) => event['event'] == 'GROUP_SEND_MSG_TIMING',
+      );
+      expect(timing['details']['outcome'], 'zero_peers_inbox_failed');
+      expect(timing['details']['topicPeers'], 0);
+      expect(timing['details']['groupId'], 'group-1');
     });
 
     test('peers > 0 + inbox OK → success, both payloads cleared', () async {
@@ -1823,7 +1915,8 @@ void main() {
         expect(saved!.status, 'pending');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNotNull);
-      });
+      },
+    );
 
     test(
       'publish fail + inbox fail → status failed, both payloads retained',

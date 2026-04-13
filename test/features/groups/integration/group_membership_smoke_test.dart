@@ -28,6 +28,16 @@ void main() {
 
   Future<void> pump() => Future.delayed(const Duration(milliseconds: 50));
 
+  Map<String, dynamic> decodeReplayPayload(Map<String, dynamic> inboxPayload) {
+    final envelope =
+        jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+    final ciphertext = envelope['ciphertext'];
+    if (envelope['kind'] == 'group_offline_replay' && ciphertext is String) {
+      return jsonDecode(ciphertext) as Map<String, dynamic>;
+    }
+    return envelope;
+  }
+
   group('Multi-user group membership smoke tests', () {
     // -----------------------------------------------------------------------
     // 1. Admin removes member — removed member stops receiving messages.
@@ -563,8 +573,9 @@ void main() {
         final charlieJoinedAt = DateTime.parse(
           '2026-04-05T12:09:58.000Z',
         ).toUtc();
-        final dianaJoinedAt = DateTime.parse('2026-04-05T12:09:59.000Z')
-            .toUtc();
+        final dianaJoinedAt = DateTime.parse(
+          '2026-04-05T12:09:59.000Z',
+        ).toUtc();
         const initialPromoteAt = '2026-04-05T12:10:00.000Z';
         const promoteAt = '2026-04-05T12:10:01.000Z';
         const removeAt = '2026-04-05T12:10:02.000Z';
@@ -1029,12 +1040,76 @@ void main() {
 
         expect(adminIncoming, hasLength(1));
         expect(adminIncoming.single.text, 'Hi team');
-        expect(bobIncoming, hasLength(1));
-        expect(bobIncoming.single.text, 'Hi team');
+        expect(
+          bobIncoming.map((message) => message.text),
+          containsAll(['Admin added Charlie', 'Hi team']),
+        );
         expect(charlieOutgoing, hasLength(1));
         expect(charlieOutgoing.single.text, 'Hi team');
 
         // Cleanup
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'writer leave emits a durable left-the-group event for remaining members',
+      () async {
+        const groupId = 'grp-writer-leave-004b';
+
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        await admin.createGroup(groupId: groupId, name: 'Leave Test');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        await bob.leaveGroup(groupId);
+        await pump();
+
+        expect(await bob.groupRepo.getGroup(groupId), isNull);
+
+        final adminMembers = await admin.groupRepo.getMembers(groupId);
+        final charlieMembers = await charlie.groupRepo.getMembers(groupId);
+        expect(
+          adminMembers.map((member) => member.peerId),
+          isNot(contains('peer-bob')),
+        );
+        expect(
+          charlieMembers.map((member) => member.peerId),
+          isNot(contains('peer-bob')),
+        );
+
+        final adminMessages = await admin.loadGroupMessages(groupId);
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          adminMessages.map((message) => message.text),
+          contains('Bob left the group'),
+        );
+        expect(
+          charlieMessages.map((message) => message.text),
+          contains('Bob left the group'),
+        );
+
         admin.dispose();
         bob.dispose();
         charlie.dispose();
@@ -1242,10 +1317,10 @@ void main() {
           isEmpty,
         );
         expect(
-          (await bob.loadGroupMessages(
-            groupId,
-          )).where((message) => message.isIncoming),
-          isEmpty,
+          (await bob.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming)
+              .map((message) => message.text),
+          contains('Admin added Charlie'),
         );
 
         await saveKey(charlie, epoch: 1, encryptedKey: 'group-key-epoch-1');
@@ -1271,8 +1346,11 @@ void main() {
 
         expect(adminIncoming, hasLength(1));
         expect(adminIncoming.single.text, 'Hi team');
-        expect(bobIncoming, hasLength(1));
-        expect(bobIncoming.single.text, 'Hi team');
+        expect(bobIncoming, hasLength(2));
+        expect(
+          bobIncoming.map((message) => message.text).toList(),
+          containsAll(['Admin added Charlie', 'Hi team']),
+        );
         expect(charlieOutgoing, hasLength(1));
         expect(charlieOutgoing.single.text, 'Hi team');
 
@@ -1857,8 +1935,21 @@ void main() {
           network: network,
         );
 
+        Future<void> saveKey(GroupTestUser user, {required int epoch}) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: 'group-key-epoch-$epoch',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+        }
+
         await alice.createGroup(groupId: groupId, name: 'Temporary Group');
+        await saveKey(alice, epoch: 1);
         await alice.addMember(groupId: groupId, invitee: bob);
+        await saveKey(bob, epoch: 1);
 
         alice.start();
 
@@ -1880,11 +1971,10 @@ void main() {
         final inboxPayload =
             (jsonDecode(inboxRaw) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
-        final inboxEnvelope =
-            jsonDecode(inboxPayload['message'] as String)
-                as Map<String, dynamic>;
 
-        await bob.groupMessageListener.handleReplayEnvelope(inboxEnvelope);
+        await bob.groupMessageListener.handleReplayEnvelope(
+          decodeReplayPayload(inboxPayload),
+        );
         await pump();
 
         final bobGroup = await bob.groupRepo.getGroup(groupId);

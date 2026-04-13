@@ -45,8 +45,9 @@ Future<int> retryIncompleteKeyExchanges({
 
   // 3. Get eligible contacts (active, not blocked, missing ML-KEM key)
   final contacts = await contactRepo.getActiveContacts();
-  final eligible =
-      contacts.where((c) => c.mlKemPublicKey == null && !c.isBlocked).toList();
+  final eligible = contacts
+      .where((c) => c.mlKemPublicKey == null && !c.isBlocked)
+      .toList();
 
   if (eligible.isEmpty) return 0;
 
@@ -68,6 +69,7 @@ Future<int> retryIncompleteKeyExchanges({
         bridge: bridge,
         targetPeerId: contact.peerId,
         recipientPublicKey: contact.publicKey,
+        intent: ContactRequestSendIntent.keyExchangeRetry,
       );
 
       if (result == SendContactRequestResult.success) sent++;

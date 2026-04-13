@@ -179,6 +179,26 @@ void main() {
         await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
       });
 
+      final begin = events.firstWhere(
+        (event) => event['event'] == 'GROUP_REJOIN_TOPICS_BEGIN',
+      );
+      expect(begin['details']['reason'], RejoinReason.startup.name);
+
+      final joined = events.firstWhere(
+        (event) => event['event'] == 'GROUP_REJOIN_TOPICS_JOINED',
+      );
+      expect(joined['details']['groupId'], 'group-1');
+      expect(joined['details']['keyEpoch'], 1);
+      expect(joined['details']['memberCount'], 1);
+
+      final done = events.firstWhere(
+        (event) => event['event'] == 'GROUP_REJOIN_TOPICS_DONE',
+      );
+      expect(done['details']['groupCount'], 1);
+      expect(done['details']['joinedGroupCount'], 1);
+      expect(done['details']['skippedNoKeyCount'], 0);
+      expect(done['details']['errorCount'], 0);
+
       final timing = events.lastWhere(
         (event) => event['event'] == 'GROUP_REJOIN_TOPICS_TIMING',
       );
@@ -186,6 +206,7 @@ void main() {
       expect(timing['details']['scope'], 'batch');
       expect(timing['details']['groupCount'], 1);
       expect(timing['details']['joinedGroupCount'], 1);
+      expect(timing['details']['reason'], RejoinReason.startup.name);
       expect(timing['details']['elapsedMs'], isA<int>());
     });
 
@@ -863,8 +884,9 @@ void main() {
           'errorCode': 'TEST_FAIL',
         };
 
-        // Should not throw
-        await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+        final events = await captureFlowEvents(() async {
+          await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+        });
 
         // Both groups should have been attempted
         final joinCommands = bridge.sentMessages
@@ -875,6 +897,37 @@ void main() {
           joinCommands,
           hasLength(2),
           reason: 'Second group should still be attempted after first fails',
+        );
+
+        final errorEvents = events
+            .where((event) => event['event'] == 'GROUP_REJOIN_TOPICS_ERROR')
+            .toList();
+        expect(errorEvents, hasLength(2));
+        expect(
+          errorEvents.every(
+            (event) => (event['details'] as Map<String, dynamic>)['error']
+                .toString()
+                .contains('TEST_FAIL'),
+          ),
+          isTrue,
+        );
+
+        final groupTimingEvents = events
+            .where(
+              (event) =>
+                  event['event'] == 'GROUP_REJOIN_TOPICS_TIMING' &&
+                  (event['details'] as Map<String, dynamic>)['scope'] ==
+                      'group',
+            )
+            .toList();
+        expect(groupTimingEvents, hasLength(2));
+        expect(
+          groupTimingEvents.every(
+            (event) =>
+                (event['details'] as Map<String, dynamic>)['outcome'] ==
+                'error',
+          ),
+          isTrue,
         );
       },
     );

@@ -90,6 +90,7 @@ type connectionInfo struct {
 	PeerId    string `json:"peerId"`
 	Address   string `json:"address"`
 	Direction string `json:"direction"`
+	Limited   bool   `json:"limited,omitempty"`
 }
 
 // isCircuitAddr returns true if the multiaddr contains a /p2p-circuit component.
@@ -1335,14 +1336,18 @@ func (n *Node) watchConnectionEvents() {
 		switch e := ev.(type) {
 		case event.EvtPeerConnectednessChanged:
 			pid := e.Peer.String()
-			if e.Connectedness == network.Connected {
+			if e.Connectedness == network.Connected || e.Connectedness == network.Limited {
 				addr := ""
 				conns := n.host.Network().ConnsToPeer(e.Peer)
 				direction := "inbound"
+				limited := e.Connectedness == network.Limited
 				if len(conns) > 0 {
 					addr = conns[0].RemoteMultiaddr().String()
 					if conns[0].Stat().Direction == network.DirOutbound {
 						direction = "outbound"
+					}
+					if conns[0].Stat().Limited {
+						limited = true
 					}
 				}
 
@@ -1351,6 +1356,7 @@ func (n *Node) watchConnectionEvents() {
 					PeerId:    pid,
 					Address:   addr,
 					Direction: direction,
+					Limited:   limited,
 				}
 				n.mu.Unlock()
 
@@ -1358,6 +1364,7 @@ func (n *Node) watchConnectionEvents() {
 					"peerId":    pid,
 					"address":   addr,
 					"direction": direction,
+					"limited":   limited,
 				})
 				n.handleRelayConnectednessChanged(e.Peer, e.Connectedness)
 			} else if e.Connectedness == network.NotConnected {

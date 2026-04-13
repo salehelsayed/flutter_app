@@ -13,6 +13,67 @@ enum SendGroupInviteResult {
   sendFailed,
 }
 
+class GroupInviteAttempt {
+  final String peerId;
+  final String? username;
+  final SendGroupInviteResult result;
+
+  const GroupInviteAttempt({
+    required this.peerId,
+    this.username,
+    required this.result,
+  });
+
+  bool get wasDelivered => result == SendGroupInviteResult.success;
+
+  String get displayName {
+    final trimmed = username?.trim();
+    return trimmed != null && trimmed.isNotEmpty ? trimmed : peerId;
+  }
+
+  String get failureLabel {
+    switch (result) {
+      case SendGroupInviteResult.success:
+        return 'delivered';
+      case SendGroupInviteResult.nodeNotRunning:
+        return 'node stopped';
+      case SendGroupInviteResult.encryptionRequired:
+        return 'missing secure key';
+      case SendGroupInviteResult.sendFailed:
+        return 'delivery failed';
+    }
+  }
+}
+
+class GroupInviteBatchResult {
+  final List<GroupInviteAttempt> attempts;
+
+  const GroupInviteBatchResult({required this.attempts});
+
+  int get successCount =>
+      attempts.where((attempt) => attempt.wasDelivered).length;
+
+  List<GroupInviteAttempt> get failures => attempts
+      .where((attempt) => !attempt.wasDelivered)
+      .toList(growable: false);
+
+  bool get hasFailures => failures.isNotEmpty;
+
+  String describeFailures({int limit = 3}) {
+    final failures = this.failures;
+    if (failures.isEmpty) return '';
+    final labels = failures
+        .take(limit)
+        .map((attempt) => '${attempt.displayName} (${attempt.failureLabel})')
+        .toList(growable: false);
+    final hiddenCount = failures.length - labels.length;
+    if (hiddenCount > 0) {
+      labels.add('+$hiddenCount more');
+    }
+    return labels.join(', ');
+  }
+}
+
 const _uuid = Uuid();
 
 /// Sends a group invite to a contact via P2P, encrypted with ML-KEM.
@@ -193,9 +254,9 @@ Future<SendGroupInviteResult> sendGroupInvite({
 /// Sends group invites to multiple recipients in parallel via [Future.wait].
 ///
 /// Each invite is independent — different recipient, different encryption.
-/// Returns the count of successful invites. Individual failures are caught
+/// Returns the per-recipient delivery outcome. Individual failures are caught
 /// and logged, never propagated.
-Future<int> sendGroupInvitesInParallel({
+Future<GroupInviteBatchResult> sendGroupInvitesInParallel({
   required P2PService p2pService,
   required Bridge bridge,
   required String senderPeerId,
@@ -204,7 +265,8 @@ Future<int> sendGroupInvitesInParallel({
   required String groupKey,
   required int keyEpoch,
   required Map<String, dynamic> groupConfig,
-  required List<({String peerId, String? mlKemPublicKey})> recipients,
+  required List<({String peerId, String? username, String? mlKemPublicKey})>
+  recipients,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -215,10 +277,10 @@ Future<int> sendGroupInvitesInParallel({
     },
   );
 
-  final results = await Future.wait(
+  final attempts = await Future.wait(
     recipients.map((r) async {
       try {
-        return await sendGroupInvite(
+        final result = await sendGroupInvite(
           p2pService: p2pService,
           bridge: bridge,
           recipientPeerId: r.peerId,
@@ -230,22 +292,31 @@ Future<int> sendGroupInvitesInParallel({
           keyEpoch: keyEpoch,
           groupConfig: groupConfig,
         );
+        return GroupInviteAttempt(
+          peerId: r.peerId,
+          username: r.username,
+          result: result,
+        );
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_INVITES_PARALLEL_SINGLE_ERROR',
           details: {'peerId': r.peerId, 'error': e.toString()},
         );
-        return SendGroupInviteResult.sendFailed;
+        return GroupInviteAttempt(
+          peerId: r.peerId,
+          username: r.username,
+          result: SendGroupInviteResult.sendFailed,
+        );
       }
     }),
   );
 
-  final sent = results.where((r) => r == SendGroupInviteResult.success).length;
+  final summary = GroupInviteBatchResult(attempts: attempts);
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_INVITES_PARALLEL_DONE',
-    details: {'sent': sent, 'total': recipients.length},
+    details: {'sent': summary.successCount, 'total': recipients.length},
   );
-  return sent;
+  return summary;
 }

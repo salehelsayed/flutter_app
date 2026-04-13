@@ -7,7 +7,6 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/models/session_reply.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/connection_card.dart';
@@ -73,6 +72,8 @@ class FeedScreen extends StatelessWidget {
   final void Function(String groupId, String text)? onGroupInlineSend;
   final void Function(GroupThreadFeedItem)? onGroupAttach;
   final void Function(String groupId, String messageId, String emoji)?
+  onGroupReactionTap;
+  final void Function(String groupId, String messageId, String emoji)?
   onGroupReactionSelected;
 
   const FeedScreen({
@@ -119,6 +120,7 @@ class FeedScreen extends StatelessWidget {
     this.onGroupTap,
     this.onGroupInlineSend,
     this.onGroupAttach,
+    this.onGroupReactionTap,
     this.onGroupReactionSelected,
   });
 
@@ -487,7 +489,7 @@ class FeedScreen extends StatelessWidget {
 
   MessageBubble _buildOverlaySelectedBubble(
     BuildContext context,
-    ThreadFeedItem thread,
+    CardThreadFeedItem thread,
     ThreadMessage message,
     List<MessageReaction> reactions,
   ) {
@@ -505,10 +507,10 @@ class FeedScreen extends StatelessWidget {
       status: message.status,
       isEdited: message.isEdited,
       senderPeerId: message.isIncoming
-          ? (message.senderPeerId ?? thread.contactPeerId)
+          ? (message.senderPeerId ?? thread.displayId)
           : null,
       senderLabel: message.isIncoming
-          ? (message.senderUsername ?? thread.contactUsername)
+          ? (message.senderUsername ?? thread.displayName)
           : AppLocalizations.of(context)!.feed_you,
       quotedText: quotedText,
       isQuoteUnavailable: isQuoteUnavailable,
@@ -519,7 +521,7 @@ class FeedScreen extends StatelessWidget {
   }
 
   (String?, bool) _resolveQuotedText(
-    ThreadFeedItem thread,
+    CardThreadFeedItem thread,
     ThreadMessage message,
   ) {
     final quotedMessageId = message.quotedMessageId;
@@ -577,33 +579,85 @@ class FeedScreen extends StatelessWidget {
     }
   }
 
-  void _showGroupReactionBar(
+  void _showGroupMessageContextOverlay(
     BuildContext context,
-    String groupId,
-    String messageId,
+    GroupThreadFeedItem thread,
+    ThreadMessage message,
+    BuildContext bubbleContext,
   ) {
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return;
+
+    final renderObject = bubbleContext.findRenderObject();
+    Rect anchorRect = Rect.fromCenter(
+      center: MediaQuery.of(context).size.center(Offset.zero),
+      width: 0,
+      height: 0,
+    );
+    if (renderObject is RenderBox && renderObject.hasSize) {
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      anchorRect = topLeft & renderObject.size;
+    }
+
     final allReactions =
-        reactionListenableForMessage?.call(messageId).value ??
-        reactions[messageId] ??
+        reactionListenableForMessage?.call(message.id).value ??
+        reactions[message.id] ??
         const [];
     final ownReaction = userPeerId != null
         ? allReactions.where((r) => r.senderPeerId == userPeerId).firstOrNull
         : null;
+    final showReplyAction = thread.canWrite && onQuoteReply != null;
+    final showCopyAction = message.text.trim().isNotEmpty;
+    final showReactionBar = onGroupReactionSelected != null;
+    if (!showReplyAction && !showCopyAction && !showReactionBar) {
+      return;
+    }
 
     showDialog(
-      context: context,
+      context: bubbleContext,
+      useSafeArea: false,
       barrierColor: Colors.transparent,
-      builder: (dialogContext) => ReactionBar(
+      builder: (dialogContext) => MessageContextOverlay(
+        anchorRect: anchorRect,
+        selectedMessage: _buildOverlaySelectedBubble(
+          context,
+          thread,
+          message,
+          allReactions,
+        ),
         currentEmoji: ownReaction?.emoji,
-        onReactionSelected: (emoji) {
-          Navigator.of(dialogContext).pop();
-          onGroupReactionSelected?.call(groupId, messageId, emoji);
-        },
-        onPlusTap: () {
-          Navigator.of(dialogContext).pop();
-          _showGroupFullPicker(context, groupId, messageId);
-        },
         onDismiss: () => Navigator.of(dialogContext).pop(),
+        showReactionBar: showReactionBar,
+        showReplyAction: showReplyAction,
+        showCopyAction: showCopyAction,
+        onReactionSelected: showReactionBar
+            ? (emoji) {
+                Navigator.of(dialogContext).pop();
+                onGroupReactionSelected?.call(
+                  thread.groupId,
+                  message.id,
+                  emoji,
+                );
+              }
+            : null,
+        onPlusTap: showReactionBar
+            ? () {
+                Navigator.of(dialogContext).pop();
+                _showGroupFullPicker(context, thread.groupId, message.id);
+              }
+            : null,
+        onReplyTap: showReplyAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                onQuoteReply?.call('group:${thread.groupId}', message.id);
+              }
+            : null,
+        onCopyTap: showCopyAction
+            ? () async {
+                Navigator.of(dialogContext).pop();
+                await _copyMessageText(context, message.text);
+              }
+            : null,
       ),
     );
   }
@@ -658,13 +712,19 @@ class FeedScreen extends StatelessWidget {
         reactions: reactions,
         reactionListenableForMessage: reactionListenableForMessage,
         ownPeerId: userPeerId,
-        onMessageLongPress: onGroupReactionSelected != null
-            ? (message, _) =>
-                  _showGroupReactionBar(context, item.groupId, message.id)
+        onMessageLongPress:
+            onGroupReactionSelected != null ||
+                onQuoteReply != null ||
+                item.messages.any((message) => message.text.trim().isNotEmpty)
+            ? (message, bubbleContext) => _showGroupMessageContextOverlay(
+                context,
+                item,
+                message,
+                bubbleContext,
+              )
             : null,
-        onReactionTap: onGroupReactionSelected != null
-            ? (msgId, emoji) =>
-                  onGroupReactionSelected!(item.groupId, msgId, emoji)
+        onReactionTap: onGroupReactionTap != null
+            ? (msgId, emoji) => onGroupReactionTap!(item.groupId, msgId, emoji)
             : null,
       );
     }

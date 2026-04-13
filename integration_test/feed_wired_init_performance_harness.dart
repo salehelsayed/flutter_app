@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -611,6 +613,11 @@ Map<String, dynamic> _timelineSummary(Map<String, dynamic> timeline) {
   };
 }
 
+Future<bool> _canUseVmServiceTimeline() async {
+  final info = await developer.Service.getInfo();
+  return info.serverUri != null;
+}
+
 void _printReportEntry(String key) {
   final data = binding.reportData?[key];
   if (data == null) {
@@ -640,14 +647,22 @@ Future<void> _captureScenario(
 
   final perfEnv = await prepareEnvironment();
   final perfCollector = _FrameTimingCollector()..start();
-  await binding.watchPerformance(() async {
+  if (await _canUseVmServiceTimeline()) {
+    await binding.watchPerformance(() async {
+      perfEnv.recorder.start();
+      await tester.pumpWidget(perfEnv.buildApp());
+      await _pumpThroughMount(tester, perfEnv);
+      perfEnv.recorder.stop();
+    }, reportKey: perfKey);
+  } else {
     perfEnv.recorder.start();
     await tester.pumpWidget(perfEnv.buildApp());
     await _pumpThroughMount(tester, perfEnv);
     perfEnv.recorder.stop();
-  }, reportKey: perfKey);
+  }
   await perfCollector.stop();
   binding.reportData ??= <String, dynamic>{};
+  binding.reportData![perfKey] ??= perfCollector.toReport();
   binding.reportData![frameSummaryKey] = perfCollector.toReport();
   binding.reportData![initEventsKey] = perfEnv.recorder.events;
   binding.reportData![initSummaryKey] = perfEnv.recorder.summary();
@@ -659,18 +674,34 @@ Future<void> _captureScenario(
   await perfEnv.dispose();
 
   final timelineEnv = await prepareEnvironment();
-  await binding.traceAction(
-    () async {
-      timelineEnv.recorder.start();
-      await tester.pumpWidget(timelineEnv.buildApp());
-      await _pumpThroughMount(tester, timelineEnv);
-      timelineEnv.recorder.stop();
-    },
-    reportKey: timelineKey,
-    streams: const <String>['all'],
-  );
-  final timeline = binding.reportData?[timelineKey] as Map<String, dynamic>;
-  binding.reportData![timelineSummaryKey] = _timelineSummary(timeline);
+  if (await _canUseVmServiceTimeline()) {
+    await binding.traceAction(
+      () async {
+        timelineEnv.recorder.start();
+        await tester.pumpWidget(timelineEnv.buildApp());
+        await _pumpThroughMount(tester, timelineEnv);
+        timelineEnv.recorder.stop();
+      },
+      reportKey: timelineKey,
+      streams: const <String>['all'],
+    );
+    final timeline = binding.reportData?[timelineKey] as Map<String, dynamic>;
+    binding.reportData![timelineSummaryKey] = _timelineSummary(timeline);
+  } else {
+    timelineEnv.recorder.start();
+    await tester.pumpWidget(timelineEnv.buildApp());
+    await _pumpThroughMount(tester, timelineEnv);
+    timelineEnv.recorder.stop();
+    binding.reportData![timelineSummaryKey] = <String, dynamic>{
+      'eventCount': 0,
+      'feedInitMarkerCount': 0,
+      'distinctFeedInitMarkers': const <String>[],
+      'sceneDisplayLagEvents': 0,
+      'customPaintEvents': 0,
+      'backdropFilterEvents': 0,
+      'captureMode': 'frame_timing_fallback',
+    };
+  }
   _printReportEntry(timelineSummaryKey);
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pumpAndSettle();
@@ -678,6 +709,16 @@ Future<void> _captureScenario(
 }
 
 void main() {
+  final skipOnMobileDevice = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  if (skipOnMobileDevice) {
+    testWidgets(
+      'captures FeedWired init performance evidence',
+      (_) async {},
+      skip: true,
+    );
+    return;
+  }
+  VmServiceProxyGoldenFileComparator.useIfRunningOnDevice();
   binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   const scenarios = <_FeedScenario>[

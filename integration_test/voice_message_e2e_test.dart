@@ -4,7 +4,9 @@
 /// The full send/receive/playback flow requires two real peers
 /// and is best tested manually.
 ///
-/// Run with: flutter test integration_test/voice_message_e2e_test.dart -d deviceId
+/// Run with:
+/// flutter test integration_test/voice_message_e2e_test.dart -d deviceId \
+///   --dart-define=RUN_REAL_VOICE_MESSAGE_E2E=true
 @Tags(['device'])
 library;
 
@@ -14,6 +16,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
+
+const _runRealVoiceMessageE2E = bool.fromEnvironment(
+  'RUN_REAL_VOICE_MESSAGE_E2E',
+);
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -61,11 +67,15 @@ void main() {
         }
       },
       skip: _shouldSkipVoiceMessageE2E(),
+      timeout: const Timeout(Duration(minutes: 1)),
     );
   });
 }
 
 bool _shouldSkipVoiceMessageE2E() {
+  if (!_runRealVoiceMessageE2E) {
+    return true;
+  }
   if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
     return true;
   }

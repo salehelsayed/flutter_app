@@ -252,6 +252,41 @@ void main() {
   });
 
   test(
+    'refreshes stored member username from later incoming group traffic',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Old Name',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Fresh Name',
+        keyEpoch: 0,
+        text: 'Name refresh',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+      );
+
+      expect(result, isNotNull);
+      final refreshedMember = await groupRepo.getMember(
+        'group-1',
+        'peer-sender',
+      );
+      expect(refreshedMember, isNotNull);
+      expect(refreshedMember!.username, 'Fresh Name');
+      expect(result!.senderUsername, 'Fresh Name');
+    },
+  );
+
+  test(
     'accepts removed-sender message when it predates the persisted removal cutoff',
     () async {
       final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
@@ -567,6 +602,54 @@ void main() {
     expect(saved!.quotedMessageId, 'msg-parent-1');
   });
 
+  test(
+    'duplicate replay with the same messageId ignores a tampered timestamp',
+    () async {
+      const sharedMessageId = 'msg-replay-timestamp-tampered';
+      final originalTimestamp = DateTime.utc(2026, 4, 5, 11, 59, 59);
+      final tamperedTimestamp = originalTimestamp.add(
+        const Duration(minutes: 5),
+      );
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Replay-resistant message',
+        timestamp: originalTimestamp.toIso8601String(),
+        messageId: sharedMessageId,
+      );
+      expect(first, isNotNull);
+
+      final replay = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Replay-resistant message',
+        timestamp: tamperedTimestamp.toIso8601String(),
+        messageId: sharedMessageId,
+      );
+
+      expect(
+        replay,
+        isNull,
+        reason: 'Replayed messageId must still deduplicate',
+      );
+
+      final saved = await msgRepo.getMessage(sharedMessageId);
+      expect(saved, isNotNull);
+      expect(saved!.timestamp, originalTimestamp);
+      expect(saved.text, 'Replay-resistant message');
+      expect(msgRepo.count, 1);
+    },
+  );
+
   test('duplicate replay saves missing media attachments', () async {
     final mediaRepo = InMemoryMediaAttachmentRepository();
     const sharedMessageId = 'msg-media-repair';
@@ -671,6 +754,117 @@ void main() {
     expect(result2, isNull);
     expect(mediaRepo.count, 1, reason: 'Media should not be saved again');
   });
+
+  test(
+    'replayed removed-sender message after cutoff does not overwrite the accepted pre-cutoff row',
+    () async {
+      const sharedMessageId = 'msg-removed-replay-cutoff';
+      final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+      final originalTimestamp = removedAt.subtract(
+        const Duration(milliseconds: 1),
+      );
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-removed',
+        senderUsername: 'Removed',
+        keyEpoch: 0,
+        text: 'Sent before cutoff',
+        timestamp: originalTimestamp.toIso8601String(),
+        messageId: sharedMessageId,
+      );
+      expect(first, isNotNull);
+
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-removed',
+        removedAt: removedAt,
+      );
+
+      final replay = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-removed',
+        senderUsername: 'Removed',
+        keyEpoch: 0,
+        text: 'Sent before cutoff',
+        timestamp: removedAt.add(const Duration(seconds: 1)).toIso8601String(),
+        messageId: sharedMessageId,
+      );
+
+      expect(replay, isNull);
+
+      final saved = await msgRepo.getMessage(sharedMessageId);
+      expect(saved, isNotNull);
+      expect(saved!.timestamp, originalTimestamp);
+      expect(
+        (await msgRepo.getMessagesPage(
+          'group-1',
+        )).where((message) => message.id == sharedMessageId),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'replayed message after dissolve cutoff does not overwrite the accepted pre-dissolve row',
+    () async {
+      const sharedMessageId = 'msg-dissolve-replay-cutoff';
+      final dissolvedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+      final originalTimestamp = dissolvedAt.subtract(
+        const Duration(seconds: 1),
+      );
+
+      await groupRepo.updateGroup(
+        testGroup.copyWith(
+          isDissolved: true,
+          dissolvedAt: dissolvedAt,
+          dissolvedBy: 'peer-admin',
+        ),
+      );
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Sent before dissolve',
+        timestamp: originalTimestamp.toIso8601String(),
+        messageId: sharedMessageId,
+      );
+      expect(first, isNotNull);
+
+      final replay = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Sent before dissolve',
+        timestamp: dissolvedAt
+            .add(const Duration(seconds: 1))
+            .toIso8601String(),
+        messageId: sharedMessageId,
+      );
+
+      expect(replay, isNull);
+
+      final saved = await msgRepo.getMessage(sharedMessageId);
+      expect(saved, isNotNull);
+      expect(saved!.timestamp, originalTimestamp);
+      expect(
+        (await msgRepo.getMessagesPage(
+          'group-1',
+        )).where((message) => message.id == sharedMessageId),
+        hasLength(1),
+      );
+    },
+  );
 
   // ---------------------------------------------------------------------------
   // Media attachment tests

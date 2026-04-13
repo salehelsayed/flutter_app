@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_app/core/media/image_processor.dart';
 
@@ -8,10 +9,10 @@ import 'package:flutter_app/core/media/image_processor.dart';
 /// and download flows cannot drift apart again.
 class AvatarNormalizationHelper {
   final ImageProcessor _imageProcessor;
+  static final Random _random = Random();
 
-  AvatarNormalizationHelper({
-    ImageProcessor? imageProcessor,
-  }) : _imageProcessor = imageProcessor ?? ImageProcessor();
+  AvatarNormalizationHelper({ImageProcessor? imageProcessor})
+    : _imageProcessor = imageProcessor ?? ImageProcessor();
 
   /// Runs the canonical avatar processing contract.
   ///
@@ -41,7 +42,7 @@ class AvatarNormalizationHelper {
     final canonicalFile = File(canonicalPath);
     await canonicalFile.parent.create(recursive: true);
 
-    final stagingPath = '$canonicalPath.normalized_tmp';
+    final stagingPath = '$canonicalPath.normalized_tmp.${_uniqueSuffix()}';
     final stagingFile = File(stagingPath);
     if (await stagingFile.exists()) {
       await stagingFile.delete();
@@ -67,5 +68,11 @@ class AvatarNormalizationHelper {
       sourcePath: processedPath,
       canonicalPath: canonicalPath,
     );
+  }
+
+  static String _uniqueSuffix() {
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final token = _random.nextInt(1 << 32).toRadixString(16);
+    return '$now-$token';
   }
 }

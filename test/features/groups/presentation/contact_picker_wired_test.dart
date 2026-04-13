@@ -18,6 +18,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 // --- Test data ---
@@ -151,6 +152,7 @@ Widget buildDirectWiredTestWidget({
   FakeBridge? bridge,
   FakeIdentityRepository? identityRepo,
   FakeP2PService? p2pService,
+  InMemoryGroupMessageRepository? msgRepo,
   String groupId = 'group-1',
 }) {
   return MaterialApp(
@@ -166,6 +168,7 @@ Widget buildDirectWiredTestWidget({
         identityRepo:
             identityRepo ?? FakeIdentityRepository(identity: testIdentity),
         p2pService: p2pService ?? FakeP2PService(),
+        msgRepo: msgRepo,
       ),
     ),
   );
@@ -184,6 +187,14 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       await groupRepo.saveGroup(testGroup);
       await groupRepo.saveMember(memberAdmin);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'test-group-key-base64',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
       await groupRepo.saveMember(memberBob); // Bob is already a member
 
       await tester.pumpWidget(
@@ -658,6 +669,52 @@ void main() {
       }
     });
 
+    testWidgets('batch invite saves a durable members-added timeline locally', (
+      tester,
+    ) async {
+      final contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(contactAlice);
+      contactRepo.addTestContact(contactCharlie);
+
+      final groupRepo = InMemoryGroupRepository();
+      final msgRepo = InMemoryGroupMessageRepository();
+      await groupRepo.saveGroup(testGroup);
+      await groupRepo.saveMember(memberAdmin);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'test-group-key-base64',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await tester.pumpWidget(
+        buildDirectWiredTestWidget(
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: PassthroughCryptoBridge(),
+          p2pService: FakeP2PService(
+            initialState: const NodeState(isStarted: true),
+          ),
+          msgRepo: msgRepo,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(find.text('Alice'));
+      await tester.pump();
+      await tester.tap(find.text('Charlie'));
+      await tester.pump();
+      await tester.tap(find.text('Send Invites'));
+      await pumpFrames(tester, count: 20);
+
+      expect(msgRepo.count, equals(1));
+      final latestMessage = await msgRepo.getLatestMessage('group-1');
+      expect(latestMessage, isNotNull);
+      expect(latestMessage!.text, equals('Admin added Alice and Charlie'));
+    });
+
     testWidgets('batch invite pops with count of invited members', (
       tester,
     ) async {
@@ -668,8 +725,16 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       await groupRepo.saveGroup(testGroup);
       await groupRepo.saveMember(memberAdmin);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'test-group-key-base64',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
 
-      int? popResult;
+      ContactPickerInviteResult? popResult;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -680,20 +745,23 @@ void main() {
             builder: (context) => Scaffold(
               body: ElevatedButton(
                 onPressed: () async {
-                  final result = await Navigator.of(context).push<int>(
-                    MaterialPageRoute(
-                      builder: (_) => ContactPickerWired(
-                        groupId: 'group-1',
-                        groupRepo: groupRepo,
-                        contactRepo: contactRepo,
-                        bridge: FakeBridge(),
-                        identityRepo: FakeIdentityRepository(
-                          identity: testIdentity,
+                  final result = await Navigator.of(context)
+                      .push<ContactPickerInviteResult>(
+                        MaterialPageRoute(
+                          builder: (_) => ContactPickerWired(
+                            groupId: 'group-1',
+                            groupRepo: groupRepo,
+                            contactRepo: contactRepo,
+                            bridge: PassthroughCryptoBridge(),
+                            identityRepo: FakeIdentityRepository(
+                              identity: testIdentity,
+                            ),
+                            p2pService: FakeP2PService(
+                              initialState: const NodeState(isStarted: true),
+                            ),
+                          ),
                         ),
-                        p2pService: FakeP2PService(),
-                      ),
-                    ),
-                  );
+                      );
                   popResult = result;
                 },
                 child: const Text('Open Picker'),
@@ -718,8 +786,9 @@ void main() {
       await tester.tap(find.text('Send Invites'));
       await pumpFrames(tester, count: 20);
 
-      // Should pop with count 2
-      expect(popResult, equals(2));
+      expect(popResult, isNotNull);
+      expect(popResult!.membersAdded, equals(2));
+      expect(popResult!.hasWarnings, isFalse);
     });
 
     testWidgets('back button pops with 0', (tester) async {
@@ -730,7 +799,7 @@ void main() {
       await groupRepo.saveGroup(testGroup);
       await groupRepo.saveMember(memberAdmin);
 
-      int? popResult;
+      ContactPickerInviteResult? popResult;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -741,20 +810,21 @@ void main() {
             builder: (context) => Scaffold(
               body: ElevatedButton(
                 onPressed: () async {
-                  final result = await Navigator.of(context).push<int>(
-                    MaterialPageRoute(
-                      builder: (_) => ContactPickerWired(
-                        groupId: 'group-1',
-                        groupRepo: groupRepo,
-                        contactRepo: contactRepo,
-                        bridge: FakeBridge(),
-                        identityRepo: FakeIdentityRepository(
-                          identity: testIdentity,
+                  final result = await Navigator.of(context)
+                      .push<ContactPickerInviteResult>(
+                        MaterialPageRoute(
+                          builder: (_) => ContactPickerWired(
+                            groupId: 'group-1',
+                            groupRepo: groupRepo,
+                            contactRepo: contactRepo,
+                            bridge: FakeBridge(),
+                            identityRepo: FakeIdentityRepository(
+                              identity: testIdentity,
+                            ),
+                            p2pService: FakeP2PService(),
+                          ),
                         ),
-                        p2pService: FakeP2PService(),
-                      ),
-                    ),
-                  );
+                      );
                   popResult = result;
                 },
                 child: const Text('Open Picker'),
@@ -773,9 +843,10 @@ void main() {
       await tester.tap(find.byIcon(Icons.arrow_back_ios_new));
       await pumpFrames(tester, count: 20);
 
-      // Picker should be popped with 0
+      // Picker should be popped with a cancelled result
       expect(find.byType(ContactPickerScreen), findsNothing);
-      expect(popResult, equals(0));
+      expect(popResult, isNotNull);
+      expect(popResult!.membersAdded, equals(0));
     });
 
     testWidgets('shows error snackbar when invite fails', (tester) async {
@@ -899,7 +970,7 @@ void main() {
         );
 
         // Use Navigator pattern to verify pop with count
-        int? popResult;
+        ContactPickerInviteResult? popResult;
 
         await tester.pumpWidget(
           MaterialApp(
@@ -910,20 +981,21 @@ void main() {
               builder: (context) => Scaffold(
                 body: ElevatedButton(
                   onPressed: () async {
-                    final result = await Navigator.of(context).push<int>(
-                      MaterialPageRoute(
-                        builder: (_) => ContactPickerWired(
-                          groupId: 'group-1',
-                          groupRepo: groupRepo,
-                          contactRepo: contactRepo,
-                          bridge: bridge,
-                          identityRepo: FakeIdentityRepository(
-                            identity: testIdentity,
+                    final result = await Navigator.of(context)
+                        .push<ContactPickerInviteResult>(
+                          MaterialPageRoute(
+                            builder: (_) => ContactPickerWired(
+                              groupId: 'group-1',
+                              groupRepo: groupRepo,
+                              contactRepo: contactRepo,
+                              bridge: bridge,
+                              identityRepo: FakeIdentityRepository(
+                                identity: testIdentity,
+                              ),
+                              p2pService: p2pService,
+                            ),
                           ),
-                          p2pService: p2pService,
-                        ),
-                      ),
-                    );
+                        );
                     popResult = result;
                   },
                   child: const Text('Open Picker'),
@@ -948,8 +1020,14 @@ void main() {
         final memberPeerIds = members.map((m) => m.peerId).toSet();
         expect(memberPeerIds, contains('peer-alice'));
 
-        // Screen should have popped with 1 (success)
-        expect(popResult, equals(1));
+        expect(popResult, isNotNull);
+        expect(popResult!.membersAdded, equals(1));
+        expect(popResult!.hasWarnings, isTrue);
+        expect(popResult!.invitesSent, equals(0));
+        expect(
+          popResult!.buildCompletionMessage(),
+          contains('invite issues: Alice (delivery failed)'),
+        );
 
         // Verify P2P was attempted
         expect(p2pService.sendMessageCallCount, greaterThan(0));
@@ -1023,7 +1101,7 @@ void main() {
         initialState: const NodeState(isStarted: true),
       );
 
-      int? popResult;
+      ContactPickerInviteResult? popResult;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -1034,20 +1112,21 @@ void main() {
             builder: (context) => Scaffold(
               body: ElevatedButton(
                 onPressed: () async {
-                  final result = await Navigator.of(context).push<int>(
-                    MaterialPageRoute(
-                      builder: (_) => ContactPickerWired(
-                        groupId: 'group-1',
-                        groupRepo: groupRepo,
-                        contactRepo: contactRepo,
-                        bridge: bridge,
-                        identityRepo: FakeIdentityRepository(
-                          identity: testIdentity,
+                  final result = await Navigator.of(context)
+                      .push<ContactPickerInviteResult>(
+                        MaterialPageRoute(
+                          builder: (_) => ContactPickerWired(
+                            groupId: 'group-1',
+                            groupRepo: groupRepo,
+                            contactRepo: contactRepo,
+                            bridge: bridge,
+                            identityRepo: FakeIdentityRepository(
+                              identity: testIdentity,
+                            ),
+                            p2pService: p2pService,
+                          ),
                         ),
-                        p2pService: p2pService,
-                      ),
-                    ),
-                  );
+                      );
                   popResult = result;
                 },
                 child: const Text('Open Picker'),
@@ -1081,8 +1160,14 @@ void main() {
       // No P2P sends (no key)
       expect(p2pService.sendMessageCallCount, equals(0));
 
-      // Pops with 2
-      expect(popResult, equals(2));
+      expect(popResult, isNotNull);
+      expect(popResult!.membersAdded, equals(2));
+      expect(popResult!.hasWarnings, isTrue);
+      expect(popResult!.inviteDeliverySkippedMissingKey, isTrue);
+      expect(
+        popResult!.buildCompletionMessage(),
+        contains('missing its latest key'),
+      );
     });
   });
 }

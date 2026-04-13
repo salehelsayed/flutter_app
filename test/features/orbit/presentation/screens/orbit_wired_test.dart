@@ -12,7 +12,9 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
@@ -21,12 +23,15 @@ import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.da
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -50,6 +55,7 @@ import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
+import '../../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
 Text _textFor(WidgetTester tester, String text) {
@@ -216,6 +222,7 @@ void main() {
     ContactRequestListener? contactRequestListener,
     ChatMessageListener? chatMessageListener,
     _FakeGroupMessageListener? groupMessageListener,
+    FakeReactionRepository? reactionRepository,
     IntroductionListener? introductionListener,
     InMemoryIntroductionRepository? introductionRepository,
     GroupInviteListener? groupInviteListener,
@@ -273,6 +280,7 @@ void main() {
       mediaFileManager: mediaFileManager,
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
+      reactionRepository: reactionRepository,
       groupRepository: effectiveGroupRepo,
       groupMessageRepository: effectiveGroupMessageRepo,
       groupMessageListener: gmListener,
@@ -361,7 +369,7 @@ void main() {
 
       return PendingGroupInvite.fromPayload(
         payload,
-        receivedAt: receivedAt ?? DateTime.utc(2026, 4, 5, 12),
+        receivedAt: receivedAt ?? DateTime.now().toUtc(),
       );
     }
 
@@ -1912,7 +1920,7 @@ void main() {
       await tester.tap(
         find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
       );
-      await pumpOrbitFrames(tester, count: 12);
+      await pumpOrbitFrames(tester, count: 30);
 
       expect(await pendingInviteRepo.getPendingInvite(invite.groupId), isNull);
       expect(await groupRepo.getGroup(invite.groupId), isNotNull);
@@ -2024,6 +2032,159 @@ void main() {
 
         delayedGroupRepo.allGroupsGate!.complete();
         await pumpOrbitFrames(tester);
+      },
+    );
+
+    testWidgets(
+      'orbit entry keeps group long-press actions aligned with the shared conversation surface',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final orbitGroup = GroupModel(
+          id: 'g-orbit-actions',
+          name: 'Orbit Actions Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g-orbit-actions',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(orbitGroup);
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'orbit-msg-1',
+            groupId: orbitGroup.id,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'Orbit action message',
+            timestamp: DateTime.utc(2026, 3, 1, 12),
+            createdAt: DateTime.utc(2026, 3, 1, 12),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(find.text('Orbit Actions Group'));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(find.text('Orbit action message'), findsOneWidget);
+
+        await tester.longPress(find.text('Orbit action message'));
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'orbit entry keeps group reaction inspection aligned with the shared conversation surface',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final reactionRepo = FakeReactionRepository();
+        final orbitGroup = GroupModel(
+          id: 'g-orbit-reactions',
+          name: 'Orbit Reactions Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g-orbit-reactions',
+          createdAt: DateTime.utc(2026, 3, 1),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(orbitGroup);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: orbitGroup.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 3, 1, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: orbitGroup.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 3, 1, 10, 1),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'orbit-reaction-msg-1',
+            groupId: orbitGroup.id,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'Orbit reaction message',
+            timestamp: DateTime.utc(2026, 3, 1, 12),
+            createdAt: DateTime.utc(2026, 3, 1, 12),
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'orbit-rxn-self',
+            messageId: 'orbit-reaction-msg-1',
+            emoji: '🔥',
+            senderPeerId: testIdentity.peerId,
+            timestamp: DateTime.utc(2026, 3, 1, 12, 1).toIso8601String(),
+            createdAt: DateTime.utc(2026, 3, 1, 12, 1).toIso8601String(),
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'orbit-rxn-bob',
+            messageId: 'orbit-reaction-msg-1',
+            emoji: '🔥',
+            senderPeerId: 'peer-bob',
+            timestamp: DateTime.utc(2026, 3, 1, 12, 2).toIso8601String(),
+            createdAt: DateTime.utc(2026, 3, 1, 12, 2).toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            reactionRepository: reactionRepo,
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(find.text('Orbit Reactions Group'));
+        await pumpOrbitFrames(tester, count: 10);
+
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(find.text('Orbit reaction message'), findsOneWidget);
+        expect(find.textContaining('🔥', skipOffstage: false), findsWidgets);
+        await tester.tap(find.textContaining('🔥', skipOffstage: false).last);
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byKey(GroupReactionDetailsSheet.sheetKey), findsOneWidget);
+        expect(
+          find.byKey(GroupReactionDetailsSheet.rowKey(testIdentity.peerId)),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(GroupReactionDetailsSheet.rowKey('peer-bob')),
+          findsOneWidget,
+        );
       },
     );
 

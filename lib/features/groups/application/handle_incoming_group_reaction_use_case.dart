@@ -10,6 +10,7 @@ enum HandleGroupReactionResult {
   parseError,
   unknownGroup,
   unknownSender,
+  senderMismatch,
 }
 
 /// Handles an incoming group reaction event.
@@ -58,7 +59,24 @@ Future<(HandleGroupReactionResult, ReactionChange?)>
     return (HandleGroupReactionResult.unknownGroup, null);
   }
 
-  // 3. Validate sender is a member (optional — member list may be stale)
+  // 3. Bind the decrypted payload sender to the outer transport sender.
+  if (payload.senderPeerId != senderId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_RECEIVE_SENDER_MISMATCH',
+      details: {
+        'transportSender': senderId.length > 10
+            ? senderId.substring(0, 10)
+            : senderId,
+        'payloadSender': payload.senderPeerId.length > 10
+            ? payload.senderPeerId.substring(0, 10)
+            : payload.senderPeerId,
+      },
+    );
+    return (HandleGroupReactionResult.senderMismatch, null);
+  }
+
+  // 4. Validate sender is a member (optional — member list may be stale)
   final member = await groupRepo.getMember(groupId, senderId);
   if (member == null) {
     emitFlowEvent(
@@ -71,7 +89,7 @@ Future<(HandleGroupReactionResult, ReactionChange?)>
     // Still process — member list may be stale
   }
 
-  // 4. Process action
+  // 5. Process action
   if (payload.action == 'remove') {
     await reactionRepo.removeReaction(payload.messageId, payload.senderPeerId);
     emitFlowEvent(
