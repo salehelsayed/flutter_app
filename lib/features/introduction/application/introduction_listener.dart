@@ -77,6 +77,10 @@ class IntroductionListener {
   Stream<IntroductionModel> get introStatusChangedStream =>
       _introStatusChangedController.stream;
 
+  void emitIntroStatusChanged(IntroductionModel intro) {
+    _introStatusChangedController.add(intro);
+  }
+
   /// Starts listening for incoming introduction messages.
   void start() {
     if (_subscription != null) return;
@@ -347,18 +351,47 @@ class IntroductionListener {
             details: {'introductionId': model.id},
           );
         } else if (payload.action == 'accept' || payload.action == 'pass') {
-          _introStatusChangedController.add(model);
+          emitIntroStatusChanged(model);
 
-          // Show local notification on mutual acceptance
-          if (payload.action == 'accept' &&
-              model.status == IntroductionOverallStatus.mutualAccepted &&
-              notificationService != null) {
-            final responderName = payload.responderUsername ?? 'Someone';
-            await notificationService!.showNotification(
-              title: 'New Connection',
-              body: '$responderName also accepted! You\'re now connected.',
-              payload: 'intros',
-            );
+          if (payload.action == 'accept') {
+            final isIntroducer = ownPeerId == model.introducerId;
+
+            if (isIntroducer && messageRepo != null) {
+              final text =
+                  model.status == IntroductionOverallStatus.mutualAccepted
+                  ? formatIntroducerMutualAcceptanceSystemMessage(
+                      introduction: model,
+                    )
+                  : formatIntroducerAcceptanceProgressSystemMessage(
+                      introduction: model,
+                      responderId: payload.responderId,
+                      responderUsername: payload.responderUsername,
+                    );
+              await insertIntroSystemMessage(
+                messageRepo: messageRepo!,
+                contactPeerId: model.recipientId,
+                text: text,
+                ownPeerId: ownPeerId,
+              );
+            }
+
+            // Show local notification on mutual acceptance
+            if (model.status == IntroductionOverallStatus.mutualAccepted &&
+                notificationService != null) {
+              final responderName = payload.responderUsername ?? 'Someone';
+              final body = isIntroducer
+                  ? formatIntroducerMutualAcceptanceNotification(
+                      introduction: model,
+                      responderId: payload.responderId,
+                      responderUsername: payload.responderUsername,
+                    )
+                  : '$responderName also accepted! You\'re now connected.';
+              await notificationService!.showNotification(
+                title: 'New Connection',
+                body: body,
+                payload: 'intros',
+              );
+            }
           }
 
           emitFlowEvent(
@@ -380,7 +413,7 @@ class IntroductionListener {
       if (result == HandleIntroductionResult.alreadyExists) {
         if (model != null &&
             (payload.action == 'accept' || payload.action == 'pass')) {
-          _introStatusChangedController.add(model);
+          emitIntroStatusChanged(model);
 
           emitFlowEvent(
             layer: 'FL',

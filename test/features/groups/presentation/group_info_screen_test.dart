@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
+import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 void main() {
   final testGroup = GroupModel(
@@ -71,6 +73,22 @@ void main() {
 
     expect(find.text('Admin User'), findsOneWidget);
     expect(find.text('Regular Member'), findsOneWidget);
+  });
+
+  testWidgets('uses UserAvatar for each member row', (tester) async {
+    await tester.pumpWidget(buildTestWidget(members: testMembers));
+
+    expect(find.byType(UserAvatar), findsNWidgets(2));
+  });
+
+  testWidgets('keeps fallback identity readable when no avatar photo exists', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestWidget(members: testMembers));
+
+    expect(find.text('Admin User'), findsOneWidget);
+    expect(find.text('Regular Member'), findsOneWidget);
+    expect(find.byType(RingAvatar), findsNWidgets(2));
   });
 
   testWidgets('shows roles', (tester) async {

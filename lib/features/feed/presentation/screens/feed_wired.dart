@@ -65,6 +65,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
@@ -74,6 +75,7 @@ import 'package:flutter_app/features/home/application/identity_avatar_resolver.d
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
@@ -156,6 +158,8 @@ class FeedWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupReactionReplayOutboxRepository?
+  groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
   final GroupInviteListener? groupInviteListener;
   final ActiveConversationTracker? groupConversationTracker;
@@ -191,6 +195,7 @@ class FeedWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
@@ -2032,6 +2037,8 @@ class _FeedWiredState extends State<FeedWired>
               audioRecorderService: widget.audioRecorderService,
               groupConversationTracker: widget.groupConversationTracker,
               reactionRepo: widget.reactionRepository,
+              groupReactionReplayOutboxRepository:
+                  widget.groupReactionReplayOutboxRepository,
               initialPendingMedia: initialPendingMedia,
               initialAttachments: initialAttachments,
             ),
@@ -2354,7 +2361,14 @@ class _FeedWiredState extends State<FeedWired>
     final reactionRepo = widget.reactionRepository;
     final groupRepo = widget.groupRepository;
     final msgRepo = widget.groupMessageRepository;
-    if (reactionRepo == null || groupRepo == null || msgRepo == null) return;
+    final reactionReplayOutboxRepo =
+        widget.groupReactionReplayOutboxRepository;
+    if (reactionRepo == null ||
+        groupRepo == null ||
+        msgRepo == null ||
+        reactionReplayOutboxRepo == null) {
+      return;
+    }
 
     // Check if toggling (same emoji from same user)
     final currentReactions = _reactionStore.reactionsForMessage(messageId);
@@ -2373,6 +2387,7 @@ class _FeedWiredState extends State<FeedWired>
         bridge: widget.bridge,
         groupRepo: groupRepo,
         reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
         groupId: groupId,
         messageId: messageId,
         emoji: emoji,
@@ -2408,6 +2423,7 @@ class _FeedWiredState extends State<FeedWired>
       groupRepo: groupRepo,
       msgRepo: msgRepo,
       reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
       groupId: groupId,
       messageId: messageId,
       emoji: emoji,
@@ -2429,6 +2445,40 @@ class _FeedWiredState extends State<FeedWired>
       }
       _reactionStore.setMessageReactions(messageId, updated);
     }
+  }
+
+  Future<void> _onGroupReactionTap(
+    String groupId,
+    String messageId,
+    String emoji,
+  ) async {
+    final groupRepo = widget.groupRepository;
+    if (groupRepo == null) return;
+    final msgRepo = widget.groupMessageRepository;
+    final reactions = _reactionStore.reactionsForMessage(messageId);
+    final usernameHintsByPeerId = await loadGroupReactionUsernameHints(
+      peerIds: reactions.map((reaction) => reaction.senderPeerId),
+      contactRepo: widget.contactRepository,
+      groupId: groupId,
+      msgRepo: msgRepo,
+    );
+
+    final participants = buildGroupReactionParticipantEntries(
+      reactions: reactions,
+      emoji: emoji,
+      members: await groupRepo.getMembers(groupId),
+      usernameHintsByPeerId: usernameHintsByPeerId,
+      ownPeerId: _peerId,
+    );
+    if (!mounted || participants.isEmpty) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF141A24),
+      showDragHandle: false,
+      builder: (_) =>
+          GroupReactionDetailsSheet(emoji: emoji, participants: participants),
+    );
   }
 
   void _onAvatarTap() {
@@ -2711,6 +2761,8 @@ class _FeedWiredState extends State<FeedWired>
       reactionListener: widget.reactionListener,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupReactionReplayOutboxRepository:
+          widget.groupReactionReplayOutboxRepository,
       groupMessageListener: widget.groupMessageListener,
       groupInviteListener: widget.groupInviteListener,
       groupConversationTracker: widget.groupConversationTracker,
@@ -2937,6 +2989,7 @@ class _FeedWiredState extends State<FeedWired>
       onGroupTap: _onGroupTap,
       onGroupInlineSend: _onGroupInlineSend,
       onGroupAttach: _onGroupAttach,
+      onGroupReactionTap: _onGroupReactionTap,
       onGroupReactionSelected: _onGroupReactionSelected,
     );
     final orbitBody = _hasMountedOrbitHost

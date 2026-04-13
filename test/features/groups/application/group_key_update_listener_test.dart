@@ -318,6 +318,49 @@ void main() {
     expect(updateKeyCount, 2);
   });
 
+  test(
+    'conflicting same-generation key updates converge to one final stored key',
+    () async {
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-race',
+            keyGeneration: 2,
+            encryptedKey: 'key-epoch-2a',
+          ),
+        ),
+      );
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-race',
+            keyGeneration: 2,
+            encryptedKey: 'key-epoch-2b',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final converged = await groupRepo.getKeyByGeneration('group-race', 2);
+      expect(converged, isNotNull);
+      expect(converged!.encryptedKey, 'key-epoch-2b');
+
+      final latest = await groupRepo.getLatestKey('group-race');
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 2);
+      expect(latest.encryptedKey, 'key-epoch-2b');
+
+      final updateKeyCount = bridge.commandLog
+          .where((c) => c == 'group:updateKey')
+          .length;
+      expect(updateKeyCount, 2);
+    },
+  );
+
   test('group:updateKey bridge failure keeps the old key active', () async {
     await groupRepo.saveKey(
       GroupKeyInfo(

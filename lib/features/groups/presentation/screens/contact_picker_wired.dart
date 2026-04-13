@@ -11,15 +11,66 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 /// Wired widget that loads contacts, filters out existing members,
 /// provides multi-select toggling, and batch-invites all selected contacts.
+class ContactPickerInviteResult {
+  final int membersAdded;
+  final GroupInviteBatchResult? inviteBatchResult;
+  final bool inviteDeliverySkippedMissingKey;
+  final bool membersAddedPublishFailed;
+
+  const ContactPickerInviteResult({
+    required this.membersAdded,
+    this.inviteBatchResult,
+    this.inviteDeliverySkippedMissingKey = false,
+    this.membersAddedPublishFailed = false,
+  });
+
+  const ContactPickerInviteResult.cancelled() : this(membersAdded: 0);
+
+  int get invitesSent => inviteBatchResult?.successCount ?? 0;
+
+  bool get hasWarnings =>
+      inviteDeliverySkippedMissingKey ||
+      membersAddedPublishFailed ||
+      (inviteBatchResult?.hasFailures ?? false);
+
+  String buildCompletionMessage() {
+    if (!hasWarnings) {
+      return membersAdded == 1
+          ? 'Member invited'
+          : '$membersAdded members invited';
+    }
+
+    final issues = <String>[];
+    if (inviteDeliverySkippedMissingKey) {
+      issues.add(
+        'invites were not sent because the group is missing its latest key',
+      );
+    }
+    if (inviteBatchResult?.hasFailures ?? false) {
+      issues.add('invite issues: ${inviteBatchResult!.describeFailures()}');
+    }
+    if (membersAddedPublishFailed) {
+      issues.add('the add-members event could not be published');
+    }
+
+    final prefix = membersAdded == 1
+        ? '1 member added'
+        : '$membersAdded members added';
+    return '$prefix, but ${issues.join('; ')}.';
+  }
+}
+
 class ContactPickerWired extends StatefulWidget {
   final String groupId;
   final GroupRepository groupRepo;
@@ -27,6 +78,7 @@ class ContactPickerWired extends StatefulWidget {
   final Bridge bridge;
   final IdentityRepository identityRepo;
   final P2PService p2pService;
+  final GroupMessageRepository? msgRepo;
 
   const ContactPickerWired({
     super.key,
@@ -36,6 +88,7 @@ class ContactPickerWired extends StatefulWidget {
     required this.bridge,
     required this.identityRepo,
     required this.p2pService,
+    this.msgRepo,
   });
 
   @override
@@ -142,13 +195,26 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
 
       final groupConfig = buildGroupConfigPayload(group, allMembers);
 
-      await callGroupUpdateConfig(
-        widget.bridge,
-        groupId: widget.groupId,
-        groupConfig: groupConfig,
-      );
+      try {
+        await callGroupUpdateConfig(
+          widget.bridge,
+          groupId: widget.groupId,
+          groupConfig: groupConfig,
+        );
+      } catch (e) {
+        for (final member in addedMembers) {
+          await widget.groupRepo.removeMember(widget.groupId, member.peerId);
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_PICKER_FL_CONFIG_SYNC_ROLLED_BACK',
+          details: {'groupId': widget.groupId, 'error': e.toString()},
+        );
+        rethrow;
+      }
 
       // 3. Broadcast ONE members_added system message
+      final publishedAt = DateTime.now().toUtc();
       final sysMessage = jsonEncode({
         '__sys': 'members_added',
         'members': addedMembers
@@ -166,15 +232,45 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         'groupConfig': groupConfig,
       });
 
-      await callGroupPublish(
-        widget.bridge,
-        groupId: widget.groupId,
-        text: sysMessage,
-        senderPeerId: identity.peerId,
-        senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey,
-        senderUsername: identity.username ?? '',
-      );
+      var membersAddedPublishFailed = false;
+      try {
+        final publishResult = await callGroupPublish(
+          widget.bridge,
+          groupId: widget.groupId,
+          text: sysMessage,
+          senderPeerId: identity.peerId,
+          senderPublicKey: identity.publicKey,
+          senderPrivateKey: identity.privateKey,
+          senderUsername: identity.username ?? '',
+        );
+        if (publishResult['ok'] != true) {
+          membersAddedPublishFailed = true;
+        }
+      } catch (e) {
+        membersAddedPublishFailed = true;
+      }
+      if (membersAddedPublishFailed) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_PICKER_FL_PUBLISH_WARNING',
+          details: {'groupId': widget.groupId},
+        );
+      } else if (widget.msgRepo != null) {
+        await widget.msgRepo!.saveMessage(
+          buildMembersAddedTimelineMessage(
+            groupId: widget.groupId,
+            addedMembers: addedMembers
+                .map(
+                  (member) =>
+                      (peerId: member.peerId, username: member.username),
+                )
+                .toList(growable: false),
+            senderId: identity.peerId,
+            senderUsername: identity.username ?? '',
+            eventAt: publishedAt,
+          ),
+        );
+      }
 
       emitFlowEvent(
         layer: 'FL',
@@ -189,13 +285,21 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
 
       // 4. Send individual encrypted P2P invites in parallel
       final keyInfo = await widget.groupRepo.getLatestKey(widget.groupId);
+      GroupInviteBatchResult? inviteBatchResult;
+      var inviteDeliverySkippedMissingKey = false;
       if (keyInfo != null) {
         final recipients = selectedContacts
             .where((c) => addedMembers.any((m) => m.peerId == c.peerId))
-            .map((c) => (peerId: c.peerId, mlKemPublicKey: c.mlKemPublicKey))
+            .map(
+              (c) => (
+                peerId: c.peerId,
+                username: c.username,
+                mlKemPublicKey: c.mlKemPublicKey,
+              ),
+            )
             .toList();
 
-        await sendGroupInvitesInParallel(
+        inviteBatchResult = await sendGroupInvitesInParallel(
           p2pService: widget.p2pService,
           bridge: widget.bridge,
           senderPeerId: identity.peerId,
@@ -207,6 +311,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           recipients: recipients,
         );
       } else {
+        inviteDeliverySkippedMissingKey = true;
         emitFlowEvent(
           layer: 'FL',
           event: 'CONTACT_PICKER_FL_NO_GROUP_KEY',
@@ -219,7 +324,14 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       }
 
       if (!mounted) return;
-      Navigator.of(context).pop(addedMembers.length);
+      Navigator.of(context).pop(
+        ContactPickerInviteResult(
+          membersAdded: addedMembers.length,
+          inviteBatchResult: inviteBatchResult,
+          inviteDeliverySkippedMissingKey: inviteDeliverySkippedMissingKey,
+          membersAddedPublishFailed: membersAddedPublishFailed,
+        ),
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -248,7 +360,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
   }
 
   void _onBack() {
-    Navigator.of(context).pop(0);
+    Navigator.of(context).pop(const ContactPickerInviteResult.cancelled());
   }
 
   @override

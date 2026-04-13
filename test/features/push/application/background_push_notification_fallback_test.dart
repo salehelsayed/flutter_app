@@ -236,18 +236,24 @@ void main() {
       expect(fallback.payload, 'intros');
     });
 
-    test('preserves provided copy for a mutual-accept intros fallback', () {
+    test(
+      'preserves provided role-correct copy for an introducer mutual-accept intros fallback',
+      () {
       const message = RemoteMessage(
         data: {
           'type': 'intros',
           'title': 'New Connection',
-          'body': 'Sarah also accepted! You\'re now connected.',
+          'body':
+              'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
         },
       );
 
       final fallback = buildBackgroundPushFallbackNotification(message);
       expect(fallback.title, 'New Connection');
-      expect(fallback.body, 'Sarah also accepted! You\'re now connected.');
+      expect(
+        fallback.body,
+        'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
+      );
       expect(fallback.payload, 'intros');
     });
 

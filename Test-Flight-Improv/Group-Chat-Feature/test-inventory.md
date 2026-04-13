@@ -73,13 +73,13 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Domain (models, repo impl) | 14 | 100 |
 | Data (DB helpers) | 6 | 83 |
 | Data (DB migrations) | 7 | 27 |
-| Application (use cases, listeners) | 36 | 367 |
-| Presentation (widgets, screens) | 20 | 250 |
-| Integration (smoke, round-trip, recovery) | 9 | 87 |
-| Core (lifecycle, bridge) | 6 | 72 |
+| Application (use cases, listeners) | 36 | 376 |
+| Presentation (widgets, screens) | 20 | 252 |
+| Integration (smoke, round-trip, recovery) | 9 | 93 |
+| Core (lifecycle, bridge) | 6 | 74 |
 | Cross-feature (feed, orbit, push, intro, share, resilience, services, notifications) | 32 | 182 |
 | E2E / Device (`integration_test/`) | 2 | 5 |
-| **Dart Total** | **132** | **1173** |
+| **Dart Total** | **132** | **1192** |
 
 ### Go Tests
 
@@ -87,7 +87,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |----------|------:|--------------------:|
 | Crypto (`crypto/`) | 1 | 14 |
 | Envelope / Wire Format (`internal/`) | 1 | 11 |
-| PubSub Core (`node/pubsub*.go`) | 4 | 90 |
+| PubSub Core (`node/pubsub*.go`) | 4 | 93 |
+| Shared Security Harness (`node/group_security_harness_test.go`) | 1 | 1 |
 | Group Inbox (`node/group_inbox*.go`) | 1 | 8 |
 | Multi-Relay (`node/multi_relay*.go`) | 1 | 3 |
 | Rendezvous (`node/rendezvous*.go`) | 1 | 2 |
@@ -96,15 +97,101 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Bridge API (`bridge/`) | 2 | 57 |
 | CLI Test Peer (`cmd/testpeer/`) | 1 | 4 |
 | Integration (`integration/`) | 2 | 3 |
-| **Go Total** | **18** | **196** |
+| **Go Total** | **19** | **200** |
 
 ### Grand Total
 
 | | Files | Tests |
 |-|------:|------:|
-| **All (Dart + Go)** | **150** | **1369** |
+| **All (Dart + Go)** | **151** | **1392** |
 
 > **Note:** Dart file counts reflect distinct `_test.dart` files. Some inventory sections cover multiple files (e.g., 4.9 covers `archive_group_use_case_test.dart` + `unarchive_group_use_case_test.dart`; 4.30 covers three reaction test files). Dart test counts are `grep`-verified against `test()`/`testWidgets()` declarations in each file. Cross-feature test counts include only the group-relevant subset from shared test files. Go test counts reflect only group-related `func Test*` functions in files that may also contain non-group tests; counts are `grep`-verified against `func Test.*[Gg]roup` patterns and manual review for files with indirect group test names. Last verified: 2026-04-11.
+
+## 0. Row Closure Crosswalk (2026-04-11)
+
+| Row | Closure state | Concrete repo evidence |
+|-----|---------------|------------------------|
+| `CB-004` | Accepted | `create_group_with_members_use_case_test.dart` now pins mixed invite degradation; `create_group_picker_wired_test.dart` proves the create flow surfaces an explicit warning instead of implying full invite success. |
+| `CB-005` | Accepted | `create_group_with_members_use_case_test.dart` now proves config-sync rollback and publish-warning truth; `contact_picker_wired_test.dart` keeps the add-member picker truthful under the same degraded branches. |
+| `CB-006` | Accepted | `group_name_panel_test.dart` now proves the shipped create surface exposes only the name field, `create_group_picker_wired_test.dart` proves the create payload omits `description`, and `group_info_wired_test.dart` keeps later edit-time description handling explicit. |
+| `CB-007` | Accepted | `create_group_use_case.dart` now falls back to `/mknoon/group/$groupId`, `create_group_use_case_test.dart` pins creator-path persistence on that namespace, and `rejoin_group_topics_use_case_test.dart` already proves rejoin callers consume the stored `topicName`. |
+| `CB-008` | Accepted | `create_group_use_case_test.dart` now proves keyless create rolls back the local group and throws instead of returning success into an unusable state. |
+| `DV-003` | Accepted | `group_message_listener_test.dart`, `contact_picker_wired_test.dart`, and `group_membership_smoke_test.dart` now pin durable `members_added` history across listener, picker, and recipient surfaces. |
+| `DV-004` | Accepted | `accept_pending_group_invite_use_case_test.dart`, `group_list_wired_test.dart`, `group_message_listener_test.dart`, and `invite_round_trip_test.dart` now prove durable `member_joined` history across accept, shipped accept-surface, listener, and existing-member render flows, including the degraded `bridgeError` branch. |
+| `DV-008` | Accepted | `group_info_wired_test.dart` and `group_membership_smoke_test.dart` now prove voluntary leave broadcasts a truthful self-removal event and remaining members persist `left the group` history. |
+| `DV-013` | Accepted | `send_group_invite_use_case_test.dart`, `create_group_with_members_use_case_test.dart`, and `contact_picker_wired_test.dart` now pin per-recipient batch invite outcomes and user-visible warning surfaces. |
+| `DV-014` | Accepted | `create_group_with_members_use_case_test.dart`, `contact_picker_wired_test.dart`, and `create_group_picker_wired_test.dart` now pin the explicit no-latest-key warning contract for create and add-member flows. |
+| `ID-001` | Accepted | `create_group_use_case_test.dart`, `create_group_with_members_use_case_test.dart`, and `group_info_wired_test.dart` now prove the creator username is persisted, exported in `groupConfig`, and rendered for other members instead of falling back to a raw peer ID. |
+| `ID-002` | Accepted | `group_member_row.dart` now reuses `UserAvatar`, and `group_info_screen_test.dart` plus `group_conversation_screen_test.dart` now prove member-list and conversation surfaces render participant identity with the same avatar component family. |
+| `ID-004` | Unsupported | `create_group_picker_wired.dart` and `contact_picker_wired.dart` restrict onboarding selection to active contacts, while `handle_incoming_group_invite_use_case_test.dart` proves invites from non-contacts are rejected as `unknownSender`; the repo does not ship a non-friend onboarding path. |
+| `ID-010` | Accepted | `group_info_screen_test.dart` and `group_conversation_screen_test.dart` now prove both group surfaces keep readable participant names and fall back to `RingAvatar` when no profile photo exists. |
+| `CX-001` | Accepted | `group_conversation_screen.dart` now routes group long-press through `MessageContextOverlay`, and `group_conversation_screen_test.dart` proves the selected preview, reply/copy actions, and coherent overlay surface. |
+| `CX-002` | Accepted | `group_conversation_screen_test.dart` now proves the long-press reply action enters the existing group quote-reply callback with the correct message id. |
+| `CX-003` | Accepted | `group_conversation_screen_test.dart` now proves long-press copy writes exact multiline/emoji text to the clipboard, dismisses the overlay, and shows the copied snackbar. |
+| `CX-004` | Accepted | `group_conversation_screen_test.dart` now proves the group context surface stays available for supported actions while unsupported edit/delete actions remain hidden. |
+| `CX-005` | Accepted | `group_conversation_screen_test.dart` plus `group_conversation_wired_test.dart` now prove reply/copy stay available even when reaction handling is unavailable. |
+| `CX-006` | Accepted | `group_conversation_screen_test.dart` now proves the overlay keeps reaction selection alive while the existing swipe-to-quote and row-render coverage remains intact. |
+| `CX-007` | Accepted | `orbit_wired_test.dart`, `feed_wired_test.dart`, and `group_conversation_wired_test.dart` now pin the same long-press action contract from Orbit, Feed, and notification-anchor entry points. |
+| `UI-001` | Accepted | `group_conversation_screen_test.dart` now proves the group row host keeps exactly one row-local shell across base text, quoted/reaction, and media variants. |
+| `UI-002` | Accepted | `group_conversation_screen_test.dart` now re-renders the same row through media and reaction enrichment and proves the shell stays single after the update. |
+| `RX-001` | Accepted | `group_reaction_details_sheet.dart` plus `group_conversation_wired_test.dart`, `feed_wired_test.dart`, and `orbit_wired_test.dart` now prove visible group chips open a participant-inspection surface instead of silently mutating. |
+| `RX-002` | Accepted | `group_conversation_screen.dart` and `feed_screen.dart` now separate chip inspection from long-press mutation, and `group_conversation_wired_test.dart` proves chip taps leave stored reactions untouched. |
+| `RX-003` | Accepted | `group_reaction_details_sheet.dart` now resolves `You`, member usernames, and readable peer-id fallback from group membership state, and `group_conversation_wired_test.dart` proves that lookup directly. |
+| `RX-004` | Accepted | `orbit_wired_test.dart` and `feed_wired_test.dart` now pin the same reaction-inspection sheet contract after entering the group from Orbit or Feed. |
+| `RX-005` | Accepted | `feed_screen_test.dart` now proves inline group chips route through inspection on both discussion and announcement-reader cards, while `feed_wired_test.dart` keeps Feed-to-conversation inspection parity. |
+| `RX-006` | Accepted | `group_reaction_roundtrip_test.dart` proves live reaction fan-out, `announcement_happy_path_test.dart` now proves the announcement-reader path also lands a durable stored replay row, and `group_resume_recovery_test.dart` proves resume/rejoin replay keeps one truthful stored reactor after live-plus-replay dedupe and after post-rotation recovery on a rotated message. |
+| `MM-009` | Accepted | `send_group_message_use_case_test.dart` pins the zero-peer plus inbox-fail branch, `retry_failed_group_messages_use_case_test.dart` proves the failed row recovers through the failed-message retry owner, and `group_resume_recovery_test.dart` now proves inbox-store retry skips that failed row while failed-message retry recovers it in place and restores offline delivery. |
+| `MM-012` | Accepted | `send_group_message_use_case_test.dart` now proves discussion sends remain allowed while recovery is active, and `group_resume_recovery_test.dart` now proves the real `GroupConversationWired` sender path still sends discussion messages while blocking announcement-admin sends without leaving a stranded local bubble. |
+| `RC-009` | Accepted | `pubsub_decryption_failure_test.go` now proves wrong-key, tampered-nonce, and malformed-payload failures emit diagnostics without any `group_message:received` event, while `go_bridge_client_test.dart` routes `group:decryption_failed` and `group:payload_parse_failed` into Flutter's `groupDiagnosticEventStream` without invoking the group message callback. |
+| `RC-010` | Accepted | `go-mknoon/node/node_test.go` now proves bounded bursts emit `group:dispatcher_pressure` and `group:dispatcher_overflow` diagnostics with queue-depth, dropped-count, and last-event data, while `go_bridge_client_test.dart` proves overflow diagnostics reach Flutter's owned diagnostics stream and flow logs without invoking the group message callback. |
+| `SV-004` | Accepted | `handle_incoming_group_message_use_case_test.dart` now proves same-`messageId` replays cannot rewrite an accepted row when timestamps are tampered or when the replay lands after removal/dissolve cutoffs, and `group_resume_recovery_test.dart` now proves a multi-page inbox replay with a tampered timestamp still materializes only one stored row. |
+| `SV-005` | Accepted | `pubsub_decryption_failure_test.go` now proves wrong-key, tampered-nonce, tampered-ciphertext, and malformed-payload group envelopes emit rejection diagnostics without any `group_message:received` event, and `go_bridge_client_test.dart` keeps the owned Flutter diagnostics stream pinned for `group:decryption_failed`. |
+| `SV-006` | Accepted | `pubsub_key_rotation_grace_test.go` now proves previous-epoch traffic emits `group_message:received` during grace and stays silent after grace expiry, while the existing `group_message_listener_test.dart` and `handle_incoming_group_message_use_case_test.dart` already pin the Flutter-visible receive-path materialization for any valid group message event. |
+| `SV-007` | Accepted | `group_key_update_listener_test.dart` now proves competing same-generation key updates collapse to one stored key and the existing sequential `epoch 2 then epoch 3` proof keeps higher-epoch convergence explicit, while `send_group_message_use_case_test.dart` and `group_resume_recovery_test.dart` keep sending usable after rotation on the winning epoch. |
+| `SV-011` | Accepted | `send_group_message_use_case_test.dart`, `rejoin_group_topics_use_case_test.dart`, `drain_group_offline_inbox_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `retry_failed_group_inbox_stores_use_case_test.dart` now pin stable begin/success/skip/error/timing flow-event names and required detail keys across the shipped group send, rejoin, drain, and retry owners. |
+| `SV-012` | Accepted | `go-mknoon/node/node_test.go` now proves overflow diagnostics are emitted with dropped-count and queue-depth data, and `go_bridge_client_test.dart` proves `group:dispatcher_overflow` reaches Flutter's diagnostics stream and flow logs instead of remaining silent. |
+| `RY-007` | Covered | `group_resume_recovery_test.dart` already proves the partitioned member misses split-window live delivery, replays the delayed backlog in cursor order after heal, and resumes later live delivery without duplicate visible rows. |
+| `RY-010` | Accepted | `main.dart`, `startup_router.dart`, `handle_app_resumed.dart`, `prepare_notification_route_target_use_case.dart`, `group_list_wired.dart`, and `orbit_wired.dart` now carry full replay dependencies on supported paths, while `accept_pending_group_invite_use_case_test.dart` and `group_list_wired_test.dart` pin the repaired invite-accept drain with a real `GroupMessageListener` and `reactionRepo`. |
+| `RY-011` | Accepted | `accept_pending_group_invite_use_case_test.dart` now proves invite acceptance drains backlog reactions when `reactionRepo` is supplied, and `group_list_wired_test.dart` proves the shipped accept flow persists the replayed message and reaction before the pending invite row disappears. |
+| `RY-012` | Accepted | `accept_pending_group_invite_use_case_test.dart` now proves `bridgeError` keeps the group persisted, clears the pending invite row, and still stores the durable join event for replay even when live `group:publish` fails, `group_list_wired_test.dart` proves the shipped accept surface tells the user recovery is still catching up, and `invite_round_trip_test.dart` proves a later rejoin plus inbox drain converges without recreating the invite row or duplicating join history. |
+| `RY-013` | Accepted | `group_offline_replay_envelope.dart` now stores only the approved replay wrapper plus ciphertext and nonce, and `go-mknoon/node/group_inbox_test.go`, `go-relay-server/group_inbox_test.go`, and `go-relay-server/backend_redis_test.go` now prove that opaque envelope survives request marshaling and cursor retrieval without exposing plaintext content. |
+| `RY-014` | Accepted | `drain_group_offline_inbox_use_case_test.dart` now proves encrypted replay preserves quoted replies plus image, video, GIF, file, and audio attachments through the real drain path, while `group_resume_recovery_test.dart` keeps missed announcement replay, voice delivery, and post-rotation delivery readable after resume. |
+| `RY-015` | Accepted | `group_resume_recovery_test.dart` now proves removed offline members drain the replayed removal, lose group access, and cannot send after resume while remaining members keep only the before-cutoff backlog, `group_info_wired_test.dart` proves voluntary leave persists a durable left-the-group event before cleanup, and `invite_round_trip_test.dart` proves rejoined members recover on the rotated epoch only. |
+| `RY-016` | Accepted | `drain_group_offline_inbox_use_case_test.dart`, `group_resume_recovery_test.dart`, `rejoin_group_topics_use_case_test.dart`, `retry_failed_group_inbox_stores_use_case_test.dart`, `pending_message_retrier_upload_ordering_test.dart`, and the resume lifecycle tests now prove encrypted replay survives cursor continuation, multi-page drain, watchdog resume, sender-owned reaction add/remove replay retry, partition heal, and same-message dedupe without creating a degraded recovery owner. |
+| `MD-005` | Accepted | `orbit_wired_test.dart` and `feed_wired_test.dart` already pin Orbit and Feed message-level parity, while `group_conversation_wired_test.dart` now pins notification-anchor reaction inspection and `app_root_notification_open_test.dart`, `resolve_group_notification_route_target_use_case_test.dart`, and `chat_and_group_push_open_flow_test.dart` keep the push-entry route contract aligned with that shared surface. |
+| `ID-003` | Covered | `group_messaging_smoke_test.dart` proves non-friend members can exchange discussion traffic once they share membership, and the `group_test_user.dart` harness avoids contact-repo shortcuts. |
+| `ID-008` | Covered | `group_membership_smoke_test.dart`, `invite_round_trip_test.dart`, and `group_message_listener_test.dart` together cover duplicate re-add, duplicate invite, and stale membership replay de-duplication. |
+| `ID-009` | Covered | `handle_incoming_group_invite_use_case_test.dart` proves avatar metadata persistence, and the accept path reuses the same payload materialization contract before the feed refresh assertions consume it. |
+| `MM-008` | Covered | `send_group_message_use_case_test.dart` proves pending publish-success rows promote only through the owned inbox-store completion path. |
+| `MM-010` | Covered | `group_conversation_wired_bg_task_test.dart` directly covers discussion and announcement sends across lock, route unmount, and zero-peer fallback branches. |
+| `MM-013` | Covered | `group_resume_recovery_test.dart` covers media recovery through the real group sender path, and the integration harness keeps member transport independent from friendship edges. |
+| `RC-006` | Covered | `handle_incoming_group_message_use_case_test.dart`, `group_message_listener_test.dart`, and `group_conversation_wired_test.dart` together prove row upsert, shared media download joining, and scroll preservation without duplicate rows. |
+| `SV-008` | Covered | `group_membership_smoke_test.dart` and `invite_round_trip_test.dart` cover concurrent role/member conflict convergence plus rotated re-invite recovery. |
+| `SV-010` | Accepted | `bridge_group_helpers_test.dart` already pins the canonical `/mknoon/group/...` bridge response and join payload contract, and `create_group_use_case_test.dart` now proves the creator fallback and persisted group row stay on that same namespace when `topicName` is omitted. |
+
+### Explicit Residual Follow-Up (2026-04-13)
+
+- None for sender-owned reaction replay durability after Report `70`:
+  `send_group_reaction_use_case_test.dart`,
+  `remove_group_reaction_use_case_test.dart`,
+  `retry_failed_group_inbox_stores_use_case_test.dart`,
+  `announcement_happy_path_test.dart`, and
+  `group_resume_recovery_test.dart` now prove exact-payload staging plus
+  retry/resume convergence for reaction add/remove.
+
+### Shared Prerequisite Sessions
+
+| Session | Closure state | Concrete repo evidence |
+|---------|---------------|------------------------|
+| `PREREQ-GROUP-OFFLINE-REPLAY` | Accepted | `group_offline_replay_envelope.dart` now materializes opaque encrypted replay envelopes on the Flutter side, `go-mknoon/node/group_inbox_test.go` plus `go-relay-server/group_inbox_test.go` and `backend_redis_test.go` prove those envelopes stay opaque across node and relay storage/retrieval, and the replay batch plus invite/rejoin/retry lifecycle batches passed with the new contract in place. |
+| `PREREQ-GROUP-PROOF-HARNESS` | Accepted | `go-mknoon/node/group_security_harness_test.go` now centralizes raw-envelope mutation, local-node connect/publish, event wait, and grace-fixture helpers, while `pubsub_decryption_failure_test.go` and `pubsub_key_rotation_grace_test.go` now reuse that seam directly for later `RC-009` / `SV-004..007` closure work. |
+| `PREREQ-GROUP-DISPATCHER-OVERFLOW` | Accepted | `go-mknoon/node/event_dispatcher.go` now surfaces dispatcher pressure/overflow diagnostics, `go-mknoon/node/node_test.go` proves those signals carry queue-depth and dropped-count data under burst load, and `go_bridge_client_test.dart` proves `group:dispatcher_overflow` reaches Flutter diagnostics and flow logs without pretending to be a delivered group message. |
+
+## 0A. 2026-04-12 Deployed-Relay Acceptance
+
+- Full suites green: Flutter host-side `/private/tmp/flutter_full_suite_20260412/flutter_test_dir.log` (`02:53 +5492 ~5: All tests passed!`), `go-mknoon` `/tmp/go-mknoon-full-suite.log`, and relay `/tmp/go-relay-server-full-suite.log`.
+- Live-lane passes green: Android background reconnect after bounded local build-state reset `/private/tmp/acceptance_20260412/background_reconnect_android_rerun1.log`; transport E2E `/private/tmp/acceptance_20260412/lane2.log`; WiFi relay fallback smoke after the truthful direct-transport contract fix `/private/tmp/acceptance_20260412/lane3_rerun.log`; media stable-ID smoke `/private/tmp/acceptance_20260412/lane4.log`; group recovery E2E `/private/tmp/acceptance_20260412/lane5.log`; soak E2E `/private/tmp/acceptance_20260412/lane6.log`; notification-open UI smoke on the primary iOS pair `/private/tmp/acceptance_20260412/notification_open_ui_primary_ios.log`; real multi-device `MD-004` on the primary iOS pair `/private/tmp/acceptance_20260412/group_multi_device_real_primary_ios.log`.
+- Truthful multi-relay skips: `/private/tmp/acceptance_20260412/lane7.log` and `/private/tmp/acceptance_20260412/lane8.log` both ended `All tests skipped.` because no two-relay `MKNOON_RELAY_ADDRESSES` environment was configured. They are not counted as multi-relay proof.
 
 ---
 
@@ -503,6 +590,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | throws on empty name | Validation |
 | throws on bridge error | Error handling |
 | saves group, member, and key to repo | Persistence |
+| persists the creator username on the admin membership row | Creator identity persistence |
+| fails honestly and rolls back when no usable group key is available | Keyless-create rollback |
 | creates announcement group with announcement bridge payload and admin metadata | Announcement type |
 
 ### 4.2 createGroupWithMembers
@@ -512,9 +601,15 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |-------|------|----------------|
 | `createGroupWithMembers` | creates group and returns GroupModel | Happy path |
 | | adds all contacts as writer members | Member creation |
+| | persists the creator username and exports it in group config | Creator identity propagation |
+| | excludes failed add-member recipients from persisted members, config, publish payload, and invite fan-out | Partial member-add subset truth |
 | | calls callGroupUpdateConfig once with full member list including self | Bridge config sync |
 | | broadcasts members_added system message via callGroupPublish | System message |
 | | sends individual encrypted P2P invites to each contact | Invite delivery |
+| | rolls back staged members when `group:updateConfig` fails after local adds | Config rollback |
+| | reports mixed or failed invite delivery as an explicit warning result | Invite-degradation truth |
+| | reports missing latest key as explicit invite-delivery degradation | Missing-key truth |
+| | reports `members_added` publish failure without pretending full invite success | Publish-warning truth |
 | | uses auto-generated name from usernames when name is null | Auto-naming |
 | | uses auto-generated name with +N suffix for 3+ contacts | Auto-naming overflow |
 | | uses provided name when name is not null | Explicit naming |
@@ -528,12 +623,13 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Group | Test | What it covers |
 |-------|------|----------------|
 | (top) | sends message successfully | Happy path |
-| | emits GROUP_SEND_MSG_TIMING with group and media metadata | Flow event |
+| | emits GROUP_SEND_MSG_TIMING with group and media metadata | Flow event contract |
 | | returns groupNotFound for unknown group | Guard |
 | | returns groupDissolved for a dissolved group | Dissolve guard |
 | | returns unauthorized for non-admin in announcement group | Announcement guard |
 | | rejects message when group recovery is in progress | Recovery guard |
 | | rejects unauthorized on announcement when recovery pending | Combined guard |
+| | allows discussion send while group recovery is in progress | Discussion recovery contract |
 | | saves message to repo on success | Persistence |
 | | calls group:publish with encrypted wire envelope | Bridge call |
 | | builds and encrypts complete wire envelope with timestamps | Envelope construction |
@@ -568,7 +664,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | pre-persist: unauthorized caller does NOT persist a row | Auth guard |
 | | pre-persist: group-not-found does NOT persist a row | Not-found guard |
 | `WU-3: 0-peer publish detection and 4-way matrix` | 0-peer + inbox OK -> successNoPeers, status sent | No-peer + inbox OK |
-| | 0-peer + inbox fail -> error | No-peer + inbox fail |
+| | 0-peer + inbox fail -> error | No-peer + inbox fail + flow event contract |
 | | peers > 0 + inbox OK -> success, both payloads cleared | Peers + inbox OK |
 | | peers > 0 + inbox fail -> publishOnly, status publish_ok | Peers + inbox fail |
 | | topicPeers null + inbox OK -> legacy success stays sent | Legacy + inbox OK |
@@ -590,7 +686,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | returns sendFailed when p2pService returns false and inbox fails | Send + inbox failure |
 | | stores invite in inbox when direct send fails | Inbox fallback |
 | | invite payload includes full groupConfig with members array | Payload shape |
-| `sendGroupInvitesInParallel` | sends invites to all recipients and returns success count | Batch send |
+| `sendGroupInvitesInParallel` | sends invites to all recipients and returns per-recipient outcomes | Batch send |
 | | runs invites concurrently | Concurrency |
 | | counts only successful invites when some fail | Partial failure |
 | | returns 0 for empty recipients list | Empty input |
@@ -619,7 +715,10 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | allows messages with different text or timestamp | False-positive guard |
 | | deduplicates by messageId when pubsub and group inbox deliver same message | Cross-path dedup |
 | | duplicate replay enriches a missing quotedMessageId | Quote enrichment |
+| | duplicate replay with the same messageId ignores a tampered timestamp | Replay tamper dedup |
 | | duplicate group inbox replay does not resave media | Media dedup |
+| | replayed removed-sender message after cutoff does not overwrite the accepted pre-cutoff row | Replay + removal cutoff |
+| | replayed message after dissolve cutoff does not overwrite the accepted pre-dissolve row | Replay + dissolve cutoff |
 | `media attachments` | saves media attachments when media list provided | Media persistence |
 | | creates MediaAttachment with downloadStatus pending | Download status |
 | | handles message without media (backward compat) | Backward compat |
@@ -805,6 +904,9 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `acceptPendingGroupInvite` | accepts pending invite, persists group, and drains inbox | Happy path |
+| | accept replays backlog reactions when reactionRepo is provided | Invite-accept immediate reaction catch-up |
+| | successful accept publishes a durable join event for the group | Durable join history |
+| | bridgeError keeps the persisted group and clears the pending invite row | Accepted-but-degraded persistence |
 | | returns expired and removes stale invite | Expiry guard |
 | | returns duplicateGroup and removes pending row when group already exists | Duplicate guard |
 | | accepting on one device does not clear the sibling device pending invite | Multi-device |
@@ -838,7 +940,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | deduplicates messages by messageId | Dedup |
 | | saves correct status based on direction | Status mapping |
 | | persists wire envelope and inbox retry payload | Payload persistence |
-| | emits GROUP_DRAIN_OFFLINE_INBOX_TIMING with batch metadata | Flow event |
+| | emits GROUP_DRAIN_OFFLINE_INBOX_TIMING with batch metadata | Batch flow event contract |
 | | drains offline inbox and saves messages to repo | Persistence |
 | | handles multiple pages with cursor pagination | Pagination |
 | | does not crash on empty inbox | Empty state |
@@ -864,10 +966,10 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 
 | Test | What it covers |
 |------|----------------|
-| retries eligible sent messages and clears inbox retry state | Happy path |
+| retries eligible sent messages and clears inbox retry state | Happy path + begin/ok/done/timing flow events |
 | retries eligible pending messages and promotes them to sent | Pending promotion |
 | skips messages that are already inbox_stored | Skip guard |
-| handles callGroupInboxStore failure gracefully | Error handling |
+| handles callGroupInboxStore failure gracefully | Error handling + per-message flow event |
 | respects batch limit | Batch size |
 | returns 0 when no eligible messages | Empty state |
 | skips legacy rows with null inbox_retry_payload | Legacy compat |
@@ -878,12 +980,13 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `retryFailedGroupMessages` | returns 0 when identity is null | Null identity guard |
-| | emits RETRY_FAILED_GROUP_MESSAGES_TIMING with total and skipped counts | Flow event |
+| | emits RETRY_FAILED_GROUP_MESSAGES_TIMING with total and skipped counts | Start/found/success/complete/timing flow events |
 | | retries a text-only failed row in place using the original ids | Text retry |
+| | retries a zero-peer plus inbox-fail row through the failed-message retry owner | Zero-peer retry owner |
 | | retries a failed text row even when inboxRetryPayload was cleared after inbox success | Cleared payload retry |
 | | retries a failed media row from persisted done attachments when inboxRetryPayload was cleared after inbox success | Media retry |
 | | retries a failed GIF row from persisted done attachments with image/gif preserved | GIF retry |
-| | skips rows whose persisted media attachments are still upload_pending | Upload-pending skip |
+| | skips rows whose persisted media attachments are still upload_pending | Upload-pending skip + skipped-reason flow event |
 | | skips media retry rows when no resendable persisted attachments exist | No-attachment skip |
 | | continues after a per-message publish error | Error isolation |
 | | retryFailedGroupMessage only retries the requested failed media row | Targeted retry |
@@ -914,10 +1017,12 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | disposes correctly | Cleanup |
 | | handles malformed data without crashing | Error resilience |
 | `system messages` | member_added saves member and calls updateConfig | Member-add system msg |
+| | member_added emits readable timeline event on groupMessageStream | Durable add timeline |
 | | unauthorized member_added is ignored | Auth guard |
 | | group_metadata_updated refreshes group metadata and stores a timeline event | Metadata update |
 | | unauthorized group_metadata_updated is ignored | Auth guard |
 | | members_added saves all members and calls updateConfig | Batch member-add |
+| | member_joined saves a durable join timeline event | Durable join timeline |
 | | unauthorized members_added is ignored | Auth guard |
 | `member_removed system messages` | unauthorized member_removed is ignored | Auth guard |
 | | replayed unauthorized member_removed is ignored | Replay auth guard |
@@ -966,7 +1071,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | saves key to DB AND updates Go via group:updateKey | Dual persistence |
 | does not crash on malformed JSON | Error resilience |
 | group:updateKey payload contains correct groupId, groupKey, keyEpoch | Payload shape |
-| handles sequential key updates (epoch 2 then epoch 3) | Sequential updates |
+| handles sequential key updates (epoch 2 then epoch 3) | Higher-epoch convergence |
+| conflicting same-generation key updates converge to one final stored key | Same-epoch convergence |
 | group:updateKey bridge failure keeps the old key active | Bridge failure guard |
 
 ### 4.30 Reactions (send / handle / remove)
@@ -1006,7 +1112,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `rejoinGroupTopics` | calls callGroupJoinWithConfig for each active group | Happy path |
-| | emits GROUP_REJOIN_TOPICS_TIMING with batch metadata | Flow event |
+| | emits GROUP_REJOIN_TOPICS_TIMING with batch metadata | Begin/joined/done/timing flow events |
 | | skips groups with no key info | Missing key skip |
 | | continues on individual join error | Error isolation |
 | | does nothing when no active groups exist | Empty state |
@@ -1020,7 +1126,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | in place relay recovery still refreshes group topics | Relay recovery |
 | | startup triggers group rejoin for all groups | Startup trigger |
 | | groups without key material are skipped | Key guard |
-| | error in one group does not prevent other groups from being rejoined | Error isolation |
+| | error in one group does not prevent other groups from being rejoined | Error isolation + per-group error flow events |
 | | rejoins archived groups | Archived inclusion |
 | | skips dissolved groups | Dissolved exclusion |
 
@@ -1080,7 +1186,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | refreshes group list when groupInviteListener emits | Invite stream |
 | | loads pending invites on init | Invite loading |
 | | refreshes pending invite list when pending invite stream emits | Invite stream |
-| | accepting a pending invite joins the group and removes the row | Accept flow |
+| | accepting a pending invite joins the group and removes the row | Accept flow + immediate replay catch-up |
+| | bridgeError accept keeps the joined group and shows recovery warning | Honest degraded state |
 | | declining a pending invite removes the row without joining | Decline flow |
 | | tapping group navigates to conversation | Navigation |
 | | shows unread counts | Unread badge |
@@ -1118,8 +1225,17 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Test | What it covers |
 |------|----------------|
 | renders messages | Message rendering |
+| renders sender identity with UserAvatar in conversation rows | Avatar consistency |
+| keeps non-photo fallback identity readable in conversation rows | Readable avatar fallback |
 | shows compose area when canWrite is true | Compose visibility |
+| long-press opens one coherent context surface with selected preview and supported actions | Context overlay parity |
+| long-press reply uses the existing quote-reply path | Long-press reply |
+| long-press copy action copies exact text and dismisses once | Clipboard copy |
+| local-only long-press actions remain available when reactions are unavailable | No-reaction local actions |
+| long-press reaction selection preserves the reaction path | Reaction parity |
 | passes isSending through to the compose send affordance | Send state |
+| group rows keep a single glass shell across text, quote, reaction, and media variants | Single-shell row rendering |
+| row shell stays single after reaction and media enrichment updates | Shell stability after enrichment |
 | renders active quote preview and dismisses it | Quote preview |
 | upload banner shows cancel affordance only when supplied | Cancel affordance |
 | shows loading shell while initial group page is still loading | Loading state |
@@ -1162,7 +1278,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | live removal timeline event from listener appears in UI | Removal timeline |
 | | live re-add timeline event from listener appears in UI | Re-add timeline |
 | | shows loading shell until the initial group page resolves | Loading state |
-| | highlights the targeted message context when opened from a notification anchor | Notification anchor |
+| | highlights the targeted message context when opened from a notification anchor | Notification anchor + long-press parity |
+| | notification-anchor entry keeps group reaction inspection aligned with the shared conversation surface | Notification anchor reaction parity |
 | | incoming message preserves scroll offset when reading older messages | Scroll preservation |
 | | recording ticks update composer without rebuilding header or message list | Rebuild isolation |
 | | voice record callbacks switch the group composer into and out of recording | Voice recording |
@@ -1202,8 +1319,10 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | voice publish failure restores the quoted reply target | Voice quote restore |
 | | announcement admin sees mic button for voice recording | Announcement voice |
 | | loads persisted reactions on init when reactionRepo is provided | Reaction loading |
-| | reaction UI is disabled when reactionRepo is null | Reaction guard |
+| | local long-press actions stay available when reactionRepo is null | No-reaction long-press parity |
 | | incoming reaction change stream updates UI state | Reaction stream |
+| | group reaction chips open participant inspection without mutating stored reactions | Reaction inspection + non-destructive tap |
+| | group reaction inspection resolves member usernames and readable peer-id fallback | Reaction identity resolution |
 
 ### 5.9 GroupConversationWired Background Task
 **File:** `test/features/groups/presentation/screens/group_conversation_wired_bg_task_test.dart`
@@ -1232,6 +1351,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Test | What it covers |
 |------|----------------|
 | shows members | Member rendering |
+| uses UserAvatar for each member row | Avatar consistency |
+| keeps fallback identity readable when no avatar photo exists | Readable avatar fallback |
 | shows roles | Role rendering |
 | shows leave button | Leave CTA |
 | shows dissolve button for active admins | Dissolve CTA |
@@ -1252,6 +1373,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |-------|------|----------------|
 | `GroupInfoWired` | loads and displays group members on init | Init loading |
 | | shows Add Member button for admin role | Add-member CTA |
+| | shows the creator username from the real create flow for other members | Creator identity rendering |
 | | hides Add Member button for non-admin role | Add-member guard |
 | | admin can dissolve a group and the screen switches to read-only state | Dissolve flow |
 | | toggles mute state and persists it to the repository | Mute toggle |
@@ -1263,6 +1385,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | leave group calls bridge and pops to first route | Leave flow |
 | | sole admin leave stays on screen and shows an error | Sole-admin guard |
 | | multi-admin leave broadcasts self-removal, rotates key, and pops to first route | Multi-admin leave |
+| | writer leave broadcasts a durable left-the-group event before local cleanup | Voluntary leave timeline |
 | | remove member updates config and refreshes member list | Remove flow |
 | | remove member broadcasts system message and rotates key | Remove side-effects |
 | | remove member calls bridge in correct order: updateConfig -> publish -> inboxStore -> generateNextKey | Bridge command order |
@@ -1298,6 +1421,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | panel appears after selecting a contact | Panel visibility |
 | | tapping Start group chat creates group and navigates to conversation | Create flow |
 | | announcement picker route creates announcement group and sends announcement payload | Announcement create |
+| | shows an explicit warning when create succeeds with invite degradation | Degraded create feedback |
 | | shows error snackbar on failure | Error feedback |
 | | shows a size-limit snackbar when create selection exceeds the contract | Limit feedback |
 | | back button pops screen | Navigation |
@@ -1338,13 +1462,16 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | batch invite adds all selected members to DB | Batch persist |
 | | batch invite broadcasts one members_added system message | System message |
 | | batch invite sends individual P2P invites to each contact | P2P invites |
-| | batch invite pops with count of invited members | Pop result |
+| | batch invite pops with an explicit completion result | Pop result |
 | | back button pops with 0 | Cancel pop |
 | | shows error snackbar when invite fails | Error feedback |
 | | stale duplicate selection fails without config sync or members_added publish | Stale dedup |
 | | over-limit batch selection fails without partial members or config sync | Over-limit guard |
+| | invite keeps local membership but reports explicit warning details when delivery fails | Invite warning feedback |
+| | reports the current key generation when invite encryption succeeds | Key proof |
 | | invite skips sendGroupInvite when no group key exists | Missing key skip |
 | | batch invite with no group key still adds members locally | Local-only add |
+| | batch invite saves a durable members-added timeline locally | Durable add timeline |
 
 ### 5.16 ContactPicker Multi-Select Integration
 **File:** `test/features/groups/presentation/contact_picker_multi_select_integration_test.dart`
@@ -1447,6 +1574,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | removed member cannot send after self-removal cleanup | Post-removal send guard |
 | | remaining peers accept only delayed removed-sender envelopes from before the persisted cutoff | Cutoff enforcement |
 | | add member syncs every member list and the new member can participate | Add-member sync |
+| | writer leave emits a durable left-the-group event for remaining members | Voluntary leave timeline |
 | | duplicate re-add returns error and leaves member lists unchanged | Duplicate guard |
 | | non-member removal returns error and leaves member lists unchanged | Non-member guard |
 | | new member cannot send before bootstrap key exists, then succeeds after bootstrap completes | Bootstrap key |
@@ -1503,10 +1631,14 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |-------|------|----------------|
 | `Group resume recovery integration tests` | member backgrounded during send receives missed group messages after resume | Background resume |
 | | same message is not duplicated if both pubsub and group inbox deliver it | Cross-path dedup |
+| | live reaction replay on resume keeps a single truthful stored reaction after rejoin | Reaction replay dedupe after resume |
+| | post-rotation reaction replay after rejoin keeps the truthful reactor on the rotated message | Post-rotation reaction recovery |
 | | removed offline member drains replayed removal, loses group access, and cannot send after resume | Offline removal |
 | | offline remaining member drains remove-vs-send backlog and keeps the same before-cutoff outcome after resume | Cutoff + resume |
 | | watchdog restart rejoins topics and receives subsequent live messages | Watchdog rejoin |
 | | announcement reader backgrounded during send receives missed announces after resume | Announcement resume |
+| | zero-peer inbox failure stays owned by failed-message retry and recovers in place | Zero-peer retry ownership |
+| | MM-012 acceptance uses real GroupConversationWired sender path to keep discussion sendable and announcement admin blocked during active recovery | Recovery send contract |
 | | 10-A acceptance uses real GroupConversationWired sender path with reader lifecycle inbox recovery | Announcement wired send |
 | | announcement media send with zero topic peers stays sent and readers recover intact media refs after resume | Zero-peer media |
 | | 10-B acceptance uses real GroupConversationWired sender path for media + resume fallback | Media resume |
@@ -1518,6 +1650,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | many joined groups resume without bursting recovery work all at once | Batch throttle |
 | | resume drains missed group backlog exactly once across pages | Multi-page drain |
 | | multi page backlog uses cursor continuation without duplication | Cursor pagination |
+| | multi page replay with a tampered timestamp still keeps one stored row | Replay tamper dedup across pages |
 | | long-offline mixed-window recovery keeps retained backlog and never resurrects expired pages | Retention enforcement |
 | | watchdog restart rejoins topics and resumes live delivery | Watchdog recovery |
 | `Section 11 test infrastructure` | publish with zero peers falls back to inbox | Zero-peer fallback |
@@ -1547,6 +1680,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | receiver rejects duplicate invite for group already joined | Duplicate guard |
 | | invite round-trip with multiple members in config | Multi-member config |
 | | GroupInviteListener stores pending invite and explicit accept completes the join flow | Pending accept flow |
+| | accept publishes a durable join event that existing members can render | Durable join timeline |
+| | bridgeError accept later rejoin and drain converge without the pending invite row | Accepted-but-degraded later recovery |
 
 ### 6.9 Announcement Happy Path
 **File:** `test/features/groups/integration/announcement_happy_path_test.dart`
@@ -1663,6 +1798,14 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | `callGroupInboxRetrieveWithCursor` | encodes cursor and page metadata and returns next cursor | Cursor pagination |
 | | rethrows TimeoutException on timeout | Timeout handling |
 | | throws BridgeCommandException on ok:false | Error handling |
+
+### 7.7 Go Bridge Client (group diagnostics subset)
+**File:** `test/core/bridge/go_bridge_client_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| group decryption failure push event reaches diagnostics stream without invoking group message callback | Owned Flutter diagnostics without ghost message routing |
+| group payload parse failure push event reaches diagnostics stream without invoking group message callback | Malformed payload diagnostics without ghost message routing |
 | `BridgeCommandException on ok:false` | throws BridgeCommandException when group:join returns ok:false | Join error |
 | | throws BridgeCommandException when group:join (with config) returns ok:false | Join-config error |
 | | throws BridgeCommandException when group:leave returns ok:false | Leave error |
@@ -1877,6 +2020,14 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | group card media-only GIF message shows thumbnail + GIF label | GIF label |
 | group thread collapsed: tapping avatar navigates | Avatar navigation |
 
+### 8.17a FeedScreen (Feed group subset)
+**File:** `test/features/feed/presentation/screens/feed_screen_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| inline group reaction chips route through the dedicated inspection callback | Inline discussion reaction inspection |
+| announcement reader cards keep inline reaction inspection available while compose stays read-only | Inline announcement-reader parity |
+
 ### 8.18 FeedWired (Feed group subset)
 **File:** `test/features/feed/presentation/screens/feed_wired_test.dart`
 
@@ -1903,6 +2054,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | group inline reply treats zero-peer publish as success and keeps the message sent | Zero-peer send |
 | incremental group updates preserve quoted replies in feed cards | Quote preservation |
 | feed opens announcement admins with a writable group conversation | Announcement write |
+| feed entry keeps group long-press actions aligned with the shared conversation surface | Feed long-press parity |
+| feed entry keeps group reaction inspection aligned with the shared conversation surface | Feed reaction-inspection parity |
 
 ### 8.19 OrbitWired (Orbit group subset)
 **File:** `test/features/orbit/presentation/screens/orbit_wired_test.dart`
@@ -1918,6 +2071,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | pending group invites are visible from the Intros tab and counted in the Orbit badge | Invite badge |
 | accepting a pending group invite from Intros joins the group | Invite accept |
 | all tab renders active groups before archived hydration completes | Archived hydration |
+| orbit entry keeps group long-press actions aligned with the shared conversation surface | Orbit long-press parity |
+| orbit entry keeps group reaction inspection aligned with the shared conversation surface | Orbit reaction-inspection parity |
 
 ### 8.20 Notification Body for Group Messages (Push)
 **File:** `test/features/push/application/notification_body_for_message_test.dart`
@@ -2079,24 +2234,29 @@ Areas of the group chat feature that have **no dedicated test coverage** or only
 - **GroupConversationWired background task skipped tests**: `group_conversation_wired_bg_task_test.dart` exists with 15 tests, but 5 are marked `skip: true` (bg:begin/bg:end lifecycle, announcement media metadata, order-recording bridge). These represent untested background-task coverage holes.
 
 ### 10.4 Integration / E2E
-- **True multi-device E2E**: Multi-device tests use in-memory fakes; no simulator-based multi-device proof exists.
-- **Push notification trigger path**: Group push routing is tested but end-to-end FCM/APNs trigger delivery is not exercised beyond routing.
+- **True multi-device E2E**: Multi-device tests use in-memory fakes in the repo-owned suite. Earlier 2026-04-12 spare iOS proof remains in `/tmp/md004_group_multi_device_real_rerun8_20260412.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/group_multi_device_real_primary_ios.log`.
+- **Push notification trigger path**: Group push routing is tested. Earlier 2026-04-12 spare iOS proof remains in `/tmp/ux009_notification_open_ui_smoke_20260412_rerun16e_drive.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/notification_open_ui_primary_ios.log`.
 - **Network partition healing**: Tested via `temporary partition replays missed backlog` in resume recovery, but no dedicated partition-heal scenario like the intro feature's multi-simulator proof.
 
 ### 10.5 Security
-- **Replay attack on group messages**: Content dedup and messageId dedup are tested, but no explicit replay-attack scenario with tampered timestamps or reordered envelopes.
-- **Tampered group message payload**: No dedicated test for tampered ciphertext rejection at the group message level (unlike intro feature's tampered v2 test). Note: Go-side does test tampered ciphertext, tampered nonce, and wrong-key decryption in `crypto/group_test.go`.
-- **Key rotation race conditions**: No stress test for concurrent key epoch conflicts across multiple admins.
+- **Replay attack on group messages**: Now covered by `handle_incoming_group_message_use_case_test.dart` and `group_resume_recovery_test.dart`, which pin timestamp-tampered replay dedup plus remove/dissolve cutoff enforcement on the Flutter-visible receive path.
+- **Tampered group message payload**: Now covered by `pubsub_decryption_failure_test.go`, which pins wrong-key, tampered-nonce, tampered-ciphertext, and malformed-payload rejection without any `group_message:received` event, and `go_bridge_client_test.dart`, which keeps the owned Flutter diagnostics route pinned.
+- **Key rotation race conditions**: Now covered at the repo-owned convergence seam by `group_key_update_listener_test.dart`, which collapses same-generation conflicts to one stored key and keeps higher-epoch convergence explicit, while `send_group_message_use_case_test.dart` and `group_resume_recovery_test.dart` keep the winning epoch sendable.
+- **Group observability contract drift**: Now covered by `send_group_message_use_case_test.dart`, `rejoin_group_topics_use_case_test.dart`, `drain_group_offline_inbox_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `retry_failed_group_inbox_stores_use_case_test.dart`, which pin stable begin/success/skip/error/timing flow-event names and required detail keys on the shipped Flutter-owned group send/recovery/retry paths.
 
 ### 10.6 Go / Dart Boundary
-- **Description pass-through**: Go `GroupCreate()` does not parse `description`; no Go-side test verifies description round-trip.
-- **TopicName gap**: Go does not return `topicName` in the create response; no test asserts the mismatch between Go's real `/mknoon/group/$groupId` and Dart's `group-$groupId` fallback.
+- **Create-time description remains intentionally unsupported**: Go `GroupCreate()` still does not parse `description`, and the shipped create surface does not expose it. Any future scope change will need new Go/Dart round-trip proof.
 
 ---
 
 ## 11. E2E / Device Tests
 
 Tests in `integration_test/` that run on a real device or simulator via `flutter test integration_test/`.
+
+Primary simulator / emulator targets for the remaining exploratory/device-proof rows:
+- Android primary pair: `emulator-5554`, `emulator-5556`
+- iOS primary pair: `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` (`iPhone Air`), `5BA69F1C-B112-47BE-B1FF-8C1003728C8F` (`iPhone 17`)
+- iOS spare validation: `1B098DFF-6294-407A-A209-BBF360893485` (`iPhone 16e`)
 
 ### 11.1 Group Recovery E2E
 **File:** `integration_test/group_recovery_e2e_test.dart`
@@ -2196,7 +2356,7 @@ Covers topic creation, validator logic, config updates, discovery, and publish o
 | TestGroupPeerDiscoveryLoop_UsesWarmRetryImmediatelyAfterPartialInitialRecovery | Warm retry timing |
 
 ### 12.5 Key Rotation Grace Period
-**File:** `go-mknoon/node/pubsub_key_rotation_grace_test.go` (6 tests)
+**File:** `go-mknoon/node/pubsub_key_rotation_grace_test.go` (7 tests)
 
 | Test | What it covers |
 |------|----------------|
@@ -2206,14 +2366,28 @@ Covers topic creation, validator logic, config updates, discovery, and publish o
 | TestUpdateGroupKey_PreservesPreviousKeyAndGraceDeadline | Grace state preservation |
 | TestJoinGroupTopic_InitialKeyHasNoGraceState | Initial key no grace |
 | TestHandleGroupSubscription_DecryptsPreviousEpochDuringGrace | Decrypt with old key |
+| TestHandleGroupSubscription_DropsPreviousEpochAfterGraceExpires | Old key after grace stays non-deliverable |
 
 ### 12.6 Decryption Failure Events
-**File:** `go-mknoon/node/pubsub_decryption_failure_test.go` (2 tests)
+**File:** `go-mknoon/node/pubsub_decryption_failure_test.go` (4 tests)
 
 | Test | What it covers |
 |------|----------------|
 | TestHandleGroupSubscription_EmitsDecryptionFailedEvent | Decryption failure event |
 | TestHandleGroupSubscription_EmitsPayloadParseFailedEvent | Parse failure event |
+| TestHandleGroupSubscription_EmitsDecryptionFailedEventForTamperedNonce | Wrong-nonce rejection with no ghost message event |
+| TestHandleGroupSubscription_EmitsDecryptionFailedEventForTamperedCiphertext | Tampered-ciphertext rejection with no ghost message event |
+
+### 12.6A Shared Security Proof Harness
+**File:** `go-mknoon/node/group_security_harness_test.go` (1 test)
+
+This file also owns the shared raw-envelope mutation, local-node connect/publish,
+event wait, and grace-fixture helpers reused by the decryption-failure and
+key-rotation suites.
+
+| Test | What it covers |
+|------|----------------|
+| TestMutateGroupEnvelope_RewritesEncryptedFieldsWithoutChangingRoutingMetadata | Raw envelope mutation helper preserves routing metadata while tampering encrypted fields for later security-row proofs |
 
 ### 12.7 Group Inbox
 **File:** `go-mknoon/node/group_inbox_test.go` (8 tests)

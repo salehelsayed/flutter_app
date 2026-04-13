@@ -5,6 +5,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/introduction/application/handle_mutual_acceptance_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
 /// Reconciles stored pending introductions against current derived truth.
 ///
@@ -19,6 +20,7 @@ Future<int> expireOldIntroductions({
   ContactRepository? contactRepo,
   MessageRepository? messageRepo,
   Bridge? bridge,
+  DownloadProfilePictureFn? downloadProfilePictureFn,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -28,6 +30,7 @@ Future<int> expireOldIntroductions({
 
   final pending = await introRepo.getPendingIntroductionsForUser(peerId);
   int repairedCount = 0;
+  final repairedMutualAcceptanceIds = <String>{};
 
   for (final intro in pending) {
     // The pending loader also returns `alreadyConnected` rows for current
@@ -55,12 +58,33 @@ Future<int> expireOldIntroductions({
       final repairedIntro =
           await introRepo.getIntroduction(intro.id) ??
           intro.copyWith(status: derived);
+      repairedMutualAcceptanceIds.add(repairedIntro.id);
       await handleMutualAcceptance(
         introduction: repairedIntro,
         contactRepo: contactRepo,
         ownPeerId: peerId,
         messageRepo: messageRepo,
         bridge: bridge,
+        downloadProfilePictureFn: downloadProfilePictureFn,
+      );
+    }
+  }
+
+  if (contactRepo != null) {
+    final mutualAccepted = await _loadMutualAcceptedIntroductions(
+      introRepo: introRepo,
+      peerId: peerId,
+    );
+    for (final intro in mutualAccepted) {
+      if (repairedMutualAcceptanceIds.contains(intro.id)) {
+        continue;
+      }
+      await retryMutualAcceptanceAvatarSettlement(
+        introduction: intro,
+        contactRepo: contactRepo,
+        ownPeerId: peerId,
+        bridge: bridge,
+        downloadProfilePictureFn: downloadProfilePictureFn,
       );
     }
   }
@@ -72,4 +96,29 @@ Future<int> expireOldIntroductions({
   );
 
   return repairedCount;
+}
+
+Future<List<IntroductionModel>> _loadMutualAcceptedIntroductions({
+  required IntroductionRepository introRepo,
+  required String peerId,
+}) async {
+  final byId = <String, IntroductionModel>{};
+  final recipientRows = await introRepo.getIntroductionsByRecipient(peerId);
+  final introducedRows = await introRepo.getIntroductionsByIntroduced(peerId);
+
+  for (final intro in [...recipientRows, ...introducedRows]) {
+    if (intro.status == IntroductionOverallStatus.mutualAccepted) {
+      byId[intro.id] = intro;
+    }
+  }
+
+  final rows = byId.values.toList(growable: false)
+    ..sort((a, b) {
+      final createdAtCompare = a.createdAt.compareTo(b.createdAt);
+      if (createdAtCompare != 0) {
+        return createdAtCompare;
+      }
+      return a.id.compareTo(b.id);
+    });
+  return rows;
 }

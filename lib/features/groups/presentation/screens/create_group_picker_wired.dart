@@ -17,6 +17,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_screen.dart';
@@ -46,6 +47,7 @@ class CreateGroupPickerWired extends StatefulWidget {
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepo;
+  final GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository;
 
   const CreateGroupPickerWired({
     super.key,
@@ -65,6 +67,7 @@ class CreateGroupPickerWired extends StatefulWidget {
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
     this.reactionRepo,
+    this.groupReactionReplayOutboxRepository,
   });
 
   @override
@@ -141,6 +144,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       );
 
       if (!mounted) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
 
       // Navigate to conversation, replacing this screen
       Navigator.of(context).pushReplacement(
@@ -162,10 +166,18 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             videoQualityPreference: widget.videoQualityPreference,
             audioRecorderService: widget.audioRecorderService,
             reactionRepo: widget.reactionRepo,
+            groupReactionReplayOutboxRepository:
+                widget.groupReactionReplayOutboxRepository,
           ),
         ),
         result: FeedRouteChanges(changedGroupIds: {result.group.id}),
       );
+      final warningMessage = result.buildCreateWarningMessage();
+      if (warningMessage != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          messenger?.showSnackBar(SnackBar(content: Text(warningMessage)));
+        });
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

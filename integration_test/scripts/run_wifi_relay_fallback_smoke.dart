@@ -3,7 +3,8 @@
 //
 // Coordinates between a Go CLI test peer and a Flutter integration test
 // running on an iOS simulator or Android emulator. Focused on WiFi->relay
-// fallback with retry policy and artifact capture.
+// fallback with retry policy and artifact capture. Baseline/recovery live
+// delivery may use a direct path when the discovered peer is reachable.
 //
 // NON-BLOCKING: runs nightly or before release, not on every PR.
 //
@@ -34,6 +35,14 @@ import '_android_app_package.dart';
 const _goMknoonDir = 'go-mknoon';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
 final _appPackage = resolveAndroidAppPackage();
+
+List<String> _relayDartDefines() {
+  final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
+  if (relayAddresses == null || relayAddresses.trim().isEmpty) {
+    return const [];
+  }
+  return ['--dart-define=MKNOON_RELAY_ADDRESSES=${relayAddresses.trim()}'];
+}
 
 // ---------------------------------------------------------------------------
 // Run-scoped paths
@@ -530,14 +539,14 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
   await Future.delayed(const Duration(seconds: 2));
 
-  // --- S1: Send v1 message to Flutter (baseline relay chat) ---
+  // --- S1: Send baseline live message to Flutter ---
   _log('ORCH', 'Scenario S1: Sending v1 message to Flutter...');
   try {
     await peer.commandOk('send_v1', {
       'peerId': flutterPeerId,
-      'text': 'S1: Hello from CLI smoke peer via relay',
+      'text': 'S1: Hello from CLI smoke peer',
     });
-    results.add(_OrchestratorResult('S1', true, 'sent v1 via relay'));
+    results.add(_OrchestratorResult('S1', true, 'sent baseline live message'));
     _log('ORCH', 'S1: sent');
   } catch (e) {
     results.add(_OrchestratorResult('S1', false, 'send failed: $e'));
@@ -742,6 +751,7 @@ Future<bool> _runOnce({
   required IOSink? logSink,
 }) async {
   final isAndroid = platform == 'android';
+  final useFlutterDrive = platform == 'ios' && _isIosDeviceId(deviceId);
 
   // Create unique temp directory for this run.
   final hostTempDir = await Directory.systemTemp.createTemp('smoke_');
@@ -822,11 +832,20 @@ Future<bool> _runOnce({
     _log('ORCH', 'Launching Flutter smoke test...');
 
     final flutterArgs = [
-      'test',
-      'integration_test/wifi_relay_fallback_smoke_test.dart',
+      if (useFlutterDrive) ...[
+        'drive',
+        '--driver=test_driver/integration_test.dart',
+        '--target=integration_test/wifi_relay_fallback_smoke_test.dart',
+        '--publish-port',
+      ] else ...[
+        'test',
+        '--no-dds',
+        'integration_test/wifi_relay_fallback_smoke_test.dart',
+      ],
       '--dart-define=CLI_PEER_FIXTURE=${paths.cliFixture}',
       '--dart-define=E2E_TEMP_DIR=$deviceDir',
       '--dart-define=E2E_WRITE_DIR=$appWriteDir',
+      ..._relayDartDefines(),
     ];
     if (deviceId != null) {
       flutterArgs.addAll(['-d', deviceId]);
@@ -1064,6 +1083,14 @@ void _cleanupTempDir(Directory dir) {
   try {
     if (dir.existsSync()) dir.deleteSync(recursive: true);
   } catch (_) {}
+}
+
+bool _isIosDeviceId(String? deviceId) {
+  if (deviceId == null) return false;
+  return RegExp(
+    r'^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})$',
+    caseSensitive: false,
+  ).hasMatch(deviceId);
 }
 
 Future<String?> _detectDevice(String platform) async {

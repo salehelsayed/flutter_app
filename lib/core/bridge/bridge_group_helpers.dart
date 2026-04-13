@@ -912,7 +912,7 @@ Future<Map<String, dynamic>> callGroupEncrypt(
 
   final request = {
     'cmd': 'group.encrypt',
-    'payload': {'key': groupKey, 'plaintext': plaintext},
+    'payload': {'groupKey': groupKey, 'plaintext': plaintext},
   };
 
   try {
@@ -961,7 +961,11 @@ Future<String> callGroupDecrypt(
 
   final request = {
     'cmd': 'group.decrypt',
-    'payload': {'key': groupKey, 'ciphertext': ciphertext, 'nonce': nonce},
+    'payload': {
+      'groupKey': groupKey,
+      'ciphertext': ciphertext,
+      'nonce': nonce,
+    },
   };
 
   try {

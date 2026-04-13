@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -81,6 +82,12 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
     'dissolvedAt': eventAt.toIso8601String(),
     'dissolvedBy': actorPeerId,
   });
+  final timelineMessage = buildGroupDissolvedTimelineMessage(
+    groupId: groupId,
+    senderId: actorPeerId,
+    senderUsername: actorUsername,
+    eventAt: eventAt,
+  );
 
   try {
     await callGroupPublish(
@@ -110,16 +117,18 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
       'groupId': groupId,
       'senderId': actorPeerId,
       'senderUsername': actorUsername,
-      'keyEpoch': 0,
       'text': sysText,
       'timestamp': eventAt.toIso8601String(),
     });
 
     try {
-      await callGroupInboxStore(
-        bridge,
-        groupId,
-        inboxPayload,
+      await storeGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: inboxPayload,
+        messageId: timelineMessage.id,
         recipientPeerIds: recipientPeerIds,
         pushTitle: group.name,
         pushBody: buildGroupDissolvedTimelineText(actorUsername),
@@ -145,14 +154,7 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
   );
   await groupRepo.updateGroup(updatedGroup);
 
-  await msgRepo.saveMessage(
-    buildGroupDissolvedTimelineMessage(
-      groupId: groupId,
-      senderId: actorPeerId,
-      senderUsername: actorUsername,
-      eventAt: eventAt,
-    ),
-  );
+  await msgRepo.saveMessage(timelineMessage);
 
   try {
     await callGroupLeave(bridge, groupId);

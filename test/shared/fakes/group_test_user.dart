@@ -23,8 +23,10 @@ import 'package:flutter_app/features/groups/application/update_group_member_role
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 
 import '../../core/bridge/fake_bridge.dart';
+import 'fake_group_reaction_replay_outbox_repository.dart';
 import 'fake_group_pubsub_network.dart';
 import 'in_memory_media_attachment_repository.dart';
 import 'in_memory_group_message_repository.dart';
@@ -43,6 +45,7 @@ class GroupTestUser {
   final InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   final GroupMessageListener groupMessageListener;
   final ReactionRepository? reactionRepo;
+  final GroupReactionReplayOutboxRepository reactionReplayOutboxRepo;
   final FakeGroupPubSubNetwork _network;
   final StreamController<Map<String, dynamic>> _incomingController;
   final StreamController<Map<String, dynamic>> _incomingReactionController;
@@ -59,6 +62,7 @@ class GroupTestUser {
     required this.mediaAttachmentRepo,
     required this.groupMessageListener,
     required this.reactionRepo,
+    required this.reactionReplayOutboxRepo,
     required FakeGroupPubSubNetwork network,
     required StreamController<Map<String, dynamic>> incomingController,
     required StreamController<Map<String, dynamic>> incomingReactionController,
@@ -74,6 +78,7 @@ class GroupTestUser {
     FakeBridge? bridge,
     MediaFileManager? mediaFileManager,
     ReactionRepository? reactionRepo,
+    GroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
@@ -114,6 +119,9 @@ class GroupTestUser {
       mediaAttachmentRepo: mediaAttachmentRepo,
       groupMessageListener: listener,
       reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo:
+          reactionReplayOutboxRepo ??
+          FakeGroupReactionReplayOutboxRepository(),
       network: network,
       incomingController: controller,
       incomingReactionController: reactionController,
@@ -297,8 +305,8 @@ class GroupTestUser {
     }, senderDeviceId: deviceId);
   }
 
-  /// Leaves a group locally and, when another admin remains, broadcasts the
-  /// same membership update peers rely on for the multi-admin continuity path.
+  /// Leaves a group locally and, when that leave is allowed, broadcasts the
+  /// same membership update peers rely on for durable membership history.
   Future<void> leaveGroup(String groupId) async {
     final group = await groupRepo.getGroup(groupId);
     final members = await groupRepo.getMembers(groupId);
@@ -306,7 +314,9 @@ class GroupTestUser {
         .where((member) => member.role == MemberRole.admin)
         .length;
 
-    if (group?.myRole == GroupRole.admin && adminCount > 1) {
+    final shouldBroadcastSelfRemoval =
+        group != null && !(group.myRole == GroupRole.admin && adminCount <= 1);
+    if (shouldBroadcastSelfRemoval) {
       final leftAt = DateTime.now().toUtc();
       final remainingMembers = members
           .where((member) => member.peerId != peerId)
@@ -561,6 +571,7 @@ class GroupTestUser {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         reactionRepo: repo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
         groupId: groupId,
         messageId: messageId,
         emoji: emoji,

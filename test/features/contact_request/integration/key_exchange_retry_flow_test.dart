@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -16,7 +17,8 @@ IdentityModel _makeIdentity({String? mlKemPublicKey = 'own-mlkem-pk'}) {
     peerId: 'alice-peer-id-1234567890',
     publicKey: 'alice-public-key',
     privateKey: 'alice-private-key',
-    mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+    mnemonic12:
+        'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
     mlKemPublicKey: mlKemPublicKey,
     mlKemSecretKey: mlKemPublicKey != null ? 'alice-mlkem-sk' : null,
     createdAt: '2024-01-01T00:00:00Z',
@@ -77,9 +79,7 @@ void main() {
   group('Key exchange retry flow', () {
     test('full offline→online retry sends to contact with null key', () async {
       // Alice has Bob as contact with null ML-KEM key
-      contactRepo.seed([
-        _makeContact('bob-peer-id-1234567890'),
-      ]);
+      contactRepo.seed([_makeContact('bob-peer-id-1234567890')]);
 
       // Simulate coming back online — call retry directly
       final sent = await retryIncompleteKeyExchanges(
@@ -153,34 +153,34 @@ void main() {
       expect(p2pService.storeInInboxCallCount, 3);
     });
 
-    test('command sequence: payload.sign → contactrequest.encrypt per contact',
-        () async {
-      contactRepo.seed([
-        _makeContact('bob-peer-id-1234567890'),
-        _makeContact('carol-peer-id-1234567890'),
-      ]);
+    test(
+      'command sequence: payload.sign → contactrequest.encrypt per contact',
+      () async {
+        contactRepo.seed([
+          _makeContact('bob-peer-id-1234567890'),
+          _makeContact('carol-peer-id-1234567890'),
+        ]);
 
-      await retryIncompleteKeyExchanges(
-        contactRepo: contactRepo,
-        identityRepo: identityRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+        await retryIncompleteKeyExchanges(
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
 
-      // 2 contacts × 2 commands each = 4 commands
-      expect(bridge.commandLog.length, equals(4));
-      // First contact: sign then encrypt
-      expect(bridge.commandLog[0], equals('payload.sign'));
-      expect(bridge.commandLog[1], equals('contactrequest.encrypt'));
-      // Second contact: sign then encrypt
-      expect(bridge.commandLog[2], equals('payload.sign'));
-      expect(bridge.commandLog[3], equals('contactrequest.encrypt'));
-    });
+        // 2 contacts × 2 commands each = 4 commands
+        expect(bridge.commandLog.length, equals(4));
+        // First contact: sign then encrypt
+        expect(bridge.commandLog[0], equals('payload.sign'));
+        expect(bridge.commandLog[1], equals('contactrequest.encrypt'));
+        // Second contact: sign then encrypt
+        expect(bridge.commandLog[2], equals('payload.sign'));
+        expect(bridge.commandLog[3], equals('contactrequest.encrypt'));
+      },
+    );
 
     test('stored inbox message is v2 encrypted envelope', () async {
-      contactRepo.seed([
-        _makeContact('bob-peer-id-1234567890'),
-      ]);
+      contactRepo.seed([_makeContact('bob-peer-id-1234567890')]);
 
       await retryIncompleteKeyExchanges(
         contactRepo: contactRepo,
@@ -191,9 +191,14 @@ void main() {
 
       expect(p2pService.lastStoreInInboxMessage, isNotNull);
       final envelope =
-          jsonDecode(p2pService.lastStoreInInboxMessage!) as Map<String, dynamic>;
+          jsonDecode(p2pService.lastStoreInInboxMessage!)
+              as Map<String, dynamic>;
       expect(envelope['type'], equals('contact_request'));
       expect(envelope['version'], equals('2'));
+      expect(
+        envelope['intent'],
+        equals(ContactRequestSendIntent.keyExchangeRetry.wireValue),
+      );
       expect(envelope['msgId'], isA<String>());
       expect(envelope['ts'], isA<String>());
       expect(envelope['encrypted'], isA<Map>());

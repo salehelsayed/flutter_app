@@ -24,13 +24,15 @@ class MessageContextOverlay extends StatefulWidget {
   final Rect anchorRect;
   final Widget? selectedMessage;
   final String? currentEmoji;
+  final bool showReactionBar;
+  final bool showReplyAction;
   final bool showEditAction;
   final bool showCopyAction;
   final bool showDeleteAction;
   final VoidCallback onDismiss;
-  final void Function(String emoji) onReactionSelected;
-  final VoidCallback onPlusTap;
-  final VoidCallback onReplyTap;
+  final void Function(String emoji)? onReactionSelected;
+  final VoidCallback? onPlusTap;
+  final VoidCallback? onReplyTap;
   final VoidCallback? onEditTap;
   final VoidCallback? onCopyTap;
   final VoidCallback? onDeleteTap;
@@ -40,13 +42,15 @@ class MessageContextOverlay extends StatefulWidget {
     required this.anchorRect,
     this.selectedMessage,
     this.currentEmoji,
+    this.showReactionBar = true,
+    this.showReplyAction = true,
     this.showEditAction = false,
     this.showCopyAction = false,
     this.showDeleteAction = false,
     required this.onDismiss,
-    required this.onReactionSelected,
-    required this.onPlusTap,
-    required this.onReplyTap,
+    this.onReactionSelected,
+    this.onPlusTap,
+    this.onReplyTap,
     this.onEditTap,
     this.onCopyTap,
     this.onDeleteTap,
@@ -72,11 +76,18 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
     final topPadding = mediaQuery.viewPadding.top + 8;
     final bottomPadding = mediaQuery.viewPadding.bottom + 8;
     final actionCount =
-        1 +
+        (widget.showReplyAction ? 1 : 0) +
         (widget.showEditAction ? 1 : 0) +
         (widget.showCopyAction ? 1 : 0) +
         (widget.showDeleteAction ? 1 : 0);
-    final menuHeight = actionCount * MessageContextOverlay._menuActionHeight;
+    final hasMenu = actionCount > 0;
+    final menuHeight = hasMenu
+        ? actionCount * MessageContextOverlay._menuActionHeight
+        : 0.0;
+    final reactionBlockHeight = widget.showReactionBar
+        ? MessageContextOverlay._reactionBarHeight +
+              MessageContextOverlay._verticalGap
+        : 0.0;
     final selectedMessageWidth = widget.anchorRect.width > 0
         ? widget.anchorRect.width
         : size.width - 32;
@@ -87,15 +98,11 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
       ((widget.anchorRect.center.dx / size.width) * 2 - 1).clamp(-1.0, 1.0),
       -1,
     );
-    final minSelectedMessageTop =
-        topPadding +
-        MessageContextOverlay._reactionBarHeight +
-        MessageContextOverlay._verticalGap;
+    final minSelectedMessageTop = topPadding + reactionBlockHeight;
     final maxSelectedMessageTop =
         size.height -
         bottomPadding -
-        menuHeight -
-        MessageContextOverlay._verticalGap -
+        (hasMenu ? menuHeight + MessageContextOverlay._verticalGap : 0.0) -
         selectedMessageHeight;
     final selectedMessageTop = widget.selectedMessage != null
         ? _clampToViewport(
@@ -104,32 +111,38 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
             max: maxSelectedMessageTop,
           )
         : null;
-    final reactionBarTop = selectedMessageTop != null
-        ? selectedMessageTop -
-              MessageContextOverlay._reactionBarHeight -
-              MessageContextOverlay._verticalGap
-        : _clampToViewport(
-            widget.anchorRect.top -
-                MessageContextOverlay._reactionBarHeight -
-                MessageContextOverlay._verticalGap,
-            min: topPadding,
-            max:
-                size.height -
-                MessageContextOverlay._reactionBarHeight -
-                bottomPadding,
-          );
-    final menuTop = selectedMessageTop != null
-        ? selectedMessageTop +
-              selectedMessageHeight +
-              MessageContextOverlay._verticalGap
-        : _clampToViewport(
-            widget.anchorRect.bottom + MessageContextOverlay._verticalGap,
-            min:
-                reactionBarTop +
-                MessageContextOverlay._reactionBarHeight +
-                MessageContextOverlay._verticalGap,
-            max: size.height - menuHeight - bottomPadding,
-          );
+    final reactionBarTop = widget.showReactionBar
+        ? (selectedMessageTop != null
+              ? selectedMessageTop -
+                    MessageContextOverlay._reactionBarHeight -
+                    MessageContextOverlay._verticalGap
+              : _clampToViewport(
+                  widget.anchorRect.top -
+                      MessageContextOverlay._reactionBarHeight -
+                      MessageContextOverlay._verticalGap,
+                  min: topPadding,
+                  max:
+                      size.height -
+                      MessageContextOverlay._reactionBarHeight -
+                      bottomPadding,
+                ))
+        : null;
+    final menuTop = hasMenu
+        ? (selectedMessageTop != null
+              ? selectedMessageTop +
+                    selectedMessageHeight +
+                    MessageContextOverlay._verticalGap
+              : _clampToViewport(
+                  widget.anchorRect.bottom + MessageContextOverlay._verticalGap,
+                  min:
+                      (reactionBarTop != null
+                          ? reactionBarTop +
+                                MessageContextOverlay._reactionBarHeight +
+                                MessageContextOverlay._verticalGap
+                          : topPadding),
+                  max: size.height - menuHeight - bottomPadding,
+                ))
+        : null;
 
     return Material(
       key: MessageContextOverlay.overlayKey,
@@ -175,46 +188,53 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
                 ),
               ),
             ),
-          Padding(
-            padding: EdgeInsets.only(top: reactionBarTop),
-            child: Align(
-              alignment: anchorAlignment,
-              child: ReactionBar(
-                key: MessageContextOverlay.reactionBarKey,
-                currentEmoji: widget.currentEmoji,
-                inline: true,
-                onReactionSelected: (emoji) =>
-                    _handleOnce(() => widget.onReactionSelected(emoji)),
-                onPlusTap: () => _handleOnce(widget.onPlusTap),
-                onDismiss: () => _handleOnce(widget.onDismiss),
-              ),
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.only(top: menuTop),
-            child: Align(
-              alignment: anchorAlignment,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 220),
-                child: _ContextMenuCard(
-                  key: MessageContextOverlay.menuKey,
-                  showEditAction: widget.showEditAction,
-                  showCopyAction: widget.showCopyAction,
-                  showDeleteAction: widget.showDeleteAction,
-                  onReplyTap: () => _handleOnce(widget.onReplyTap),
-                  onEditTap: widget.onEditTap != null
-                      ? () => _handleOnce(widget.onEditTap!)
-                      : null,
-                  onCopyTap: widget.onCopyTap != null
-                      ? () => _handleOnce(widget.onCopyTap!)
-                      : null,
-                  onDeleteTap: widget.onDeleteTap != null
-                      ? () => _handleOnce(widget.onDeleteTap!)
-                      : null,
+          if (reactionBarTop != null &&
+              widget.onReactionSelected != null &&
+              widget.onPlusTap != null)
+            Padding(
+              padding: EdgeInsets.only(top: reactionBarTop),
+              child: Align(
+                alignment: anchorAlignment,
+                child: ReactionBar(
+                  key: MessageContextOverlay.reactionBarKey,
+                  currentEmoji: widget.currentEmoji,
+                  inline: true,
+                  onReactionSelected: (emoji) =>
+                      _handleOnce(() => widget.onReactionSelected!(emoji)),
+                  onPlusTap: () => _handleOnce(widget.onPlusTap!),
+                  onDismiss: () => _handleOnce(widget.onDismiss),
                 ),
               ),
             ),
-          ),
+          if (menuTop != null)
+            Padding(
+              padding: EdgeInsets.only(top: menuTop),
+              child: Align(
+                alignment: anchorAlignment,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 220),
+                  child: _ContextMenuCard(
+                    key: MessageContextOverlay.menuKey,
+                    showReplyAction: widget.showReplyAction,
+                    showEditAction: widget.showEditAction,
+                    showCopyAction: widget.showCopyAction,
+                    showDeleteAction: widget.showDeleteAction,
+                    onReplyTap: widget.onReplyTap != null
+                        ? () => _handleOnce(widget.onReplyTap!)
+                        : null,
+                    onEditTap: widget.onEditTap != null
+                        ? () => _handleOnce(widget.onEditTap!)
+                        : null,
+                    onCopyTap: widget.onCopyTap != null
+                        ? () => _handleOnce(widget.onCopyTap!)
+                        : null,
+                    onDeleteTap: widget.onDeleteTap != null
+                        ? () => _handleOnce(widget.onDeleteTap!)
+                        : null,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -231,20 +251,22 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
 }
 
 class _ContextMenuCard extends StatelessWidget {
+  final bool showReplyAction;
   final bool showEditAction;
   final bool showCopyAction;
   final bool showDeleteAction;
-  final VoidCallback onReplyTap;
+  final VoidCallback? onReplyTap;
   final VoidCallback? onEditTap;
   final VoidCallback? onCopyTap;
   final VoidCallback? onDeleteTap;
 
   const _ContextMenuCard({
     super.key,
+    required this.showReplyAction,
     required this.showEditAction,
     required this.showCopyAction,
     required this.showDeleteAction,
-    required this.onReplyTap,
+    this.onReplyTap,
     this.onEditTap,
     this.onCopyTap,
     this.onDeleteTap,
@@ -254,12 +276,13 @@ class _ContextMenuCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final actions = <Widget>[
-      _ContextMenuAction(
-        key: MessageContextOverlay.replyActionKey,
-        icon: Icons.reply_rounded,
-        label: l10n.conversation_context_reply,
-        onTap: onReplyTap,
-      ),
+      if (showReplyAction)
+        _ContextMenuAction(
+          key: MessageContextOverlay.replyActionKey,
+          icon: Icons.reply_rounded,
+          label: l10n.conversation_context_reply,
+          onTap: onReplyTap,
+        ),
       if (showEditAction)
         _ContextMenuAction(
           key: MessageContextOverlay.editActionKey,

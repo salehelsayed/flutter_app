@@ -20,6 +20,7 @@ Future<GroupModel> createGroup({
   required String creatorPeerId,
   required String creatorPublicKey,
   required String creatorMlKemPublicKey,
+  String? creatorUsername,
   String? description,
 }) async {
   emitFlowEvent(
@@ -56,7 +57,8 @@ Future<GroupModel> createGroup({
 
   // 2. Parse result
   final groupId = result['groupId'] as String? ?? const Uuid().v4();
-  final topicName = result['topicName'] as String? ?? 'group-$groupId';
+  final topicName =
+      result['topicName'] as String? ?? '/mknoon/group/$groupId';
   final now = DateTime.now().toUtc();
 
   // 3. Create GroupModel
@@ -78,7 +80,7 @@ Future<GroupModel> createGroup({
   final selfMember = GroupMember(
     groupId: groupId,
     peerId: creatorPeerId,
-    username: null,
+    username: creatorUsername,
     role: MemberRole.admin,
     publicKey: creatorPublicKey,
     mlKemPublicKey: creatorMlKemPublicKey,
@@ -114,6 +116,10 @@ Future<GroupModel> createGroup({
         event: 'GROUP_CREATE_USE_CASE_KEYGEN_ERROR',
         details: {'error': e.toString()},
       );
+      await _rollbackCreatedGroup(groupRepo, groupId);
+      throw StateError(
+        'Group creation did not finish because no usable group key was available.',
+      );
     }
   }
 
@@ -126,4 +132,13 @@ Future<GroupModel> createGroup({
   );
 
   return group;
+}
+
+Future<void> _rollbackCreatedGroup(
+  GroupRepository groupRepo,
+  String groupId,
+) async {
+  await groupRepo.removeAllMembers(groupId);
+  await groupRepo.removeAllKeys(groupId);
+  await groupRepo.deleteGroup(groupId);
 }

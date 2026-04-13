@@ -39,10 +39,12 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
@@ -4915,16 +4917,12 @@ void main() {
       await pumpFeedFrames(tester);
 
       expect(bridge.commandLog, contains('bg:begin'));
+      expect(bridge.commandLog, contains('group.encrypt'));
       expect(bridge.commandLog, contains('group:publish'));
-      expect(bridge.commandLog, contains('group:inboxStore'));
       expect(bridge.commandLog, contains('bg:end'));
-      _expectCommandOrder(bridge.commandLog, 'bg:begin', 'group:publish');
-      _expectCommandOrder(
-        bridge.commandLog,
-        'group:publish',
-        'group:inboxStore',
-      );
-      _expectCommandOrder(bridge.commandLog, 'group:inboxStore', 'bg:end');
+      _expectCommandOrder(bridge.commandLog, 'bg:begin', 'group.encrypt');
+      _expectCommandOrder(bridge.commandLog, 'group.encrypt', 'group:publish');
+      _expectCommandOrder(bridge.commandLog, 'group:publish', 'bg:end');
     });
 
     testWidgets(
@@ -5721,6 +5719,179 @@ void main() {
     );
 
     testWidgets(
+      'feed entry keeps group long-press actions aligned with the shared conversation surface',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final feedGroup = GroupModel(
+          id: 'g-feed-actions',
+          name: 'Feed Actions Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g-feed-actions',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin-peer',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(feedGroup);
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-feed-actions-1',
+            groupId: feedGroup.id,
+            senderPeerId: 'other-peer',
+            senderUsername: 'OtherUser',
+            text: 'Feed action message',
+            timestamp: DateTime.utc(2026, 2, 1, 11),
+            createdAt: DateTime.utc(2026, 2, 1, 11),
+            isIncoming: true,
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('View earlier messages'));
+        await pumpFeedFrames(tester, count: 4);
+
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(find.text('Feed action message'), findsWidgets);
+
+        await tester.longPress(find.text('Feed action message').last);
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'feed entry keeps group reaction inspection aligned with the shared conversation surface',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final reactionRepo = FakeReactionRepository();
+        final feedGroup = GroupModel(
+          id: 'g-feed-reactions',
+          name: 'Feed Reactions Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g-feed-reactions',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin-peer',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(feedGroup);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: feedGroup.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 2, 1, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: feedGroup.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 2, 1, 10, 1),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-feed-reaction-1',
+            groupId: feedGroup.id,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'Feed reaction message',
+            timestamp: DateTime.utc(2026, 2, 1, 11),
+            createdAt: DateTime.utc(2026, 2, 1, 11),
+            isIncoming: true,
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-feed-self',
+            messageId: 'gm-feed-reaction-1',
+            emoji: '🔥',
+            senderPeerId: testIdentity.peerId,
+            timestamp: DateTime.utc(2026, 2, 1, 11, 1).toIso8601String(),
+            createdAt: DateTime.utc(2026, 2, 1, 11, 1).toIso8601String(),
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-feed-bob',
+            messageId: 'gm-feed-reaction-1',
+            emoji: '🔥',
+            senderPeerId: 'peer-bob',
+            timestamp: DateTime.utc(2026, 2, 1, 11, 2).toIso8601String(),
+            createdAt: DateTime.utc(2026, 2, 1, 11, 2).toIso8601String(),
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            reactionRepository: reactionRepo,
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await tester.tap(find.text('View earlier messages'));
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.byType(GroupConversationWired), findsOneWidget);
+        expect(find.text('Feed reaction message'), findsWidgets);
+        expect(find.textContaining('🔥', skipOffstage: false), findsWidgets);
+        await tester.tap(find.textContaining('🔥', skipOffstage: false).last);
+        await pumpFeedFrames(tester);
+
+        expect(find.byKey(GroupReactionDetailsSheet.sheetKey), findsOneWidget);
+        expect(
+          find.byKey(GroupReactionDetailsSheet.rowKey(testIdentity.peerId)),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(GroupReactionDetailsSheet.rowKey('peer-bob')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'feed delete-for-me removes the thread row and keeps the contact card',
       (tester) async {
         tester.view.physicalSize = const Size(390, 844);
@@ -6487,6 +6658,9 @@ class _GatedBridge extends FakeBridge {
       lastCommand = cmd;
       commandLog.add(cmd!);
       return '';
+    }
+    if (cmd == 'group.encrypt') {
+      return super.send(message);
     }
     await sendGate.future;
     return super.send(message);

@@ -181,6 +181,20 @@ class _NotificationOpenHarnessAppState
     );
   }
 
+  Future<void> _simulateWarmGroupMessageTap() async {
+    await routeAppRootRemoteNotificationOpen(
+      data: const <String, dynamic>{
+        'type': 'group_message',
+        'groupId': _groupWeekend,
+        'messageId': 'msg-weekend-1',
+      },
+      onBeforeOpen: _clearDeliveredNotifications,
+      onBeforeRouteTarget: _prepare,
+      onRouteTarget: _route,
+      onMissingRouteTarget: _missingRouteTarget,
+    );
+  }
+
   Future<void> _simulateWarmLocalChatTap() async {
     await routeAppRootLocalNotificationTap(
       payload: _peerAlice,
@@ -239,6 +253,12 @@ class _NotificationOpenHarnessAppState
           key: const Key('warm-group-invite-button'),
           onPressed: _simulateWarmGroupInviteTap,
           child: const Text('Simulate Warm Group Invite Tap'),
+        ),
+        const SizedBox(height: 8),
+        ElevatedButton(
+          key: const Key('warm-group-message-button'),
+          onPressed: _simulateWarmGroupMessageTap,
+          child: const Text('Simulate Warm Group Message Tap'),
         ),
         const SizedBox(height: 8),
         ElevatedButton(
@@ -927,6 +947,27 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'group message tap lands on the targeted group after group catch-up',
+    (tester) async {
+      await tester.pumpWidget(const _NotificationOpenHarnessApp());
+
+      await tester.tap(find.byKey(const Key('warm-group-message-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('group-screen')), findsOneWidget);
+      expect(find.text('Group: grp-weekend'), findsOneWidget);
+      expect(find.text('Alice: brunch at 10?'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'clear > prepare:group:grp-weekend|message:msg-weekend-1 > '
+          'drain:group:grp-weekend > route:group:grp-weekend|message:msg-weekend-1',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
 
   testWidgets('warm local chat tap uses the same prepare-then-route flow', (
     tester,

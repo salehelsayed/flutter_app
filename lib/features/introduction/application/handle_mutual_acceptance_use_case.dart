@@ -36,7 +36,15 @@ Future<ContactModel?> handleMutualAcceptance({
       ? introduction.introducedUsername
       : introduction.recipientUsername;
 
-  if (await contactRepo.contactExists(otherPeerId)) {
+  final existingContact = await contactRepo.getContact(otherPeerId);
+  if (existingContact != null) {
+    await retryMutualAcceptanceAvatarSettlement(
+      introduction: introduction,
+      contactRepo: contactRepo,
+      ownPeerId: ownPeerId,
+      bridge: bridge,
+      downloadProfilePictureFn: downloadProfilePictureFn,
+    );
     emitFlowEvent(
       layer: 'UC',
       event: 'MUTUAL_ACCEPTANCE_CONTACT_EXISTS',
@@ -68,37 +76,13 @@ Future<ContactModel?> handleMutualAcceptance({
   );
   await contactRepo.addContact(newContact);
 
-  // Download avatar for the new contact (fire and forget).
-  // If the relay doesn't have it yet, retry after a short delay.
-  if (bridge != null) {
-    final dlFn = downloadProfilePictureFn ?? downloadProfilePicture;
-    () async {
-      try {
-        var result = await dlFn(
-          bridge: bridge,
-          contactRepo: contactRepo,
-          ownerPeerId: otherPeerId,
-          avatarVersion: 'initial',
-        );
-        if (result != null) return;
-
-        // Retry once after delay — relay may not have the profile yet
-        await Future<void>.delayed(const Duration(seconds: 5));
-        await dlFn(
-          bridge: bridge,
-          contactRepo: contactRepo,
-          ownerPeerId: otherPeerId,
-          avatarVersion: 'initial',
-        );
-      } catch (e) {
-        emitFlowEvent(
-          layer: 'UC',
-          event: 'INTRO_AVATAR_DOWNLOAD_ERROR',
-          details: {'peerId': otherPeerId, 'error': e.toString()},
-        );
-      }
-    }();
-  }
+  _scheduleIntroAvatarDownloadIfMissing(
+    contact: newContact,
+    contactRepo: contactRepo,
+    ownerPeerId: otherPeerId,
+    bridge: bridge,
+    downloadProfilePictureFn: downloadProfilePictureFn,
+  );
 
   // Insert "Connected through [introducer]" system message
   if (messageRepo != null) {
@@ -123,4 +107,83 @@ Future<ContactModel?> handleMutualAcceptance({
   );
 
   return newContact;
+}
+
+Future<void> retryMutualAcceptanceAvatarSettlement({
+  required IntroductionModel introduction,
+  required ContactRepository contactRepo,
+  required String ownPeerId,
+  Bridge? bridge,
+  DownloadProfilePictureFn? downloadProfilePictureFn,
+}) async {
+  if (introduction.status != IntroductionOverallStatus.mutualAccepted) {
+    return;
+  }
+
+  final isRecipient = introduction.recipientId == ownPeerId;
+  final isIntroduced = introduction.introducedId == ownPeerId;
+  if (!isRecipient && !isIntroduced) {
+    return;
+  }
+
+  final otherPeerId = isRecipient
+      ? introduction.introducedId
+      : introduction.recipientId;
+  final contact = await contactRepo.getContact(otherPeerId);
+  if (contact == null) {
+    return;
+  }
+
+  _scheduleIntroAvatarDownloadIfMissing(
+    contact: contact,
+    contactRepo: contactRepo,
+    ownerPeerId: otherPeerId,
+    bridge: bridge,
+    downloadProfilePictureFn: downloadProfilePictureFn,
+  );
+}
+
+void _scheduleIntroAvatarDownloadIfMissing({
+  required ContactModel contact,
+  required ContactRepository contactRepo,
+  required String ownerPeerId,
+  Bridge? bridge,
+  DownloadProfilePictureFn? downloadProfilePictureFn,
+}) {
+  if (bridge == null) {
+    return;
+  }
+
+  final avatarPath = contact.avatarPath?.trim();
+  if (avatarPath != null && avatarPath.isNotEmpty) {
+    return;
+  }
+
+  final dlFn = downloadProfilePictureFn ?? downloadProfilePicture;
+  () async {
+    try {
+      var result = await dlFn(
+        bridge: bridge,
+        contactRepo: contactRepo,
+        ownerPeerId: ownerPeerId,
+        avatarVersion: 'initial',
+      );
+      if (result != null) return;
+
+      // Retry once after delay — relay may not have the profile yet
+      await Future<void>.delayed(const Duration(seconds: 5));
+      await dlFn(
+        bridge: bridge,
+        contactRepo: contactRepo,
+        ownerPeerId: ownerPeerId,
+        avatarVersion: 'initial',
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'UC',
+        event: 'INTRO_AVATAR_DOWNLOAD_ERROR',
+        details: {'peerId': ownerPeerId, 'error': e.toString()},
+      );
+    }
+  }();
 }

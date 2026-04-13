@@ -1,11 +1,15 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 
 /// Bridge that fails on the first N group:inboxStore calls and succeeds after.
@@ -55,7 +59,8 @@ GroupMessage _makeRetryEligible(
     isIncoming: isIncoming,
     createdAt: now,
     inboxStored: inboxStored,
-    inboxRetryPayload: inboxRetryPayload ??
+    inboxRetryPayload:
+        inboxRetryPayload ??
         (isIncoming || inboxStored
             ? null
             : jsonEncode({
@@ -74,23 +79,101 @@ GroupMessage _makeRetryEligible(
   );
 }
 
+GroupReactionReplayOutboxEntry _makeReactionRetryEntry(
+  String reactionId, {
+  String action = 'add',
+  String deliveryStatus = GroupReactionReplayOutboxStatus.failed,
+}) {
+  final nowIso = DateTime.utc(2026, 1, 15, 12, 0, 0).toIso8601String();
+  return GroupReactionReplayOutboxEntry(
+    reactionId: reactionId,
+    groupId: 'group-1',
+    messageId: 'message-$reactionId',
+    senderPeerId: 'peer-1',
+    emoji: action == 'remove' ? ':remove:' : ':fire:',
+    action: action,
+    inboxRetryPayload: jsonEncode({
+      'groupId': 'group-1',
+      'message': jsonEncode({
+        'kind': 'group_offline_replay',
+        'version': 1,
+        'payloadType': 'group_reaction',
+        'keyEpoch': 1,
+        'messageId': reactionId,
+        'ciphertext': jsonEncode({
+          'id': reactionId,
+          'messageId': 'message-$reactionId',
+          'emoji': action == 'remove' ? ':remove:' : ':fire:',
+          'action': action,
+          'senderPeerId': 'peer-1',
+          'timestamp': nowIso,
+        }),
+        'nonce': 'fake-group-nonce',
+      }),
+      'recipientPeerIds': ['peer-2'],
+      'pushTitle': 'Test Group',
+      'pushBody': 'reaction $reactionId',
+    }),
+    deliveryStatus: deliveryStatus,
+    lastError: deliveryStatus == GroupReactionReplayOutboxStatus.failed
+        ? 'initial failure'
+        : null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  );
+}
+
+Future<List<Map<String, dynamic>>> captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
+
 void main() {
   late FakeBridge bridge;
   late InMemoryGroupMessageRepository msgRepo;
+  late FakeGroupReactionReplayOutboxRepository reactionReplayOutboxRepo;
 
   setUp(() {
     bridge = FakeBridge();
     msgRepo = InMemoryGroupMessageRepository();
+    reactionReplayOutboxRepo = FakeGroupReactionReplayOutboxRepository();
   });
 
   test('retries eligible sent messages and clears inbox retry state', () async {
     final msg = _makeRetryEligible('msg-1');
     await msgRepo.saveMessage(msg);
 
-    final retried = await retryFailedGroupInboxStores(
-      bridge: bridge,
-      msgRepo: msgRepo,
-    );
+    late int retried;
+    final events = await captureFlowEvents(() async {
+      retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+      );
+    });
 
     expect(retried, 1);
     final saved = await msgRepo.getMessage('msg-1');
@@ -98,6 +181,30 @@ void main() {
     expect(saved.status, 'sent');
     expect(saved.inboxRetryPayload, isNull);
     expect(bridge.commandLog, contains('group:inboxStore'));
+
+    final begin = events.firstWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORES_BEGIN',
+    );
+    expect(begin['details']['limit'], 20);
+
+    final ok = events.firstWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORE_OK',
+    );
+    expect(ok['details']['messageId'], 'msg-1');
+
+    final done = events.firstWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORES_DONE',
+    );
+    expect(done['details']['retried'], 1);
+    expect(done['details']['total'], 1);
+
+    final timing = events.lastWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORES_TIMING',
+    );
+    expect(timing['details']['outcome'], 'complete');
+    expect(timing['details']['total'], 1);
+    expect(timing['details']['retried'], 1);
+    expect(timing['details']['limit'], 20);
   });
 
   test('retries eligible pending messages and promotes them to sent', () async {
@@ -137,10 +244,13 @@ void main() {
     await msgRepo.saveMessage(msg1);
     await msgRepo.saveMessage(msg2);
 
-    final retried = await retryFailedGroupInboxStores(
-      bridge: failBridge,
-      msgRepo: msgRepo,
-    );
+    late int retried;
+    final events = await captureFlowEvents(() async {
+      retried = await retryFailedGroupInboxStores(
+        bridge: failBridge,
+        msgRepo: msgRepo,
+      );
+    });
 
     // First fails, second succeeds
     expect(retried, 1);
@@ -152,6 +262,20 @@ void main() {
     expect(saved2!.inboxStored, isTrue);
     expect(saved2.status, 'sent');
     expect(saved2.inboxRetryPayload, isNull);
+
+    final errorEvent = events.firstWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORE_ERROR',
+    );
+    expect(errorEvent['details']['messageId'], 'msg-fail');
+    expect(
+      errorEvent['details']['error'],
+      contains('Simulated inbox store failure #1'),
+    );
+
+    final okEvent = events.firstWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORE_OK',
+    );
+    expect(okEvent['details']['messageId'], 'msg-ok');
   });
 
   test('respects batch limit', () async {
@@ -168,10 +292,113 @@ void main() {
 
     expect(retried, 20);
     // Verify exactly 20 inboxStore calls
-    final inboxCalls =
-        bridge.commandLog.where((c) => c == 'group:inboxStore').length;
+    final inboxCalls = bridge.commandLog
+        .where((c) => c == 'group:inboxStore')
+        .length;
     expect(inboxCalls, 20);
   });
+
+  test('retries reaction replay outbox rows and marks them stored', () async {
+    await reactionReplayOutboxRepo.saveEntry(_makeReactionRetryEntry('rx-add'));
+    await reactionReplayOutboxRepo.saveEntry(
+      _makeReactionRetryEntry(
+        'rx-remove',
+        action: 'remove',
+        deliveryStatus: GroupReactionReplayOutboxStatus.pending,
+      ),
+    );
+
+    late int retried;
+    final events = await captureFlowEvents(() async {
+      retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      );
+    });
+
+    expect(retried, 2);
+    expect(
+      bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+      hasLength(2),
+    );
+
+    final addEntry = await reactionReplayOutboxRepo.getEntry('rx-add');
+    final removeEntry = await reactionReplayOutboxRepo.getEntry('rx-remove');
+    expect(addEntry, isNotNull);
+    expect(removeEntry, isNotNull);
+    expect(addEntry!.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+    expect(removeEntry!.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+    expect(
+      await reactionReplayOutboxRepo.loadRetryableEntries(limit: 10),
+      isEmpty,
+    );
+
+    final okEvents = events
+        .where(
+          (event) => event['event'] == 'RETRY_FAILED_GROUP_REACTION_REPLAY_OK',
+        )
+        .toList();
+    expect(okEvents, hasLength(2));
+
+    final done = events.firstWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORES_DONE',
+    );
+    expect(done['details']['messageTotal'], 0);
+    expect(done['details']['reactionTotal'], 2);
+    expect(done['details']['retried'], 2);
+  });
+
+  test(
+    'reaction replay retry failure leaves the row failed and continues to later rows',
+    () async {
+      final failBridge = _FailFirstNInboxBridge(failCount: 1);
+      await reactionReplayOutboxRepo.saveEntry(
+        _makeReactionRetryEntry('rx-fail'),
+      );
+      await reactionReplayOutboxRepo.saveEntry(
+        _makeReactionRetryEntry('rx-ok'),
+      );
+
+      late int retried;
+      final events = await captureFlowEvents(() async {
+        retried = await retryFailedGroupInboxStores(
+          bridge: failBridge,
+          msgRepo: msgRepo,
+          reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        );
+      });
+
+      expect(retried, 1);
+
+      final failedEntry = await reactionReplayOutboxRepo.getEntry('rx-fail');
+      final storedEntry = await reactionReplayOutboxRepo.getEntry('rx-ok');
+      expect(failedEntry, isNotNull);
+      expect(storedEntry, isNotNull);
+      expect(
+        failedEntry!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.failed,
+      );
+      expect(
+        failedEntry.lastError,
+        contains('Simulated inbox store failure #1'),
+      );
+      expect(
+        storedEntry!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.stored,
+      );
+
+      final errorEvent = events.firstWhere(
+        (event) => event['event'] == 'RETRY_FAILED_GROUP_REACTION_REPLAY_ERROR',
+      );
+      expect(errorEvent['details']['reactionId'], 'rx-fail');
+
+      final okEvent = events.firstWhere(
+        (event) => event['event'] == 'RETRY_FAILED_GROUP_REACTION_REPLAY_OK',
+      );
+      expect(okEvent['details']['reactionId'], 'rx-ok');
+    },
+  );
 
   test('returns 0 when no eligible messages', () async {
     // incoming message — not eligible

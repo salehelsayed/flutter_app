@@ -66,10 +66,11 @@ void main() {
           expect(hydratedGroup.createdBy, 'alice-peer');
 
           final members = await user.groupRepo.getMembers(groupId);
-          expect(
-            members.map((member) => member.peerId).toSet(),
-            {'alice-peer', 'bob-peer', 'charlie-peer'},
-          );
+          expect(members.map((member) => member.peerId).toSet(), {
+            'alice-peer',
+            'bob-peer',
+            'charlie-peer',
+          });
 
           final rolesByPeerId = {
             for (final member in members) member.peerId: member.role,
@@ -89,14 +90,18 @@ void main() {
 
         // -- assert --
         final bobMessages = await bob.loadGroupMessages(groupId);
-        expect(bobMessages, hasLength(1));
-        expect(bobMessages.first.text, 'Hello group!');
-        expect(bobMessages.first.isIncoming, isTrue);
+        final bobRegular = bobMessages
+            .where((message) => message.text == 'Hello group!')
+            .toList();
+        expect(bobRegular, hasLength(1));
+        expect(bobRegular.first.isIncoming, isTrue);
 
         final charlieMessages = await charlie.loadGroupMessages(groupId);
-        expect(charlieMessages, hasLength(1));
-        expect(charlieMessages.first.text, 'Hello group!');
-        expect(charlieMessages.first.isIncoming, isTrue);
+        final charlieRegular = charlieMessages
+            .where((message) => message.text == 'Hello group!')
+            .toList();
+        expect(charlieRegular, hasLength(1));
+        expect(charlieRegular.first.isIncoming, isTrue);
 
         // Alice has 0 incoming (the network does not fan back to sender)
         final aliceIncoming = (await alice.loadGroupMessages(
@@ -244,11 +249,14 @@ void main() {
           groupId,
         )).where((message) => message.isIncoming).toList();
         expect(charlieIncoming, hasLength(2));
+        expect(charlieIncoming.map((message) => message.text).toSet(), {
+          'From Alice',
+          'From Bob',
+        });
         expect(
-          charlieIncoming.map((message) => message.text).toSet(),
-          {'From Alice', 'From Bob'},
+          charlieIncoming.map((message) => message.id).toSet(),
+          hasLength(2),
         );
-        expect(charlieIncoming.map((message) => message.id).toSet(), hasLength(2));
 
         alice.dispose();
         bob.dispose();
@@ -514,27 +522,27 @@ void main() {
       await pump();
 
       final aliceMessages = await alice.loadGroupMessages(groupId);
-      final aliceReplies = aliceMessages.where(
-        (message) => message.text == 'Quoted reply',
-      ).toList();
+      final aliceReplies = aliceMessages
+          .where((message) => message.text == 'Quoted reply')
+          .toList();
       expect(aliceReplies, hasLength(1));
       final aliceReply = aliceReplies.single;
       expect(aliceReply.isIncoming, isTrue);
       expect(aliceReply.quotedMessageId, parent.id);
 
       final charlieMessages = await charlie.loadGroupMessages(groupId);
-      final charlieReplies = charlieMessages.where(
-        (message) => message.text == 'Quoted reply',
-      ).toList();
+      final charlieReplies = charlieMessages
+          .where((message) => message.text == 'Quoted reply')
+          .toList();
       expect(charlieReplies, hasLength(1));
       final charlieReply = charlieReplies.single;
       expect(charlieReply.isIncoming, isTrue);
       expect(charlieReply.quotedMessageId, parent.id);
 
       final bobMessages = await bob.loadGroupMessages(groupId);
-      final bobReplies = bobMessages.where(
-        (message) => message.text == 'Quoted reply',
-      ).toList();
+      final bobReplies = bobMessages
+          .where((message) => message.text == 'Quoted reply')
+          .toList();
       expect(bobReplies, hasLength(1));
       final bobReply = bobReplies.single;
       expect(bobReply.isIncoming, isFalse);

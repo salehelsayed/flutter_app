@@ -1,8 +1,7 @@
 package node
 
 import (
-	"context"
-	"encoding/json"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -10,79 +9,6 @@ import (
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
 	"github.com/mknoon/go-mknoon/internal"
 )
-
-func waitForCollectedEvent(t *testing.T, collector *testEventCollector, eventName string, timeout time.Duration) map[string]interface{} {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		for _, raw := range collector.snapshot() {
-			var ev map[string]interface{}
-			if err := json.Unmarshal([]byte(raw), &ev); err != nil {
-				continue
-			}
-			if evName, _ := ev["event"].(string); evName == eventName {
-				data, _ := ev["data"].(map[string]interface{})
-				return data
-			}
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-
-	t.Fatalf("timed out waiting for event %q", eventName)
-	return nil
-}
-
-func buildGroupEnvelopeWithPlaintext(t *testing.T, groupId, senderId, privB64, pubB64, groupKey string, keyEpoch int, plaintext string) string {
-	t.Helper()
-
-	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(groupKey, plaintext)
-	if err != nil {
-		t.Fatalf("encrypt: %v", err)
-	}
-
-	sigData := mcrypto.BuildGroupSignatureData(groupId, keyEpoch, ctB64)
-	signature, err := mcrypto.SignPayload(privB64, sigData)
-	if err != nil {
-		t.Fatalf("sign: %v", err)
-	}
-
-	envelope := &internal.GroupEnvelope{
-		Version:         "3",
-		Type:            "group_message",
-		GroupId:         groupId,
-		SenderId:        senderId,
-		SenderPublicKey: pubB64,
-		Signature:       signature,
-		KeyEpoch:        keyEpoch,
-		Encrypted: internal.GroupEncryptedPayload{
-			Ciphertext: ctB64,
-			Nonce:      nonceB64,
-		},
-	}
-
-	envelopeJSON, err := internal.MarshalGroupEnvelope(envelope)
-	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
-	}
-	return envelopeJSON
-}
-
-func publishRawGroupEnvelope(t *testing.T, n *Node, groupId, envelopeJSON string) {
-	t.Helper()
-
-	topic := n.groupTopics[groupId]
-	if topic == nil {
-		t.Fatalf("missing topic for group %q", groupId)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := topic.Publish(ctx, []byte(envelopeJSON)); err != nil {
-		t.Fatalf("topic publish: %v", err)
-	}
-}
 
 func TestHandleGroupSubscription_EmitsDecryptionFailedEvent(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
@@ -121,16 +47,7 @@ func TestHandleGroupSubscription_EmitsDecryptionFailedEvent(t *testing.T) {
 	nodeBCapture := &testEventCollector{}
 	nodeB.eventCallback = nodeBCapture
 
-	bAddrs := nodeB.Host().Addrs()
-	addrStrs := make([]string, len(bAddrs))
-	for i, a := range bAddrs {
-		addrStrs[i] = a.String()
-	}
-	if err := nodeA.DialPeer(nodeB.PeerId(), addrStrs); err != nil {
-		t.Fatalf("DialPeer A->B: %v", err)
-	}
-
-	time.Sleep(500 * time.Millisecond)
+	connectLocalGroupNodes(t, nodeA, nodeB)
 
 	envelopeJSON := buildTestEnvelope(
 		t,
@@ -202,16 +119,7 @@ func TestHandleGroupSubscription_EmitsPayloadParseFailedEvent(t *testing.T) {
 	nodeBCapture := &testEventCollector{}
 	nodeB.eventCallback = nodeBCapture
 
-	bAddrs := nodeB.Host().Addrs()
-	addrStrs := make([]string, len(bAddrs))
-	for i, a := range bAddrs {
-		addrStrs[i] = a.String()
-	}
-	if err := nodeA.DialPeer(nodeB.PeerId(), addrStrs); err != nil {
-		t.Fatalf("DialPeer A->B: %v", err)
-	}
-
-	time.Sleep(500 * time.Millisecond)
+	connectLocalGroupNodes(t, nodeA, nodeB)
 
 	envelopeJSON := buildGroupEnvelopeWithPlaintext(
 		t,
@@ -241,6 +149,161 @@ func TestHandleGroupSubscription_EmitsPayloadParseFailedEvent(t *testing.T) {
 	for _, raw := range events {
 		if strings.Contains(raw, `"event":"group_message:received"`) {
 			t.Fatal("group_message:received should not be emitted after payload parse failure")
+		}
+	}
+}
+
+func TestHandleGroupSubscription_EmitsDecryptionFailedEventForTamperedNonce(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeB := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "group-decrypt-failure-bad-nonce"
+	senderPeerId := nodeA.PeerId()
+	config := &GroupConfig{
+		Name:      "Bad Nonce Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: senderPeerId,
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 9}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	nodeBCapture := &testEventCollector{}
+	nodeB.eventCallback = nodeBCapture
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+
+	validEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"hello over a tampered nonce",
+	)
+	tamperedEnvelope := mutateGroupEnvelope(t, validEnvelope, func(env *internal.GroupEnvelope) {
+		env.Encrypted.Nonce = "tampered-nonce"
+	})
+	publishRawGroupEnvelope(t, nodeA, groupId, tamperedEnvelope)
+
+	data := waitForCollectedEvent(t, nodeBCapture, "group:decryption_failed", 5*time.Second)
+
+	if got := data["groupId"]; got != groupId {
+		t.Fatalf("groupId = %v, want %q", got, groupId)
+	}
+	if got := data["senderId"]; got != senderPeerId {
+		t.Fatalf("senderId = %v, want %q", got, senderPeerId)
+	}
+	if got := int(data["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("keyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+	if got := int(data["localKeyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("localKeyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+	if got := data["error"]; got == "" {
+		t.Fatal("expected non-empty error field")
+	}
+
+	events := nodeBCapture.snapshot()
+	for _, raw := range events {
+		if strings.Contains(raw, `"event":"group_message:received"`) {
+			t.Fatal("group_message:received should not be emitted after tampered nonce decryption failure")
+		}
+	}
+}
+
+func TestHandleGroupSubscription_EmitsDecryptionFailedEventForTamperedCiphertext(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeB := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "group-decrypt-failure-bad-ciphertext"
+	senderPeerId := nodeA.PeerId()
+	config := &GroupConfig{
+		Name:      "Bad Ciphertext Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: senderPeerId,
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 10}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	nodeBCapture := &testEventCollector{}
+	nodeB.eventCallback = nodeBCapture
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+
+	validEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"hello over tampered ciphertext",
+	)
+	tamperedEnvelope := mutateAndResignGroupEnvelope(t, validEnvelope, senderPrivB64, func(env *internal.GroupEnvelope) {
+		ciphertextBytes, err := base64.StdEncoding.DecodeString(env.Encrypted.Ciphertext)
+		if err != nil {
+			t.Fatalf("decode ciphertext: %v", err)
+		}
+		ciphertextBytes[0] ^= 0xFF
+		env.Encrypted.Ciphertext = base64.StdEncoding.EncodeToString(ciphertextBytes)
+	})
+	publishRawGroupEnvelope(t, nodeA, groupId, tamperedEnvelope)
+
+	data := waitForCollectedEvent(t, nodeBCapture, "group:decryption_failed", 5*time.Second)
+
+	if got := data["groupId"]; got != groupId {
+		t.Fatalf("groupId = %v, want %q", got, groupId)
+	}
+	if got := data["senderId"]; got != senderPeerId {
+		t.Fatalf("senderId = %v, want %q", got, senderPeerId)
+	}
+	if got := int(data["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("keyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+	if got := int(data["localKeyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("localKeyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+	if got := data["error"]; got == "" {
+		t.Fatal("expected non-empty error field")
+	}
+
+	events := nodeBCapture.snapshot()
+	for _, raw := range events {
+		if strings.Contains(raw, `"event":"group_message:received"`) {
+			t.Fatal("group_message:received should not be emitted after tampered ciphertext decryption failure")
 		}
 	}
 }

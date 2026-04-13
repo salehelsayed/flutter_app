@@ -1,9 +1,15 @@
+import 'dart:convert';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -26,7 +32,12 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
   required Bridge bridge,
   required String groupId,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
   GroupMessageListener? groupMessageListener,
+  String? senderPeerId,
+  String? senderPublicKey,
+  String? senderPrivateKey,
+  String? senderUsername,
   DateTime? now,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
 }) async {
@@ -90,13 +101,36 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         msgRepo: msgRepo,
         groupId: acceptedGroupId ?? groupId,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        reactionRepo: reactionRepo,
         groupMessageListener: groupMessageListener,
       );
-      final group = await groupRepo.getGroup(acceptedGroupId ?? groupId);
+      final acceptedId = acceptedGroupId ?? groupId;
+      final group = await groupRepo.getGroup(acceptedId);
+      await _publishAcceptedJoinTimelineIfPossible(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupId: acceptedId,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+      );
       return (AcceptPendingGroupInviteResult.success, group);
     case HandleGroupInviteResult.bridgeError:
       await pendingInviteRepo.deletePendingInvite(groupId);
-      final group = await groupRepo.getGroup(acceptedGroupId ?? groupId);
+      final acceptedId = acceptedGroupId ?? groupId;
+      final group = await groupRepo.getGroup(acceptedId);
+      await _publishAcceptedJoinTimelineIfPossible(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupId: acceptedId,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+      );
       return (AcceptPendingGroupInviteResult.bridgeError, group);
     case HandleGroupInviteResult.duplicateGroup:
       await pendingInviteRepo.deletePendingInvite(groupId);
@@ -108,5 +142,101 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
     case HandleGroupInviteResult.decryptionFailed:
       await pendingInviteRepo.deletePendingInvite(groupId);
       return (AcceptPendingGroupInviteResult.invalidPayload, null);
+  }
+}
+
+Future<void> _publishAcceptedJoinTimelineIfPossible({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required Bridge bridge,
+  required String groupId,
+  String? senderPeerId,
+  String? senderPublicKey,
+  String? senderPrivateKey,
+  String? senderUsername,
+}) async {
+  if (senderPeerId == null ||
+      senderPeerId.isEmpty ||
+      senderPublicKey == null ||
+      senderPrivateKey == null) {
+    return;
+  }
+
+  final joinedAt = DateTime.now().toUtc();
+  final timelineMessage = buildMemberJoinedTimelineMessage(
+    groupId: groupId,
+    joinedPeerId: senderPeerId,
+    joinedUsername: senderUsername,
+    eventAt: joinedAt,
+  );
+  await msgRepo.saveMessage(timelineMessage);
+
+  final sysText = jsonEncode({
+    '__sys': 'member_joined',
+    'member': {
+      'peerId': senderPeerId,
+      if (senderUsername != null) 'username': senderUsername,
+    },
+  });
+
+  final recipientPeerIds = (await groupRepo.getMembers(groupId))
+      .map((member) => member.peerId)
+      .where((peerId) => peerId != senderPeerId)
+      .toList(growable: false);
+
+  try {
+    await callGroupPublish(
+      bridge,
+      groupId: groupId,
+      text: sysText,
+      senderPeerId: senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      senderUsername: senderUsername ?? '',
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_JOIN_EVENT_WARNING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'stage': 'publish',
+        'error': e.toString(),
+      },
+    );
+  }
+
+  if (recipientPeerIds.isEmpty) {
+    return;
+  }
+
+  final inboxPayload = jsonEncode({
+    'groupId': groupId,
+    'senderId': senderPeerId,
+    'senderUsername': senderUsername ?? '',
+    'text': sysText,
+    'timestamp': joinedAt.toIso8601String(),
+  });
+
+  try {
+    await storeGroupOfflineReplayEnvelope(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      payloadType: groupOfflineReplayPayloadTypeMessage,
+      plaintext: inboxPayload,
+      messageId: timelineMessage.id,
+      recipientPeerIds: recipientPeerIds,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_JOIN_EVENT_WARNING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'stage': 'replay_store',
+        'error': e.toString(),
+      },
+    );
   }
 }

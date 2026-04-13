@@ -9,6 +9,7 @@ import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
@@ -347,6 +348,7 @@ void main() {
       );
 
       await groupRepository.saveGroup(_makeGroup('group-1', 'Writers'));
+      await _saveLatestGroupKey(groupRepository, 'group-1');
 
       final coordinator = DefaultShareBatchDeliveryCoordinator(
         identityRepository: identityRepository,
@@ -402,6 +404,7 @@ void main() {
       );
 
       await groupRepository.saveGroup(_makeGroup('group-2', 'Pending Writers'));
+      await _saveLatestGroupKey(groupRepository, 'group-2');
 
       final coordinator = DefaultShareBatchDeliveryCoordinator(
         identityRepository: identityRepository,
@@ -503,6 +506,20 @@ IdentityModel _makeIdentity() {
   );
 }
 
+Future<void> _saveLatestGroupKey(
+  InMemoryGroupRepository groupRepository,
+  String groupId,
+) async {
+  await groupRepository.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: 1,
+      encryptedKey: 'test-group-key-1',
+      createdAt: DateTime.now().toUtc(),
+    ),
+  );
+}
+
 class _GroupShareBgBridge extends FakeBridge {
   _GroupShareBgBridge({
     required this.publishMessageId,
@@ -532,6 +549,13 @@ class _GroupShareBgBridge extends FakeBridge {
         return 'share-group-bg-task';
       case 'bg:end':
         return '';
+      case 'group.encrypt':
+        final payload = parsed['payload'] as Map<String, dynamic>;
+        return jsonEncode({
+          'ok': true,
+          'ciphertext': payload['plaintext'],
+          'nonce': 'share-group-fake-nonce',
+        });
       case 'group:publish':
         return jsonEncode({
           'ok': true,

@@ -33,6 +33,19 @@ enum SendContactRequestResult {
   sendFailed,
 }
 
+/// High-level reason the contact request is being sent.
+enum ContactRequestSendIntent {
+  /// A user-facing request triggered by a real connect action.
+  newRequest('new_request'),
+
+  /// A silent retry to repair an incomplete ML-KEM key exchange.
+  keyExchangeRetry('key_exchange_retry');
+
+  const ContactRequestSendIntent(this.wireValue);
+
+  final String wireValue;
+}
+
 /// Sends a contact request to a peer after scanning their QR code.
 ///
 /// This function:
@@ -50,6 +63,7 @@ Future<SendContactRequestResult> sendContactRequest({
   required Bridge bridge,
   required String targetPeerId,
   String? recipientPublicKey,
+  ContactRequestSendIntent intent = ContactRequestSendIntent.newRequest,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -185,6 +199,7 @@ Future<SendContactRequestResult> sendContactRequest({
     final v2Message = {
       'type': 'contact_request',
       'version': '2',
+      'intent': intent.wireValue,
       'msgId': msgId,
       'ts': ts,
       if (sanitizedUsername.isNotEmpty) 'senderUsername': sanitizedUsername,
@@ -200,6 +215,7 @@ Future<SendContactRequestResult> sendContactRequest({
     final v1Message = {
       'type': 'contact_request',
       'version': '1',
+      'intent': intent.wireValue,
       'payload': signedPayload,
     };
     messageJson = jsonEncode(v1Message);

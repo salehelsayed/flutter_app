@@ -37,6 +37,14 @@ const _goMknoonDir = 'go-mknoon';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
 final _appPackage = resolveAndroidAppPackage();
 
+List<String> _relayDartDefines() {
+  final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
+  if (relayAddresses == null || relayAddresses.trim().isEmpty) {
+    return const [];
+  }
+  return ['--dart-define=MKNOON_RELAY_ADDRESSES=${relayAddresses.trim()}'];
+}
+
 // ---------------------------------------------------------------------------
 // Run-scoped paths — unique temp directory per run for isolation + cleanup
 // ---------------------------------------------------------------------------
@@ -650,13 +658,7 @@ Future<List<_OrchestratorResult>> _runScenarios(
               '(exitCode=$flutterExitCode)'
         : 'Flutter peer fixture not found after 360s';
     _log('ORCH', 'ERROR: $detail');
-    results.add(
-      _OrchestratorResult(
-        'SETUP',
-        false,
-        detail,
-      ),
-    );
+    results.add(_OrchestratorResult('SETUP', false, detail));
     return results;
   }
 
@@ -1734,6 +1736,14 @@ bool _isPhysicalIosDeviceId(String? deviceId) {
   ).hasMatch(deviceId);
 }
 
+bool _isIosSimulatorDeviceId(String? deviceId) {
+  if (deviceId == null) return false;
+  return RegExp(
+    r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',
+    caseSensitive: false,
+  ).hasMatch(deviceId);
+}
+
 void main(List<String> args) async {
   _log('ORCH', 'E2E Transport Test Orchestrator');
 
@@ -1778,6 +1788,8 @@ void main(List<String> args) async {
   }
 
   final isPhysicalIosDevice = _isPhysicalIosDeviceId(deviceId);
+  final isIosSimulator = _isIosSimulatorDeviceId(deviceId);
+  final useFlutterDrive = isPhysicalIosDevice || isIosSimulator;
   if (isPhysicalIosDevice && !allowPhysicalDevice) {
     _log(
       'ORCH',
@@ -1878,18 +1890,20 @@ void main(List<String> args) async {
     _log('ORCH', 'Launching Flutter integration test...');
 
     final flutterArgs = [
-      if (isPhysicalIosDevice) ...[
+      if (useFlutterDrive) ...[
         'drive',
         '--driver=test_driver/integration_test.dart',
         '--target=integration_test/transport_e2e_test.dart',
         '--publish-port',
       ] else ...[
         'test',
+        '--no-dds',
         'integration_test/transport_e2e_test.dart',
       ],
       '--dart-define=CLI_PEER_FIXTURE=${paths.cliFixture}',
       '--dart-define=E2E_TEMP_DIR=$deviceDir',
       '--dart-define=E2E_WRITE_DIR=$appWriteDir',
+      ..._relayDartDefines(),
       if (phase4Only) '--dart-define=E2E_PHASE4_ONLY=true',
     ];
     if (deviceId != null) {

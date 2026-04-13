@@ -19,13 +19,51 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 class CreateGroupWithMembersResult {
   final GroupModel group;
   final int membersAdded;
-  final int invitesSent;
+  final GroupInviteBatchResult? inviteBatchResult;
+  final bool inviteDeliverySkippedMissingKey;
+  final bool membershipSyncRolledBack;
+  final bool membersAddedPublishFailed;
 
   const CreateGroupWithMembersResult({
     required this.group,
     required this.membersAdded,
-    required this.invitesSent,
+    this.inviteBatchResult,
+    this.inviteDeliverySkippedMissingKey = false,
+    this.membershipSyncRolledBack = false,
+    this.membersAddedPublishFailed = false,
   });
+
+  int get invitesSent => inviteBatchResult?.successCount ?? 0;
+
+  bool get hasWarnings =>
+      inviteDeliverySkippedMissingKey ||
+      membershipSyncRolledBack ||
+      membersAddedPublishFailed ||
+      (inviteBatchResult?.hasFailures ?? false);
+
+  String? buildCreateWarningMessage() {
+    final issues = <String>[];
+    if (membershipSyncRolledBack) {
+      issues.add(
+        'no one else was added because membership setup could not be synced',
+      );
+    }
+    if (inviteDeliverySkippedMissingKey) {
+      issues.add(
+        'invites were not sent because the group is missing its latest key',
+      );
+    }
+    if (inviteBatchResult?.hasFailures ?? false) {
+      issues.add('invite issues: ${inviteBatchResult!.describeFailures()}');
+    }
+    if (membersAddedPublishFailed) {
+      issues.add('the add-members event could not be published');
+    }
+    if (issues.isEmpty) {
+      return null;
+    }
+    return 'Group created, but ${issues.join('; ')}.';
+  }
 }
 
 /// Creates a new group, adds selected contacts as members, updates config,
@@ -70,6 +108,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     creatorPeerId: identity.peerId,
     creatorPublicKey: identity.publicKey,
     creatorMlKemPublicKey: identity.mlKemPublicKey ?? '',
+    creatorUsername: identity.username,
     description: description,
   );
 
@@ -108,11 +147,27 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   final allMembers = await groupRepo.getMembers(group.id);
   final groupConfig = buildGroupConfigPayload(group, allMembers);
 
-  await callGroupUpdateConfig(
-    bridge,
-    groupId: group.id,
-    groupConfig: groupConfig,
-  );
+  try {
+    await callGroupUpdateConfig(
+      bridge,
+      groupId: group.id,
+      groupConfig: groupConfig,
+    );
+  } catch (e) {
+    for (final member in addedMembers) {
+      await groupRepo.removeMember(group.id, member.peerId);
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CREATE_GROUP_WITH_MEMBERS_CONFIG_SYNC_ROLLED_BACK',
+      details: {'groupId': group.id, 'error': e.toString()},
+    );
+    return CreateGroupWithMembersResult(
+      group: group,
+      membersAdded: 0,
+      membershipSyncRolledBack: true,
+    );
+  }
 
   // 5. Broadcast members_added system message
   final sysMessage = jsonEncode({
@@ -131,26 +186,48 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     'groupConfig': groupConfig,
   });
 
-  await callGroupPublish(
-    bridge,
-    groupId: group.id,
-    text: sysMessage,
-    senderPeerId: identity.peerId,
-    senderPublicKey: identity.publicKey,
-    senderPrivateKey: identity.privateKey,
-    senderUsername: identity.username,
-  );
+  var membersAddedPublishFailed = false;
+  try {
+    final publishResult = await callGroupPublish(
+      bridge,
+      groupId: group.id,
+      text: sysMessage,
+      senderPeerId: identity.peerId,
+      senderPublicKey: identity.publicKey,
+      senderPrivateKey: identity.privateKey,
+      senderUsername: identity.username,
+    );
+    if (publishResult['ok'] != true) {
+      membersAddedPublishFailed = true;
+    }
+  } catch (e) {
+    membersAddedPublishFailed = true;
+  }
+  if (membersAddedPublishFailed) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CREATE_GROUP_WITH_MEMBERS_PUBLISH_WARNING',
+      details: {'groupId': group.id},
+    );
+  }
 
   // 6. Send individual P2P invites in parallel
-  var invitesSent = 0;
+  GroupInviteBatchResult? inviteBatchResult;
+  var inviteDeliverySkippedMissingKey = false;
   final keyInfo = await groupRepo.getLatestKey(group.id);
   if (keyInfo != null) {
     final recipients = selectedContacts
         .where((c) => addedMembers.any((m) => m.peerId == c.peerId))
-        .map((c) => (peerId: c.peerId, mlKemPublicKey: c.mlKemPublicKey))
+        .map(
+          (c) => (
+            peerId: c.peerId,
+            username: c.username,
+            mlKemPublicKey: c.mlKemPublicKey,
+          ),
+        )
         .toList();
 
-    invitesSent = await sendGroupInvitesInParallel(
+    inviteBatchResult = await sendGroupInvitesInParallel(
       p2pService: p2pService,
       bridge: bridge,
       senderPeerId: identity.peerId,
@@ -161,6 +238,13 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       groupConfig: groupConfig,
       recipients: recipients,
     );
+  } else if (addedMembers.isNotEmpty) {
+    inviteDeliverySkippedMissingKey = true;
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CREATE_GROUP_WITH_MEMBERS_MISSING_GROUP_KEY',
+      details: {'groupId': group.id},
+    );
   }
 
   emitFlowEvent(
@@ -169,14 +253,16 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     details: {
       'groupId': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
       'membersAdded': addedMembers.length,
-      'invitesSent': invitesSent,
+      'invitesSent': inviteBatchResult?.successCount ?? 0,
     },
   );
 
   return CreateGroupWithMembersResult(
     group: group,
     membersAdded: addedMembers.length,
-    invitesSent: invitesSent,
+    inviteBatchResult: inviteBatchResult,
+    inviteDeliverySkippedMissingKey: inviteDeliverySkippedMissingKey,
+    membersAddedPublishFailed: membersAddedPublishFailed,
   );
 }
 

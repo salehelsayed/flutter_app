@@ -1,5 +1,6 @@
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
@@ -88,11 +89,13 @@ void main() {
         retrier.start();
 
         // Stay online — emit same state (not a transition)
-        p2pService.emitState(const NodeState(
-          isStarted: true,
-          peerId: 'my-peer',
-          circuitAddresses: ['/p2p-circuit/addr1'],
-        ));
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/p2p-circuit/addr1'],
+          ),
+        );
         fake.flushMicrotasks();
 
         // Wait well past the debounce — no timer was created
@@ -109,11 +112,13 @@ void main() {
         retrier.start();
 
         // Go online → creates timer
-        p2pService.emitState(const NodeState(
-          isStarted: true,
-          peerId: 'p',
-          circuitAddresses: ['/a'],
-        ));
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'p',
+            circuitAddresses: ['/a'],
+          ),
+        );
         fake.flushMicrotasks();
 
         // Advance 1s (timer not fired yet)
@@ -124,11 +129,13 @@ void main() {
         fake.flushMicrotasks();
 
         // Go online again → new timer replaces old (cancel + new Timer)
-        p2pService.emitState(const NodeState(
-          isStarted: true,
-          peerId: 'p',
-          circuitAddresses: ['/a'],
-        ));
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'p',
+            circuitAddresses: ['/a'],
+          ),
+        );
         fake.flushMicrotasks();
 
         // Advance 5s from LAST online event → retry fires
@@ -174,16 +181,61 @@ void main() {
       });
     });
 
+    test('suppresses a second reconnect retry inside coordinator cooldown', () {
+      fakeAsync((fake) {
+        var runCount = 0;
+        final coordinator = KeyExchangeRetryCoordinator(
+          performRetry: () async {
+            runCount += 1;
+            return 1;
+          },
+          cooldown: const Duration(seconds: 10),
+          now: () => DateTime.utc(2026, 4, 12, 18).add(fake.elapsed),
+        );
+        retrier = KeyExchangeRetrier(
+          p2pService: p2pService,
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          coordinator: coordinator,
+        );
+        retrier.start();
+
+        const onlineState = NodeState(
+          isStarted: true,
+          peerId: 'p',
+          circuitAddresses: ['/a'],
+        );
+
+        p2pService.emitState(onlineState);
+        fake.flushMicrotasks();
+        fake.elapse(const Duration(seconds: 5));
+        fake.flushMicrotasks();
+        expect(runCount, 1);
+
+        p2pService.emitState(NodeState.stopped);
+        fake.flushMicrotasks();
+        p2pService.emitState(onlineState);
+        fake.flushMicrotasks();
+        fake.elapse(const Duration(seconds: 5));
+        fake.flushMicrotasks();
+
+        expect(runCount, 1);
+      });
+    });
+
     test('dispose cancels subscription and timer', () {
       fakeAsync((fake) {
         retrier.start();
 
         // Go online → creates timer
-        p2pService.emitState(const NodeState(
-          isStarted: true,
-          peerId: 'my-peer',
-          circuitAddresses: ['/addr'],
-        ));
+        p2pService.emitState(
+          const NodeState(
+            isStarted: true,
+            peerId: 'my-peer',
+            circuitAddresses: ['/addr'],
+          ),
+        );
         fake.flushMicrotasks();
 
         // Dispose before timer fires

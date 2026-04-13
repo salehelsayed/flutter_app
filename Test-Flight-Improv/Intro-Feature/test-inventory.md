@@ -1,6 +1,6 @@
 # Introduction Feature -- Test Inventory
 
-**Date:** 2026-04-09
+**Date:** 2026-04-13
 **Scope:** All automated tests covering the Introduction feature across unit, widget, integration, and regression categories.
 
 ---
@@ -52,13 +52,13 @@ Screenshots from device runs are saved under `build/intro_e2e/`.
 | Category | Files | Test Cases |
 |----------|------:|-----------:|
 | Domain (models, repo impl) | 2 | 13 |
-| Data (DB migrations) | 1 | 2 |
-| Application (use cases, listener, delivery) | 18 | 173 |
+| Data (DB migrations/helpers) | 3 | 12 |
+| Application (use cases, listener, delivery) | 18 | 182 |
 | Presentation (widgets, screens) | 10 | 72 |
 | Integration (smoke, wiring, multi-node) | 4 | 63 |
 | Regression | 1 | 22 |
 | Cross-feature (feed, push, conversation, orbit) | 8 | 44 |
-| **Total** | **44** | **389** |
+| **Total** | **46** | **408** |
 
 QA checklist from the `c4-code.md` source-of-truth review:
 
@@ -100,7 +100,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 
 ---
 
-## 2. Data Layer (DB Migrations)
+## 2. Data Layer (DB Migrations / Helpers)
 
 ### 2.1 pending_introduction_responses table
 **File:** `test/core/database/migrations/046_pending_introduction_responses_test.dart`
@@ -110,12 +110,38 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | creates pending_introduction_responses table | Migration creates table schema |
 | is idempotent when rerun | Re-running migration is safe |
 
-### Gaps
+### 2.2 Intro persistence migrations
+**File:** `test/core/database/migrations/intro_migrations_test.dart`
 
-- No migration tests for the `introductions` table (migration 019)
-- No migration tests for key-column additions (migrations 022, 023, 025)
-- No migration tests for `introduction_outbox_deliveries` table
-- No DB helper function tests (all helpers are exercised indirectly through use-case and integration tests)
+| Test | What it covers |
+|------|----------------|
+| creates the introductions table with expected indexes | Migration 019 base schema and indexes |
+| is idempotent when rerun | Migration 019 rerun safety |
+| add introduced and recipient key columns | Migrations 022 and 023 key-column additions |
+| preserves existing key data and allows already_connected status | Migration 025 table rebuild plus status expansion |
+| creates the outbox table with retry indexes | Migration 047 schema and indexes |
+| is idempotent when rerun | Migration 047 rerun safety |
+
+### 2.3 Intro DB helpers
+**File:** `test/core/database/helpers/intro_db_helpers_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| includes already_connected rows for visibility and orders newest first | Pending intro loader truth |
+| counts only true pending rows across recipient and introduced roles | Pending badge count truth |
+| orders replay rows by created_at then response_key | Deferred intro response replay ordering |
+| returns only failed stale sending or sent and delivered via inbox rows in created order | Retryable intro outbox selection |
+
+### Coverage Notes
+
+- Direct migration coverage for `019`, `022`, `023`, `025`, and `047` is now
+  covered on 2026-04-13 by `test/core/database/migrations/intro_migrations_test.dart`.
+- Direct helper coverage for `introductions_db_helpers.dart`,
+  `pending_introduction_responses_db_helpers.dart`, and
+  `introduction_outbox_db_helpers.dart` is now covered on 2026-04-13 by
+  `test/core/database/helpers/intro_db_helpers_test.dart`.
+- Broader regression confirmation for the touched persistence seam was rerun on
+  2026-04-13 with `flutter test --no-pub test/core/database`.
 
 ---
 
@@ -221,6 +247,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | | new contact has mlKemPublicKey from introduction | Key exchange |
 | | stores a meaningful system message in the new conversation | System message |
 | | avatar retry failure does not roll back the created contact or system message | Avatar failure durability |
+| | existing mutual-acceptance contact without avatar retries settlement without duplicating system message | Later avatar settlement idempotence |
 | `ConnectionFeedItem.fromContact` | populates introducedBy from contact field | Feed item mapping |
 
 ### 3.6 Mutual Acceptance (combined flow)
@@ -345,6 +372,10 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | | formats the introduced-side message | Introduced perspective |
 | | includes the already connected suffix | Already-connected variant |
 | (top) | formatMutualAcceptanceSystemMessage names the new contact clearly | Mutual acceptance copy |
+| `introducer status feedback copy` | formats first-accept progress when the recipient accepts first | Introducer first-accept copy |
+| | formats first-accept progress when the introduced party accepts first | Reverse-order introducer copy |
+| | formats introducer mutual-accept thread copy | Introducer thread completion copy |
+| | formats introducer mutual-accept notification copy | Introducer notification completion copy |
 
 ### 3.13 IntroductionListener
 **File:** `test/features/introduction/application/introduction_listener_test.dart`
@@ -358,7 +389,10 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | duplicate send replay keeps one row, one system message, and one notification | Duplicate send replay idempotency |
 | dispatches status changes to introStatusChangedStream | Status stream |
 | introduced-side receipt uses introduced perspective in system message and notification | Copy perspective |
-| mutual acceptance shows a local new-connection notification | Notification on connect |
+| introducer-side first accept writes a recipient-thread progress message without a false connection notification | Introducer first-accept thread feedback |
+| introducer-side mutual acceptance writes a recipient-thread connection message and a role-correct notification | Introducer completion feedback |
+| participant-side mutual acceptance shows a local new-connection notification | Participant notification on connect |
+| duplicate introducer mutual-accept replay does not duplicate recipient-thread messages or notifications | Introducer replay idempotency |
 | duplicate accept replay after mutual acceptance does not duplicate contact side effects or notifications | Terminal accept replay idempotency |
 | multiple incoming intros produce stacked local notifications | Notification stacking |
 | defers out-of-order accept and confirms direct delivery positively | Out-of-order + ack |
@@ -389,6 +423,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | repairs stale pending passed rows without creating a contact | Passed-state startup healing |
 | repairs stale pending expired rows without creating a contact | Expired-state startup healing |
 | leaves alreadyConnected rows untouched during startup repair | Guard for already-connected |
+| later recovery settles avatar for an already-mutual-accepted contact without duplicating side effects | Intro-owned later avatar settlement |
 
 ### 3.16 resolveUnknownInboxSender
 **File:** `test/features/introduction/application/resolve_unknown_inbox_sender_use_case_test.dart`
@@ -727,7 +762,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 |------|----------------|
 | shows fallback for intros type | Background push displays notification for intro events |
 | preserves provided copy for a new-introduction intros fallback | Push-backed new-intro notification copy |
-| preserves provided copy for a mutual-accept intros fallback | Push-backed mutual-accept notification copy |
+| preserves provided role-correct copy for an introducer mutual-accept intros fallback | Push-backed introducer mutual-accept notification copy |
 | shows fallback for group_invite type and routes to intros | Group invite push routes to intros tab |
 
 ### 7.7 Orbit Wired (intro-related subset)
@@ -760,17 +795,24 @@ QA checklist from the `c4-code.md` source-of-truth review:
 
 ## 8. Coverage Gaps
 
-Areas of the introduction feature that have **no dedicated test coverage** or only indirect coverage:
+Areas of the introduction feature with remaining gaps, or recently closed seams
+that used to lack direct coverage:
 
 ### 8.1 Data Layer
-- **DB helper functions**: `introductions_db_helpers.dart`, `pending_introduction_responses_db_helpers.dart`, `introduction_outbox_db_helpers.dart` -- exercised only indirectly through use-case tests. No unit tests for SQL correctness, edge-case queries, or concurrent access.
-- **Migrations 019, 022, 023, 025**: No tests verifying schema creation or column additions for the `introductions` or `introduction_outbox_deliveries` tables.
+- **DB helper functions**: Covered on 2026-04-13 by `intro_db_helpers_test.dart`,
+  which directly exercises pending intro visibility, pending count truth,
+  deferred-response replay ordering, and retryable outbox selection, plus a
+  green rerun of `flutter test --no-pub test/core/database`.
+- **Migrations 019, 022, 023, 025, 047**: Covered on 2026-04-13 by
+  `intro_migrations_test.dart`, which directly verifies intro table creation,
+  key-column additions, `already_connected` rebuild behavior, and intro outbox
+  schema/index creation, plus a green rerun of `flutter test --no-pub test/core/database`.
 
 ### 8.2 Application Layer
 - **Delivery cascade tiers**: The local/direct race is now covered on 2026-04-09 by `local/direct race converges to one intro row and one system message on the receiver` in `test/features/introduction/integration/introduction_smoke_test.dart`, and relay probe is covered by `relay-probe fallback delivers after the direct path fails` in `test/features/introduction/application/introduction_outbound_delivery_test.dart`; the already-connected fast path still is not tested in isolation.
 - **retryPendingIntroductionDeliveries on app resume**: Covered on 2026-04-09 by `retryPendingIntroductionDeliveries processes multiple stalled and failed rows and cleans delivered inbox rows` in `test/features/introduction/application/introduction_outbound_delivery_test.dart` plus the existing intro-retry ordering proof in `test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart`.
 - **insertIntroSystemMessage**: No dedicated tests (covered indirectly by `create_connection_on_mutual_acceptance_test` and listener tests).
-- **Avatar download on mutual acceptance**: Covered on 2026-04-09 by `avatar retry failure does not roll back the created contact or system message` in `test/features/introduction/application/create_connection_on_mutual_acceptance_test.dart`.
+- **Avatar download on mutual acceptance**: Covered on 2026-04-13 by the no-rollback regression plus `existing mutual-acceptance contact without avatar retries settlement without duplicating system message` in `test/features/introduction/application/create_connection_on_mutual_acceptance_test.dart`, `later recovery settles avatar for an already-mutual-accepted contact without duplicating side effects` in `test/features/introduction/application/expire_old_introductions_use_case_test.dart`, and green reruns of `flutter test --no-pub test/features/introduction/application`, `./scripts/run_test_gates.sh intro`, and `./scripts/run_test_gates.sh baseline`.
 - **Batch progress callback edge cases**: Partial batch failure mid-stream, network drop during batch.
 - **Flow-event contract inventory**: No dedicated tests pin intro-specific event family names, including contact intro banner/sent-at persistence events and intro retry orchestration events.
 
@@ -789,7 +831,7 @@ Areas of the introduction feature that have **no dedicated test coverage** or on
 - **Concurrent intro-chain isolation**: Covered on 2026-04-09 by the concurrent-chain isolation regression in `test/features/introduction/integration/introduction_multi_node_test.dart` and a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Offline relay intro to first chat**: Covered on 2026-04-09 by `INTRO_E2E_SCENARIO=offline-chat ./smoke_test_friends.sh`, the offline-relay-to-first-chat regression in `test/features/introduction/integration/introduction_multi_node_test.dart`, and a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Pass fallback after unreachable peers**: Covered on 2026-04-09 by `INTRO_E2E_SCENARIO=pass-fallback ./smoke_test_friends.sh`, the pass-fallback inbox regression in `test/features/introduction/integration/introduction_multi_node_test.dart`, and a green rerun of `./scripts/run_test_gates.sh intro`.
-- **Push notification trigger path**: Exact intro title/body content is now covered on 2026-04-09 across `introduction_listener_test.dart` local notifications and `background_push_notification_fallback_test.dart` intro fallback copy, but end-to-end FCM/APNs trigger delivery still is not exercised beyond routing.
+- **Push notification trigger path**: Exact intro title/body content is now covered on 2026-04-13 across the introducer- and participant-role listener regressions in `introduction_listener_test.dart`, the introducer copy helpers in `introduction_copy_test.dart`, the role-correct intro fallback copy regression in `background_push_notification_fallback_test.dart`, and green reruns of `./scripts/run_test_gates.sh intro` plus `./scripts/run_test_gates.sh baseline`; end-to-end FCM/APNs trigger delivery still is not exercised beyond routing.
 - **Post-expiry re-introduction**: Covered on 2026-04-09 by the expired-refresh regressions in `test/features/introduction/application/send_introduction_test.dart` and `test/features/introduction/integration/introduction_smoke_test.dart`, plus a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Sender-side persistence window**: Covered on 2026-04-09 by the `send_introduction_test.dart` crash-window regression, `INTRO_E2E_SCENARIO=repair ./smoke_test_friends.sh`, and green intro/transport gates; future regressions should keep using the same repair path.
 
@@ -798,4 +840,5 @@ Areas of the introduction feature that have **no dedicated test coverage** or on
 - **Tampered payload**: Covered on 2026-04-09 by `tampered v2 ciphertext rejects intro, stores nothing, and logs failure` in `test/features/introduction/application/introduction_listener_test.dart` and a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Key mismatch escalation**: Covered on 2026-04-09 by `rejects intro/contact stranger ML-KEM mismatches before mutation` in both `test/features/introduction/application/accept_introduction_test.dart` and `test/features/introduction/application/pass_introduction_test.dart`, plus a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Envelope messageId normalization**: Covered on 2026-04-09 by the `introduction_payload_test.dart` regressions that scope retry IDs per action/sender and patch missing `messageId` values without breaking legacy top-level `id` envelopes, plus a green rerun of `./scripts/run_test_gates.sh intro`.
+- **Relay inbox action-split dedupe**: Covered on 2026-04-13 by `TestInboxStoreDedup_IntroductionPlaintextDifferentActionMessageIDs` and `TestInboxStoreDedup_IntroductionEncryptedDifferentActionMessageIDs` in `go-relay-server/inbox_dedup_test.go`, plus green reruns of `cd go-relay-server && go test ./... -run 'TestInboxStoreDedup_Introduction'` and `cd go-relay-server && go test ./...`; this directly proves relay storage keeps `send` and later `accept` intro envelopes for the same `introductionId` separate when their top-level action-scoped `messageId` values differ, while exact duplicate retries still dedupe.
 - **Terminal stale delivery**: Covered on 2026-04-09 by the `handle_incoming_introduction_test.dart` regressions that keep `passed`, `expired`, and `alreadyConnected` rows from being replaced by stale pending sends, plus a green rerun of `./scripts/run_test_gates.sh intro`.

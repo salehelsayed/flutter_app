@@ -117,6 +117,39 @@ func TestInboxStoreDedup_IntroductionPlaintextEnvelope(t *testing.T) {
 	}
 }
 
+func TestInboxStoreDedup_IntroductionPlaintextDifferentActionMessageIDs(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+
+	send := inboxMessage{
+		From: "sender-peer",
+		Message: `{"type":"introduction","version":"1","messageId":"intro-plain-001::send::peer-A","payload":{"action":"send","introductionId":"intro-plain-001","timestamp":"2026-04-04T20:36:00Z"}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	accept := inboxMessage{
+		From: "recipient-peer-B",
+		Message: `{"type":"introduction","version":"1","messageId":"intro-plain-001::accept::peer-B","payload":{"action":"accept","introductionId":"intro-plain-001","responderId":"peer-B","timestamp":"2026-04-04T20:37:00Z"}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	inbox.Store("recipient-peer", send)
+	inbox.Store("recipient-peer", accept)
+	if inbox.Count("recipient-peer") != 2 {
+		t.Fatalf(
+			"expected 2 introductions after action-distinct plaintext store, got %d",
+			inbox.Count("recipient-peer"),
+		)
+	}
+
+	inbox.Store("recipient-peer", accept)
+	if inbox.Count("recipient-peer") != 2 {
+		t.Fatalf(
+			"expected duplicate accept to stay deduped after plaintext action split, got %d",
+			inbox.Count("recipient-peer"),
+		)
+	}
+}
+
 func TestInboxStoreDedup_IntroductionEncryptedEnvelopeWithMessageID(t *testing.T) {
 	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
 	inbox := NewInboxStore(push)
@@ -132,6 +165,39 @@ func TestInboxStoreDedup_IntroductionEncryptedEnvelopeWithMessageID(t *testing.T
 	if inbox.Count("recipient-peer") != 1 {
 		t.Fatalf(
 			"expected 1 introduction after duplicate encrypted store, got %d",
+			inbox.Count("recipient-peer"),
+		)
+	}
+}
+
+func TestInboxStoreDedup_IntroductionEncryptedDifferentActionMessageIDs(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+
+	send := inboxMessage{
+		From:      "sender-peer",
+		Message:   `{"type":"introduction","version":"2","messageId":"intro-enc-001::send::peer-A","senderPeerId":"peer-A","encrypted":{"kem":"...","ciphertext":"...","nonce":"..."}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	accept := inboxMessage{
+		From:      "recipient-peer-B",
+		Message:   `{"type":"introduction","version":"2","messageId":"intro-enc-001::accept::peer-B","senderPeerId":"peer-B","encrypted":{"kem":"...","ciphertext":"...","nonce":"..."}}`,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	inbox.Store("recipient-peer", send)
+	inbox.Store("recipient-peer", accept)
+	if inbox.Count("recipient-peer") != 2 {
+		t.Fatalf(
+			"expected 2 introductions after action-distinct encrypted store, got %d",
+			inbox.Count("recipient-peer"),
+		)
+	}
+
+	inbox.Store("recipient-peer", accept)
+	if inbox.Count("recipient-peer") != 2 {
+		t.Fatalf(
+			"expected duplicate accept to stay deduped after encrypted action split, got %d",
 			inbox.Count("recipient-peer"),
 		)
 	}

@@ -115,20 +115,29 @@ follow-up state being durable.
 - This removes the previously open sender-local truth window without adding a
   separate outbox-to-intro reconstruction path.
 
-### Group C: Post-mutual-acceptance avatar follow-up is only best-effort
+### Group C: Post-mutual-acceptance avatar follow-up gained intro-owned later settlement on 2026-04-13
 
 - Once an intro reaches `mutualAccepted`, `handleMutualAcceptance(...)` creates
   the contact first and then starts avatar download as fire-and-forget work
   (`lib/features/introduction/application/handle_mutual_acceptance_use_case.dart`).
-- The avatar path retries only once after a short delay and then swallows
-  failure into an emitted flow event
+- The initial avatar path still retries only once after a short delay and then
+  emits `INTRO_AVATAR_DOWNLOAD_ERROR`
   (`lib/features/introduction/application/handle_mutual_acceptance_use_case.dart`).
-- This protects connection creation, which is good, but it does not provide a
-  durable retry substrate comparable to the intro outbox or other recovered
-  message flows.
-- Existing coverage audit already records this as only partially covered with no
-  smoke or e2e proof in the current tree
-  (`Test-Flight-Improv/50-two-simulator-user-journey-tests-coverage-audit.md`).
+- The missing later recovery seam is now covered by
+  `expireOldIntroductions(...)`, which Feed and Orbit already call on intro
+  reload; that use case now inspects already-mutualAccepted intro rows and
+  retries avatar settlement only for existing intro-created contacts that still
+  lack an avatar
+  (`lib/features/introduction/application/expire_old_introductions_use_case.dart`,
+  `lib/features/feed/presentation/screens/feed_wired.dart`,
+  `lib/features/orbit/presentation/screens/orbit_wired.dart`).
+- Direct tests now prove:
+  - avatar failure still does not roll back the contact or system message
+  - a later intro-owned recovery pass can settle the avatar
+  - later recovery does not duplicate the contact or duplicate the intro system
+    message
+- This remains an intro-scoped recovery path rather than a generic avatar
+  background worker for every contact in the app.
 
 ### Group D: Coverage is strong around adjacent seams, but the exact grouped failures are still under-covered
 
@@ -241,5 +250,7 @@ follow-up state being durable.
 - Current gap: current intro smoke guidance exists, but there is no explicit
   top-level `integration_test/` intro acceptance reliability journey in the
   checked-in `integration_test/` tree.
-- Current gap: avatar follow-up after mutual acceptance is only partially
-  covered today and lacks smoke/e2e proof for durable eventual settlement.
+- Covered on 2026-04-13 at the host-side intro application layer: later intro-
+  owned recovery now has direct proof for avatar settlement after the initial
+  failure window was missed, while the broader top-level `integration_test/`
+  intro acceptance journey gap remains unchanged.

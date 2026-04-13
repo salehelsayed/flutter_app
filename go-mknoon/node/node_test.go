@@ -1666,6 +1666,57 @@ func TestEventDispatcher_PreservesMessageEvents(t *testing.T) {
 	}
 }
 
+func TestEventDispatcher_EmitsPressureAndOverflowDiagnostics(t *testing.T) {
+	collector := &testEventCollector{}
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			time.Sleep(50 * time.Millisecond)
+			collector.OnEvent(jsonStr)
+		},
+	}
+
+	d := NewEventDispatcher(cb, 2)
+	defer d.Stop()
+
+	for i := 0; i < 10; i++ {
+		d.Emit("group_message:received", map[string]interface{}{
+			"groupId": "group-overflow",
+			"text":    fmt.Sprintf("msg-%d", i),
+		})
+	}
+
+	pressure := waitForCollectedEvent(t, collector, dispatcherPressureEvent, 3*time.Second)
+	if got := pressure["state"]; got != "near_overflow" {
+		t.Fatalf("pressure state = %v, want near_overflow", got)
+	}
+	if got := pressure["maxQueueSize"]; got != float64(2) {
+		t.Fatalf("pressure maxQueueSize = %v, want 2", got)
+	}
+	if got := pressure["queueDepth"]; got == nil || got.(float64) < 1 {
+		t.Fatalf("pressure queueDepth = %v, want >= 1", got)
+	}
+	if got := pressure["lastEvent"]; got != "group_message:received" {
+		t.Fatalf("pressure lastEvent = %v, want group_message:received", got)
+	}
+
+	overflow := waitForCollectedEvent(t, collector, dispatcherOverflowEvent, 3*time.Second)
+	if got := overflow["state"]; got != "overflow" {
+		t.Fatalf("overflow state = %v, want overflow", got)
+	}
+	if got := overflow["maxQueueSize"]; got != float64(2) {
+		t.Fatalf("overflow maxQueueSize = %v, want 2", got)
+	}
+	if got := overflow["queueDepth"]; got != float64(2) {
+		t.Fatalf("overflow queueDepth = %v, want 2", got)
+	}
+	if got := overflow["droppedCount"]; got == nil || got.(float64) < 1 {
+		t.Fatalf("overflow droppedCount = %v, want >= 1", got)
+	}
+	if got := overflow["lastEvent"]; got != "group_message:received" {
+		t.Fatalf("overflow lastEvent = %v, want group_message:received", got)
+	}
+}
+
 // --- Test helper types ---
 
 type slowEventCallback struct {

@@ -247,14 +247,18 @@ void main() {
       );
       await pump();
 
-      // Charlie receives the message
+      // Charlie sees the leave timeline plus the post-leave chat message.
       final charlieMsgs = await charlie.loadGroupMessages(groupId);
-      expect(charlieMsgs.length, 1);
-      expect(charlieMsgs.first.text, 'After Bob left');
+      expect(charlieMsgs, hasLength(2));
+      expect(
+        charlieMsgs.map((message) => message.text),
+        containsAll(['Bob left the group', 'After Bob left']),
+      );
 
-      // Bob receives nothing
+      // Bob keeps the local leave timeline even after the group is removed.
       final bobMsgs = await bob.loadGroupMessages(groupId);
-      expect(bobMsgs.length, 0);
+      expect(bobMsgs, hasLength(1));
+      expect(bobMsgs.single.text, 'Bob left the group');
 
       // Bob's groupRepo should have no group
       final bobGroup = await bob.groupRepo.getGroup(groupId);

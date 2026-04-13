@@ -78,6 +78,10 @@ void main() {
     void Function(String contactPeerId, String messageId)? onDeleteMessage,
     void Function(String contactPeerId)? onCancelEdit,
     void Function(String groupId, String text)? onGroupInlineSend,
+    void Function(String groupId, String messageId, String emoji)?
+    onGroupReactionTap,
+    void Function(String groupId, String messageId, String emoji)?
+    onGroupReactionSelected,
     void Function(String contactPeerId, String messageId)? onQuoteReply,
     void Function(GroupThreadFeedItem)? onGroupAttach,
     String? userPeerId = 'alice-peer',
@@ -109,6 +113,8 @@ void main() {
               onDeleteMessage: onDeleteMessage,
               onCancelEdit: onCancelEdit,
               onGroupInlineSend: onGroupInlineSend,
+              onGroupReactionTap: onGroupReactionTap,
+              onGroupReactionSelected: onGroupReactionSelected,
               onQuoteReply: onQuoteReply,
               onGroupAttach: onGroupAttach,
               reactions: reactions,
@@ -516,6 +522,219 @@ void main() {
       expect(find.byType(TextField), findsNothing);
       expect(find.byIcon(Icons.add_rounded), findsNothing);
       expect(find.byType(SwipeToQuoteBubble), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'inline group reaction chips route through the dedicated inspection callback',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final groupItem = GroupThreadFeedItem(
+        id: 'group_thread_reactions',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        groupId: 'group-1',
+        groupName: 'Reaction Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'group-msg-1',
+            text: 'Group message with reactions',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Bob',
+            senderPeerId: 'peer-bob',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+      String? tappedGroupId;
+      String? tappedMessageId;
+      String? tappedEmoji;
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [groupItem],
+          reactions: {
+            'group-msg-1': [
+              MessageReaction(
+                id: 'rxn-1',
+                messageId: 'group-msg-1',
+                emoji: '👍',
+                senderPeerId: 'peer-bob',
+                timestamp: '2026-03-01T09:56:00.000Z',
+                createdAt: '2026-03-01T09:56:00.000Z',
+              ),
+            ],
+          },
+          onGroupReactionTap: (groupId, messageId, emoji) {
+            tappedGroupId = groupId;
+            tappedMessageId = messageId;
+            tappedEmoji = emoji;
+          },
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('👍'));
+      await tester.pump();
+
+      expect(tappedGroupId, 'group-1');
+      expect(tappedMessageId, 'group-msg-1');
+      expect(tappedEmoji, '👍');
+    },
+  );
+
+  testWidgets(
+    'announcement reader cards keep inline reaction inspection available while compose stays read-only',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final groupItem = GroupThreadFeedItem(
+        id: 'group_thread_announce_reactions',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        groupId: 'announce-1',
+        groupName: 'Announcements',
+        groupType: GroupType.announcement,
+        myRole: GroupRole.member,
+        messages: [
+          ThreadMessage(
+            id: 'announce-msg-1',
+            text: 'Admin reaction message',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Admin',
+            senderPeerId: 'peer-admin',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+      String? tappedGroupId;
+      String? tappedMessageId;
+      String? tappedEmoji;
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [groupItem],
+          reactions: {
+            'announce-msg-1': [
+              MessageReaction(
+                id: 'rxn-announce',
+                messageId: 'announce-msg-1',
+                emoji: '👏',
+                senderPeerId: 'peer-admin',
+                timestamp: '2026-03-01T09:56:00.000Z',
+                createdAt: '2026-03-01T09:56:00.000Z',
+              ),
+            ],
+          },
+          onGroupInlineSend: (_, __) {},
+          onGroupAttach: (_) {},
+          onQuoteReply: (_, __) {},
+          onGroupReactionTap: (groupId, messageId, emoji) {
+            tappedGroupId = groupId;
+            tappedMessageId = messageId;
+            tappedEmoji = emoji;
+          },
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.text('Only admins can send messages in this group'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('👏'));
+      await tester.pump();
+
+      expect(tappedGroupId, 'announce-1');
+      expect(tappedMessageId, 'announce-msg-1');
+      expect(tappedEmoji, '👏');
+    },
+  );
+
+  testWidgets(
+    'group message long-press in Feed uses the shared context overlay with reactions reply and copy',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final item = GroupThreadFeedItem(
+        id: 'group_thread_overlay',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        groupId: 'group-1',
+        groupName: 'Overlay Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'group-msg-1',
+            text: 'Incoming group message',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Bob',
+            senderPeerId: 'peer-bob',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+      String? quotedPeerId;
+      String? quotedMessageId;
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [item],
+          reactions: {
+            'group-msg-1': [
+              MessageReaction(
+                id: 'rxn-1',
+                messageId: 'group-msg-1',
+                emoji: '👍',
+                senderPeerId: 'peer-bob',
+                timestamp: '2026-03-01T09:56:00.000Z',
+                createdAt: '2026-03-01T09:56:00.000Z',
+              ),
+            ],
+          },
+          onGroupReactionSelected: (_, __, ___) {},
+          onQuoteReply: (contactPeerId, messageId) {
+            quotedPeerId = contactPeerId;
+            quotedMessageId = messageId;
+          },
+        ),
+      );
+      await tester.pump();
+
+      await tester.longPress(find.text('Incoming group message'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.reactionBarKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(MessageContextOverlay.selectedMessageKey),
+          matching: find.text('Incoming group message'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(quotedPeerId, 'group:group-1');
+      expect(quotedMessageId, 'group-msg-1');
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
     },
   );
 

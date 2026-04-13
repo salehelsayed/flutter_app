@@ -99,12 +99,14 @@ readonly OPTIONAL_MANUAL_TESTS=(
   "test/integration/notification_deeplink_integration_test.dart"
   "test/integration/rapid_lock_unlock_integration_test.dart"
   "test/integration/relay_down_degradation_integration_test.dart"
-  "integration_test/conversation_wired_performance_test.dart"
-  "integration_test/conversation_wired_subscription_performance_test.dart"
+  "integration_test/media_message_journey_e2e_test.dart"
+  "integration_test/notification_open_ui_smoke_test.dart"
+  "test/performance/conversation_wired_performance_test.dart"
+  "test/performance/conversation_wired_subscription_performance_test.dart"
   "integration_test/feed_performance_test.dart"
-  "integration_test/feed_wired_init_performance_test.dart"
+  "test/performance/feed_wired_init_performance_test.dart"
   "integration_test/identity_progress_performance_test.dart"
-  "integration_test/orbit_performance_test.dart"
+  "test/performance/orbit_performance_test.dart"
 )
 
 readonly OUT_OF_GATE_TESTS=(

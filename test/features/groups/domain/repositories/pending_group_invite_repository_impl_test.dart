@@ -16,6 +16,9 @@ void main() {
     String groupName = 'Book Club',
     DateTime? receivedAt,
   }) {
+    final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
+    final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
+    final inviteTimestamp = createdAt.add(const Duration(minutes: 5));
     final payload = GroupInvitePayload(
       id: 'invite-$groupId',
       groupId: groupId,
@@ -25,16 +28,16 @@ void main() {
         'name': groupName,
         'groupType': 'chat',
         'createdBy': 'peer-admin',
-        'createdAt': '2026-04-05T12:00:00.000Z',
+        'createdAt': createdAt.toIso8601String(),
         'members': const [],
       },
       senderPeerId: 'peer-admin',
       senderUsername: 'Admin',
-      timestamp: '2026-04-05T13:00:00.000Z',
+      timestamp: inviteTimestamp.toIso8601String(),
     );
     return PendingGroupInvite.fromPayload(
       payload,
-      receivedAt: receivedAt ?? DateTime.utc(2026, 4, 5, 13, 0),
+      receivedAt: effectiveReceivedAt,
     );
   }
 

@@ -17,6 +17,7 @@ import 'package:flutter_app/features/groups/application/group_avatar_storage.dar
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
@@ -319,10 +320,6 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<void> _broadcastSelfRemovalIfNeeded() async {
-    if (_group.myRole != GroupRole.admin) {
-      return;
-    }
-
     final identity = await widget.identityRepo.loadIdentity();
     if (identity == null) {
       throw StateError('No identity found');
@@ -332,7 +329,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     final adminCount = members
         .where((member) => member.role == MemberRole.admin)
         .length;
-    if (adminCount <= 1) {
+    if (_group.myRole == GroupRole.admin && adminCount <= 1) {
       return;
     }
 
@@ -354,17 +351,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       'groupConfig': _buildGroupConfig(_group, remainingMembers),
     });
 
+    final leaveTimelineMessage = buildMemberRemovedTimelineMessage(
+      groupId: _group.id,
+      removedPeerId: identity.peerId,
+      removedUsername: identity.username,
+      senderId: identity.peerId,
+      senderUsername: identity.username ?? '',
+      eventAt: leftAt,
+    );
     if (widget.msgRepo != null) {
-      await widget.msgRepo!.saveMessage(
-        buildMemberRemovedTimelineMessage(
-          groupId: _group.id,
-          removedPeerId: identity.peerId,
-          removedUsername: identity.username,
-          senderId: identity.peerId,
-          senderUsername: identity.username ?? '',
-          eventAt: leftAt,
-        ),
-      );
+      await widget.msgRepo!.saveMessage(leaveTimelineMessage);
     }
 
     await callGroupPublish(
@@ -385,31 +381,35 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         'groupId': _group.id,
         'senderId': identity.peerId,
         'senderUsername': identity.username ?? '',
-        'keyEpoch': 0,
         'text': sysText,
         'timestamp': leftAt.toIso8601String(),
       });
-      await callGroupInboxStore(
-        widget.bridge,
-        _group.id,
-        inboxPayload,
+      await storeGroupOfflineReplayEnvelope(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        groupId: _group.id,
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: inboxPayload,
+        messageId: leaveTimelineMessage.id,
         recipientPeerIds: recipientPeerIds,
       );
     }
 
-    await rotateAndDistributeGroupKey(
-      bridge: widget.bridge,
-      groupRepo: widget.groupRepo,
-      groupId: _group.id,
-      selfPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-      senderUsername: identity.username ?? '',
-      sendP2PMessage: (peerId, message) async {
-        await widget.p2pService.sendMessage(peerId, message);
-        return true;
-      },
-    );
+    if (remainingMembers.isNotEmpty) {
+      await rotateAndDistributeGroupKey(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        groupId: _group.id,
+        selfPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username ?? '',
+        sendP2PMessage: (peerId, message) async {
+          await widget.p2pService.sendMessage(peerId, message);
+          return true;
+        },
+      );
+    }
   }
 
   Future<void> _onRemoveMember(GroupMember member) async {
@@ -440,23 +440,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             'removedAt': removedAt.toIso8601String(),
             'groupConfig': groupConfig,
           });
+          final removalTimelineMessage = buildMemberRemovedTimelineMessage(
+            groupId: widget.group.id,
+            removedPeerId: member.peerId,
+            removedUsername: member.username,
+            senderId: identity.peerId,
+            senderUsername: identity.username ?? '',
+            eventAt: removedAt,
+          );
           if (widget.msgRepo != null) {
-            await widget.msgRepo!.saveMessage(
-              buildMemberRemovedTimelineMessage(
-                groupId: widget.group.id,
-                removedPeerId: member.peerId,
-                removedUsername: member.username,
-                senderId: identity.peerId,
-                senderUsername: identity.username ?? '',
-                eventAt: removedAt,
-              ),
-            );
+            await widget.msgRepo!.saveMessage(removalTimelineMessage);
           }
           final removalInboxPayload = jsonEncode({
             'groupId': widget.group.id,
             'senderId': identity.peerId,
             'senderUsername': identity.username ?? '',
-            'keyEpoch': 0,
             'text': sysMessage,
             'timestamp': removedAt.toIso8601String(),
           });
@@ -470,10 +468,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPrivateKey: identity.privateKey,
             senderUsername: identity.username ?? '',
           );
-          await callGroupInboxStore(
-            widget.bridge,
-            widget.group.id,
-            removalInboxPayload,
+          await storeGroupOfflineReplayEnvelope(
+            bridge: widget.bridge,
+            groupRepo: widget.groupRepo,
+            groupId: widget.group.id,
+            payloadType: groupOfflineReplayPayloadTypeMessage,
+            plaintext: removalInboxPayload,
+            messageId: removalTimelineMessage.id,
             recipientPeerIds: [member.peerId],
           );
 
@@ -601,20 +602,19 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
         'groupConfig': _buildGroupConfig(group, members),
       });
+      final roleTimelineMessage = buildMemberRoleUpdatedTimelineMessage(
+        groupId: _group.id,
+        updatedPeerId: updatedMember.peerId,
+        updatedUsername: updatedMember.username,
+        previousRole: member.role,
+        newRole: updatedMember.role,
+        senderId: identity.peerId,
+        senderUsername: identity.username ?? '',
+        eventAt: changedAt,
+      );
 
       if (widget.msgRepo != null) {
-        await widget.msgRepo!.saveMessage(
-          buildMemberRoleUpdatedTimelineMessage(
-            groupId: _group.id,
-            updatedPeerId: updatedMember.peerId,
-            updatedUsername: updatedMember.username,
-            previousRole: member.role,
-            newRole: updatedMember.role,
-            senderId: identity.peerId,
-            senderUsername: identity.username ?? '',
-            eventAt: changedAt,
-          ),
-        );
+        await widget.msgRepo!.saveMessage(roleTimelineMessage);
       }
 
       await callGroupPublish(
@@ -637,14 +637,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'groupId': _group.id,
           'senderId': identity.peerId,
           'senderUsername': identity.username ?? '',
-          'keyEpoch': 0,
           'text': sysText,
           'timestamp': changedAt.toIso8601String(),
         });
-        await callGroupInboxStore(
-          widget.bridge,
-          _group.id,
-          inboxPayload,
+        await storeGroupOfflineReplayEnvelope(
+          bridge: widget.bridge,
+          groupRepo: widget.groupRepo,
+          groupId: _group.id,
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: inboxPayload,
+          messageId: roleTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
       }
@@ -831,16 +833,15 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         'updatedAt': changedAt.toIso8601String(),
         'groupConfig': buildGroupConfigPayload(updatedGroup, refreshedMembers),
       });
+      final metadataTimelineMessage = buildGroupMetadataUpdatedTimelineMessage(
+        groupId: _group.id,
+        senderId: identity.peerId,
+        senderUsername: identity.username ?? '',
+        eventAt: changedAt,
+      );
 
       if (widget.msgRepo != null) {
-        await widget.msgRepo!.saveMessage(
-          buildGroupMetadataUpdatedTimelineMessage(
-            groupId: _group.id,
-            senderId: identity.peerId,
-            senderUsername: identity.username ?? '',
-            eventAt: changedAt,
-          ),
-        );
+        await widget.msgRepo!.saveMessage(metadataTimelineMessage);
       }
 
       await callGroupPublish(
@@ -862,14 +863,16 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'groupId': _group.id,
           'senderId': identity.peerId,
           'senderUsername': identity.username ?? '',
-          'keyEpoch': 0,
           'text': sysText,
           'timestamp': changedAt.toIso8601String(),
         });
-        await callGroupInboxStore(
-          widget.bridge,
-          _group.id,
-          inboxPayload,
+        await storeGroupOfflineReplayEnvelope(
+          bridge: widget.bridge,
+          groupRepo: widget.groupRepo,
+          groupId: _group.id,
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: inboxPayload,
+          messageId: metadataTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
       }
@@ -904,7 +907,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   void _onAddMember() {
     Navigator.of(context)
-        .push<int>(
+        .push<ContactPickerInviteResult>(
           MaterialPageRoute(
             builder: (_) => ContactPickerWired(
               groupId: _group.id,
@@ -913,20 +916,17 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
               bridge: widget.bridge,
               identityRepo: widget.identityRepo,
               p2pService: widget.p2pService,
+              msgRepo: widget.msgRepo,
             ),
           ),
         )
-        .then((count) {
-          if (count != null && count > 0) {
+        .then((result) {
+          if (result != null && result.membersAdded > 0) {
             _didMutateGroup = true;
             _loadGroupInfo();
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    count == 1 ? 'Member invited' : '$count members invited',
-                  ),
-                ),
+                SnackBar(content: Text(result.buildCompletionMessage())),
               );
             }
           }

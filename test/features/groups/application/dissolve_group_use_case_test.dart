@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
@@ -30,6 +31,14 @@ void main() {
     msgRepo = InMemoryGroupMessageRepository();
 
     await groupRepo.saveGroup(baseGroup);
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 1,
+        encryptedKey: 'test-group-key-1',
+        createdAt: now,
+      ),
+    );
     await groupRepo.saveMember(
       GroupMember(
         groupId: 'group-1',

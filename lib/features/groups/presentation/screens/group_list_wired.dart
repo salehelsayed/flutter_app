@@ -20,6 +20,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
@@ -45,6 +46,7 @@ class GroupListWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final ActiveConversationTracker? groupConversationTracker;
   final ReactionRepository? reactionRepo;
+  final GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository;
 
   const GroupListWired({
     super.key,
@@ -64,6 +66,7 @@ class GroupListWired extends StatefulWidget {
     this.audioRecorderService,
     this.groupConversationTracker,
     this.reactionRepo,
+    this.groupReactionReplayOutboxRepository,
   });
 
   @override
@@ -207,6 +210,8 @@ class _GroupListWiredState extends State<GroupListWired>
               audioRecorderService: widget.audioRecorderService,
               groupConversationTracker: widget.groupConversationTracker,
               reactionRepo: widget.reactionRepo,
+              groupReactionReplayOutboxRepository:
+                  widget.groupReactionReplayOutboxRepository,
             ),
           ),
         )
@@ -229,6 +234,7 @@ class _GroupListWiredState extends State<GroupListWired>
 
     setState(() => _processingInviteIds.add(invite.groupId));
     try {
+      final identity = await widget.identityRepo.loadIdentity();
       final (result, group) = await acceptPendingGroupInvite(
         pendingInviteRepo: inviteListener.pendingInviteRepo,
         groupRepo: widget.groupRepo,
@@ -236,7 +242,12 @@ class _GroupListWiredState extends State<GroupListWired>
         bridge: widget.bridge,
         groupId: invite.groupId,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
+        reactionRepo: widget.reactionRepo,
         groupMessageListener: widget.groupMessageListener,
+        senderPeerId: identity?.peerId,
+        senderPublicKey: identity?.publicKey,
+        senderPrivateKey: identity?.privateKey,
+        senderUsername: identity?.username,
       );
       if (group != null) {
         _changedGroupIds.add(group.id);

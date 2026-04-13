@@ -142,7 +142,14 @@ class RecordAudioRecorderService implements AudioRecorderService {
   Future<void> dispose() async {
     _ticker?.cancel();
     _maxDurationTimer?.cancel();
-    await _amplitudeBridgeSub?.cancel();
+    try {
+      // Some device/emulator plugin backends can stall while tearing down the
+      // amplitude event stream. Keep recorder disposal bounded so app shutdown
+      // and device integration tests do not hang indefinitely.
+      await _amplitudeBridgeSub
+          ?.cancel()
+          .timeout(const Duration(seconds: 2));
+    } catch (_) {}
     _amplitudeBridgeSub = null;
     await _durationController.close();
     await _amplitudeController.close();

@@ -756,6 +756,22 @@ func TestBuildContactRequestPushMessage_UsesContactRequestRoute(t *testing.T) {
 	}
 }
 
+func TestExtractChatPushMetadata_SuppressesKeyExchangeRetryContactRequest(t *testing.T) {
+	metadata := extractChatPushMetadata(
+		`{"type":"contact_request","version":"2","intent":"key_exchange_retry","msgId":"req-1","senderUsername":"Alice","encrypted":{"ephemeralPublicKey":"e","ciphertext":"c","nonce":"n"}}`,
+	)
+
+	if metadata.ShouldNotify {
+		t.Fatal("expected key-exchange retry contact request to suppress push notification")
+	}
+	if metadata.RouteType != "contact_request" {
+		t.Fatalf("routeType = %q, want %q", metadata.RouteType, "contact_request")
+	}
+	if metadata.MessageID != "req-1" {
+		t.Fatalf("messageID = %q, want %q", metadata.MessageID, "req-1")
+	}
+}
+
 func TestBuildGroupInvitePushMessage_UsesInviteRouteAndMetadata(t *testing.T) {
 	msg := buildPushMessage(
 		"fcm-token",
@@ -801,6 +817,31 @@ func TestInboxStore_UnsupportedEnvelopeDoesNotSendPush(t *testing.T) {
 	select {
 	case <-recorder.sentSignal:
 		t.Fatal("unexpected push send for unsupported envelope")
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func TestInboxStore_KeyExchangeRetryContactRequestDoesNotSendPush(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	tokenStore.RegisterToken("peer-recipient", "fcm-token", "android")
+
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+
+	stored := inbox.Store("peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"contact_request","version":"2","intent":"key_exchange_retry","msgId":"req-1","senderUsername":"Alice","encrypted":{"ephemeralPublicKey":"e","ciphertext":"c","nonce":"n"}}`,
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if !stored {
+		t.Fatal("expected retry contact request to still be stored in inbox")
+	}
+
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("unexpected push send for key-exchange retry contact request")
 	case <-time.After(150 * time.Millisecond):
 	}
 }

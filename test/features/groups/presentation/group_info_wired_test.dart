@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
@@ -138,12 +140,41 @@ Future<void> scrollToDissolveGroupButton(WidgetTester tester) async {
   await pumpFrames(tester, count: 5);
 }
 
+Future<void> _saveGroupReplayKey(
+  InMemoryGroupRepository groupRepo, {
+  String groupId = 'group-1',
+  int generation = 1,
+}) async {
+  await groupRepo.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: generation,
+      encryptedKey: 'test-group-key-$generation',
+      createdAt: DateTime.now().toUtc(),
+    ),
+  );
+}
+
+Map<String, dynamic> _storedGroupReplayEnvelope(String message) {
+  return jsonDecode(message) as Map<String, dynamic>;
+}
+
+Map<String, dynamic> _decodedGroupReplayPayload(String message) {
+  final envelope = _storedGroupReplayEnvelope(message);
+  final ciphertext = envelope['ciphertext'];
+  if (envelope['kind'] == 'group_offline_replay' && ciphertext is String) {
+    return jsonDecode(ciphertext) as Map<String, dynamic>;
+  }
+  return envelope;
+}
+
 void main() {
   group('GroupInfoWired', () {
     testWidgets('loads and displays group members on init', (tester) async {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       final m1 = makeMember(
         peerId: 'peer-admin',
@@ -180,6 +211,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -198,10 +230,78 @@ void main() {
       expect(find.text('Add Member'), findsOneWidget);
     });
 
+    testWidgets(
+      'shows the creator username from the real create flow for other members',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:create': {
+              'ok': true,
+              'groupId': 'group-created-with-username',
+              'topicName': 'topic-group-created-with-username',
+              'groupKey': 'group-key-created-with-username',
+              'keyEpoch': 0,
+            },
+          },
+        );
+        final viewerIdentity = IdentityModel(
+          peerId: 'peer-alice',
+          publicKey: 'pk-alice',
+          privateKey: 'sk-alice',
+          mnemonic12:
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+          mlKemPublicKey: 'mlkem-pk-alice',
+          username: 'Alice',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+          updatedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+
+        final created = await createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'Created Group',
+          type: GroupType.chat,
+          creatorPeerId: testIdentity.peerId,
+          creatorPublicKey: testIdentity.publicKey,
+          creatorMlKemPublicKey: testIdentity.mlKemPublicKey ?? '',
+          creatorUsername: testIdentity.username,
+        );
+        await groupRepo.saveGroup(created.copyWith(myRole: GroupRole.member));
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: created.id,
+            peerId: viewerIdentity.peerId,
+            username: viewerIdentity.username,
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: created.copyWith(myRole: GroupRole.member),
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: viewerIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Admin'), findsOneWidget);
+        expect(find.text('peer-admin'), findsNothing);
+      },
+    );
+
     testWidgets('hides Add Member button for non-admin role', (tester) async {
       final groupRepo = InMemoryGroupRepository();
       final group = makeMemberGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -227,6 +327,7 @@ void main() {
         final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
         await groupRepo.saveMember(
           makeMember(
             peerId: 'peer-admin',
@@ -313,6 +414,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -354,6 +456,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final group = makeMemberGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       await groupRepo.saveMember(
         makeMember(
@@ -393,6 +496,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final persistedGroup = makeAdminGroup();
       await groupRepo.saveGroup(persistedGroup);
+      await _saveGroupReplayKey(groupRepo);
       await groupRepo.saveMember(
         makeMember(
           peerId: 'peer-admin',
@@ -432,6 +536,7 @@ void main() {
         final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
         await groupRepo.saveMember(
           GroupMember(
             groupId: 'group-1',
@@ -548,6 +653,7 @@ void main() {
         final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
 
         await groupRepo.saveMember(
           GroupMember(
@@ -669,6 +775,7 @@ void main() {
         final groupRepo = InMemoryGroupRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
 
         await groupRepo.saveMember(
           GroupMember(
@@ -763,6 +870,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       final bridge = FakeBridge();
 
@@ -819,6 +927,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
       await groupRepo.saveMember(
         makeMember(
           peerId: 'peer-admin',
@@ -878,6 +987,7 @@ void main() {
         final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
 
         await groupRepo.saveMember(
           GroupMember(
@@ -996,12 +1106,130 @@ void main() {
       },
     );
 
+    testWidgets(
+      'writer leave broadcasts a durable left-the-group event before local cleanup',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeMemberGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            mlKemPublicKey: 'mlkem-pk-charlie',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final leavingIdentity = IdentityModel(
+          peerId: 'peer-bob',
+          publicKey: 'pk-bob',
+          privateKey: 'sk-bob',
+          mnemonic12:
+              'one two three four five six seven eight nine ten eleven twelve',
+          mlKemPublicKey: 'mlkem-pk-bob',
+          username: 'Bob',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+          updatedAt: DateTime.now().toUtc().toIso8601String(),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'writer-rotated-key',
+          'keyEpoch': 2,
+        };
+        final p2pService = FakeP2PService();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: leavingIdentity,
+                          ),
+                          p2pService: p2pService,
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 30);
+
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+        await tapLeaveGroupButton(tester, settleFrameCount: 30);
+
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+        expect(bridge.commandLog, contains('group:generateNextKey'));
+        expect(bridge.commandLog, contains('group:leave'));
+        expect(p2pService.sentMessageLog.length, 2);
+
+        final latestTimeline = await msgRepo.getLatestMessage('group-1');
+        expect(latestTimeline, isNotNull);
+        expect(
+          latestTimeline!.text,
+          buildMemberRemovedTimelineText('Bob', 'Bob'),
+        );
+
+        expect(await groupRepo.getGroup('group-1'), isNull);
+        expect(find.byType(GroupInfoScreen), findsNothing);
+      },
+    );
+
     testWidgets('remove member updates config and refreshes member list', (
       tester,
     ) async {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       final m1 = makeMember(
         peerId: 'peer-admin',
@@ -1072,6 +1300,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       final admin = GroupMember(
         groupId: 'group-1',
@@ -1166,6 +1395,7 @@ void main() {
         final groupRepo = InMemoryGroupRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
 
         final admin = GroupMember(
           groupId: 'group-1',
@@ -1227,17 +1457,19 @@ void main() {
         await pumpFrames(tester);
         await confirmRemoveMemberDialog(tester);
 
-        // Extract the first 4 distinct commands to verify ordering
+        // Verify the durable removal replay is encrypted before inbox store,
+        // and that key rotation starts only after the replay is persisted.
         final distinctCommands = <String>[];
         for (final cmd in bridge.commandLog) {
           if (!distinctCommands.contains(cmd)) {
             distinctCommands.add(cmd);
           }
-          if (distinctCommands.length == 4) break;
+          if (distinctCommands.length == 5) break;
         }
         expect(distinctCommands, [
           'group:updateConfig',
           'group:publish',
+          'group.encrypt',
           'group:inboxStore',
           'group:generateNextKey',
         ]);
@@ -1250,6 +1482,7 @@ void main() {
         final groupRepo = InMemoryGroupRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
 
         final admin = GroupMember(
           groupId: 'group-1',
@@ -1342,6 +1575,7 @@ void main() {
         final msgRepo = InMemoryGroupMessageRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
 
         final admin = GroupMember(
           groupId: 'group-1',
@@ -1442,25 +1676,6 @@ void main() {
         expect(memberPeerIds, contains('peer-bob'));
         expect(memberPeerIds, isNot(contains('peer-alice')));
 
-        final inboxStoreMsg = bridge.sentMessages.firstWhere((m) {
-          final parsed = jsonDecode(m) as Map<String, dynamic>;
-          return parsed['cmd'] == 'group:inboxStore';
-        });
-        final inboxStorePayload =
-            (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
-                as Map<String, dynamic>;
-        expect(inboxStorePayload['recipientPeerIds'], ['peer-alice']);
-
-        final inboxEnvelope =
-            jsonDecode(inboxStorePayload['message'] as String)
-                as Map<String, dynamic>;
-        expect(inboxEnvelope['groupId'], 'group-1');
-        expect(inboxEnvelope['senderId'], 'peer-admin');
-        expect(inboxEnvelope['senderUsername'], 'Admin');
-        expect(inboxEnvelope['keyEpoch'], 0);
-        expect(inboxEnvelope['text'], publishPayload['text']);
-        expect(inboxEnvelope['timestamp'], sysText['removedAt']);
-
         final removedAt = DateTime.parse(sysText['removedAt'] as String);
         final timelineMessage = buildMemberRemovedTimelineMessage(
           groupId: 'group-1',
@@ -1470,6 +1685,33 @@ void main() {
           senderUsername: 'Admin',
           eventAt: removedAt,
         );
+
+        final inboxStoreMsg = bridge.sentMessages.firstWhere((m) {
+          final parsed = jsonDecode(m) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:inboxStore';
+        });
+        final inboxStorePayload =
+            (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(inboxStorePayload['recipientPeerIds'], ['peer-alice']);
+
+        final replayEnvelope = _storedGroupReplayEnvelope(
+          inboxStorePayload['message'] as String,
+        );
+        expect(replayEnvelope['kind'], 'group_offline_replay');
+        expect(replayEnvelope['payloadType'], 'group_message');
+        expect(replayEnvelope['keyEpoch'], 1);
+        expect(replayEnvelope['messageId'], timelineMessage.id);
+
+        final inboxEnvelope = _decodedGroupReplayPayload(
+          inboxStorePayload['message'] as String,
+        );
+        expect(inboxEnvelope['groupId'], 'group-1');
+        expect(inboxEnvelope['senderId'], 'peer-admin');
+        expect(inboxEnvelope['senderUsername'], 'Admin');
+        expect(inboxEnvelope['text'], publishPayload['text']);
+        expect(inboxEnvelope['timestamp'], sysText['removedAt']);
+
         final persistedTimeline = await msgRepo.getMessage(timelineMessage.id);
         expect(persistedTimeline, isNotNull);
         expect(
@@ -1489,6 +1731,7 @@ void main() {
         final groupRepo = InMemoryGroupRepository();
         final group = makeAdminGroup();
         await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
 
         await groupRepo.saveMember(
           makeMember(
@@ -1566,6 +1809,7 @@ void main() {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
       await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
 
       await groupRepo.saveMember(
         makeMember(

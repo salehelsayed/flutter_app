@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -115,6 +118,81 @@ func TestLoadServerLimitsFromEnv_Overrides(t *testing.T) {
 	}
 	if limits.MaxGroupInboxMessages != 22 {
 		t.Fatalf("expected MaxGroupInboxMessages=22, got %d", limits.MaxGroupInboxMessages)
+	}
+}
+
+func TestResolveStorageConfig_UsesExplicitRoot(t *testing.T) {
+	var ensured []string
+	cfg, fallbackReason, err := resolveStorageConfig(
+		"/custom/relay-data",
+		func(path string, _ os.FileMode) error {
+			ensured = append(ensured, path)
+			return nil
+		},
+		func() (string, error) {
+			t.Fatal("getwd should not be called for explicit root")
+			return "", nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("resolveStorageConfig() error: %v", err)
+	}
+	if fallbackReason != "" {
+		t.Fatalf("expected no fallback reason, got %q", fallbackReason)
+	}
+	if cfg.RootDir != "/custom/relay-data" {
+		t.Fatalf("expected explicit root, got %q", cfg.RootDir)
+	}
+	if cfg.MediaDir != "/custom/relay-data/media" {
+		t.Fatalf("unexpected media dir %q", cfg.MediaDir)
+	}
+	if cfg.ProfileDir != "/custom/relay-data/profiles" {
+		t.Fatalf("unexpected profile dir %q", cfg.ProfileDir)
+	}
+	if len(ensured) != 1 || ensured[0] != "/custom/relay-data" {
+		t.Fatalf("expected explicit root mkdir, got %#v", ensured)
+	}
+}
+
+func TestResolveStorageConfig_FallsBackToWorkingDirectoryWhenDefaultUnavailable(t *testing.T) {
+	var ensured []string
+	cfg, fallbackReason, err := resolveStorageConfig(
+		"",
+		func(path string, _ os.FileMode) error {
+			ensured = append(ensured, path)
+			if path == defaultRelayDataDir {
+				return errors.New("read-only file system")
+			}
+			return nil
+		},
+		func() (string, error) {
+			return "/repo/go-relay-server", nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("resolveStorageConfig() error: %v", err)
+	}
+	expectedRoot := filepath.Join("/repo/go-relay-server", "data")
+	if cfg.RootDir != expectedRoot {
+		t.Fatalf("expected fallback root %q, got %q", expectedRoot, cfg.RootDir)
+	}
+	if cfg.MediaDir != filepath.Join(expectedRoot, "media") {
+		t.Fatalf("unexpected media dir %q", cfg.MediaDir)
+	}
+	if cfg.ProfileDir != filepath.Join(expectedRoot, "profiles") {
+		t.Fatalf("unexpected profile dir %q", cfg.ProfileDir)
+	}
+	if fallbackReason == "" {
+		t.Fatal("expected fallback reason when /data is unavailable")
+	}
+	expectedEnsured := []string{defaultRelayDataDir, expectedRoot}
+	if len(ensured) != len(expectedEnsured) {
+		t.Fatalf("expected mkdir calls %#v, got %#v", expectedEnsured, ensured)
+	}
+	for i, path := range expectedEnsured {
+		if ensured[i] != path {
+			t.Fatalf("expected mkdir calls %#v, got %#v", expectedEnsured, ensured)
+		}
 	}
 }
 

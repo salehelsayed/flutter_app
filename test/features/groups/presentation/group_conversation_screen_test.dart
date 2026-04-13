@@ -1,17 +1,22 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
+import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 void main() {
   final testGroup = GroupModel(
@@ -53,6 +58,8 @@ void main() {
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
     Map<String, List<MediaAttachment>> mediaMap = const {},
+    Map<String, List<MessageReaction>> reactions = const {},
+    void Function(String messageId, String emoji)? onReactionSelected,
     ValueChanged<String>? onSend,
     String? initialText,
     GroupBacklogRetentionNotice? backlogRetentionNotice,
@@ -81,12 +88,22 @@ void main() {
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
           mediaMap: mediaMap,
+          reactions: reactions,
+          onReactionSelected: onReactionSelected,
           initialText: initialText,
           backlogRetentionNotice: backlogRetentionNotice,
         ),
       ),
     );
   }
+
+  Finder messageRow(String messageId) =>
+      find.byKey(ValueKey('grp-msg-$messageId'));
+
+  Finder rowBackdropFilter(String messageId) => find.descendant(
+    of: messageRow(messageId),
+    matching: find.byType(BackdropFilter),
+  );
 
   testWidgets('renders messages', (tester) async {
     await tester.pumpWidget(buildTestWidget(messages: testMessages));
@@ -95,10 +112,176 @@ void main() {
     expect(find.text('Alice'), findsOneWidget);
   });
 
+  testWidgets('renders sender identity with UserAvatar in conversation rows', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestWidget(messages: testMessages));
+
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.byType(UserAvatar), findsOneWidget);
+  });
+
+  testWidgets(
+    'keeps non-photo fallback identity readable in conversation rows',
+    (tester) async {
+      await tester.pumpWidget(buildTestWidget(messages: testMessages));
+
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Hello everyone!'), findsOneWidget);
+      expect(find.byType(RingAvatar), findsOneWidget);
+    },
+  );
+
   testWidgets('shows compose area when canWrite is true', (tester) async {
     await tester.pumpWidget(buildTestWidget(canWrite: true));
 
     expect(find.text('Write something...'), findsOneWidget);
+  });
+
+  testWidgets(
+    'long-press opens one coherent context surface with selected preview and supported actions',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: testMessages,
+          onQuoteReply: (_) {},
+          onReactionSelected: (_, __) {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.longPress(find.text('Hello everyone!'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.reactionBarKey), findsOneWidget);
+      expect(
+        find.byKey(MessageContextOverlay.selectedMessageKey),
+        findsOneWidget,
+      );
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.deleteActionKey), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(MessageContextOverlay.selectedMessageKey),
+          matching: find.text('Hello everyone!'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('long-press reply uses the existing quote-reply path', (
+    tester,
+  ) async {
+    String? quotedMessageId;
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: testMessages,
+        onQuoteReply: (messageId) => quotedMessageId = messageId,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.longPress(find.text('Hello everyone!'));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(MessageContextOverlay.replyActionKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(quotedMessageId, 'msg-1');
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+  });
+
+  testWidgets('long-press copy action copies exact text and dismisses once', (
+    tester,
+  ) async {
+    const copiedMessage = 'Hello\nEmoji 😄';
+    String? copiedText;
+    var clipboardCalls = 0;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        clipboardCalls++;
+        copiedText = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: [
+          testMessages.first.copyWith(text: copiedMessage),
+        ],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.longPress(find.textContaining('Hello'));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byKey(MessageContextOverlay.copyActionKey));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(clipboardCalls, 1);
+    expect(copiedText, copiedMessage);
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
+    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.text('Message copied to clipboard'), findsOneWidget);
+  });
+
+  testWidgets(
+    'local-only long-press actions remain available when reactions are unavailable',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(messages: testMessages, onQuoteReply: (_) {}),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.longPress(find.text('Hello everyone!'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.reactionBarKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+    },
+  );
+
+  testWidgets('long-press reaction selection preserves the reaction path', (
+    tester,
+  ) async {
+    String? reactedMessageId;
+    String? reactedEmoji;
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: testMessages,
+        onQuoteReply: (_) {},
+        onReactionSelected: (messageId, emoji) {
+          reactedMessageId = messageId;
+          reactedEmoji = emoji;
+        },
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.longPress(find.text('Hello everyone!'));
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.text('👍'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(reactedMessageId, 'msg-1');
+    expect(reactedEmoji, '👍');
+    expect(find.byKey(MessageContextOverlay.overlayKey), findsNothing);
   });
 
   MediaAttachment makeImageAttachment({
@@ -138,6 +321,152 @@ void main() {
 
     expect(sentText, isNull);
   });
+
+  testWidgets(
+    'group rows keep a single glass shell across text, quote, reaction, and media variants',
+    (tester) async {
+      final timestamp = DateTime.utc(2026, 4, 11, 12);
+      final parent = GroupMessage(
+        id: 'msg-parent',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Original parent',
+        timestamp: timestamp,
+        createdAt: timestamp,
+        isIncoming: true,
+      );
+      final quoted = GroupMessage(
+        id: 'msg-quoted',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Quoted child',
+        quotedMessageId: parent.id,
+        timestamp: timestamp.add(const Duration(minutes: 1)),
+        createdAt: timestamp.add(const Duration(minutes: 1)),
+        isIncoming: true,
+      );
+      final media = GroupMessage(
+        id: 'msg-media',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: '',
+        timestamp: timestamp.add(const Duration(minutes: 2)),
+        createdAt: timestamp.add(const Duration(minutes: 2)),
+        isIncoming: true,
+        media: [
+          makeImageAttachment(
+            id: 'att-media',
+            messageId: 'msg-media',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [parent],
+          onQuoteReply: (_) {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(messageRow(parent.id), findsOneWidget);
+      expect(rowBackdropFilter(parent.id), findsOneWidget);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [parent, quoted],
+          onQuoteReply: (_) {},
+          reactions: {
+            'msg-quoted': [
+              MessageReaction(
+                id: 'rx-1',
+                messageId: 'msg-quoted',
+                emoji: '👍',
+                senderPeerId: 'peer-1',
+                timestamp: timestamp.toIso8601String(),
+                createdAt: timestamp.toIso8601String(),
+              ),
+            ],
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(messageRow(quoted.id), findsOneWidget);
+      expect(rowBackdropFilter(quoted.id), findsOneWidget);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [media],
+          onQuoteReply: (_) {},
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(messageRow(media.id), findsOneWidget);
+      expect(rowBackdropFilter(media.id), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'row shell stays single after reaction and media enrichment updates',
+    (tester) async {
+      final timestamp = DateTime.utc(2026, 4, 11, 12);
+      final message = GroupMessage(
+        id: 'msg-enriched',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: 'Will enrich',
+        timestamp: timestamp,
+        createdAt: timestamp,
+        isIncoming: true,
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(messages: [message], onQuoteReply: (_) {}),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(messageRow(message.id), findsOneWidget);
+      expect(rowBackdropFilter(message.id), findsOneWidget);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            message.copyWith(
+              media: [
+                makeImageAttachment(
+                  id: 'att-enriched',
+                  messageId: 'msg-enriched',
+                ),
+              ],
+            ),
+          ],
+          onQuoteReply: (_) {},
+          reactions: {
+            'msg-enriched': [
+              MessageReaction(
+                id: 'rx-enriched',
+                messageId: 'msg-enriched',
+                emoji: '❤️',
+                senderPeerId: 'peer-1',
+                timestamp: timestamp.toIso8601String(),
+                createdAt: timestamp.toIso8601String(),
+              ),
+            ],
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(messageRow(message.id), findsOneWidget);
+      expect(rowBackdropFilter(message.id), findsOneWidget);
+    },
+  );
 
   testWidgets('renders active quote preview and dismisses it', (tester) async {
     var cleared = false;

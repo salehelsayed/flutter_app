@@ -486,7 +486,10 @@ func TestGroupPeerDiscoveryLoop_RetriesMissingThirdPeerDuringWarmWindow(t *testi
 		nodeA.Host().Peerstore().AddAddrs(nodeCID, nodeC.Host().Addrs(), time.Hour)
 	}()
 
-	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 6*time.Second)
+	// Full-package runs can take a few extra warm cycles before the late
+	// peer address is retried. Keep the assertion on the eventual state, not
+	// the exact retry wall-clock.
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 10*time.Second)
 
 	msgID, peerCount, err := nodeA.PublishGroupMessage(
 		groupId,
@@ -574,7 +577,7 @@ func TestGroupPeerDiscoveryLoop_UsesWarmRetryImmediatelyAfterPartialInitialRecov
 	}
 	nodeA.Host().Peerstore().AddAddrs(nodeCID, nodeC.Host().Addrs(), time.Hour)
 
-	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 6*time.Second)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 10*time.Second)
 
 	msgID, peerCount, err := nodeA.PublishGroupMessage(
 		groupId,

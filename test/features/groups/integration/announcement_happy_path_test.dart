@@ -5,12 +5,15 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/group_test_user.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
@@ -206,11 +209,22 @@ void main() {
       );
 
       final reactionRepo = FakeReactionRepository();
+      final reactionReplayOutboxRepo =
+          FakeGroupReactionReplayOutboxRepository();
+      await reader.groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: created.id,
+          keyGeneration: 0,
+          encryptedKey: 'group-key-ann-happy',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
       final (reactionResult, reaction) = await sendGroupReaction(
         bridge: reader.bridge,
         groupRepo: reader.groupRepo,
         msgRepo: reader.msgRepo,
         reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
         groupId: created.id,
         messageId: received.id,
         emoji: '👍',
@@ -221,6 +235,15 @@ void main() {
 
       expect(reactionResult, SendGroupReactionResult.success);
       expect(reaction, isNotNull);
+
+      await tester.pump();
+
+      final outboxEntry = await reactionReplayOutboxRepo.getEntry(reaction!.id);
+      expect(outboxEntry, isNotNull);
+      expect(
+        outboxEntry!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.stored,
+      );
 
       final storedReactions = await reactionRepo.getReactionsForMessage(
         received.id,

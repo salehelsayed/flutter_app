@@ -347,9 +347,9 @@ class GroupMessageListener {
 
   /// Handles a system message (e.g. member_added/member_removed config update).
   ///
-  /// System messages are published by the admin via the group pubsub topic
-  /// to notify existing members of config changes. They are not displayed
-  /// as regular chat messages.
+  /// System messages are published over the group topic to notify members of
+  /// config changes. Membership events may also materialize durable timeline
+  /// rows so the UI can show human-readable history later.
   Future<void> _handleSystemMessage(
     String groupId,
     String text,
@@ -378,8 +378,29 @@ class GroupMessageListener {
         _ => envelopeEventAt,
       };
 
+      if (sysType == 'member_joined' &&
+          !await _isAuthorizedJoinEventSender(groupId, senderId, parsed)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_UNAUTHORIZED_JOIN_EVENT',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'type': sysType,
+            'senderId': senderId.length > 8
+                ? senderId.substring(0, 8)
+                : senderId,
+          },
+        );
+        return;
+      }
+
       if (_requiresMembershipEventAuthorization(sysType) &&
-          !await _isAuthorizedMembershipEventSender(groupId, senderId)) {
+          !await _isAuthorizedMembershipEventSender(
+            groupId,
+            senderId,
+            sysType: sysType,
+            parsed: parsed,
+          )) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_UNAUTHORIZED_MEMBERSHIP_EVENT',
@@ -433,7 +454,13 @@ class GroupMessageListener {
           )) {
             return;
           }
-          await _handleMembersAdded(groupId, parsed, eventAt: eventAt);
+          await _handleMembersAdded(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+          );
         });
       } else if (sysType == 'member_removed') {
         await _enqueueGroupConfigWork(groupId, () async {
@@ -502,6 +529,8 @@ class GroupMessageListener {
             eventAt: eventAt,
           );
         });
+      } else if (sysType == 'member_joined') {
+        await _handleMemberJoined(groupId, parsed, eventAt: eventAt);
       } else if (sysType == 'key_rotated') {
         emitFlowEvent(
           layer: 'FL',
@@ -538,8 +567,10 @@ class GroupMessageListener {
 
   Future<bool> _isAuthorizedMembershipEventSender(
     String groupId,
-    String senderId,
-  ) async {
+    String senderId, {
+    String? sysType,
+    Map<String, dynamic>? parsed,
+  }) async {
     if (senderId.isEmpty) {
       return false;
     }
@@ -554,7 +585,36 @@ class GroupMessageListener {
     }
 
     final senderMember = await _groupRepo.getMember(groupId, senderId);
+    if (sysType == 'member_removed') {
+      final memberData = parsed?['member'] as Map<String, dynamic>?;
+      final removedPeerId = memberData?['peerId'] as String?;
+      if (removedPeerId != null &&
+          removedPeerId.isNotEmpty &&
+          removedPeerId == senderId &&
+          senderMember != null) {
+        return true;
+      }
+    }
     return senderMember?.role == MemberRole.admin;
+  }
+
+  Future<bool> _isAuthorizedJoinEventSender(
+    String groupId,
+    String senderId,
+    Map<String, dynamic> parsed,
+  ) async {
+    if (senderId.isEmpty) {
+      return false;
+    }
+    final memberData = parsed['member'] as Map<String, dynamic>?;
+    final joinedPeerId = memberData?['peerId'] as String?;
+    if (joinedPeerId == null ||
+        joinedPeerId.isEmpty ||
+        joinedPeerId != senderId) {
+      return false;
+    }
+    final joinedMember = await _groupRepo.getMember(groupId, joinedPeerId);
+    return joinedMember != null;
   }
 
   /// Handles a member_added system message.
@@ -597,22 +657,15 @@ class GroupMessageListener {
     }
 
     if (addedPeerId != null && addedPeerId.isNotEmpty) {
-      _messageController.add(
-        GroupMessage(
-          id:
-              'sys-member_added:$groupId:$addedPeerId:'
-              '${senderId.isEmpty ? 'system' : senderId}:'
-              '${(eventAt ?? DateTime.now().toUtc()).microsecondsSinceEpoch}',
-          groupId: groupId,
-          senderPeerId: senderId.isEmpty ? 'system' : senderId,
-          senderUsername: senderUsername.isNotEmpty ? senderUsername : null,
-          text: _buildAddedTimelineText(senderUsername, addedUsername),
-          timestamp: eventAt ?? DateTime.now().toUtc(),
-          status: 'delivered',
-          isIncoming: true,
-          createdAt: eventAt ?? DateTime.now().toUtc(),
-        ),
+      final timelineMessage = buildMembersAddedTimelineMessage(
+        groupId: groupId,
+        addedMembers: [(peerId: addedPeerId, username: addedUsername)],
+        senderId: senderId,
+        senderUsername: senderUsername,
+        eventAt: eventAt ?? DateTime.now().toUtc(),
       );
+      await _msgRepo.saveMessage(timelineMessage);
+      _messageController.add(timelineMessage);
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt);
@@ -627,16 +680,6 @@ class GroupMessageListener {
     );
   }
 
-  String _buildAddedTimelineText(String senderUsername, String? addedUsername) {
-    final actor = senderUsername.trim().isNotEmpty
-        ? senderUsername.trim()
-        : 'Admin';
-    final subject = addedUsername != null && addedUsername.trim().isNotEmpty
-        ? addedUsername.trim()
-        : 'a member';
-    return '$actor added $subject';
-  }
-
   /// Handles a members_added (batch) system message.
   ///
   /// Saves all new members to the local DB and updates the Go topic validator
@@ -644,6 +687,8 @@ class GroupMessageListener {
   Future<void> _handleMembersAdded(
     String groupId,
     Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
     DateTime? eventAt,
   }) async {
     final membersList = parsed['members'] as List<dynamic>?;
@@ -673,6 +718,28 @@ class GroupMessageListener {
       await _syncGroupConfig(groupId, groupConfig);
     }
 
+    final addedMembers = membersList
+        ?.whereType<Map<String, dynamic>>()
+        .map(
+          (data) => (
+            peerId: data['peerId'] as String? ?? '',
+            username: data['username'] as String?,
+          ),
+        )
+        .where((member) => member.peerId.isNotEmpty)
+        .toList(growable: false);
+    if (addedMembers != null && addedMembers.isNotEmpty) {
+      final timelineMessage = buildMembersAddedTimelineMessage(
+        groupId: groupId,
+        addedMembers: addedMembers,
+        senderId: senderId,
+        senderUsername: senderUsername,
+        eventAt: eventAt ?? DateTime.now().toUtc(),
+      );
+      await _msgRepo.saveMessage(timelineMessage);
+      _messageController.add(timelineMessage);
+    }
+
     await _recordMembershipEventWatermark(groupId, eventAt);
 
     emitFlowEvent(
@@ -681,6 +748,37 @@ class GroupMessageListener {
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'count': membersList?.length ?? 0,
+      },
+    );
+  }
+
+  Future<void> _handleMemberJoined(
+    String groupId,
+    Map<String, dynamic> parsed, {
+    DateTime? eventAt,
+  }) async {
+    final memberData = parsed['member'] as Map<String, dynamic>?;
+    final joinedPeerId = memberData?['peerId'] as String? ?? '';
+    if (joinedPeerId.isEmpty) {
+      return;
+    }
+    final timelineMessage = buildMemberJoinedTimelineMessage(
+      groupId: groupId,
+      joinedPeerId: joinedPeerId,
+      joinedUsername: memberData?['username'] as String?,
+      eventAt: eventAt ?? DateTime.now().toUtc(),
+    );
+    await _msgRepo.saveMessage(timelineMessage);
+    _messageController.add(timelineMessage);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_MEMBER_JOINED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'memberPeerId': joinedPeerId.length > 8
+            ? joinedPeerId.substring(0, 8)
+            : joinedPeerId,
       },
     );
   }

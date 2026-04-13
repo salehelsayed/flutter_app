@@ -457,8 +457,9 @@ func extractChatPushMetadata(message string) chatPushMetadata {
 
 		return metadata
 	case "contact_request":
+		intent := trimmedString(envelope["intent"])
 		metadata := chatPushMetadata{
-			ShouldNotify:   true,
+			ShouldNotify:   intent != "key_exchange_retry",
 			RouteType:      "contact_request",
 			MessageID:      extractMessageId(message),
 			SenderUsername: trimmedString(envelope["senderUsername"]),

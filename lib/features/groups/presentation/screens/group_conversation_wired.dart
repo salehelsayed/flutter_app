@@ -40,10 +40,12 @@ import 'package:flutter_app/features/groups/application/send_group_reaction_use_
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
@@ -88,6 +90,7 @@ class GroupConversationWired extends StatefulWidget {
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
   final ReactionRepository? reactionRepo;
+  final GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository;
   final UploadMediaFn uploadMediaFn;
   final int maxAttachmentBudgetBytes;
 
@@ -114,6 +117,7 @@ class GroupConversationWired extends StatefulWidget {
     this.initialPendingMedia,
     this.initialText,
     this.reactionRepo,
+    this.groupReactionReplayOutboxRepository,
     this.uploadMediaFn = uploadMedia,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
   });
@@ -1360,6 +1364,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             _showFloatingSnackBar('This group has been dissolved');
           }
         }
+      } else if (message == null) {
+        await _restoreComposerSnapshotWithoutFailure(
+          composerSnapshot,
+          messageId,
+        );
       } else {
         await _restoreComposerSnapshot(composerSnapshot, messageId);
       }
@@ -1471,6 +1480,34 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _updateLocalMessageStatus(messageId, 'failed');
     }
     await _persistMessageStatus(messageId, 'failed');
+    if (showSnackBar && snackText != null) {
+      _showFloatingSnackBar(snackText);
+    }
+  }
+
+  Future<void> _restoreComposerSnapshotWithoutFailure(
+    _GroupComposerSnapshot snapshot,
+    String messageId, {
+    String? snackText,
+    bool showSnackBar = false,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _draftText = snapshot.draftText;
+        _pendingAttachments = List<PendingComposerMedia>.from(
+          snapshot.pendingAttachments,
+        );
+        _activeQuoteMessageId = snapshot.quotedMessageId;
+        _removeLocalMessage(messageId);
+      });
+      _updateComposerState(
+        pendingAttachments: _pendingAttachmentFiles(),
+        isUploading: false,
+      );
+    }
+    try {
+      await widget.msgRepo.deleteMessage(messageId);
+    } catch (_) {}
     if (showSnackBar && snackText != null) {
       _showFloatingSnackBar(snackText);
     }
@@ -2590,6 +2627,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _onReactionSelected(String messageId, String emoji) async {
     if (widget.reactionRepo == null) return;
+    if (widget.groupReactionReplayOutboxRepository == null) return;
     if (_ownPeerId == null) return;
 
     // Check if we already have a reaction with this emoji — toggle off
@@ -2609,6 +2647,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
         reactionRepo: widget.reactionRepo!,
+        reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository!,
         groupId: widget.group.id,
         messageId: messageId,
         emoji: emoji,
@@ -2640,6 +2679,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       groupRepo: widget.groupRepo,
       msgRepo: widget.msgRepo,
       reactionRepo: widget.reactionRepo!,
+      reactionReplayOutboxRepo: widget.groupReactionReplayOutboxRepository!,
       groupId: widget.group.id,
       messageId: messageId,
       emoji: emoji,
@@ -2657,6 +2697,37 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _reactions = {..._reactions, messageId: list};
       });
     }
+  }
+
+  Future<void> _onReactionTap(String messageId, String emoji) async {
+    final allReactions = _reactions[messageId] ?? const <MessageReaction>[];
+    if (allReactions.isEmpty) return;
+
+    final members = await widget.groupRepo.getMembers(widget.group.id);
+    final usernameHintsByPeerId = await loadGroupReactionUsernameHints(
+      peerIds: allReactions.map((reaction) => reaction.senderPeerId),
+      contactRepo: widget.contactRepo,
+      groupId: widget.group.id,
+      msgRepo: widget.msgRepo,
+    );
+    if (!mounted) return;
+
+    final participants = buildGroupReactionParticipantEntries(
+      reactions: allReactions,
+      emoji: emoji,
+      members: members,
+      usernameHintsByPeerId: usernameHintsByPeerId,
+      ownPeerId: _ownPeerId,
+    );
+    if (participants.isEmpty) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF141A24),
+      showDragHandle: false,
+      builder: (_) =>
+          GroupReactionDetailsSheet(emoji: emoji, participants: participants),
+    );
   }
 
   @override
@@ -2732,6 +2803,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         recordingState: _composerViewState.recordingState,
         onMediaTap: _onMediaTap,
         reactions: _reactions,
+        onReactionTap: _onReactionTap,
         onReactionSelected: widget.reactionRepo != null
             ? _onReactionSelected
             : null,

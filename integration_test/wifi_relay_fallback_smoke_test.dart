@@ -1,10 +1,10 @@
 // WiFi-Relay Fallback Smoke Test
 //
 // High-fidelity end-to-end smoke test using two real app instances to validate:
-//   S1: Baseline relay chat (CLI peer sends message via relay)
+//   S1: Baseline live chat (CLI peer sends message; direct/relay both valid)
 //   S2: Send message to CLI peer
 //   S3: Transport fallback (CLI stops -> inbox -> CLI restarts -> retrieval)
-//   S4: Recovery after CLI restart (new messages work)
+//   S4: Recovery after CLI restart (new messages work over direct/relay)
 //
 // NON-BLOCKING: runs nightly or before release, not on every PR.
 //
@@ -38,6 +38,21 @@ import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart'
 import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
+import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
+import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
+import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
+import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
+import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
+import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
+import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
+import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
+import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
+import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
+import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
+import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -186,7 +201,7 @@ Future<_SmokeTestStack> _setupStack() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 12,
+    version: 44,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -199,6 +214,21 @@ Future<_SmokeTestStack> _setupStack() async {
       await runMediaAttachmentsMigration(db);
       await runAvatarVersionMigration(db);
       await runTransportColumnMigration(db);
+      await runWaveformColumnMigration(db);
+      await runWireEnvelopeMigration(db);
+      await runMessageStatusCleanupMigration(db);
+      await runMessageReactionsMigration(db);
+      await runGroupsTablesMigration(db);
+      await runGroupMessagesTablesMigration(db);
+      await runIntroductionsTableMigration(db);
+      await runIntroBannerColumnsMigration(db);
+      await runContactIntroducedByMigration(db);
+      await runIntroductionKeysMigration(db);
+      await runIntroductionRecipientKeysMigration(db);
+      await runContactIntroducedByPeerIdMigration(db);
+      await runIntroductionAlreadyConnectedMigration(db);
+      await runMessagesEditedAtMigration(db);
+      await runMessagesDeletedStateMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -211,9 +241,24 @@ Future<_SmokeTestStack> _setupStack() async {
       if (oldVersion < 10) await runMediaAttachmentsMigration(db);
       if (oldVersion < 11) await runAvatarVersionMigration(db);
       if (oldVersion < 12) await runTransportColumnMigration(db);
+      if (oldVersion < 13) await runWaveformColumnMigration(db);
+      if (oldVersion < 14) await runWireEnvelopeMigration(db);
+      if (oldVersion < 15) await runMessageStatusCleanupMigration(db);
+      if (oldVersion < 16) await runMessageReactionsMigration(db);
+      if (oldVersion < 17) await runGroupsTablesMigration(db);
+      if (oldVersion < 18) await runGroupMessagesTablesMigration(db);
+      if (oldVersion < 19) await runIntroductionsTableMigration(db);
+      if (oldVersion < 20) await runIntroBannerColumnsMigration(db);
+      if (oldVersion < 21) await runContactIntroducedByMigration(db);
+      if (oldVersion < 22) await runIntroductionKeysMigration(db);
+      if (oldVersion < 23) await runIntroductionRecipientKeysMigration(db);
+      if (oldVersion < 24) await runContactIntroducedByPeerIdMigration(db);
+      if (oldVersion < 25) await runIntroductionAlreadyConnectedMigration(db);
+      if (oldVersion < 43) await runMessagesEditedAtMigration(db);
+      if (oldVersion < 44) await runMessagesDeletedStateMigration(db);
     },
   );
-  print('[SMOKE] Database initialized (version 12)');
+  print('[SMOKE] Database initialized (version 44)');
 
   final contactRepo = ContactRepositoryImpl(
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -453,6 +498,10 @@ class _ScenarioResult {
   _ScenarioResult(this.name, this.passed, this.detail);
 }
 
+bool _isAcceptedLiveIncomingTransport(String? transport) {
+  return transport == 'direct' || transport == 'relay' || transport == 'inbox';
+}
+
 // ---------------------------------------------------------------------------
 // Main test suite
 // ---------------------------------------------------------------------------
@@ -481,13 +530,18 @@ void main() {
 
     try {
       // ================================================================
-      // S1: Baseline relay chat -- receive a message from CLI peer
+      // S1: Baseline live chat -- receive a message from the CLI peer.
       // ================================================================
       if (hasCli) {
-        print('\n--- S1: Baseline relay chat ---');
-        print('[SMOKE] S1: Waiting for CLI peer to send message via relay...');
+        print('\n--- S1: Baseline live chat ---');
+        print(
+          '[SMOKE] S1: Waiting for CLI peer to send live message '
+          '(direct or relay is acceptable)...',
+        );
 
         // The orchestrator discovers us via rendezvous and sends a v1 message.
+        // If the CLI can reach our announced LAN address, the stored transport
+        // is truthfully recorded as direct instead of relay.
         // Poll for up to 60s for the message to arrive.
         var s1Found = false;
         for (var sec = 0; sec < 60; sec++) {
@@ -502,8 +556,7 @@ void main() {
           if (s1Msgs.isNotEmpty) {
             s1Found = true;
             final transport = s1Msgs.first.transport;
-            // Accept relay or inbox transport -- both prove end-to-end works.
-            final pass = transport == 'relay' || transport == 'inbox';
+            final pass = _isAcceptedLiveIncomingTransport(transport);
             results.add(
               _ScenarioResult(
                 'S1',
@@ -657,7 +710,7 @@ void main() {
       }
 
       // ================================================================
-      // S4: Recovery after CLI restart -- new messages work
+      // S4: Recovery after CLI restart -- new live messages work.
       // ================================================================
       if (hasCli) {
         print('\n--- S4: Recovery after CLI restart ---');
@@ -676,7 +729,7 @@ void main() {
           if (s4Msgs.isNotEmpty) {
             s4Found = true;
             final transport = s4Msgs.first.transport;
-            final pass = transport == 'relay' || transport == 'inbox';
+            final pass = _isAcceptedLiveIncomingTransport(transport);
             results.add(
               _ScenarioResult(
                 'S4',

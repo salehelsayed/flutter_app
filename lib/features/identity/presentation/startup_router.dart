@@ -16,6 +16,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
@@ -126,6 +127,10 @@ class StartupRouter extends StatefulWidget {
   /// The group message repository for group message persistence.
   final GroupMessageRepository? groupMessageRepository;
 
+  /// Durable sender-owned reaction replay outbox repository.
+  final GroupReactionReplayOutboxRepository?
+  groupReactionReplayOutboxRepository;
+
   /// The group message listener for incoming group messages.
   final GroupMessageListener? groupMessageListener;
 
@@ -180,6 +185,7 @@ class StartupRouter extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
     this.groupConversationTracker,
@@ -267,6 +273,8 @@ class _StartupRouterState extends State<StartupRouter> {
             reactionListener: widget.reactionListener,
             groupRepository: widget.groupRepository,
             groupMessageRepository: widget.groupMessageRepository,
+            groupReactionReplayOutboxRepository:
+                widget.groupReactionReplayOutboxRepository,
             groupMessageListener: widget.groupMessageListener,
             groupInviteListener: widget.groupInviteListener,
             groupConversationTracker: widget.groupConversationTracker,
@@ -430,6 +438,8 @@ class _StartupRouterState extends State<StartupRouter> {
                       reactionListener: widget.reactionListener,
                       groupRepository: widget.groupRepository,
                       groupMessageRepository: widget.groupMessageRepository,
+                      groupReactionReplayOutboxRepository:
+                          widget.groupReactionReplayOutboxRepository,
                       groupMessageListener: widget.groupMessageListener,
                       groupInviteListener: widget.groupInviteListener,
                       groupConversationTracker: widget.groupConversationTracker,

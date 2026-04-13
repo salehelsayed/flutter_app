@@ -173,27 +173,86 @@ void main() {
           ownPeerId: 'peer-B',
           messageRepo: messageRepo,
           bridge: bridge,
-          downloadProfilePictureFn: ({
-            required bridge,
-            required contactRepo,
-            required ownerPeerId,
-            required avatarVersion,
-          }) async {
-            downloadCalls++;
-            if (downloadCalls == 1) {
-              return null;
-            }
-            throw StateError('avatar retry failed');
-          },
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                downloadCalls++;
+                if (downloadCalls == 1) {
+                  return null;
+                }
+                throw StateError('avatar retry failed');
+              },
         );
 
         expect(result, isNotNull);
         expect(await contactRepo.contactExists('peer-C'), isTrue);
 
-        await Future<void>.delayed(const Duration(seconds: 5, milliseconds: 50));
+        await Future<void>.delayed(
+          const Duration(seconds: 5, milliseconds: 50),
+        );
 
         expect(downloadCalls, 2);
         expect(await contactRepo.contactExists('peer-C'), isTrue);
+
+        final messages = await messageRepo.getMessagesForContact('peer-C');
+        expect(messages, hasLength(1));
+        expect(
+          messages.single.text,
+          'You and Sarah are now connected — introduced by Noor',
+        );
+      },
+    );
+
+    test(
+      'existing mutual-acceptance contact without avatar retries settlement without duplicating system message',
+      () async {
+        await handleMutualAcceptance(
+          introduction: mutualIntro,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+          messageRepo: messageRepo,
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        var downloadCalls = 0;
+
+        final result = await handleMutualAcceptance(
+          introduction: mutualIntro,
+          contactRepo: contactRepo,
+          ownPeerId: 'peer-B',
+          messageRepo: messageRepo,
+          bridge: bridge,
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                downloadCalls++;
+                final existing = await contactRepo.getContact(ownerPeerId);
+                final updated = existing!.copyWith(
+                  avatarPath: 'media/avatars/$ownerPeerId.jpg',
+                  avatarVersion: avatarVersion,
+                );
+                await contactRepo.addContact(updated);
+                return updated;
+              },
+        );
+
+        expect(result, isNull);
+
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        expect(downloadCalls, 1);
+        final contact = await contactRepo.getContact('peer-C');
+        expect(contact, isNotNull);
+        expect(contact!.avatarPath, 'media/avatars/peer-C.jpg');
+        expect(contact.avatarVersion, 'initial');
 
         final messages = await messageRepo.getMessagesForContact('peer-C');
         expect(messages, hasLength(1));

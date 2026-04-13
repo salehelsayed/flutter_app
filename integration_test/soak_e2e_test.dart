@@ -7,6 +7,8 @@
 //   dart run integration_test/scripts/run_soak_e2e.dart -d <simulator-id>
 //
 // Signal protocol:
+//   phase4_initial_ready → written after the Flutter harness is ready for the
+//                          deterministic Phase 4 gate
 //   phase4_resume_and_send → run the deterministic stale-discoverability gate
 //                            and write phase4_result
 //   soak_send_next     → send a message to CLI peer
@@ -51,7 +53,35 @@ import 'package:flutter_app/core/database/migrations/023_introduction_recipient_
 import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
 import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
+import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
+import 'package:flutter_app/core/database/migrations/029_posts_nearby.dart';
+import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
+import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
+import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_context.dart';
+import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
+import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
+import 'package:flutter_app/core/database/migrations/035_posts_repost_delivery_state.dart';
+import 'package:flutter_app/core/database/migrations/036_posts_pass_encrypted_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
+import 'package:flutter_app/core/database/migrations/038_posts_repost_media_crypto.dart';
+import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/040_posts_repost_visual_metrics.dart';
+import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
+import 'package:flutter_app/core/database/migrations/042_media_attachment_reliability_columns.dart';
+import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
+import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
+import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
+import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
+import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
+import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
+import 'package:flutter_app/core/database/migrations/049_groups_metadata_columns.dart';
+import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart';
+import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
+import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
+import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
@@ -67,6 +97,11 @@ import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 
 /// Base directory for signal files — matches the orchestrator's paths.
 String _signalDir() {
+  const configuredDir = String.fromEnvironment(
+    'E2E_SIGNAL_DIR',
+    defaultValue: '',
+  );
+  if (configuredDir.isNotEmpty) return configuredDir;
   final envDir = Platform.environment['E2E_SIGNAL_DIR'];
   if (envDir != null) return envDir;
   return '${Directory.systemTemp.path}/e2e_soak_signals';
@@ -119,15 +154,26 @@ void main() {
     await bridge.initialize();
 
     final identityJson = await bridge.send(
-      jsonEncode({'cmd': 'identity.generate'}),
+      jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
     );
     final identityResult = jsonDecode(identityJson) as Map<String, dynamic>;
-    final myPeerId = identityResult['peerId'] as String;
-    final myPrivateKey = identityResult['privateKey'] as String;
+    if (identityResult['ok'] != true) {
+      throw StateError('identity.generate failed: $identityResult');
+    }
+    final identity = Map<String, dynamic>.from(
+      identityResult['identity'] as Map,
+    );
+    final myPeerId = identity['peerId'] as String;
+    final myPrivateKey = identity['privateKey'] as String;
 
     // Generate ML-KEM keys
-    final mlKemJson = await bridge.send(jsonEncode({'cmd': 'mlkem.keygen'}));
+    final mlKemJson = await bridge.send(
+      jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+    );
     final mlKemResult = jsonDecode(mlKemJson) as Map<String, dynamic>;
+    if (mlKemResult['ok'] != true) {
+      throw StateError('mlkem.keygen failed: $mlKemResult');
+    }
     final myMlKemPK = mlKemResult['publicKey'] as String;
     final myMlKemSK = mlKemResult['secretKey'] as String;
 
@@ -136,7 +182,7 @@ void main() {
     databaseFactory = databaseFactoryFfi;
     final db = await openDatabase(
       inMemoryDatabasePath,
-      version: 26,
+      version: 53,
       onCreate: (db, version) async {
         await runIdentityTableMigration(db);
         await runMessagesTableMigration(db);
@@ -147,6 +193,7 @@ void main() {
         await runBlockColumnsMigration(db);
         await runQuotedMessageIdMigration(db);
         await runMediaAttachmentsMigration(db);
+        await runMediaAttachmentReliabilityColumnsMigration(db);
         await runAvatarVersionMigration(db);
         await runTransportColumnMigration(db);
         await runWaveformColumnMigration(db);
@@ -163,6 +210,32 @@ void main() {
         await runContactIntroducedByPeerIdMigration(db);
         await runIntroductionAlreadyConnectedMigration(db);
         await runGroupQuotedMessageIdMigration(db);
+        await runPostsCoreMigration(db);
+        await runPostsEngagementMigration(db);
+        await runPostsNearbyMigration(db);
+        await runPostsPassAlongMigration(db);
+        await runPostsPinsMigration(db);
+        await runPostsRetryRecipientContextMigration(db);
+        await runPostsFollowOnOutboxMigration(db);
+        await runPostsMediaUploadRecoveryMigration(db);
+        await runPostsRepostDeliveryStateMigration(db);
+        await runPostsPassEncryptedSnapshotsMigration(db);
+        await runPostsRepostEngagementStateMigration(db);
+        await runPostsRepostMediaCryptoMigration(db);
+        await runPostsPassAvatarSnapshotsMigration(db);
+        await runPostsRepostVisualMetricsMigration(db);
+        await runGroupMessageReliabilityColumnsMigration(db);
+        await runMessagesEditedAtMigration(db);
+        await runMessagesDeletedStateMigration(db);
+        await runInboxStagingEntriesMigration(db);
+        await runPendingIntroductionResponsesMigration(db);
+        await runIntroductionOutboxMigration(db);
+        await runGroupsLastMembershipEventAtMigration(db);
+        await runGroupsMetadataColumnsMigration(db);
+        await runGroupsMuteColumnMigration(db);
+        await runPendingGroupInvitesMigration(db);
+        await runGroupsDissolveColumnsMigration(db);
+        await runGroupsBacklogRetentionColumnsMigration(db);
       },
     );
 
@@ -247,6 +320,15 @@ void main() {
       inboxStagingRepository: InMemoryInboxStagingRepository(),
     );
     await p2pService.startNode(myPrivateKey, myPeerId);
+    final registerResult = await callP2PRendezvousRegister(
+      bridge,
+      namespace: 'mknoon:chat:$myPeerId',
+    );
+    if (registerResult['ok'] != true) {
+      throw StateError(
+        'rendezvous:register failed for soak peer: $registerResult',
+      );
+    }
 
     // Add CLI peer as contact
     await contactRepo.addContact(
@@ -276,10 +358,11 @@ void main() {
       'flutter_peer_fixture.json',
       jsonEncode({
         'peerId': myPeerId,
-        'publicKey': identityResult['publicKey'],
+        'publicKey': identity['publicKey'],
         'mlKemPublicKey': myMlKemPK,
       }),
     );
+    _writeSignal('phase4_initial_ready', 'ready');
 
     Future<Map<String, dynamic>> buildStats({
       required int sentCount,

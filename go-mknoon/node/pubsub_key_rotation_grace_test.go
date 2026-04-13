@@ -40,13 +40,13 @@ func TestGroupTopicValidator_AcceptsPreviousEpochDuringGrace(t *testing.T) {
 	}
 
 	envelope := buildTestEnvelope(t, groupId, "peer-1", priv, pub, groupKey, 1, "old epoch")
-	keyInfo := &GroupKeyInfo{
-		Key:           "current-key-b64",
-		KeyEpoch:      2,
-		PrevKey:       groupKey,
-		PrevKeyEpoch:  1,
-		GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
-	}
+	keyInfo := buildGroupKeyInfoWithGrace(
+		"current-key-b64",
+		2,
+		groupKey,
+		1,
+		time.Now().Add(KeyRotationGracePeriod),
+	)
 
 	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
 	if result != "accept" {
@@ -72,13 +72,13 @@ func TestGroupTopicValidator_RejectsPreviousEpochAfterGraceExpires(t *testing.T)
 	}
 
 	envelope := buildTestEnvelope(t, groupId, "peer-1", priv, pub, groupKey, 1, "old epoch")
-	keyInfo := &GroupKeyInfo{
-		Key:           "current-key-b64",
-		KeyEpoch:      2,
-		PrevKey:       groupKey,
-		PrevKeyEpoch:  1,
-		GraceDeadline: time.Now().Add(-time.Second),
-	}
+	keyInfo := buildGroupKeyInfoWithGrace(
+		"current-key-b64",
+		2,
+		groupKey,
+		1,
+		time.Now().Add(-time.Second),
+	)
 
 	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
 	if result != "reject:bad_signature" {
@@ -108,13 +108,13 @@ func TestGroupTopicValidator_AcceptsCurrentEpochDuringGrace(t *testing.T) {
 	}
 
 	envelope := buildTestEnvelope(t, groupId, "peer-1", priv, pub, currentKey, 2, "current epoch")
-	keyInfo := &GroupKeyInfo{
-		Key:           currentKey,
-		KeyEpoch:      2,
-		PrevKey:       prevKey,
-		PrevKeyEpoch:  1,
-		GraceDeadline: time.Now().Add(KeyRotationGracePeriod),
-	}
+	keyInfo := buildGroupKeyInfoWithGrace(
+		currentKey,
+		2,
+		prevKey,
+		1,
+		time.Now().Add(KeyRotationGracePeriod),
+	)
 
 	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
 	if result != "accept" {
@@ -234,16 +234,7 @@ func TestHandleGroupSubscription_DecryptsPreviousEpochDuringGrace(t *testing.T) 
 	nodeBCapture := &testEventCollector{}
 	nodeB.eventCallback = nodeBCapture
 
-	bAddrs := nodeB.Host().Addrs()
-	addrStrs := make([]string, len(bAddrs))
-	for i, a := range bAddrs {
-		addrStrs[i] = a.String()
-	}
-	if err := nodeA.DialPeer(nodeB.PeerId(), addrStrs); err != nil {
-		t.Fatalf("DialPeer A->B: %v", err)
-	}
-
-	time.Sleep(500 * time.Millisecond)
+	connectLocalGroupNodes(t, nodeA, nodeB)
 
 	envelopeJSON := buildTestEnvelope(
 		t,
@@ -278,4 +269,66 @@ func TestHandleGroupSubscription_DecryptsPreviousEpochDuringGrace(t *testing.T) 
 		}
 	}
 	t.Fatal("expected group_message:received event during grace-period decrypt")
+}
+
+func TestHandleGroupSubscription_DropsPreviousEpochAfterGraceExpires(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	oldGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate old group key: %v", err)
+	}
+	newGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate new group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeB := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "group-decrypt-prev-expired"
+	senderPeerId := nodeA.PeerId()
+	config := &GroupConfig{
+		Name:      "Expired Grace Delivery Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: senderPeerId,
+	}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: oldGroupKey, KeyEpoch: 1}); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, &GroupKeyInfo{Key: oldGroupKey, KeyEpoch: 1}); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+	nodeB.UpdateGroupKey(groupId, &GroupKeyInfo{Key: newGroupKey, KeyEpoch: 2})
+	nodeB.groupKeys[groupId].GraceDeadline = time.Now().Add(-time.Second)
+
+	nodeBCapture := &testEventCollector{}
+	nodeB.eventCallback = nodeBCapture
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+
+	envelopeJSON := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		oldGroupKey,
+		1,
+		"old epoch should now be stale",
+	)
+	publishRawGroupEnvelope(t, nodeA, groupId, envelopeJSON)
+
+	time.Sleep(500 * time.Millisecond)
+
+	events := nodeBCapture.snapshot()
+	if hasCollectedEventName(events, "group_message:received") {
+		t.Fatal("group_message:received should not be emitted after grace expiry")
+	}
+	if hasCollectedEventName(events, "group:decryption_failed") {
+		t.Fatal("group:decryption_failed should not be emitted when stale old-epoch traffic is rejected by the validator")
+	}
 }

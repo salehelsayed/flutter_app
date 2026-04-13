@@ -319,30 +319,39 @@ void main() {
       groupConfig: _testGroupConfig,
     );
 
-    test('sends invites to all recipients and returns success count', () async {
-      final recipients = [
-        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
-        (
-          peerId: '12D3KooWCharlie',
-          mlKemPublicKey: 'charlieMlKem64' as String?,
-        ),
-      ];
+    test(
+      'sends invites to all recipients and returns per-recipient outcomes',
+      () async {
+        final recipients = [
+          (
+            peerId: '12D3KooWBob',
+            username: 'Bob' as String?,
+            mlKemPublicKey: 'bobMlKem64' as String?,
+          ),
+          (
+            peerId: '12D3KooWCharlie',
+            username: 'Charlie' as String?,
+            mlKemPublicKey: 'charlieMlKem64' as String?,
+          ),
+        ];
 
-      final sent = await sendGroupInvitesInParallel(
-        p2pService: p2pService,
-        bridge: bridge,
-        senderPeerId: sharedArgs.senderPeerId,
-        senderUsername: sharedArgs.senderUsername,
-        groupId: sharedArgs.groupId,
-        groupKey: sharedArgs.groupKey,
-        keyEpoch: sharedArgs.keyEpoch,
-        groupConfig: sharedArgs.groupConfig,
-        recipients: recipients,
-      );
+        final result = await sendGroupInvitesInParallel(
+          p2pService: p2pService,
+          bridge: bridge,
+          senderPeerId: sharedArgs.senderPeerId,
+          senderUsername: sharedArgs.senderUsername,
+          groupId: sharedArgs.groupId,
+          groupKey: sharedArgs.groupKey,
+          keyEpoch: sharedArgs.keyEpoch,
+          groupConfig: sharedArgs.groupConfig,
+          recipients: recipients,
+        );
 
-      expect(sent, equals(2));
-      expect(p2pService.sentMessageLog.length, equals(2));
-    });
+        expect(result.successCount, equals(2));
+        expect(result.failures, isEmpty);
+        expect(p2pService.sentMessageLog.length, equals(2));
+      },
+    );
 
     test('runs invites concurrently', () async {
       final slowP2P = _SlowFakeP2PService(
@@ -351,16 +360,25 @@ void main() {
       );
 
       final recipients = [
-        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
+        (
+          peerId: '12D3KooWBob',
+          username: 'Bob' as String?,
+          mlKemPublicKey: 'bobMlKem64' as String?,
+        ),
         (
           peerId: '12D3KooWCharlie',
+          username: 'Charlie' as String?,
           mlKemPublicKey: 'charlieMlKem64' as String?,
         ),
-        (peerId: '12D3KooWDave', mlKemPublicKey: 'daveMlKem64' as String?),
+        (
+          peerId: '12D3KooWDave',
+          username: 'Dave' as String?,
+          mlKemPublicKey: 'daveMlKem64' as String?,
+        ),
       ];
 
       final sw = Stopwatch()..start();
-      final sent = await sendGroupInvitesInParallel(
+      final result = await sendGroupInvitesInParallel(
         p2pService: slowP2P,
         bridge: bridge,
         senderPeerId: sharedArgs.senderPeerId,
@@ -373,7 +391,7 @@ void main() {
       );
       sw.stop();
 
-      expect(sent, equals(3));
+      expect(result.successCount, equals(3));
       expect(slowP2P.sentMessageLog.length, equals(3));
       // Sequential would be ~300ms+; parallel should be ~100ms
       expect(sw.elapsedMilliseconds, lessThan(250));
@@ -383,15 +401,24 @@ void main() {
 
     test('counts only successful invites when some fail', () async {
       final recipients = [
-        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
-        (peerId: '12D3KooWNoKey', mlKemPublicKey: null as String?),
+        (
+          peerId: '12D3KooWBob',
+          username: 'Bob' as String?,
+          mlKemPublicKey: 'bobMlKem64' as String?,
+        ),
+        (
+          peerId: '12D3KooWNoKey',
+          username: 'NoKey' as String?,
+          mlKemPublicKey: null as String?,
+        ),
         (
           peerId: '12D3KooWCharlie',
+          username: 'Charlie' as String?,
           mlKemPublicKey: 'charlieMlKem64' as String?,
         ),
       ];
 
-      final sent = await sendGroupInvitesInParallel(
+      final result = await sendGroupInvitesInParallel(
         p2pService: p2pService,
         bridge: bridge,
         senderPeerId: sharedArgs.senderPeerId,
@@ -403,11 +430,17 @@ void main() {
         recipients: recipients,
       );
 
-      expect(sent, equals(2));
+      expect(result.successCount, equals(2));
+      expect(result.failures, hasLength(1));
+      expect(result.failures.single.displayName, equals('NoKey'));
+      expect(
+        result.failures.single.result,
+        equals(SendGroupInviteResult.encryptionRequired),
+      );
     });
 
     test('returns 0 for empty recipients list', () async {
-      final sent = await sendGroupInvitesInParallel(
+      final result = await sendGroupInvitesInParallel(
         p2pService: p2pService,
         bridge: bridge,
         senderPeerId: sharedArgs.senderPeerId,
@@ -419,7 +452,8 @@ void main() {
         recipients: [],
       );
 
-      expect(sent, equals(0));
+      expect(result.successCount, equals(0));
+      expect(result.attempts, isEmpty);
       expect(p2pService.sendMessageCallCount, equals(0));
     });
 
@@ -427,15 +461,24 @@ void main() {
       final throwBridge = _ThrowOnKeyBridge(throwForKey: 'badKey');
 
       final recipients = [
-        (peerId: '12D3KooWBob', mlKemPublicKey: 'bobMlKem64' as String?),
-        (peerId: '12D3KooWEvil', mlKemPublicKey: 'badKey' as String?),
+        (
+          peerId: '12D3KooWBob',
+          username: 'Bob' as String?,
+          mlKemPublicKey: 'bobMlKem64' as String?,
+        ),
+        (
+          peerId: '12D3KooWEvil',
+          username: 'Evil' as String?,
+          mlKemPublicKey: 'badKey' as String?,
+        ),
         (
           peerId: '12D3KooWCharlie',
+          username: 'Charlie' as String?,
           mlKemPublicKey: 'charlieMlKem64' as String?,
         ),
       ];
 
-      final sent = await sendGroupInvitesInParallel(
+      final result = await sendGroupInvitesInParallel(
         p2pService: p2pService,
         bridge: throwBridge,
         senderPeerId: sharedArgs.senderPeerId,
@@ -447,7 +490,9 @@ void main() {
         recipients: recipients,
       );
 
-      expect(sent, equals(2));
+      expect(result.successCount, equals(2));
+      expect(result.failures, hasLength(1));
+      expect(result.failures.single.displayName, equals('Evil'));
       expect(p2pService.sentMessageLog.length, equals(2));
     });
   });

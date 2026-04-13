@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
@@ -208,7 +209,20 @@ Future<void> _drainGroupInbox({
     final nextCursor = result.cursor;
 
     for (final msg in messages) {
-      final payload = decodeInboxMessage(msg, groupId);
+      Map<String, dynamic> payload;
+      try {
+        payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'error': e.toString(),
+          },
+        );
+        continue;
+      }
       final text = payload['text'] as String? ?? '';
       final timestamp =
           payload['timestamp'] as String? ??
@@ -398,17 +412,50 @@ Future<void> _drainGroupInbox({
 /// Also handles the case where the map IS the payload directly (has
 /// `senderId` key), which happens when the bridge returns pre-decoded
 /// messages or in test scenarios.
-Map<String, dynamic> decodeInboxMessage(
+Future<Map<String, dynamic>> decodeInboxMessage(
+  Bridge bridge,
+  GroupRepository groupRepo,
   Map<String, dynamic> envelope,
   String fallbackGroupId,
-) {
+) async {
   // If the envelope contains a `message` string, decode it.
   final messageStr = envelope['message'];
   if (messageStr is String && messageStr.isNotEmpty) {
+    Map<String, dynamic>? decodedMessage;
     try {
-      return jsonDecode(messageStr) as Map<String, dynamic>;
+      final decoded = jsonDecode(messageStr);
+      if (decoded is Map) {
+        decodedMessage = Map<String, dynamic>.from(decoded);
+      }
     } catch (_) {
-      // Not valid JSON — fall through
+      decodedMessage = null;
+    }
+
+    if (decodedMessage != null) {
+      if (isGroupOfflineReplayEnvelope(decodedMessage)) {
+        final payloadType =
+            decodedMessage['payloadType'] as String? ??
+            groupOfflineReplayPayloadTypeMessage;
+        final plaintext = await decryptGroupOfflineReplayEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: fallbackGroupId,
+          envelope: decodedMessage,
+        );
+
+        if (payloadType == groupOfflineReplayPayloadTypeReaction) {
+          return {
+            'type': groupOfflineReplayPayloadTypeReaction,
+            'reaction': plaintext,
+          };
+        }
+
+        return Map<String, dynamic>.from(
+          jsonDecode(plaintext) as Map<String, dynamic>,
+        );
+      }
+
+      return decodedMessage;
     }
   }
 

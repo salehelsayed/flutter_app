@@ -84,6 +84,19 @@ void main() {
       expect(find.text('Group name (optional)'), findsOneWidget);
     });
 
+    testWidgets('does not expose a second create-time description field',
+        (tester) async {
+      await tester.pumpWidget(buildWidget(
+        selectedContacts: [contactAlice],
+      ));
+
+      expect(find.byType(TextField), findsOneWidget);
+      expect(
+        find.textContaining('description', findRichText: true),
+        findsNothing,
+      );
+    });
+
     testWidgets('shows Start group chat button', (tester) async {
       await tester.pumpWidget(buildWidget(
         selectedContacts: [contactAlice],

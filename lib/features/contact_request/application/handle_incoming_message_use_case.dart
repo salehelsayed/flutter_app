@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -21,6 +22,9 @@ enum HandleMessageResult {
 
   /// Existing contact's ML-KEM key was updated from verified payload.
   contactKeyUpdated,
+
+  /// Intro-related contact repair completed silently.
+  silentIntroRecovered,
 
   /// Not a contact request message (regular chat).
   regularMessage,
@@ -43,7 +47,8 @@ enum HandleMessageResult {
 /// Returns a tuple of (result, request, peerId) where request is non-null
 /// when result == contactRequest, and peerId is non-null when result ==
 /// contactKeyUpdated (extracted from the decrypted payload).
-Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessage({
+Future<(HandleMessageResult, ContactRequestModel?, String?)>
+handleIncomingMessage({
   required ChatMessage message,
   required Bridge bridge,
   required ContactRequestRepository requestRepo,
@@ -51,6 +56,7 @@ Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessa
   required String ownPeerId,
   String? ownPrivateKey,
   Set<String>? seenMessageIds,
+  AttemptSilentIntroContactRequestRecovery? attemptSilentIntroRecovery,
 }) async {
   // Safe prefix for logging (handles short strings like "unknown")
   String safePrefix(String s) => s.length > 10 ? s.substring(0, 10) : s;
@@ -67,11 +73,7 @@ Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessa
     json = jsonDecode(message.content) as Map<String, dynamic>;
   } catch (e) {
     // Not JSON - treat as regular message
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'INCOMING_MESSAGE_NOT_JSON',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'INCOMING_MESSAGE_NOT_JSON', details: {});
     return (HandleMessageResult.regularMessage, null, null);
   }
 
@@ -86,11 +88,7 @@ Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessa
     return (HandleMessageResult.regularMessage, null, null);
   }
 
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'CONTACT_REQUEST_RECEIVED',
-    details: {},
-  );
+  emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_RECEIVED', details: {});
 
   // 3. Determine version and extract payload
   final version = json['version'] as String? ?? '1';
@@ -265,11 +263,7 @@ Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessa
 
   // 6. Check not from self
   if (peerId == ownPeerId) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CONTACT_REQUEST_FROM_SELF',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_FROM_SELF', details: {});
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -298,6 +292,27 @@ Future<(HandleMessageResult, ContactRequestModel?, String?)> handleIncomingMessa
       details: {'peerId': peerIdPrefix},
     );
     return (HandleMessageResult.invalidMessage, null, null);
+  }
+
+  if (attemptSilentIntroRecovery != null) {
+    final recoveryResult = await attemptSilentIntroRecovery(
+      VerifiedContactRequestEnvelope(
+        peerId: peerId,
+        publicKey: publicKey,
+        rendezvous: payload['rv'] as String,
+        username: payload['un'] as String? ?? 'Unknown',
+        signature: signature,
+        mlKemPublicKey: payload['mlkem'] as String?,
+      ),
+    );
+    if (recoveryResult.action == IntroContactRequestRecoveryAction.recovered) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_SILENT_INTRO_RECOVERED',
+        details: {'peerId': peerIdPrefix},
+      );
+      return (HandleMessageResult.silentIntroRecovered, null, null);
+    }
   }
 
   // 8. Check if already a contact (and update ML-KEM key if missing)

@@ -103,4 +103,74 @@ void main() {
       'You and Sarah are now connected — introduced by Noor',
     );
   });
+
+  group('introducer status feedback copy', () {
+    test('formats first-accept progress when the recipient accepts first', () {
+      final intro = buildIntroduction(
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        recipientUsername: 'Lina',
+        introducedUsername: 'Sarah',
+      );
+
+      expect(
+        formatIntroducerAcceptanceProgressSystemMessage(
+          introduction: intro,
+          responderId: 'peer-B',
+          responderUsername: 'Lina',
+        ),
+        'Lina accepted your intro to Sarah',
+      );
+    });
+
+    test('formats first-accept progress when the introduced party accepts first', () {
+      final intro = buildIntroduction(
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        recipientUsername: 'Lina',
+        introducedUsername: 'Sarah',
+      );
+
+      expect(
+        formatIntroducerAcceptanceProgressSystemMessage(
+          introduction: intro,
+          responderId: 'peer-C',
+          responderUsername: 'Sarah',
+        ),
+        'Sarah accepted your intro to Lina',
+      );
+    });
+
+    test('formats introducer mutual-accept thread copy', () {
+      final intro = buildIntroduction(
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        recipientUsername: 'Lina',
+        introducedUsername: 'Sarah',
+      );
+
+      expect(
+        formatIntroducerMutualAcceptanceSystemMessage(introduction: intro),
+        'Lina and Sarah are now connected',
+      );
+    });
+
+    test('formats introducer mutual-accept notification copy', () {
+      final intro = buildIntroduction(
+        recipientId: 'peer-B',
+        introducedId: 'peer-C',
+        recipientUsername: 'Lina',
+        introducedUsername: 'Sarah',
+      );
+
+      expect(
+        formatIntroducerMutualAcceptanceNotification(
+          introduction: intro,
+          responderId: 'peer-C',
+          responderUsername: 'Sarah',
+        ),
+        'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
+      );
+    });
+  });
 }

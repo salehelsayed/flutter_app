@@ -15,14 +15,18 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -30,6 +34,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -448,7 +453,7 @@ void main() {
     late StreamController<GroupMessage> messageStreamController;
     late FakeUploadWakeLockDriver wakeLockDriver;
 
-    setUp(() {
+    setUp(() async {
       groupRepo = InMemoryGroupRepository();
       msgRepo = CountingGroupMessageRepository();
       mediaAttachmentRepo = CountingMediaAttachmentRepository();
@@ -463,6 +468,14 @@ void main() {
       messageStreamController = StreamController<GroupMessage>.broadcast();
       wakeLockDriver = FakeUploadWakeLockDriver();
       UploadWakeLockController.debugReset(driver: wakeLockDriver);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'test-group-key-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
     });
 
     tearDown(() {
@@ -927,7 +940,13 @@ void main() {
         await startRecording();
         await pumpUntil(
           tester,
-          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+          () =>
+              tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .recordingState ==
+              VoiceRecordingState.recording,
         );
 
         final recordingScreen = tester.widget<GroupConversationScreen>(
@@ -940,7 +959,9 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
-        await pumpUntil(tester, () => uploadStarted.isCompleted, maxPumps: 240);
+        await tester.runAsync(() async {
+          await uploadStarted.future.timeout(const Duration(seconds: 30));
+        });
         expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
         await pumpUntil(
@@ -1163,8 +1184,7 @@ void main() {
         final screen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
-        final sendMessage =
-            screen.onSend as Future<void> Function(String);
+        final sendMessage = screen.onSend as Future<void> Function(String);
         late Future<void> sendFuture;
         await tester.runAsync(() async {
           sendFuture = sendMessage('Durable parent row');
@@ -1455,8 +1475,7 @@ void main() {
         final screen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
-        final sendMessage =
-            screen.onSend as Future<void> Function(String);
+        final sendMessage = screen.onSend as Future<void> Function(String);
         await tester.runAsync(() async {
           await sendMessage('Missing group media');
         });
@@ -1534,8 +1553,7 @@ void main() {
         final screen = tester.widget<GroupConversationScreen>(
           find.byType(GroupConversationScreen),
         );
-        final sendMessage =
-            screen.onSend as Future<void> Function(String);
+        final sendMessage = screen.onSend as Future<void> Function(String);
         await tester.runAsync(() async {
           await sendMessage('Unauthorized media');
         });
@@ -1870,6 +1888,111 @@ void main() {
           find.byKey(const ValueKey('grp-highlight-msg-older')),
           findsNothing,
         );
+
+        await tester.longPress(find.text('Tapped notification message'));
+        await pumpFrames(tester);
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'notification-anchor entry keeps group reaction inspection aligned with the shared conversation surface',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 2, 1, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 2, 1, 10, 1),
+          ),
+        );
+
+        final start = DateTime.utc(2026, 2, 1, 10);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-anchor-older',
+            groupId: group.id,
+            senderPeerId: 'peer-alice',
+            senderUsername: 'Alice',
+            text: 'Older anchor message',
+            timestamp: start,
+            createdAt: start,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-anchor-targeted',
+            groupId: group.id,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'Targeted anchor reaction message',
+            timestamp: start.add(const Duration(minutes: 1)),
+            createdAt: start.add(const Duration(minutes: 1)),
+          ),
+        );
+
+        final reactionRepo = FakeReactionRepository();
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-anchor-self',
+            messageId: 'msg-anchor-targeted',
+            emoji: '🔥',
+            senderPeerId: testIdentity.peerId,
+            timestamp: start.add(const Duration(minutes: 2)).toIso8601String(),
+            createdAt: start.add(const Duration(minutes: 2)).toIso8601String(),
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-anchor-bob',
+            messageId: 'msg-anchor-targeted',
+            emoji: '🔥',
+            senderPeerId: 'peer-bob',
+            timestamp: start.add(const Duration(minutes: 3)).toIso8601String(),
+            createdAt: start.add(const Duration(minutes: 3)).toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            initialHighlightedMessageId: 'msg-anchor-targeted',
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(
+          find.byKey(const ValueKey('grp-highlight-msg-anchor-targeted')),
+          findsOneWidget,
+        );
+        expect(find.text('🔥 2'), findsOneWidget);
+
+        await tester.tap(find.text('🔥 2'));
+        await pumpFrames(tester);
+
+        expect(find.byKey(GroupReactionDetailsSheet.sheetKey), findsOneWidget);
+        expect(find.text('You'), findsOneWidget);
+        expect(find.text('Bob'), findsWidgets);
+        expect(reactionRepo.removeReactionCallCount, 0);
       },
     );
 
@@ -3337,9 +3460,7 @@ void main() {
         expect(
           mediaFileManager.deletedFilePaths,
           contains(
-            endsWith(
-              'pending_uploads/msg-delete-target/att-delete-target.jpg',
-            ),
+            endsWith('pending_uploads/msg-delete-target/att-delete-target.jpg'),
           ),
         );
         expect(
@@ -4018,14 +4139,10 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
-        await pumpUntilAsync(
-          tester,
-          () async {
-            final messages = await msgRepo.getMessagesPage(group.id);
-            return messages.length == 1 && messages.single.status == 'sending';
-          },
-          maxPumps: 240,
-        );
+        await pumpUntilAsync(tester, () async {
+          final messages = await msgRepo.getMessagesPage(group.id);
+          return messages.length == 1 && messages.single.status == 'sending';
+        }, maxPumps: 240);
         await pumpFrames(tester, count: 10);
 
         // The durable parent message row is now persisted before upload so
@@ -4275,6 +4392,7 @@ void main() {
           ..fakeDurationMs = 3000
           ..fakeSizeBytes = 48000
           ..fakeOutputPath = tempVoice.path;
+        final uploadStarted = Completer<void>();
 
         await tester.pumpWidget(
           buildWidget(
@@ -4295,22 +4413,27 @@ void main() {
                   durationMs,
                   waveform,
                   allowedPeers,
-                }) async => MediaAttachment(
-                  id: blobId!,
-                  messageId: '',
-                  mime: mime,
-                  size: 1,
-                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                  localPath: mediaFileManager?.relativePathForAttachment(
-                    contactPeerId: group.id,
-                    blobId: blobId,
+                }) async {
+                  if (!uploadStarted.isCompleted) {
+                    uploadStarted.complete();
+                  }
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
                     mime: mime,
-                  ),
-                  downloadStatus: 'done',
-                  durationMs: durationMs,
-                  waveform: waveform,
-                  createdAt: DateTime.now().toUtc().toIso8601String(),
-                ),
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: mediaFileManager?.relativePathForAttachment(
+                      contactPeerId: group.id,
+                      blobId: blobId,
+                      mime: mime,
+                    ),
+                    downloadStatus: 'done',
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
           ),
         );
         await pumpFrames(tester, count: 20);
@@ -4334,12 +4457,9 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 100));
         });
-
-        await pumpUntilAsync(
-          tester,
-          () async => await msgRepo.getLatestMessage(group.id) != null,
-          maxPumps: 120,
-        );
+        await tester.runAsync(() async {
+          await uploadStarted.future.timeout(const Duration(seconds: 6));
+        });
         await pumpFrames(tester, count: 5);
 
         final inFlightMessage = await msgRepo.getLatestMessage(group.id);
@@ -4637,23 +4757,30 @@ void main() {
       },
     );
 
-    testWidgets('reaction UI is disabled when reactionRepo is null', (
-      tester,
-    ) async {
-      final group = makeChatGroup();
-      await groupRepo.saveGroup(group);
-      await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+    testWidgets(
+      'local long-press actions stay available when reactionRepo is null',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
 
-      await tester.pumpWidget(buildWidget(group: group));
-      await pumpFrames(tester);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
 
-      // Long-press a message — should NOT show reaction bar
-      await tester.longPress(find.text('Hello'));
-      await pumpFrames(tester);
+        // Long-press still opens the context surface, but reactions stay hidden.
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
 
-      // No reaction bar emojis visible (the preset emojis like thumbs up etc.)
-      expect(find.text('\u{1F44D}'), findsNothing);
-    });
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(find.byKey(MessageContextOverlay.reactionBarKey), findsNothing);
+        expect(
+          find.byKey(MessageContextOverlay.replyActionKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+        expect(find.text('\u{1F44D}'), findsNothing);
+      },
+    );
 
     testWidgets('incoming reaction change stream updates UI state', (
       tester,
@@ -4699,5 +4826,162 @@ void main() {
       // Clean up
       await reactionStreamController.close();
     });
+
+    testWidgets(
+      'group reaction chips open participant inspection without mutating stored reactions',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 4, 11, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 4, 11, 10, 1),
+          ),
+        );
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+
+        final reactionRepo = FakeReactionRepository();
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-self',
+            messageId: 'msg-1',
+            emoji: '🔥',
+            senderPeerId: testIdentity.peerId,
+            timestamp: DateTime.utc(2026, 4, 11, 10, 2).toIso8601String(),
+            createdAt: DateTime.utc(2026, 4, 11, 10, 2).toIso8601String(),
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-bob',
+            messageId: 'msg-1',
+            emoji: '🔥',
+            senderPeerId: 'peer-bob',
+            timestamp: DateTime.utc(2026, 4, 11, 10, 3).toIso8601String(),
+            createdAt: DateTime.utc(2026, 4, 11, 10, 3).toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, reactionRepo: reactionRepo),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('🔥 2'));
+        await pumpFrames(tester);
+
+        expect(find.byKey(GroupReactionDetailsSheet.sheetKey), findsOneWidget);
+        expect(find.text('You'), findsOneWidget);
+        expect(find.text('Bob'), findsOneWidget);
+        expect(reactionRepo.removeReactionCallCount, 0);
+        expect(
+          await reactionRepo.getReactionsForMessage('msg-1'),
+          hasLength(2),
+        );
+      },
+    );
+
+    testWidgets(
+      'group reaction inspection prefers member and contact usernames before readable peer-id fallback',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 4, 11, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-ibra',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 4, 11, 10, 1),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-fallback-1234567890',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 4, 11, 10, 2),
+          ),
+        );
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: 'peer-ibra',
+            publicKey: 'pk-peer-ibra',
+            rendezvous: 'rv-peer-ibra',
+            username: 'Ibra',
+            signature: 'sig-peer-ibra',
+            scannedAt: DateTime.utc(2026, 4, 11, 10, 3).toIso8601String(),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(id: 'msg-identity', text: 'Identity target'),
+        );
+
+        final reactionRepo = FakeReactionRepository();
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-charlie',
+            messageId: 'msg-identity',
+            emoji: '👍',
+            senderPeerId: 'peer-charlie',
+            timestamp: DateTime.utc(2026, 4, 11, 10, 2).toIso8601String(),
+            createdAt: DateTime.utc(2026, 4, 11, 10, 2).toIso8601String(),
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-ibra',
+            messageId: 'msg-identity',
+            emoji: '👍',
+            senderPeerId: 'peer-ibra',
+            timestamp: DateTime.utc(2026, 4, 11, 10, 3).toIso8601String(),
+            createdAt: DateTime.utc(2026, 4, 11, 10, 3).toIso8601String(),
+          ),
+        );
+        await reactionRepo.saveReaction(
+          MessageReaction(
+            id: 'rxn-fallback',
+            messageId: 'msg-identity',
+            emoji: '👍',
+            senderPeerId: 'peer-fallback-1234567890',
+            timestamp: DateTime.utc(2026, 4, 11, 10, 4).toIso8601String(),
+            createdAt: DateTime.utc(2026, 4, 11, 10, 4).toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(group: group, reactionRepo: reactionRepo),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('👍 3'));
+        await pumpFrames(tester);
+
+        expect(find.byKey(GroupReactionDetailsSheet.sheetKey), findsOneWidget);
+        expect(find.text('Charlie'), findsOneWidget);
+        expect(find.text('Ibra'), findsOneWidget);
+        expect(find.text('peer-fallbac...'), findsOneWidget);
+      },
+    );
   });
 }

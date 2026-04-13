@@ -153,7 +153,7 @@ void main() {
       bridge.responses['group:create'] = {
         'ok': true,
         'groupId': 'new-group-id',
-        'topicName': 'topic-new-group-id',
+        'topicName': '/mknoon/group/new-group-id',
         'groupKey': 'base64-group-key',
         'keyEpoch': 0,
       };
@@ -320,6 +320,35 @@ void main() {
       },
     );
 
+    testWidgets(
+      'create flow omits description because the create surface does not expose it',
+      (tester) async {
+        contactRepo.addTestContact(contactAlice);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Alice'));
+        await pumpFrames(tester);
+
+        await tester.enterText(find.byType(TextField).last, 'Trip Notes');
+        await tester.tap(find.text('Start group chat'));
+        await pumpFrames(tester, count: 30);
+
+        final createMessage = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:create',
+        );
+        final createPayload =
+            (jsonDecode(createMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+
+        expect(createPayload['name'], 'Trip Notes');
+        expect(createPayload.containsKey('description'), isFalse);
+      },
+    );
+
     testWidgets('shows error snackbar on failure', (tester) async {
       contactRepo.addTestContact(contactAlice);
 
@@ -347,6 +376,46 @@ void main() {
       // Should still be on picker screen
       expect(find.byType(CreateGroupPickerScreen), findsOneWidget);
     });
+
+    testWidgets(
+      'shows an explicit warning when create succeeds with invite degradation',
+      (tester) async {
+        contactRepo.addTestContact(contactAlice);
+        p2pService.sendMessageResult = false;
+        p2pService.storeInInboxResult = false;
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Alice'));
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Start group chat'));
+        await pumpFrames(tester, count: 30);
+
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+        expect(find.byType(SnackBar), findsOneWidget);
+        final snackContent = find.descendant(
+          of: find.byType(SnackBar),
+          matching: find.byType(Text),
+        );
+        expect(snackContent, findsWidgets);
+        expect(
+          find.descendant(
+            of: find.byType(SnackBar),
+            matching: find.textContaining('invite issues'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: find.byType(SnackBar),
+            matching: find.textContaining('Alice'),
+          ),
+          findsWidgets,
+        );
+      },
+    );
 
     testWidgets(
       'shows a size-limit snackbar when create selection exceeds the contract',

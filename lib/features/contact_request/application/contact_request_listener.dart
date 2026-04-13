@@ -5,10 +5,12 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
 
@@ -66,6 +68,8 @@ class ContactRequestListener {
   final Future<String?> Function()? getOwnPrivateKey;
   final DownloadProfilePictureFn downloadProfilePictureFn;
   final bool Function(String peerId)? shouldSuppressPresentationForPeerId;
+  final AttemptSilentIntroContactRequestRecovery? attemptSilentIntroRecovery;
+  final void Function(IntroductionModel intro)? emitRecoveredIntroductionStatus;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _requestController = StreamController<ContactRequestModel>.broadcast();
@@ -83,6 +87,8 @@ class ContactRequestListener {
     DownloadProfilePictureFn? downloadProfilePictureFn,
     ReplayCache? replayCache,
     this.shouldSuppressPresentationForPeerId,
+    this.attemptSilentIntroRecovery,
+    this.emitRecoveredIntroductionStatus,
   }) : downloadProfilePictureFn =
            downloadProfilePictureFn ?? downloadProfilePicture,
        _replayCache = replayCache ?? ReplayCache();
@@ -167,6 +173,7 @@ class ContactRequestListener {
     try {
       // Resolve own private key for v2 decryption
       final ownPrivateKey = await getOwnPrivateKey?.call();
+      IntroContactRequestRecoveryResult? recoveryResult;
 
       final (result, request, keyUpdatePeerId) = await handleIncomingMessage(
         message: message,
@@ -176,11 +183,21 @@ class ContactRequestListener {
         ownPeerId: getOwnPeerId(),
         ownPrivateKey: ownPrivateKey,
         seenMessageIds: _replayCache.ids,
+        attemptSilentIntroRecovery: attemptSilentIntroRecovery == null
+            ? null
+            : (verifiedRequest) async {
+                final result = await attemptSilentIntroRecovery!(
+                  verifiedRequest,
+                );
+                recoveryResult = result;
+                return result;
+              },
       );
 
       // For successful v2 handling, add msgId to replay cache
       if (result == HandleMessageResult.contactRequest ||
           result == HandleMessageResult.contactKeyUpdated ||
+          result == HandleMessageResult.silentIntroRecovered ||
           result == HandleMessageResult.duplicateRequest ||
           result == HandleMessageResult.alreadyContact) {
         // Extract msgId from v2 messages
@@ -235,6 +252,16 @@ class ContactRequestListener {
         final updatedContact = await contactRepo.getContact(keyUpdatePeerId);
         if (updatedContact != null) {
           _contactKeyUpdatedController.add(updatedContact);
+        }
+      } else if (result == HandleMessageResult.silentIntroRecovered) {
+        final recoveredIntro = recoveryResult?.introduction;
+        if (recoveredIntro != null) {
+          emitRecoveredIntroductionStatus?.call(recoveredIntro);
+        }
+
+        if (recoveryResult?.contactKeyUpdated == true &&
+            recoveryResult?.contact != null) {
+          _contactKeyUpdatedController.add(recoveryResult!.contact!);
         }
       }
     } catch (e) {

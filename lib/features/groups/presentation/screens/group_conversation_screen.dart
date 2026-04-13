@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -10,7 +11,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/attachmen
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -20,6 +21,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.da
 import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
 /// Pure UI screen for group conversation.
@@ -59,6 +61,7 @@ class GroupConversationScreen extends StatelessWidget {
   final ValueListenable<ConversationComposerViewState>? composerStateListenable;
   final void Function(String messageId, int index)? onMediaTap;
   final Map<String, List<MessageReaction>> reactions;
+  final void Function(String messageId, String emoji)? onReactionTap;
   final void Function(String messageId, String emoji)? onReactionSelected;
   final String? initialText;
   final ValueChanged<String>? onDraftChanged;
@@ -104,6 +107,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.composerStateListenable,
     this.onMediaTap,
     this.reactions = const {},
+    this.onReactionTap,
     this.onReactionSelected,
     this.initialText,
     this.onDraftChanged,
@@ -384,43 +388,54 @@ class GroupConversationScreen extends StatelessWidget {
             message.status == 'failed' &&
             messageMedia.isNotEmpty;
         final isHighlighted = highlightedMessageId == message.id;
+        final canReplyFromContext = canWrite && onQuoteReply != null;
+        final canCopyFromContext = message.text.trim().isNotEmpty;
+        final canShowReactionContext = onReactionSelected != null;
+        final canOpenContextOverlay =
+            canReplyFromContext || canCopyFromContext || canShowReactionContext;
+
+        LetterCard buildLetterCard({VoidCallback? onLongPress}) => LetterCard(
+          senderPeerId: message.senderPeerId,
+          senderName: isSent ? 'You' : (message.senderUsername ?? 'Unknown'),
+          text: message.text,
+          time: _formatTime(message.timestamp),
+          isIncoming: !isSent,
+          status: isSent ? message.status : null,
+          quotedText: quotedText,
+          isQuoteUnavailable: isQuoteUnavailable,
+          media: messageMedia,
+          onMediaTap: onMediaTap != null
+              ? (index) => onMediaTap!(message.id, index)
+              : null,
+          reactions: reactions[message.id] ?? const [],
+          ownPeerId: ownPeerId,
+          onReactionTap: onReactionTap != null
+              ? (emoji) => onReactionTap!(message.id, emoji)
+              : null,
+          onLongPress: onLongPress,
+          onRetryFailedMedia:
+              showFailedMediaActions && onRetryFailedMedia != null
+              ? () => onRetryFailedMedia!(message.id)
+              : null,
+          onDeleteFailedMedia:
+              showFailedMediaActions && onDeleteFailedMedia != null
+              ? () => onDeleteFailedMedia!(message.id)
+              : null,
+          failedMediaActionKeySuffix: message.id,
+        );
 
         Widget bubble = Padding(
           key: ValueKey('grp-msg-${message.id}'),
           padding: const EdgeInsets.only(bottom: 12),
           child: Builder(
-            builder: (cardContext) => LetterCard(
-              senderPeerId: message.senderPeerId,
-              senderName: isSent
-                  ? 'You'
-                  : (message.senderUsername ?? 'Unknown'),
-              text: message.text,
-              time: _formatTime(message.timestamp),
-              isIncoming: !isSent,
-              status: isSent ? message.status : null,
-              quotedText: quotedText,
-              isQuoteUnavailable: isQuoteUnavailable,
-              media: messageMedia,
-              onMediaTap: onMediaTap != null
-                  ? (index) => onMediaTap!(message.id, index)
+            builder: (cardContext) => buildLetterCard(
+              onLongPress: canOpenContextOverlay
+                  ? () => _showMessageContextOverlay(
+                      message,
+                      cardContext: cardContext,
+                      selectedMessage: buildLetterCard(),
+                    )
                   : null,
-              reactions: reactions[message.id] ?? const [],
-              ownPeerId: ownPeerId,
-              onReactionTap: onReactionSelected != null
-                  ? (emoji) => onReactionSelected!(message.id, emoji)
-                  : null,
-              onLongPress: onReactionSelected != null
-                  ? () => _showReactionBar(cardContext, message.id)
-                  : null,
-              onRetryFailedMedia:
-                  showFailedMediaActions && onRetryFailedMedia != null
-                  ? () => onRetryFailedMedia!(message.id)
-                  : null,
-              onDeleteFailedMedia:
-                  showFailedMediaActions && onDeleteFailedMedia != null
-                  ? () => onDeleteFailedMedia!(message.id)
-                  : null,
-              failedMediaActionKeySuffix: message.id,
             ),
           ),
         );
@@ -501,34 +516,69 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  void _showReactionBar(BuildContext cardContext, String messageId) {
-    // Calculate card position for anchored reaction bar
-    double? anchorY;
+  void _showMessageContextOverlay(
+    GroupMessage message, {
+    required BuildContext cardContext,
+    required Widget selectedMessage,
+  }) {
+    final route = ModalRoute.of(cardContext);
+    if (route != null && !route.isCurrent) return;
+
     final renderObject = cardContext.findRenderObject();
+    Rect anchorRect = Rect.fromCenter(
+      center: MediaQuery.of(cardContext).size.center(Offset.zero),
+      width: 0,
+      height: 0,
+    );
     if (renderObject is RenderBox && renderObject.hasSize) {
-      anchorY = renderObject.localToGlobal(Offset.zero).dy;
+      final topLeft = renderObject.localToGlobal(Offset.zero);
+      anchorRect = topLeft & renderObject.size;
     }
 
-    final messageReactions = reactions[messageId] ?? [];
+    final messageReactions = reactions[message.id] ?? [];
     final ownReaction = ownPeerId != null
         ? messageReactions.where((r) => r.senderPeerId == ownPeerId).firstOrNull
         : null;
+    final showReplyAction = canWrite && onQuoteReply != null;
+    final showCopyAction = message.text.trim().isNotEmpty;
+    final showReactionBar = onReactionSelected != null;
 
     showDialog(
       context: cardContext,
+      useSafeArea: false,
       barrierColor: Colors.transparent,
-      builder: (dialogContext) => ReactionBar(
+      builder: (dialogContext) => MessageContextOverlay(
+        anchorRect: anchorRect,
+        selectedMessage: selectedMessage,
         currentEmoji: ownReaction?.emoji,
-        anchorY: anchorY,
-        onReactionSelected: (emoji) {
-          Navigator.of(dialogContext).pop();
-          onReactionSelected?.call(messageId, emoji);
-        },
-        onPlusTap: () {
-          Navigator.of(dialogContext).pop();
-          _showFullPicker(cardContext, messageId);
-        },
+        showReactionBar: showReactionBar,
+        showReplyAction: showReplyAction,
+        showCopyAction: showCopyAction,
         onDismiss: () => Navigator.of(dialogContext).pop(),
+        onReactionSelected: showReactionBar
+            ? (emoji) {
+                Navigator.of(dialogContext).pop();
+                onReactionSelected?.call(message.id, emoji);
+              }
+            : null,
+        onPlusTap: showReactionBar
+            ? () {
+                Navigator.of(dialogContext).pop();
+                _showFullPicker(cardContext, message.id);
+              }
+            : null,
+        onReplyTap: showReplyAction
+            ? () {
+                Navigator.of(dialogContext).pop();
+                onQuoteReply?.call(message.id);
+              }
+            : null,
+        onCopyTap: showCopyAction
+            ? () async {
+                Navigator.of(dialogContext).pop();
+                await _copyMessageText(cardContext, message.text);
+              }
+            : null,
       ),
     );
   }
@@ -548,6 +598,21 @@ class GroupConversationScreen extends StatelessWidget {
     final minute = local.minute.toString().padLeft(2, '0');
     final period = local.hour < 12 ? 'AM' : 'PM';
     return '$hour:$minute $period';
+  }
+
+  Future<void> _copyMessageText(BuildContext context, String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.conversation_context_copied,
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 }
 
