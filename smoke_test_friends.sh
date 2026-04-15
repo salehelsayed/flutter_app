@@ -177,7 +177,7 @@ result_file_path() {
 
 capture_step_screenshots() {
   local step_id="$1"
-  local dir="$ARTIFACT_ROOT/$step_id"
+  local dir="$PWD/$ARTIFACT_ROOT/$step_id"
   mkdir -p "$dir"
   xcrun simctl io "$DEVICE_A" screenshot "$dir/a.png" >/dev/null
   xcrun simctl io "$DEVICE_B" screenshot "$dir/b.png" >/dev/null
@@ -321,9 +321,9 @@ path_a, path_b, path_c, peer_a, peer_b, peer_c = sys.argv[1:]
 result_a = json.load(open(path_a))
 result_b = json.load(open(path_b))
 result_c = json.load(open(path_c))
-assert result_a["stepId"] == "split-brain-second-accept", result_a
-assert result_b["stepId"] == "split-brain-first-accept", result_b
-assert result_c["stepId"] == "split-brain-second-accept", result_c
+assert result_a["stepId"] == "partial-send", result_a
+assert result_b["stepId"] == "partial-send", result_b
+assert result_c["stepId"] == "partial-send", result_c
 snap_a = result_a["snapshot"]
 snap_b = result_b["snapshot"]
 snap_c = result_c["snapshot"]

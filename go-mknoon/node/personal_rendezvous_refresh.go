@@ -11,7 +11,23 @@ import (
 var errPersonalRendezvousRegisterInFlight = errors.New("personal rendezvous registration already in flight")
 
 func (n *Node) autoRegisterPersonalNamespaceForStart() {
-	if !n.waitForCircuitAddressForStart(10 * time.Second) {
+	totalStart := time.Now()
+
+	circuitStart := time.Now()
+	circuitOk := n.waitForCircuitAddressForStart(10 * time.Second)
+	circuitAddressMs := time.Since(circuitStart).Milliseconds()
+	circuitOutcome := "found"
+	if !circuitOk {
+		circuitOutcome = "timeout"
+	}
+
+	if !circuitOk {
+		n.emitEvent("node:startup_timing", map[string]interface{}{
+			"phase":                 "discoverable",
+			"circuitAddressMs":      circuitAddressMs,
+			"circuitAddressOutcome": circuitOutcome,
+			"totalToDiscoverableMs": time.Since(totalStart).Milliseconds(),
+		})
 		log.Printf("[NODE] auto-register skipped: no circuit address ready")
 		return
 	}
@@ -24,7 +40,19 @@ func (n *Node) autoRegisterPersonalNamespaceForStart() {
 		return
 	}
 
-	if err := n.registerPersonalRendezvousNamespace(namespace, nil); err != nil {
+	regStart := time.Now()
+	err := n.registerPersonalRendezvousNamespace(namespace, nil)
+	rendezvousRegisterMs := time.Since(regStart).Milliseconds()
+
+	n.emitEvent("node:startup_timing", map[string]interface{}{
+		"phase":                 "discoverable",
+		"circuitAddressMs":      circuitAddressMs,
+		"circuitAddressOutcome": circuitOutcome,
+		"rendezvousRegisterMs":  rendezvousRegisterMs,
+		"totalToDiscoverableMs": time.Since(totalStart).Milliseconds(),
+	})
+
+	if err != nil {
 		if errors.Is(err, errPersonalRendezvousRegisterInFlight) {
 			log.Printf("[NODE] auto-register skipped: personal registration already in flight")
 			return

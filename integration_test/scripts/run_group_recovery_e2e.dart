@@ -4,9 +4,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '_android_app_package.dart';
+
 const _goMknoonDir = 'go-mknoon';
 const _testpeerBin = 'go-mknoon/bin/testpeer';
 const _defaultMacOsBundleId = 'com.example.flutterApp';
+String? _androidDeviceId;
+final _appPackage = resolveAndroidAppPackage();
 
 List<String> _relayDartDefines() {
   final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
@@ -14,6 +18,25 @@ List<String> _relayDartDefines() {
     return const [];
   }
   return ['--dart-define=MKNOON_RELAY_ADDRESSES=${relayAddresses.trim()}'];
+}
+
+String? _adbPath;
+String _adb() {
+  if (_adbPath != null) return _adbPath!;
+  for (final base in [
+    Platform.environment['ANDROID_HOME'],
+    Platform.environment['ANDROID_SDK_ROOT'],
+    '${Platform.environment['HOME']}/Library/Android/sdk',
+  ]) {
+    if (base == null) continue;
+    final candidate = '$base/platform-tools/adb';
+    if (File(candidate).existsSync()) {
+      _adbPath = candidate;
+      return candidate;
+    }
+  }
+  _adbPath = 'adb';
+  return _adbPath!;
 }
 
 class TestPeer {
@@ -100,14 +123,12 @@ class TestPeer {
   }
 
   Future<void> writeFixture(String path) async {
-    final file = File(path);
-    file.writeAsStringSync(
-      jsonEncode({
-        'peerId': peerId,
-        'publicKey': publicKey,
-        'mlKemPublicKey': mlKemPublicKey,
-      }),
-    );
+    final content = jsonEncode({
+      'peerId': peerId,
+      'publicKey': publicKey,
+      'mlKemPublicKey': mlKemPublicKey,
+    });
+    await _writeFile(path, content);
   }
 
   Future<void> stop() async {
@@ -154,15 +175,134 @@ bool _isIosDeviceId(String deviceId) {
   ).hasMatch(deviceId);
 }
 
+bool _isAndroidDeviceId(String deviceId) =>
+    !_isIosDeviceId(deviceId) && deviceId != 'macos';
+
+Future<void> _writeFile(String path, String content) async {
+  if (_androidDeviceId == null) {
+    File(path).writeAsStringSync(content);
+    return;
+  }
+
+  final tmp = File(
+    '${Directory.systemTemp.path}/group_recovery_push_${DateTime.now().millisecondsSinceEpoch}',
+  );
+  tmp.writeAsStringSync(content);
+  try {
+    final result = await Process.run(_adb(), [
+      '-s',
+      _androidDeviceId!,
+      'push',
+      tmp.path,
+      path,
+    ]);
+    if (result.exitCode != 0) {
+      throw StateError('adb push failed: ${result.stderr}');
+    }
+  } finally {
+    try {
+      tmp.deleteSync();
+    } catch (_) {}
+  }
+}
+
+Future<String?> _readFile(String path) async {
+  if (_androidDeviceId == null) {
+    final file = File(path);
+    if (!file.existsSync()) return null;
+    return file.readAsStringSync();
+  }
+
+  final result = await Process.run(_adb(), [
+    '-s',
+    _androidDeviceId!,
+    'shell',
+    'cat',
+    path,
+  ]);
+  if (result.exitCode != 0) return null;
+  return (result.stdout as String).trimRight();
+}
+
+Future<String?> _readAppFile(String path) async {
+  if (_androidDeviceId == null) {
+    return _readFile(path);
+  }
+
+  final result = await Process.run(_adb(), [
+    '-s',
+    _androidDeviceId!,
+    'shell',
+    'run-as',
+    _appPackage,
+    'cat',
+    path,
+  ]);
+  if (result.exitCode != 0) return null;
+  return (result.stdout as String).trimRight();
+}
+
+Future<String> _createAndroidTempDir(String deviceId) async {
+  final path = '/data/local/tmp/group_recovery_e2e_${DateTime.now().millisecondsSinceEpoch}';
+  final mkdir = await Process.run(_adb(), [
+    '-s',
+    deviceId,
+    'shell',
+    'mkdir',
+    '-p',
+    path,
+  ]);
+  if (mkdir.exitCode != 0) {
+    throw StateError('Failed to create Android temp dir: ${mkdir.stderr}');
+  }
+  await Process.run(_adb(), [
+    '-s',
+    deviceId,
+    'shell',
+    'chmod',
+    '777',
+    path,
+  ]);
+  return path;
+}
+
+Future<void> _cleanupAndroidTempDir(String deviceId, String path) async {
+  try {
+    await Process.run(_adb(), [
+      '-s',
+      deviceId,
+      'shell',
+      'rm',
+      '-rf',
+      path,
+    ]);
+  } catch (_) {}
+}
+
+Future<void> _cleanupAndroidAppWriteDir(String deviceId, String path) async {
+  try {
+    await Process.run(_adb(), [
+      '-s',
+      deviceId,
+      'shell',
+      'run-as',
+      _appPackage,
+      'rm',
+      '-rf',
+      path,
+    ]);
+  } catch (_) {}
+}
+
 Future<Map<String, dynamic>> _waitForGroupFixture(
   String path, {
   Duration timeout = const Duration(seconds: 120),
 }) async {
   final deadline = DateTime.now().add(timeout);
-  final file = File(path);
   while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    final raw = await _readAppFile(path);
+    if (raw != null && raw.isNotEmpty) {
+      return jsonDecode(raw) as Map<String, dynamic>;
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
   }
@@ -174,9 +314,9 @@ Future<bool> _waitForSignal(
   Duration timeout = const Duration(seconds: 45),
 }) async {
   final deadline = DateTime.now().add(timeout);
-  final file = File(path);
   while (DateTime.now().isBefore(deadline)) {
-    if (file.existsSync()) return true;
+    final raw = await _readAppFile(path);
+    if (raw != null) return true;
     await Future<void>.delayed(const Duration(milliseconds: 250));
   }
   return false;
@@ -226,18 +366,27 @@ Future<void> main(List<String> args) async {
   }
 
   final deviceId = await _pickDevice(requestedDevice);
+  final isAndroid = _isAndroidDeviceId(deviceId);
+  if (isAndroid) {
+    _androidDeviceId = deviceId;
+  }
   final hostTempDir = await Directory.systemTemp.createTemp(
     'group_recovery_e2e_',
   );
-  final sharedDir = deviceId == 'macos'
-      ? await _createMacOsSharedDir()
-      : hostTempDir;
+  final readDirPath = deviceId == 'macos'
+      ? (await _createMacOsSharedDir()).path
+      : isAndroid
+      ? await _createAndroidTempDir(deviceId)
+      : hostTempDir.path;
+  final writeDirPath = isAndroid
+      ? '/data/data/$_appPackage/cache/e2e_group_recovery'
+      : readDirPath;
   final dbName =
       'group_recovery_cli_e2e_${DateTime.now().millisecondsSinceEpoch}.db';
-  final cliFixturePath = '${sharedDir.path}/cli_peer_fixture.json';
-  final groupFixturePath = '${sharedDir.path}/group_recovery_fixture.json';
-  final liveReceivedPath = '${sharedDir.path}/e2e_group_live_received';
-  final inboxStoredPath = '${sharedDir.path}/e2e_group_cli_inbox_stored';
+  final cliFixturePath = '$readDirPath/cli_peer_fixture.json';
+  final groupFixturePath = '$writeDirPath/group_recovery_fixture.json';
+  final liveReceivedPath = '$writeDirPath/e2e_group_live_received';
+  final inboxStoredPath = '$readDirPath/e2e_group_cli_inbox_stored';
 
   final peer = TestPeer();
 
@@ -265,12 +414,11 @@ Future<void> main(List<String> args) async {
         '--publish-port',
       ] else ...<String>[
         'test',
-        '--no-dds',
         'integration_test/group_recovery_cli_e2e_test.dart',
       ],
       '--dart-define=CLI_PEER_FIXTURE=$cliFixturePath',
-      '--dart-define=E2E_TEMP_DIR=${sharedDir.path}',
-      '--dart-define=E2E_WRITE_DIR=${sharedDir.path}',
+      '--dart-define=E2E_TEMP_DIR=$readDirPath',
+      '--dart-define=E2E_WRITE_DIR=$writeDirPath',
       '--dart-define=E2E_DB_NAME=$dbName',
       ..._relayDartDefines(),
       '-d',
@@ -316,7 +464,7 @@ Future<void> main(List<String> args) async {
       'senderUsername': 'CLIGroupPeer',
       'keyEpoch': groupFixture['keyEpoch'],
     });
-    File(inboxStoredPath).writeAsStringSync('ok');
+    await _writeFile(inboxStoredPath, 'ok');
     _log('ORCH', 'Missed inbox message stored');
 
     final flutterExitCode = await flutterProcess.exitCode;
@@ -328,9 +476,12 @@ Future<void> main(List<String> args) async {
     try {
       hostTempDir.deleteSync(recursive: true);
     } catch (_) {}
-    if (sharedDir.path != hostTempDir.path) {
+    if (isAndroid) {
+      await _cleanupAndroidTempDir(deviceId, readDirPath);
+      await _cleanupAndroidAppWriteDir(deviceId, writeDirPath);
+    } else if (readDirPath != hostTempDir.path) {
       try {
-        sharedDir.deleteSync(recursive: true);
+        Directory(readDirPath).deleteSync(recursive: true);
       } catch (_) {}
     }
   }

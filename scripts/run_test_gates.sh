@@ -124,6 +124,8 @@ Usage:
   ./scripts/run_test_gates.sh posts
   ./scripts/run_test_gates.sh transport
   ./scripts/run_test_gates.sh all
+  ./scripts/run_test_gates.sh benchmark
+  ./scripts/run_test_gates.sh benchmark-sim
   ./scripts/run_test_gates.sh completeness-check
 
 Notes:
@@ -290,6 +292,11 @@ classify_path() {
     return 0
   fi
 
+  if [[ "$path" =~ ^test/performance/.*_test\.dart$ ]]; then
+    printf 'benchmark / performance suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/unit/.*_test\.dart$ ]]; then
     printf 'unit direct suite'
     return 0
@@ -376,6 +383,26 @@ main() {
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
       run_transport_gate
+      ;;
+    benchmark)
+      echo "=== Benchmark Tests ==="
+      flutter test test/performance/ --reporter expanded
+      ;;
+    benchmark-sim)
+      echo "=== Simulator Benchmark Tests ==="
+      local -a sim_args=()
+      while IFS= read -r path; do
+        sim_args+=("$path")
+      done < <(integration_test_args)
+      for f in integration_test/benchmark_*_harness.dart; do
+        if [[ -f "$f" ]]; then
+          if ((${#sim_args[@]} > 0)); then
+            flutter test "${sim_args[@]}" "$f"
+          else
+            flutter test "$f"
+          fi
+        fi
+      done
       ;;
     completeness-check)
       run_completeness_check

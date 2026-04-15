@@ -310,7 +310,9 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 			),
 		)
 	}
+	libp2pStart := time.Now()
 	h, err := libp2p.New(hostOpts...)
+	libp2pNewMs := time.Since(libp2pStart).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("create host: %w", err)
 	}
@@ -326,10 +328,12 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	}
 
 	// Initialize PubSub (GossipSub) for group messaging.
+	pubsubStart := time.Now()
 	if err := n.initPubSub(); err != nil {
 		h.Close()
 		return nil, fmt.Errorf("init pubsub: %w", err)
 	}
+	pubsubInitMs := time.Since(pubsubStart).Milliseconds()
 
 	n.namespace = cfg.Namespace
 	if n.namespace == "" {
@@ -361,9 +365,16 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		n.eventDispatcher = NewEventDispatcher(n.eventCallback, 1024)
 	}
 
+	n.emitEvent("node:startup_timing", map[string]interface{}{
+		"phase":        "host_ready",
+		"libp2pNewMs":  libp2pNewMs,
+		"pubsubInitMs": pubsubInitMs,
+	})
+
 	// Warm relay connections concurrently in background.
 	// Each relayInfo may contain multiple addresses (e.g. WSS + QUIC) for
 	// the same peer — host.Connect() tries all addresses internally.
+	relayWarmStart := time.Now()
 	go func() {
 		for _, info := range relayInfos {
 			go func(ri peer.AddrInfo) {
@@ -375,6 +386,26 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 			}(info)
 		}
 	}()
+
+	// Emit relay_warm_done when first relay connection succeeds.
+	// Capture channel and context locally so a Stop/Start cycle doesn't
+	// cause this goroutine to reference the next cycle's channel.
+	if len(relayInfos) > 0 {
+		relayReadyCh := n.relayReady
+		ctx := n.ctx
+		go func() {
+			select {
+			case <-relayReadyCh:
+				n.emitEvent("node:startup_timing", map[string]interface{}{
+					"phase":           "relay_warm_done",
+					"relayWarmMs":     time.Since(relayWarmStart).Milliseconds(),
+					"relaysAttempted": len(relayInfos),
+				})
+			case <-ctx.Done():
+				// Node stopped before relay connected — no event
+			}
+		}()
+	}
 
 	// Auto-register as soon as the first relay path yields a discoverable
 	// circuit address. Do not wait for slower warm attempts to settle.
@@ -540,13 +571,27 @@ func (n *Node) WaitForRelayConnection(timeout time.Duration) error {
 // warming the connection lets AutoRelay's identify complete instantly when it
 // runs tryNode(), avoiding a 20s identify timeout + 30s retry wait.
 func (n *Node) warmRelayConnection(info peer.AddrInfo) error {
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(n.ctx, DialTimeout)
 	defer cancel()
 
 	if err := n.host.Connect(ctx, info); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			n.emitTimeoutFired("DialTimeout", DialTimeout, start)
+		}
+		n.emitEvent("relay:warm_timing", map[string]interface{}{
+			"elapsedMs": time.Since(start).Milliseconds(),
+			"outcome":   "failed",
+			"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
+		})
 		return fmt.Errorf("dial relay: %w", err)
 	}
 
+	n.emitEvent("relay:warm_timing", map[string]interface{}{
+		"elapsedMs": time.Since(start).Milliseconds(),
+		"outcome":   "success",
+		"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
+	})
 	log.Printf("[NODE] Warmed relay connection: %s", info.ID.String()[:min(20, len(info.ID.String()))])
 	return nil
 }
@@ -1034,9 +1079,12 @@ func (n *Node) SendMessage(peerIdStr string, message string, timeoutMs int) (str
 }
 
 type SendMessageResult struct {
-	Reply     string
-	Acked     bool
-	Transport string
+	Reply        string
+	Acked        bool
+	Transport    string
+	StreamOpenMs int64
+	WriteMs      int64
+	AckWaitMs    int64
 }
 
 func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeoutMs int) (SendMessageResult, error) {
@@ -1058,9 +1106,11 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 		timeout = time.Duration(timeoutMs) * time.Millisecond
 	}
 
+	streamOpenStart := time.Now()
 	s, err := n.openChatStreamForSend(h, pid, peerIdStr, timeout)
+	streamOpenMs := time.Since(streamOpenStart).Milliseconds()
 	if err != nil {
-		return SendMessageResult{}, fmt.Errorf("open stream: %w", err)
+		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("open stream: %w", err)
 	}
 	defer s.Close()
 
@@ -1070,21 +1120,28 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 	s.SetDeadline(time.Now().Add(timeout))
 
 	// Write message using 4-byte BE framing (same as inbox protocol)
+	writeStart := time.Now()
 	if err := writeFrame(s, []byte(message)); err != nil {
-		return SendMessageResult{}, fmt.Errorf("write message: %w", err)
+		return SendMessageResult{StreamOpenMs: streamOpenMs}, fmt.Errorf("write message: %w", err)
 	}
+	writeMs := time.Since(writeStart).Milliseconds()
 
 	// Read reply
+	ackStart := time.Now()
 	replyBytes, err := readFrame(s)
+	ackWaitMs := time.Since(ackStart).Milliseconds()
 	if err != nil {
 		// Message was written but ACK read failed
-		return SendMessageResult{Transport: transport}, nil
+		return SendMessageResult{Transport: transport, StreamOpenMs: streamOpenMs, WriteMs: writeMs, AckWaitMs: ackWaitMs}, nil
 	}
 
 	return SendMessageResult{
-		Reply:     string(replyBytes),
-		Acked:     true,
-		Transport: transport,
+		Reply:        string(replyBytes),
+		Acked:        true,
+		Transport:    transport,
+		StreamOpenMs: streamOpenMs,
+		WriteMs:      writeMs,
+		AckWaitMs:    ackWaitMs,
 	}, nil
 }
 
@@ -1268,16 +1325,33 @@ func (n *Node) handleIncomingMessage(s network.Stream) {
 		confirmCh := n.registerDirectConfirm(nonce)
 		n.emitEvent("message:received", msgData)
 
-		if !n.waitForRegisteredDirectConfirm(nonce, confirmCh, n.directConfirmTimeout()) {
+		waitStart := time.Now()
+		confirmed := n.waitForRegisteredDirectConfirm(nonce, confirmCh, n.directConfirmTimeout())
+		waitMs := time.Since(waitStart).Milliseconds()
+
+		if !confirmed {
+			n.emitTimeoutFired("DirectConfirmTimeout", n.directConfirmTimeout(), waitStart)
+			n.emitEvent("message:direct_ack_timing", map[string]interface{}{
+				"waitMs":  waitMs,
+				"outcome": "timeout",
+			})
 			log.Printf("[NODE] Direct confirm timeout for %s — not ACKing", nonce[:min(8, len(nonce))])
 			return
 		}
 
+		ackWriteStart := time.Now()
 		ack := []byte(`{"ack":true}`)
 		if err := writeFrame(s, ack); err != nil {
 			log.Printf("[NODE] ACK write error for %s: %v", remotePeer[:min(20, len(remotePeer))], err)
 			return
 		}
+		ackWriteMs := time.Since(ackWriteStart).Milliseconds()
+
+		n.emitEvent("message:direct_ack_timing", map[string]interface{}{
+			"waitMs":     waitMs,
+			"ackWriteMs": ackWriteMs,
+			"outcome":    "confirmed",
+		})
 
 		ok = true
 		return
@@ -1300,8 +1374,11 @@ func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
 		return n.waitForCircuitAddressHook(timeout)
 	}
 
+	start := time.Now()
+	pollCount := 0
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		pollCount++
 		n.mu.RLock()
 		h := n.host
 		n.mu.RUnlock()
@@ -1310,11 +1387,21 @@ func (n *Node) waitForCircuitAddress(timeout time.Duration) bool {
 		}
 		for _, addr := range h.Addrs() {
 			if strings.Contains(addr.String(), "/p2p-circuit") {
+				n.emitEvent("circuit_address:timing", map[string]interface{}{
+					"elapsedMs": time.Since(start).Milliseconds(),
+					"outcome":   "found",
+					"pollCount": pollCount,
+				})
 				return true
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	n.emitEvent("circuit_address:timing", map[string]interface{}{
+		"elapsedMs": time.Since(start).Milliseconds(),
+		"outcome":   "timeout",
+		"pollCount": pollCount,
+	})
 	log.Printf("[NODE] Timed out waiting for circuit address after %v", timeout)
 	return false
 }
@@ -1478,6 +1565,15 @@ func (n *Node) handleRelayConnectednessChanged(pid peer.ID, connectedness networ
 }
 
 // emitEvent sends a push event to Flutter via the callback.
+// emitTimeoutFired emits a timeout:fired event for instrumentation.
+func (n *Node) emitTimeoutFired(name string, configured time.Duration, start time.Time) {
+	n.emitEvent("timeout:fired", map[string]interface{}{
+		"timeoutName":  name,
+		"configuredMs": configured.Milliseconds(),
+		"actualMs":     time.Since(start).Milliseconds(),
+	})
+}
+
 // Phase 4: Uses the async event dispatcher when available, falling back
 // to synchronous delivery for backward compatibility.
 func (n *Node) emitEvent(eventName string, data map[string]interface{}) {

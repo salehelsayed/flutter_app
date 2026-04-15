@@ -40,7 +40,7 @@ type inboxResponse struct {
 
 // InboxStore stores a message in the offline inbox for a peer.
 // Tries each configured relay in order until one succeeds.
-func (n *Node) InboxStore(toPeerId string, message string) error {
+func (n *Node) InboxStore(toPeerId string, message string, timeoutMs int) error {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -51,18 +51,37 @@ func (n *Node) InboxStore(toPeerId string, message string) error {
 
 	rs := n.buildRelaySelector(nil)
 
+	totalStart := time.Now()
 	return rs.ForEach(func(relay RelayInfo) error {
 		timeout := InboxTimeout
+		if timeoutMs > 0 {
+			timeout = time.Duration(timeoutMs) * time.Millisecond
+		}
 		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
 		// Ensure connected to relay
+		connectStart := time.Now()
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+			n.emitEvent("inbox:store_timing", map[string]interface{}{
+				"connectMs": time.Since(connectStart).Milliseconds(),
+				"totalMs":   time.Since(totalStart).Milliseconds(),
+				"outcome":   "connect_failed",
+			})
 			return fmt.Errorf("connect to relay: %w", err)
 		}
+		connectMs := time.Since(connectStart).Milliseconds()
 
+		streamStart := time.Now()
 		s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+		streamOpenMs := time.Since(streamStart).Milliseconds()
 		if err != nil {
+			n.emitEvent("inbox:store_timing", map[string]interface{}{
+				"connectMs":    connectMs,
+				"streamOpenMs": streamOpenMs,
+				"totalMs":      time.Since(totalStart).Milliseconds(),
+				"outcome":      "stream_failed",
+			})
 			return fmt.Errorf("open inbox stream: %w", err)
 		}
 		streamOK := false
@@ -81,11 +100,15 @@ func (n *Node) InboxStore(toPeerId string, message string) error {
 			return fmt.Errorf("marshal request: %w", err)
 		}
 
+		writeStart := time.Now()
 		if err := writeFrame(s, reqBytes); err != nil {
 			return fmt.Errorf("write request: %w", err)
 		}
+		writeMs := time.Since(writeStart).Milliseconds()
 
+		readStart := time.Now()
 		respBytes, err := readFrame(s)
+		readMs := time.Since(readStart).Milliseconds()
 		if err != nil {
 			return fmt.Errorf("read response: %w", err)
 		}
@@ -99,6 +122,14 @@ func (n *Node) InboxStore(toPeerId string, message string) error {
 			return fmt.Errorf("inbox store failed: %s", resp.Error)
 		}
 
+		n.emitEvent("inbox:store_timing", map[string]interface{}{
+			"connectMs":    connectMs,
+			"streamOpenMs": streamOpenMs,
+			"writeMs":      writeMs,
+			"readMs":       readMs,
+			"totalMs":      time.Since(totalStart).Milliseconds(),
+			"outcome":      "success",
+		})
 		log.Printf("[INBOX] Stored message for %s", toPeerId[:min(20, len(toPeerId))])
 		streamOK = true
 		return nil
@@ -118,7 +149,8 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 
 	rs := n.buildRelaySelector(nil)
 
-	return ForEachWithResult(rs, func(relay RelayInfo) ([]InboxMessage, error) {
+	retrieveStart := time.Now()
+	result, err := ForEachWithResult(rs, func(relay RelayInfo) ([]InboxMessage, error) {
 		timeout := InboxTimeout
 		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
@@ -172,6 +204,20 @@ func (n *Node) InboxRetrieve() ([]InboxMessage, error) {
 		streamOK = true
 		return resp.Messages, nil
 	})
+	outcome := "success"
+	if err != nil {
+		outcome = "failed"
+	}
+	msgCount := 0
+	if result != nil {
+		msgCount = len(result)
+	}
+	n.emitEvent("inbox:retrieve_timing", map[string]interface{}{
+		"totalMs":      time.Since(retrieveStart).Milliseconds(),
+		"outcome":      outcome,
+		"messageCount": msgCount,
+	})
+	return result, err
 }
 
 // InboxRetrieveResult holds the paginated result from InboxRetrieveWithTimeout.

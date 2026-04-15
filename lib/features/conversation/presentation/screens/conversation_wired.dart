@@ -21,6 +21,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -195,6 +196,7 @@ class ConversationWired extends StatefulWidget {
   final DeleteContactFn? deleteContactFn;
   final UploadMediaFn uploadMediaFn;
   final SendVoiceMessageFn sendVoiceMessageFn;
+  final DateTime? notificationTappedAt;
 
   const ConversationWired({
     super.key,
@@ -228,6 +230,7 @@ class ConversationWired extends StatefulWidget {
     this.deleteContactFn,
     this.uploadMediaFn = uploadMedia,
     this.sendVoiceMessageFn = sendVoiceMessage,
+    this.notificationTappedAt,
   });
 
   @override
@@ -461,7 +464,10 @@ class _ConversationWiredState extends State<ConversationWired> {
       _scrollToBottom();
       _markAsRead();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _initialLoadDone = true);
+        if (mounted) {
+          setState(() => _initialLoadDone = true);
+          _emitNotificationTapTimingIfNeeded();
+        }
       });
     } else {
       _loadInitialPage().then((_) => _markAsRead());
@@ -472,6 +478,18 @@ class _ConversationWiredState extends State<ConversationWired> {
     _startListeningForReactions();
     _checkIntroBanner();
     _checkHasOtherFriends();
+  }
+
+  bool _notificationTimingEmitted = false;
+
+  void _emitNotificationTapTimingIfNeeded() {
+    final tappedAt = widget.notificationTappedAt;
+    if (tappedAt == null || _notificationTimingEmitted) return;
+    _notificationTimingEmitted = true;
+    emitNotificationTapTiming(
+      tappedAt: tappedAt,
+      routeKind: 'conversation',
+    );
   }
 
   void _handleMediaUploadProgress(Map<String, dynamic> event) {
@@ -1040,7 +1058,10 @@ class _ConversationWiredState extends State<ConversationWired> {
         await _loadReactions(messages);
         unawaited(_recoverVisibleMedia(messages));
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _initialLoadDone = true);
+          if (mounted) {
+            setState(() => _initialLoadDone = true);
+            _emitNotificationTapTimingIfNeeded();
+          }
         });
       }
     } catch (e) {

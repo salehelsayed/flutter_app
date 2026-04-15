@@ -38,7 +38,7 @@ func TestSecondRelayAvailablePreventsWatchdogRestart(t *testing.T) {
 	waitForDiscoverablePeer(t, nodeB, namespace, peerIDA, 15*time.Second)
 
 	message := "hello through relayB after relayA loss"
-	if err := nodeA.InboxStore(peerIDB, message); err != nil {
+	if err := nodeA.InboxStore(peerIDB, message, 0); err != nil {
 		t.Fatalf("InboxStore after relayA loss: %v", err)
 	}
 
@@ -251,7 +251,7 @@ func waitForInboxStore(t *testing.T, n *node.Node, toPeerID, message string, tim
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if err := n.InboxStore(toPeerID, message); err == nil {
+		if err := n.InboxStore(toPeerID, message, 0); err == nil {
 			return
 		} else {
 			lastErr = err

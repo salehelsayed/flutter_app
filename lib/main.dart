@@ -1843,6 +1843,7 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   bool _isResuming = false;
+  DateTime? _notificationTappedAt;
   NotificationRouteTarget? _deferredNotificationRouteTarget;
   late final PostNotificationOpenCoordinator _postNotificationOpenCoordinator;
   late final ContactRequestNotificationMaterializer
@@ -2009,6 +2010,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {
+    _notificationTappedAt = DateTime.now();
     final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
     await _withContactRequestPresentationSuppressed(
       routeTarget: routeTarget,
@@ -2065,6 +2067,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _onNotificationTap(String payload) async {
+    _notificationTappedAt = DateTime.now();
     try {
       await routeAppRootLocalNotificationTap(
         payload: payload,
@@ -2073,6 +2076,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         onRouteTarget: _handleNotificationRouteTarget,
       );
     } catch (e) {
+      _notificationTappedAt = null;
       emitFlowEvent(
         layer: 'FL',
         event: 'NOTIFICATION_TAP_NAV_ERROR',
@@ -2095,6 +2099,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     if (routeTarget.kind == NotificationRouteTargetKind.post ||
         routeTarget.kind == NotificationRouteTargetKind.postComment) {
+      _notificationTappedAt = null;
       await _postNotificationOpenCoordinator.handleRouteTarget(
         routeTarget: routeTarget,
         drainOfflineInbox: widget.p2pService.drainOfflineInbox,
@@ -2104,12 +2109,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
     switch (routeTarget.kind) {
       case NotificationRouteTargetKind.contactRequest:
+        _notificationTappedAt = null;
         await _contactRequestNotificationMaterializer.handleRoute(
           navigator: navigator,
           peerId: routeTarget.peerId!,
         );
         return;
       case NotificationRouteTargetKind.intros:
+        _notificationTappedAt = null;
         await _openIntroOrbitRoute(navigator: navigator);
         return;
       case NotificationRouteTargetKind.group:
@@ -2120,6 +2127,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           drainOfflineInbox: widget.p2pService.drainOfflineInbox,
         );
         if (resolution.group == null) {
+          _notificationTappedAt = null;
           emitFlowEvent(
             layer: 'FL',
             event: resolution.hasPendingInvite
@@ -2137,6 +2145,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           return;
         }
         final group = resolution.group!;
+        final tappedAt = _notificationTappedAt;
+        _notificationTappedAt = null;
         navigator.push(
           MaterialPageRoute(
             builder: (_) => GroupConversationWired(
@@ -2157,6 +2167,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               reactionRepo: widget.reactionRepository,
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
+              notificationTappedAt: tappedAt,
             ),
           ),
         );
@@ -2166,11 +2177,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           routeTarget.peerId!,
         );
         if (contact == null) {
+          _notificationTappedAt = null;
           return;
         }
+        final tappedAt = _notificationTappedAt;
+        _notificationTappedAt = null;
         await _openConversationForContact(
           navigator: navigator,
           contact: contact,
+          notificationTappedAt: tappedAt,
         );
         return;
       case NotificationRouteTargetKind.post:
@@ -2223,6 +2238,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _openConversationForContact({
     required NavigatorState navigator,
     required ContactModel contact,
+    DateTime? notificationTappedAt,
   }) async {
     navigator.push(
       buildConversationSlideUpRoute(
@@ -2241,6 +2257,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           reactionRepo: widget.reactionRepository,
           reactionListener: widget.reactionListener,
           introductionRepository: widget.introductionRepository,
+          notificationTappedAt: notificationTappedAt,
         ),
       ),
     );
@@ -2395,6 +2412,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
 
     try {
+      widget.p2pService.markResumeStarted();
       await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
@@ -2469,7 +2487,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         postRepo: widget.postRepository,
         mediaFileManager: widget.mediaFileManager,
       );
+      widget.p2pService.checkResumeAlreadyOnline();
     } finally {
+      widget.p2pService.clearResumeStarted();
       _isResuming = false;
       debugPrint('[LIFECYCLE] _onResumed() finished');
     }

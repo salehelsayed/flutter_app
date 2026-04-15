@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,11 +166,14 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 
+	extra := buildGroupMessageExtra(msgId, opts)
+	extra["publishedAtNano"] = strconv.FormatInt(time.Now().UnixNano(), 10)
+
 	payload := &internal.GroupMessagePayload{
 		Text:      text,
 		Timestamp: timestamp,
 		Username:  senderUsername,
-		Extra:     buildGroupMessageExtra(msgId, opts),
+		Extra:     extra,
 	}
 
 	payloadJSON, err := internal.MarshalGroupPayload(payload)
@@ -178,14 +182,18 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	}
 
 	// 2. Encrypt payload with group key.
+	encryptStart := time.Now()
 	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(keyInfo.Key, payloadJSON)
+	encryptMs := time.Since(encryptStart).Milliseconds()
 	if err != nil {
 		return "", 0, fmt.Errorf("encrypt group message: %w", err)
 	}
 
 	// 3. Build signature data and sign.
+	signStart := time.Now()
 	sigData := mcrypto.BuildGroupSignatureData(groupId, keyInfo.KeyEpoch, ctB64)
 	signature, err := mcrypto.SignPayload(privateKeyB64, sigData)
+	signMs := time.Since(signStart).Milliseconds()
 	if err != nil {
 		return "", 0, fmt.Errorf("sign group message: %w", err)
 	}
@@ -230,6 +238,8 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 		"groupId":    groupId,
 		"messageId":  msgId,
 		"topicPeers": peerCount,
+		"encryptMs":  encryptMs,
+		"signMs":     signMs,
 	})
 
 	return msgId, peerCount, nil
@@ -518,7 +528,9 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		}
 
 		// Decrypt the payload.
+		decryptStart := time.Now()
 		plaintext, err := decryptGroupEnvelopePayload(env, keyInfo, time.Now())
+		decryptMs := time.Since(decryptStart).Milliseconds()
 		if err != nil {
 			log.Printf("[PUBSUB] Failed to decrypt message in group %s: %v", groupId, err)
 			n.emitEvent("group:decryption_failed", map[string]interface{}{
@@ -527,6 +539,7 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 				"keyEpoch":      env.KeyEpoch,
 				"localKeyEpoch": keyInfo.KeyEpoch,
 				"error":         err.Error(),
+				"decryptMs":     decryptMs,
 			})
 			continue
 		}
@@ -555,10 +568,17 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 			continue
 		}
 
-		n.emitEvent(
-			"group_message:received",
-			buildGroupMessageReceivedEvent(groupId, env, payload),
-		)
+		receivedEvent := buildGroupMessageReceivedEvent(groupId, env, payload)
+		receivedEvent["decryptMs"] = decryptMs
+		if payload.Extra != nil {
+			if pubNanoStr, ok := payload.Extra["publishedAtNano"].(string); ok {
+				if pubNano, err := strconv.ParseInt(pubNanoStr, 10, 64); err == nil {
+					deliveryMs := (time.Now().UnixNano() - pubNano) / 1e6
+					receivedEvent["deliveryMs"] = deliveryMs
+				}
+			}
+		}
+		n.emitEvent("group_message:received", receivedEvent)
 	}
 }
 

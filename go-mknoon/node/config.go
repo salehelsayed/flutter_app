@@ -30,7 +30,8 @@ const (
 	SendTimeout       = 15 * time.Second
 	DiscoverTimeout   = 10 * time.Second
 	InboxTimeout      = 15 * time.Second
-	MediaTimeout      = 5 * time.Minute // large files need generous timeout
+	MediaTimeout      = 5 * time.Minute  // large files need generous timeout
+	MediaIdleTimeout  = 10 * time.Second // stall = no bytes for this long
 
 	// PubSub.
 	GroupTopicPrefix                  = "/mknoon/group/"

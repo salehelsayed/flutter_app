@@ -154,7 +154,7 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     storeInInboxCallCount++;
     lastStoreInInboxPeerId = toPeerId;
     lastStoreInInboxMessage = message;

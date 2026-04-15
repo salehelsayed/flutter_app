@@ -72,6 +72,27 @@ class P2PServiceImpl implements P2PService {
   /// 'in_place', 'watchdog_restart', or null if no recovery yet.
   String? _lastRecoveryMethod;
 
+  /// Timing instrumentation: last confirmed-healthy relay poll timestamp.
+  DateTime? _lastHealthyRelayAt;
+
+  /// Timing instrumentation: when degradation was first detected (for outage timing).
+  DateTime? _outageDetectedAt;
+
+  /// §24: Timestamp when startNodeCore() was called (for cold-start timing).
+  DateTime? _nodeStartRequestedAt;
+
+  /// §24: Timestamp when we last transitioned away from online (for recovery timing).
+  DateTime? _lastWentOfflineAt;
+
+  /// §24: Prevents duplicate cold-start events when multiple paths race.
+  bool _coldStartOnlineEmitted = false;
+
+  /// §24: True when startNodeCore detected an 'already started' hot-restart.
+  bool _isHotRestart = false;
+
+  /// §24: Timestamp when the app resumed from background (for background_resume timing).
+  DateTime? _resumeStartedAt;
+
   /// Phase 5: Threshold for escalating from in-place refresh to watchdog.
   static const int refreshFailureThreshold = 3;
 
@@ -173,6 +194,9 @@ class P2PServiceImpl implements P2PService {
     }
     _isStarting = true;
     _startNodeTime = DateTime.now();
+    _nodeStartRequestedAt = DateTime.now();
+    _coldStartOnlineEmitted = false;
+    _isHotRestart = false;
     if (kDebugMode) {
       debugPrint('[START] startNodeCore() beginning for peerId=$peerId');
     }
@@ -196,7 +220,7 @@ class P2PServiceImpl implements P2PService {
 
       if (response['ok'] == true) {
         _stopped = false;
-        _emitState(NodeState.fromJson(response));
+        _emitState(NodeState.fromJson(response), source: 'start_response');
 
         if (_stateHasHealthyRelay(_currentState)) {
           _hasEverBeenOnline = true;
@@ -215,6 +239,7 @@ class P2PServiceImpl implements P2PService {
       // Query node:status to sync Dart state with the running Go node.
       final errorMsg = response['errorMessage']?.toString() ?? '';
       if (errorMsg.contains('already started')) {
+        _isHotRestart = true;
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_START_NODE_CORE_ALREADY_RUNNING',
@@ -224,7 +249,7 @@ class P2PServiceImpl implements P2PService {
         final statusResponse = await callP2PNodeStatus(_bridge);
         if (statusResponse['ok'] == true) {
           _stopped = false;
-          _emitState(NodeState.fromJson(statusResponse));
+          _emitState(NodeState.fromJson(statusResponse), source: 'start_response');
 
           if (_stateHasHealthyRelay(_currentState)) {
             _hasEverBeenOnline = true;
@@ -560,6 +585,7 @@ class P2PServiceImpl implements P2PService {
     var replayed = 0;
 
     for (final entry in entries) {
+      final entryStopwatch = Stopwatch()..start();
       final message = entry.toChatMessage();
       try {
         final replayRecoveredInboxChatMessage =
@@ -576,6 +602,17 @@ class P2PServiceImpl implements P2PService {
             rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_CHAT_REJECTED',
           )) {
             replayed++;
+            entryStopwatch.stop();
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'INBOX_DELIVERY_TIMING',
+              details: {
+                'deliveryMs': entryStopwatch.elapsedMilliseconds,
+                'messageId': entry.entryId.length > 8
+                    ? entry.entryId.substring(0, 8)
+                    : entry.entryId,
+              },
+            );
           }
           continue;
         }
@@ -596,6 +633,17 @@ class P2PServiceImpl implements P2PService {
             rejectedEvent: 'P2P_SERVICE_INBOX_STAGED_INTRO_REJECTED',
           )) {
             replayed++;
+            entryStopwatch.stop();
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'INBOX_DELIVERY_TIMING',
+              details: {
+                'deliveryMs': entryStopwatch.elapsedMilliseconds,
+                'messageId': entry.entryId.length > 8
+                    ? entry.entryId.substring(0, 8)
+                    : entry.entryId,
+              },
+            );
           }
           continue;
         }
@@ -612,6 +660,17 @@ class P2PServiceImpl implements P2PService {
                 ? entry.entryId.substring(0, 8)
                 : entry.entryId,
             'messageType': entry.messageType,
+          },
+        );
+        entryStopwatch.stop();
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'INBOX_DELIVERY_TIMING',
+          details: {
+            'deliveryMs': entryStopwatch.elapsedMilliseconds,
+            'messageId': entry.entryId.length > 8
+                ? entry.entryId.substring(0, 8)
+                : entry.entryId,
           },
         );
       } catch (e) {
@@ -1042,6 +1101,9 @@ class P2PServiceImpl implements P2PService {
         final reply = response['reply'] as String?;
         final acked = response['acked'] as bool?;
         final transport = response['transport']?.toString();
+        final streamOpenMs = response['streamOpenMs'] as int?;
+        final writeMs = response['writeMs'] as int?;
+        final ackWaitMs = response['ackWaitMs'] as int?;
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_SEND_MESSAGE_WITH_REPLY_SUCCESS',
@@ -1057,6 +1119,9 @@ class P2PServiceImpl implements P2PService {
           acked: acked,
           reply: reply,
           transport: transport,
+          streamOpenMs: streamOpenMs,
+          writeMs: writeMs,
+          ackWaitMs: ackWaitMs,
         );
       } else {
         emitFlowEvent(
@@ -1203,12 +1268,112 @@ class P2PServiceImpl implements P2PService {
     _healthCheckTimer = null;
   }
 
+  /// Records when the app resumed from background.
+  /// Called by lifecycle handler before health check.
+  void markResumeStarted() {
+    _resumeStartedAt = DateTime.now();
+  }
+
+  /// Clears any unconsumed resume timestamp.
+  /// Called in finally block to prevent stale timestamps.
+  void clearResumeStarted() {
+    _resumeStartedAt = null;
+  }
+
+  /// If the badge is already green when resume fires, emit immediately.
+  /// Called after handleAppResumed completes.
+  void checkResumeAlreadyOnline() {
+    if (_resumeStartedAt == null) return;
+    if (_stateHasHealthyRelay(_currentState)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'TIME_TO_ONLINE_BADGE',
+        details: {
+          'totalMs': DateTime.now().difference(_resumeStartedAt!).inMilliseconds,
+          'phase': 'background_resume_already_online',
+          'source': 'resume_check',
+        },
+      );
+      _resumeStartedAt = null;
+    }
+  }
+
   /// Safely update [_currentState] and emit to [_stateController].
   /// No-op if the controller is closed.
-  void _emitState(NodeState newState) {
+  ///
+  /// [source] tags the caller for §24 TIME_TO_ONLINE_BADGE instrumentation:
+  /// 'start_response', 'relay_state_push', 'health_check_poll', 'addresses_push'.
+  void _emitState(NodeState newState, {String? source}) {
+    final wasOnline = _stateHasHealthyRelay(_currentState);
     _currentState = newState;
     if (!_stateController.isClosed) {
       _stateController.add(_currentState);
+    }
+
+    final nowOnline = _stateHasHealthyRelay(_currentState);
+
+    // §24: Cold start / hot restart — first time reaching online after node start.
+    if (nowOnline && !wasOnline && !_coldStartOnlineEmitted &&
+        _nodeStartRequestedAt != null) {
+      _coldStartOnlineEmitted = true;
+      final totalMs = DateTime.now()
+          .difference(_nodeStartRequestedAt!)
+          .inMilliseconds;
+      final String phase;
+      if (_lastWentOfflineAt != null) {
+        phase = 'recovery';
+      } else if (_isHotRestart) {
+        phase = 'hot_restart';
+      } else {
+        phase = 'cold_start';
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'TIME_TO_ONLINE_BADGE',
+        details: {
+          'totalMs': totalMs,
+          'phase': phase,
+          'source': source ?? 'unknown',
+        },
+      );
+      _lastWentOfflineAt = null;
+      return;
+    }
+
+    // §24: Recovery — was online, went offline, now back online.
+    if (nowOnline && !wasOnline && _coldStartOnlineEmitted &&
+        _lastWentOfflineAt != null) {
+      // If this recovery was triggered by a background resume, emit
+      // background_resume phase instead of (in addition to) recovery.
+      final String phase;
+      final int totalMs;
+      if (_resumeStartedAt != null) {
+        phase = 'background_resume';
+        totalMs = DateTime.now()
+            .difference(_resumeStartedAt!)
+            .inMilliseconds;
+        _resumeStartedAt = null;
+      } else {
+        phase = 'recovery';
+        totalMs = DateTime.now()
+            .difference(_lastWentOfflineAt!)
+            .inMilliseconds;
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'TIME_TO_ONLINE_BADGE',
+        details: {
+          'totalMs': totalMs,
+          'phase': phase,
+          'source': source ?? 'unknown',
+        },
+      );
+      _lastWentOfflineAt = null;
+    }
+
+    // §24: Track when we lose online status (for recovery timing).
+    if (!nowOnline && wasOnline) {
+      _lastWentOfflineAt = DateTime.now();
     }
   }
 
@@ -1290,12 +1455,26 @@ class P2PServiceImpl implements P2PService {
       }
       if (_stateHasHealthyRelay(freshState)) {
         _hasEverBeenOnline = true;
+        _lastHealthyRelayAt = DateTime.now();
       }
 
       // Recovery: when reservation-aware relay health says we are degraded,
       // reconnect relays. If relayState is absent, fall back to circuit
       // addresses for compatibility with older bridges.
       if (_stateNeedsRelayRecovery(freshState) && _hasEverBeenOnline) {
+        _outageDetectedAt ??= DateTime.now();
+        final detectionMs = _lastHealthyRelayAt != null
+            ? DateTime.now().difference(_lastHealthyRelayAt!).inMilliseconds
+            : -1;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RELAY_OUTAGE_TIMING',
+          details: {
+            'phase': 'detected',
+            'detectionMs': detectionMs,
+            'detectionSource': 'poll',
+          },
+        );
         if (kDebugMode) {
           debugPrint(
             '[HEALTH] DEGRADED — relay not healthy '
@@ -1340,6 +1519,20 @@ class P2PServiceImpl implements P2PService {
                 );
               }
             }
+            final totalOutageMs = _outageDetectedAt != null
+                ? DateTime.now().difference(_outageDetectedAt!).inMilliseconds
+                : reconnectMs;
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RELAY_OUTAGE_TIMING',
+              details: {
+                'phase': 'recovered',
+                'recoveryMs': reconnectMs,
+                'totalOutageMs': totalOutageMs,
+                'recoveryMode': reconnectResponse['recoveryMode'],
+              },
+            );
+            _outageDetectedAt = null;
             _consecutiveRefreshFailures = 0;
           } else {
             _consecutiveRefreshFailures++;
@@ -1392,7 +1585,7 @@ class P2PServiceImpl implements P2PService {
         }
 
         if (_stateMeaningfullyChanged(_currentState, retryState)) {
-          _emitState(retryState);
+          _emitState(retryState, source: 'health_check_poll');
 
           emitFlowEvent(
             layer: 'FL',
@@ -1437,7 +1630,7 @@ class P2PServiceImpl implements P2PService {
 
       // Normal path: only emit if something meaningful changed
       if (_stateMeaningfullyChanged(_currentState, freshState)) {
-        _emitState(freshState);
+        _emitState(freshState, source: 'health_check_poll');
 
         if (kDebugMode) {
           debugPrint(
@@ -1614,7 +1807,7 @@ class P2PServiceImpl implements P2PService {
     );
 
     if (_stateMeaningfullyChanged(previousState, updatedState)) {
-      _emitState(updatedState);
+      _emitState(updatedState, source: 'addresses_push');
     }
 
     if (nowHealthy) {
@@ -1697,10 +1890,11 @@ class P2PServiceImpl implements P2PService {
       },
     );
 
-    _emitState(updatedState);
+    _emitState(updatedState, source: 'relay_state_push');
 
     if (nowHealthy) {
       _hasEverBeenOnline = true;
+      _lastHealthyRelayAt = DateTime.now();
     }
 
     if (!wasHealthy &&
@@ -1711,6 +1905,19 @@ class P2PServiceImpl implements P2PService {
     }
 
     if (wasHealthy && !nowHealthy && _hasEverBeenOnline) {
+      _outageDetectedAt ??= DateTime.now();
+      final detectionMs = _lastHealthyRelayAt != null
+          ? DateTime.now().difference(_lastHealthyRelayAt!).inMilliseconds
+          : -1;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RELAY_OUTAGE_TIMING',
+        details: {
+          'phase': 'detected',
+          'detectionMs': detectionMs,
+          'detectionSource': 'push',
+        },
+      );
       if (kDebugMode) {
         debugPrint(
           '[RELAY] relay:state shows degradation — triggering immediate recovery',
@@ -1793,7 +2000,7 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_INBOX_STORE_BEGIN',
@@ -1805,6 +2012,7 @@ class P2PServiceImpl implements P2PService {
         _bridge,
         toPeerId: toPeerId,
         message: message,
+        timeoutMs: timeoutMs,
       );
       final ok = response['ok'] == true;
       emitFlowEvent(

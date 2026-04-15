@@ -18,7 +18,10 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 const Duration interactiveLocalBudget = Duration(milliseconds: 1500);
 
 /// Interactive send budget for the overall direct send path.
-const Duration interactiveDirectBudget = Duration(seconds: 4);
+const Duration interactiveDirectBudget = Duration(seconds: 2);
+
+/// Interactive send budget for the inbox store fallback path.
+const Duration interactiveInboxBudget = Duration(seconds: 3);
 
 /// After a successful relay probe, allow one immediate retry before inbox
 /// fallback. This targets stale-discoverability recovery without slowing the
@@ -87,6 +90,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final textPreview = buildTextPreview(sanitizedText);
   final hasAttachments =
       mediaAttachments != null && mediaAttachments.isNotEmpty;
+  var connectionReused = false;
+  var sendPath = 'unknown';
+  Map<String, int> stepTimings = {};
   void emitSendTiming({
     required String outcome,
     Map<String, dynamic> details = const {},
@@ -99,6 +105,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         'elapsedMs': sendStopwatch.elapsedMilliseconds,
         'outcome': outcome,
         'hasAttachments': hasAttachments,
+        'connectionReused': connectionReused,
+        'sendPath': sendPath,
+        ...stepTimings,
         ...details,
       },
     );
@@ -186,11 +195,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   if (bridge != null && recipientMlKemPublicKey != null) {
     try {
       final innerJson = payload.toInnerJson();
+      final encryptStopwatch = Stopwatch()..start();
       final encryptResult = await callEncryptMessage(
         bridge: bridge,
         recipientMlKemPublicKey: recipientMlKemPublicKey,
         plaintext: innerJson,
       );
+      encryptStopwatch.stop();
+      stepTimings['encryptMs'] = encryptStopwatch.elapsedMilliseconds;
       if (encryptResult['ok'] != true) {
         emitFlowEvent(
           layer: 'FL',
@@ -249,17 +261,27 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   );
 
   if (isAlreadyConnected) {
+    connectionReused = true;
+    sendPath = 'reuse';
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_REUSE_CONNECTION',
       details: {'targetPeerId': targetPrefix},
     );
     try {
+      final reuseSendStopwatch = Stopwatch()..start();
       final sendResult = await p2pService.sendMessageWithReply(
         targetPeerId,
         jsonString,
         timeoutMs: interactiveDirectBudget.inMilliseconds,
       );
+      reuseSendStopwatch.stop();
+      stepTimings = {
+        'sendMs': reuseSendStopwatch.elapsedMilliseconds,
+        if (sendResult.streamOpenMs != null) 'streamOpenMs': sendResult.streamOpenMs!,
+        if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
+        if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
+      };
       if (sendResult.sent) {
         return _completeSuccessfulSend(
           p2pService: p2pService,
@@ -283,11 +305,19 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           attachments: normalizedAttachments,
           sendStopwatch: sendStopwatch,
           emitTimingEvent: emitTimingEvent,
+          extraTimingDetails: {
+            'connectionReused': true,
+            'sendPath': 'reuse',
+            ...stepTimings,
+          },
         );
       }
     } catch (_) {
       // Connection reuse failed — fall through to race
     }
+    connectionReused = false;
+    sendPath = 'unknown';
+    stepTimings = {};
   }
 
   // 5. Race: local WiFi and direct discover/dial/send in parallel.
@@ -381,6 +411,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final raceResult = await completer.future;
 
   if (raceResult.success) {
+    sendPath = raceResult.via == 'local' ? 'local' : 'direct';
+    stepTimings = raceResult.stepTimings;
     return _completeSuccessfulSend(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -398,6 +430,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       attachments: normalizedAttachments,
       sendStopwatch: sendStopwatch,
       emitTimingEvent: emitTimingEvent,
+      extraTimingDetails: {
+        'connectionReused': false,
+        'sendPath': sendPath,
+        ...stepTimings,
+      },
     );
   }
 
@@ -410,6 +447,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       failureReason: failureReason,
     );
     if (relayProbeResult.success) {
+      sendPath = 'relay';
+      stepTimings = {...stepTimings, ...relayProbeResult.stepTimings};
       return _completeSuccessfulSend(
         p2pService: p2pService,
         messageRepo: messageRepo,
@@ -427,6 +466,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         attachments: normalizedAttachments,
         sendStopwatch: sendStopwatch,
         emitTimingEvent: emitTimingEvent,
+        extraTimingDetails: {
+          'connectionReused': false,
+          'sendPath': 'relay',
+          ...stepTimings,
+        },
       );
     }
     failureReason = relayProbeResult.reason ?? failureReason;
@@ -440,11 +484,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   );
 
   try {
+    final inboxStopwatch = Stopwatch()..start();
     final storedInInbox = await p2pService.storeInInbox(
       targetPeerId,
       jsonString,
+      timeoutMs: interactiveInboxBudget.inMilliseconds,
     );
+    inboxStopwatch.stop();
+    stepTimings['inboxMs'] = inboxStopwatch.elapsedMilliseconds;
     if (storedInInbox) {
+      sendPath = 'inbox';
       final deliveredMessage = payload.toConversationMessage(
         contactPeerId: targetPeerId,
         isIncoming: false,
@@ -576,6 +625,7 @@ class _RaceResult {
   final String? via;
   final String? reason;
   final bool relayProbeEligible;
+  final Map<String, int> stepTimings;
 
   const _RaceResult._({
     required this.success,
@@ -583,20 +633,29 @@ class _RaceResult {
     this.via,
     this.reason,
     this.relayProbeEligible = false,
+    this.stepTimings = const {},
   });
 
   factory _RaceResult.succeeded({
     required String via,
     bool acknowledged = false,
-  }) => _RaceResult._(success: true, acknowledged: acknowledged, via: via);
+    Map<String, int> stepTimings = const {},
+  }) => _RaceResult._(
+    success: true,
+    acknowledged: acknowledged,
+    via: via,
+    stepTimings: stepTimings,
+  );
 
   factory _RaceResult.failed(
     String reason, {
     bool relayProbeEligible = false,
+    Map<String, int> stepTimings = const {},
   }) => _RaceResult._(
     success: false,
     reason: reason,
     relayProbeEligible: relayProbeEligible,
+    stepTimings: stepTimings,
   );
 }
 
@@ -652,16 +711,23 @@ Future<_RaceResult> _tryLocalSend(
   String senderPeerId, {
   required int timeoutMs,
 }) async {
+  final localStopwatch = Stopwatch()..start();
   final localSent = await p2pService.sendLocalMessage(
     targetPeerId,
     jsonString,
     senderPeerId,
     timeoutMs: timeoutMs,
   );
+  localStopwatch.stop();
+  final timings = {'localSendMs': localStopwatch.elapsedMilliseconds};
   if (localSent) {
-    return _RaceResult.succeeded(via: 'local', acknowledged: true);
+    return _RaceResult.succeeded(
+      via: 'local',
+      acknowledged: true,
+      stepTimings: timings,
+    );
   }
-  return _RaceResult.failed('local_send_failed');
+  return _RaceResult.failed('local_send_failed', stepTimings: timings);
 }
 
 /// Try direct discover → dial → send path.
@@ -671,36 +737,64 @@ Future<_RaceResult> _tryDirectSend(
   String jsonString,
 ) async {
   final budgetMs = interactiveDirectBudget.inMilliseconds;
+  final timings = <String, int>{};
 
   // Discover
+  final discoverStopwatch = Stopwatch()..start();
   final peer = await p2pService.discoverPeer(targetPeerId, timeoutMs: budgetMs);
+  discoverStopwatch.stop();
+  timings['discoverMs'] = discoverStopwatch.elapsedMilliseconds;
   if (peer == null) {
-    return _RaceResult.failed('peer_not_found', relayProbeEligible: true);
+    return _RaceResult.failed(
+      'peer_not_found',
+      relayProbeEligible: true,
+      stepTimings: timings,
+    );
   }
 
   // Dial
+  final dialStopwatch = Stopwatch()..start();
   final dialed = await p2pService.dialPeer(
     targetPeerId,
     addresses: peer.addresses,
     timeoutMs: budgetMs,
   );
+  dialStopwatch.stop();
+  timings['dialMs'] = dialStopwatch.elapsedMilliseconds;
   if (!dialed) {
-    return _RaceResult.failed('dial_failed', relayProbeEligible: true);
+    return _RaceResult.failed(
+      'dial_failed',
+      relayProbeEligible: true,
+      stepTimings: timings,
+    );
   }
 
   // Send
+  final sendStepStopwatch = Stopwatch()..start();
   final sendResult = await p2pService.sendMessageWithReply(
     targetPeerId,
     jsonString,
     timeoutMs: budgetMs,
   );
+  sendStepStopwatch.stop();
+  timings['sendMs'] = sendStepStopwatch.elapsedMilliseconds;
+  if (sendResult.streamOpenMs != null) {
+    timings['streamOpenMs'] = sendResult.streamOpenMs!;
+  }
+  if (sendResult.writeMs != null) {
+    timings['writeMs'] = sendResult.writeMs!;
+  }
+  if (sendResult.ackWaitMs != null) {
+    timings['ackWaitMs'] = sendResult.ackWaitMs!;
+  }
   if (!sendResult.sent) {
-    return _RaceResult.failed('send_failed');
+    return _RaceResult.failed('send_failed', stepTimings: timings);
   }
 
   return _RaceResult.succeeded(
     via: _resolveGoSendTransport(p2pService, targetPeerId, sendResult),
     acknowledged: sendResult.acknowledged,
+    stepTimings: timings,
   );
 }
 
@@ -710,6 +804,7 @@ Future<_RaceResult> _tryRelayProbeSend(
   String jsonString, {
   required String failureReason,
 }) async {
+  final relayProbeStopwatch = Stopwatch()..start();
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_RELAY_PROBE_BEGIN',
@@ -720,12 +815,16 @@ Future<_RaceResult> _tryRelayProbeSend(
   try {
     probeResult = await p2pService.probeRelay(targetPeerId);
   } catch (e) {
+    relayProbeStopwatch.stop();
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_RELAY_PROBE_ERROR',
       details: {'error': e.toString()},
     );
-    return _RaceResult.failed(failureReason);
+    return _RaceResult.failed(
+      failureReason,
+      stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
+    );
   }
 
   switch (probeResult) {
@@ -760,6 +859,7 @@ Future<_RaceResult> _tryRelayProbeSend(
             timeoutMs: interactiveDirectBudget.inMilliseconds,
           );
           if (sendResult.sent) {
+            relayProbeStopwatch.stop();
             return _RaceResult.succeeded(
               via: _resolveGoSendTransport(
                 p2pService,
@@ -767,6 +867,12 @@ Future<_RaceResult> _tryRelayProbeSend(
                 sendResult,
               ),
               acknowledged: sendResult.acknowledged,
+              stepTimings: {
+                'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds,
+                if (sendResult.streamOpenMs != null) 'streamOpenMs': sendResult.streamOpenMs!,
+                if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
+                if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
+              },
             );
           }
 
@@ -794,21 +900,33 @@ Future<_RaceResult> _tryRelayProbeSend(
           await Future<void>.delayed(relayProbeRetryBackoff);
         }
       }
-      return _RaceResult.failed('send_failed');
+      relayProbeStopwatch.stop();
+      return _RaceResult.failed(
+        'send_failed',
+        stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
+      );
     case RelayProbeResult.noReservation:
+      relayProbeStopwatch.stop();
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_RELAY_PROBE_NO_RESERVATION',
         details: {},
       );
-      return _RaceResult.failed('peer_not_found');
+      return _RaceResult.failed(
+        'peer_not_found',
+        stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
+      );
     case RelayProbeResult.error:
+      relayProbeStopwatch.stop();
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_RELAY_PROBE_FALLBACK',
         details: {'reason': failureReason},
       );
-      return _RaceResult.failed(failureReason);
+      return _RaceResult.failed(
+        failureReason,
+        stepTimings: {'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds},
+      );
   }
 }
 
@@ -864,6 +982,7 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
   required List<MediaAttachment>? attachments,
   required Stopwatch sendStopwatch,
   required bool emitTimingEvent,
+  Map<String, dynamic> extraTimingDetails = const {},
 }) async {
   final message = await _persistOutgoingSendResult(
     p2pService: p2pService,
@@ -897,9 +1016,11 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
       details: {
         'elapsedMs': sendStopwatch.elapsedMilliseconds,
         'outcome': 'success',
+        'messageId': resolvedMessageId.substring(0, 8),
         'hasAttachments': attachments != null && attachments.isNotEmpty,
         'status': message.status,
         'via': message.transport,
+        ...extraTimingDetails,
       },
     );
   }
@@ -953,6 +1074,7 @@ Future<ConversationMessage> _persistOutgoingSendResult({
     final storedInInbox = await p2pService.storeInInbox(
       targetPeerId,
       jsonString,
+      timeoutMs: interactiveInboxBudget.inMilliseconds,
     );
     if (storedInInbox) {
       emitFlowEvent(

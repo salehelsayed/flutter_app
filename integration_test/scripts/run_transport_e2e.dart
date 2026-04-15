@@ -1897,7 +1897,6 @@ void main(List<String> args) async {
         '--publish-port',
       ] else ...[
         'test',
-        '--no-dds',
         'integration_test/transport_e2e_test.dart',
       ],
       '--dart-define=CLI_PEER_FIXTURE=${paths.cliFixture}',

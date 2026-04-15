@@ -269,7 +269,7 @@ class _ThrowingInboxP2PService extends FakeP2PService {
   });
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     storeInInboxCallCount++;
     final idx = _storeCallIndex++;
     if (throwOnIndices.contains(idx)) {

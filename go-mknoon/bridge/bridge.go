@@ -104,7 +104,9 @@ func MlKemKeygen() (result string) {
 		}
 	}()
 
+	start := time.Now()
 	kp, err := mcrypto.MlKemKeygen()
+	keygenMs := time.Since(start).Milliseconds()
 	if err != nil {
 		return errJSON("INTERNAL_ERROR", err.Error())
 	}
@@ -113,6 +115,7 @@ func MlKemKeygen() (result string) {
 		"ok":        true,
 		"publicKey": kp.PublicKey,
 		"secretKey": kp.SecretKey,
+		"keygenMs":  keygenMs,
 	})
 }
 
@@ -138,16 +141,20 @@ func EncryptMessage(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing recipientPublicKey or plaintext")
 	}
 
+	encryptStart := time.Now()
 	enc, err := mcrypto.EncryptMessage(params.RecipientPublicKey, params.Plaintext)
+	encryptMs := time.Since(encryptStart).Milliseconds()
 	if err != nil {
 		return errJSON("INTERNAL_ERROR", err.Error())
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":         true,
-		"kem":        enc.Kem,
-		"ciphertext": enc.Ciphertext,
-		"nonce":      enc.Nonce,
+		"ok":               true,
+		"kem":              enc.Kem,
+		"ciphertext":       enc.Ciphertext,
+		"nonce":            enc.Nonce,
+		"encryptMs":        encryptMs,
+		"payloadSizeBytes": len(params.Plaintext),
 	})
 }
 
@@ -175,14 +182,18 @@ func DecryptMessage(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing secretKey, kem, ciphertext, or nonce")
 	}
 
+	decryptStart := time.Now()
 	plaintext, err := mcrypto.DecryptMessage(params.SecretKey, params.Kem, params.Ciphertext, params.Nonce)
+	decryptMs := time.Since(decryptStart).Milliseconds()
 	if err != nil {
 		return errJSON("INTERNAL_ERROR", err.Error())
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":        true,
-		"plaintext": plaintext,
+		"ok":               true,
+		"plaintext":        plaintext,
+		"decryptMs":        decryptMs,
+		"payloadSizeBytes": len(plaintext),
 	})
 }
 
@@ -770,9 +781,10 @@ func SendMessage(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		PeerId    string `json:"peerId"`
-		Message   string `json:"message"`
-		TimeoutMs int    `json:"timeoutMs"`
+		PeerId        string `json:"peerId"`
+		Message       string `json:"message"`
+		TimeoutMs     int    `json:"timeoutMs"`
+		CorrelationId string `json:"correlationId"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -790,13 +802,20 @@ func SendMessage(paramsJSON string) (result string) {
 		return errJSON("SEND_ERROR", err.Error())
 	}
 
-	return okJSON(map[string]interface{}{
-		"ok":        true,
-		"sent":      true,
-		"acked":     sendResult.Acked,
-		"reply":     sendResult.Reply,
-		"transport": sendResult.Transport,
-	})
+	resp := map[string]interface{}{
+		"ok":           true,
+		"sent":         true,
+		"acked":        sendResult.Acked,
+		"reply":        sendResult.Reply,
+		"transport":    sendResult.Transport,
+		"streamOpenMs": sendResult.StreamOpenMs,
+		"writeMs":      sendResult.WriteMs,
+		"ackWaitMs":    sendResult.AckWaitMs,
+	}
+	if params.CorrelationId != "" {
+		resp["correlationId"] = params.CorrelationId
+	}
+	return okJSON(resp)
 }
 
 // ConfirmDirectMessage resolves a pending deferred direct-ack nonce.
@@ -856,8 +875,9 @@ func InboxStore(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		ToPeerId string `json:"toPeerId"`
-		Message  string `json:"message"`
+		ToPeerId  string `json:"toPeerId"`
+		Message   string `json:"message"`
+		TimeoutMs int    `json:"timeoutMs"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -866,7 +886,7 @@ func InboxStore(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing toPeerId or message")
 	}
 
-	if err := n.InboxStore(params.ToPeerId, params.Message); err != nil {
+	if err := n.InboxStore(params.ToPeerId, params.Message, params.TimeoutMs); err != nil {
 		return errJSON("INBOX_ERROR", err.Error())
 	}
 

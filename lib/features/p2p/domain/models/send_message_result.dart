@@ -4,12 +4,18 @@ class SendMessageResult {
   final bool? acked;
   final String? reply;
   final String? transport;
+  final int? streamOpenMs;
+  final int? writeMs;
+  final int? ackWaitMs;
 
   const SendMessageResult({
     required this.sent,
     this.acked,
     this.reply,
     this.transport,
+    this.streamOpenMs,
+    this.writeMs,
+    this.ackWaitMs,
   });
 
   /// Whether the remote peer acknowledged receipt.

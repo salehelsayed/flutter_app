@@ -116,7 +116,7 @@ class _FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     if (throwOnStore) throw Exception('store error');
     storedToPeers.add(toPeerId);
     if (storeResultsQueue.isNotEmpty) {

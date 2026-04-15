@@ -143,7 +143,7 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     storeInInboxCallCount++;
     lastInboxPeerId = toPeerId;
     lastInboxMessage = message;
@@ -1989,7 +1989,7 @@ class _ThrowOnInboxP2PService implements P2PService {
   }) async => p2pSucceeds;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async =>
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async =>
       throw Exception('Inbox store exploded');
 
   @override
@@ -2092,7 +2092,7 @@ class _ThrowOnSendP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -2198,7 +2198,7 @@ class _FlakyDiscoverP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -2299,7 +2299,7 @@ class _SlowLocalFastDirectP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>

@@ -102,7 +102,7 @@ abstract class P2PService {
   ///   - [message]: The message content
   ///
   /// Returns true if the message was stored successfully.
-  Future<bool> storeInInbox(String toPeerId, String message);
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs});
 
   /// Retrieve messages from the offline inbox.
   ///

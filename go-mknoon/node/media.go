@@ -46,6 +46,48 @@ type MediaMeta struct {
 
 // --- Helper ---
 
+// ErrStallTimeout is returned when a media transfer stalls (no bytes for MediaIdleTimeout).
+var ErrStallTimeout = fmt.Errorf("media transfer stalled: no bytes for %v", MediaIdleTimeout)
+
+// idleTimeoutReader wraps an io.Reader and fails if no bytes are read
+// within the idle timeout period. The timer resets on every successful
+// Read that returns n > 0.
+type idleTimeoutReader struct {
+	reader      io.Reader
+	idleTimeout time.Duration
+	timer       *time.Timer
+}
+
+func newIdleTimeoutReader(r io.Reader, timeout time.Duration) *idleTimeoutReader {
+	return &idleTimeoutReader{
+		reader:      r,
+		idleTimeout: timeout,
+		timer:       time.NewTimer(timeout),
+	}
+}
+
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+	type readResult struct {
+		n   int
+		err error
+	}
+	ch := make(chan readResult, 1)
+	go func() {
+		n, err := r.reader.Read(p)
+		ch <- readResult{n, err}
+	}()
+
+	select {
+	case res := <-ch:
+		if res.n > 0 {
+			r.timer.Reset(r.idleTimeout)
+		}
+		return res.n, res.err
+	case <-r.timer.C:
+		return 0, ErrStallTimeout
+	}
+}
+
 const mediaUploadProgressEmitChunkBytes int64 = 256 * 1024
 const mediaUploadProgressEmitInterval = 250 * time.Millisecond
 
@@ -94,18 +136,39 @@ func (n *Node) openMediaStream() (network.Stream, context.CancelFunc, error) {
 	}
 
 	result, err := ForEachWithResult(rs, func(relay RelayInfo) (*streamResult, error) {
+		totalStart := time.Now()
 		ctx, cancel := context.WithTimeout(n.ctx, MediaTimeout)
 
+		connectStart := time.Now()
 		if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
 			cancel()
+			n.emitEvent("media:stream_open_timing", map[string]interface{}{
+				"connectMs": time.Since(connectStart).Milliseconds(),
+				"totalMs":   time.Since(totalStart).Milliseconds(),
+				"outcome":   "connect_failed",
+			})
 			return nil, fmt.Errorf("connect to relay: %w", err)
 		}
+		connectMs := time.Since(connectStart).Milliseconds()
 
+		streamStart := time.Now()
 		s, err := h.NewStream(ctx, relay.ID, MediaProtocol)
 		if err != nil {
 			cancel()
+			n.emitEvent("media:stream_open_timing", map[string]interface{}{
+				"connectMs":   connectMs,
+				"newStreamMs": time.Since(streamStart).Milliseconds(),
+				"totalMs":     time.Since(totalStart).Milliseconds(),
+				"outcome":     "stream_failed",
+			})
 			return nil, fmt.Errorf("open media stream: %w", err)
 		}
+		n.emitEvent("media:stream_open_timing", map[string]interface{}{
+			"connectMs":   connectMs,
+			"newStreamMs": time.Since(streamStart).Milliseconds(),
+			"totalMs":     time.Since(totalStart).Milliseconds(),
+			"outcome":     "success",
+		})
 		setStreamDeadline(s, MediaTimeout)
 
 		return &streamResult{stream: s, cancel: cancel}, nil
@@ -198,7 +261,9 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 		},
 	}
 	progressReader.emitProgressFn(0, fi.Size())
-	if _, err := io.Copy(s, progressReader); err != nil {
+	transferStart := time.Now()
+	idleReader := newIdleTimeoutReader(progressReader, MediaIdleTimeout)
+	if _, err := io.Copy(s, idleReader); err != nil {
 		return fmt.Errorf("stream file data: %w", err)
 	}
 	progressReader.emitProgressFn(fi.Size(), fi.Size())
@@ -218,6 +283,17 @@ func (n *Node) MediaUpload(id, toPeerId, mime, filePath string, allowedPeers []s
 		return fmt.Errorf("upload failed: %s", confirm.Error)
 	}
 
+	transferMs := time.Since(transferStart).Milliseconds()
+	throughput := int64(0)
+	if transferMs > 0 {
+		throughput = (fi.Size() * 1000) / transferMs
+	}
+	n.emitEvent("media:upload_complete", map[string]interface{}{
+		"id":                    id,
+		"totalBytes":            fi.Size(),
+		"totalMs":               transferMs,
+		"throughputBytesPerSec": throughput,
+	})
 	log.Printf("[MEDIA] Uploaded blob %s (%d bytes) to %s", id, fi.Size(), toPeerId[:min(20, len(toPeerId))])
 	streamOK = true
 	return nil
@@ -253,7 +329,9 @@ func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, er
 	}
 
 	// Read exactly resp.Size bytes
-	written, sErr := io.CopyN(f, s, resp.Size)
+	downloadStart := time.Now()
+	idleReader := newIdleTimeoutReader(s, MediaIdleTimeout)
+	written, sErr := io.CopyN(f, idleReader, resp.Size)
 	f.Close()
 
 	if sErr != nil || written != resp.Size {
@@ -261,6 +339,17 @@ func (n *Node) MediaDownload(id, outputPath string) (mime string, size int64, er
 		return "", 0, fmt.Errorf("download incomplete: wrote %d/%d, err=%v", written, resp.Size, sErr)
 	}
 
+	downloadMs := time.Since(downloadStart).Milliseconds()
+	dlThroughput := int64(0)
+	if downloadMs > 0 {
+		dlThroughput = (resp.Size * 1000) / downloadMs
+	}
+	n.emitEvent("media:download_complete", map[string]interface{}{
+		"id":                    id,
+		"totalBytes":            resp.Size,
+		"totalMs":               downloadMs,
+		"throughputBytesPerSec": dlThroughput,
+	})
 	log.Printf("[MEDIA] Downloaded blob %s (%d bytes, %s)", id, resp.Size, resp.Mime)
 	streamOK = true
 	return resp.Mime, resp.Size, nil
@@ -355,9 +444,23 @@ func (n *Node) ProfileUpload(mime, filePath string) error {
 		return fmt.Errorf("profile upload not ready: %s", resp.Error)
 	}
 
-	if _, err := io.Copy(s, f); err != nil {
+	progressReader := &mediaUploadProgressReader{
+		reader:     f,
+		totalBytes: fi.Size(),
+		lastEmitAt: time.Now(),
+		emitProgressFn: func(sentBytes, totalBytes int64) {
+			n.emitEvent("profile:upload_progress", map[string]interface{}{
+				"sentBytes":  sentBytes,
+				"totalBytes": totalBytes,
+			})
+		},
+	}
+	progressReader.emitProgressFn(0, fi.Size())
+	idleReader := newIdleTimeoutReader(progressReader, MediaIdleTimeout)
+	if _, err := io.Copy(s, idleReader); err != nil {
 		return fmt.Errorf("stream profile data: %w", err)
 	}
+	progressReader.emitProgressFn(fi.Size(), fi.Size())
 
 	confirmBytes, err := readFrame(s)
 	if err != nil {
@@ -405,7 +508,8 @@ func (n *Node) ProfileDownload(ownerPeerId, outputPath string) (mime string, siz
 		return "", 0, fmt.Errorf("create output file: %w", sErr)
 	}
 
-	written, sErr := io.CopyN(f, s, resp.Size)
+	idleReader := newIdleTimeoutReader(s, MediaIdleTimeout)
+	written, sErr := io.CopyN(f, idleReader, resp.Size)
 	f.Close()
 
 	if sErr != nil || written != resp.Size {

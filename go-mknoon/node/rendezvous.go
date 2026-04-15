@@ -27,6 +27,7 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 
 	rs := n.buildRelaySelector(serverAddresses)
 
+	registerStart := time.Now()
 	if err := rs.ForEach(func(relay RelayInfo) error {
 		timeout := DiscoverTimeout
 		ctx, cancel := context.WithTimeout(n.ctx, timeout)
@@ -87,9 +88,17 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 		streamOK = true
 		return nil
 	}); err != nil {
+		n.emitEvent("rendezvous:register_timing", map[string]interface{}{
+			"elapsedMs": time.Since(registerStart).Milliseconds(),
+			"outcome":   "failed",
+		})
 		return err
 	}
 
+	n.emitEvent("rendezvous:register_timing", map[string]interface{}{
+		"elapsedMs": time.Since(registerStart).Milliseconds(),
+		"outcome":   "success",
+	})
 	n.maybeStartPersonalRendezvousRefreshLoopAfterRegister(namespace)
 	return nil
 }
@@ -114,7 +123,8 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 
 	rs := n.buildRelaySelector(serverAddresses)
 
-	return ForEachWithResult(rs, func(relay RelayInfo) ([]peer.AddrInfo, error) {
+	discoverStart := time.Now()
+	result, err := ForEachWithResult(rs, func(relay RelayInfo) ([]peer.AddrInfo, error) {
 		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
 
@@ -152,6 +162,16 @@ func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses [
 		streamOK = true
 		return peers, nil
 	})
+	outcome := "success"
+	if err != nil {
+		outcome = "failed"
+	}
+	n.emitEvent("rendezvous:discover_timing", map[string]interface{}{
+		"elapsedMs": time.Since(discoverStart).Milliseconds(),
+		"outcome":   outcome,
+		"peerCount": len(result),
+	})
+	return result, err
 }
 
 // RendezvousDiscover discovers peers on a namespace.

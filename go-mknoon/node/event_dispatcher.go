@@ -19,6 +19,7 @@ type eventItem struct {
 	eventName string
 	data      map[string]interface{}
 	timestamp time.Time
+	emittedAt time.Time
 }
 
 // EventDispatcher provides bounded async delivery of events from Go to Flutter.
@@ -91,10 +92,12 @@ func (d *EventDispatcher) Emit(eventName string, data map[string]interface{}) {
 		return
 	}
 
+	now := time.Now()
 	item := eventItem{
 		eventName: eventName,
 		data:      data,
-		timestamp: time.Now(),
+		timestamp: now,
+		emittedAt: now,
 	}
 
 	d.mu.Lock()
@@ -247,6 +250,12 @@ func (d *EventDispatcher) deliver(item eventItem) {
 			log.Printf("[EVENT_DISPATCHER] Callback panic for event %q: %v", item.eventName, r)
 		}
 	}()
+
+	queueWaitMs := time.Since(item.emittedAt).Milliseconds()
+	if item.data == nil {
+		item.data = map[string]interface{}{}
+	}
+	item.data["queueWaitMs"] = queueWaitMs
 
 	payload := map[string]interface{}{
 		"event": item.eventName,

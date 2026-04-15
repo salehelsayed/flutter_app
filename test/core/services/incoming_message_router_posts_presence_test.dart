@@ -94,7 +94,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => true;
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
 
   @override
   Future<void> warmBackground() async {}

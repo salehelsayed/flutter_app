@@ -18,6 +18,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -93,6 +94,7 @@ class GroupConversationWired extends StatefulWidget {
   final GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository;
   final UploadMediaFn uploadMediaFn;
   final int maxAttachmentBudgetBytes;
+  final DateTime? notificationTappedAt;
 
   const GroupConversationWired({
     super.key,
@@ -120,6 +122,7 @@ class GroupConversationWired extends StatefulWidget {
     this.groupReactionReplayOutboxRepository,
     this.uploadMediaFn = uploadMedia,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
+    this.notificationTappedAt,
   });
 
   @override
@@ -250,6 +253,19 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _loadMessages();
     _startListening();
     _startListeningForReactions();
+  }
+
+  bool _notificationTimingEmitted = false;
+
+  void _emitNotificationTapTimingIfNeeded() {
+    final tappedAt = widget.notificationTappedAt;
+    if (tappedAt == null || _notificationTimingEmitted) return;
+    _notificationTimingEmitted = true;
+    emitNotificationTapTiming(
+      tappedAt: tappedAt,
+      routeKind: 'group',
+      messageId: widget.initialHighlightedMessageId,
+    );
   }
 
   void _handleMediaUploadProgress(Map<String, dynamic> event) {
@@ -698,6 +714,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _messages = messages;
         _mediaMap = mediaMap;
         _initialLoadDone = true;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _emitNotificationTapTimingIfNeeded();
       });
 
       unawaited(_loadReactions(messages));

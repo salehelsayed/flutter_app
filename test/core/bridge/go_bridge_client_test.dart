@@ -284,6 +284,70 @@ void main() {
   });
 
   group('push event routing', () {
+    test('timeout:fired push event is forwarded with the raw event name', () {
+      flowEventLoggingEnabled = true;
+      final flowEvents = <Map<String, dynamic>>[];
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null && message.startsWith('[FLOW] ')) {
+          flowEvents.add(
+            jsonDecode(message.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+          );
+        }
+      };
+
+      client.debugHandleEventForTest(
+        jsonEncode({
+          'event': 'timeout:fired',
+          'data': {
+            'timeoutName': 'DirectConfirmTimeout',
+            'configuredMs': 2000,
+            'actualMs': 2013,
+          },
+        }),
+      );
+
+      final timeoutEvents = flowEvents
+          .where((event) => event['event'] == 'timeout:fired')
+          .toList(growable: false);
+      expect(timeoutEvents, hasLength(1));
+      expect(
+        timeoutEvents.single['details'],
+        containsPair('timeoutName', 'DirectConfirmTimeout'),
+      );
+    });
+
+    test('group publish debug push event keeps the raw flow event name', () {
+      flowEventLoggingEnabled = true;
+      final flowEvents = <Map<String, dynamic>>[];
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null && message.startsWith('[FLOW] ')) {
+          flowEvents.add(
+            jsonDecode(message.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+          );
+        }
+      };
+
+      client.debugHandleEventForTest(
+        jsonEncode({
+          'event': 'group:publish_debug',
+          'data': {'encryptMs': 3, 'signMs': 1, 'topicPeers': 2},
+        }),
+      );
+
+      final rawEvents = flowEvents
+          .where((event) => event['event'] == 'group:publish_debug')
+          .toList(growable: false);
+      final aliasEvents = flowEvents
+          .where((event) => event['event'] == 'GROUP_PUBLISH_DEBUG')
+          .toList(growable: false);
+
+      expect(rawEvents, hasLength(1));
+      expect(aliasEvents, hasLength(1));
+      expect(rawEvents.single['details'], containsPair('topicPeers', 2));
+    });
+
     test('relay:state push event invokes relay-state callback', () {
       Map<String, dynamic>? received;
       client.onRelayStateChanged = (data) {

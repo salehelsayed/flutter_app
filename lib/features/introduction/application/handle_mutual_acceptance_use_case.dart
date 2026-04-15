@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -160,6 +161,8 @@ void _scheduleIntroAvatarDownloadIfMissing({
   }
 
   final dlFn = downloadProfilePictureFn ?? downloadProfilePicture;
+  final shouldRetryAfterDelay =
+      downloadProfilePictureFn != null || bridge is GoBridgeClient;
   () async {
     try {
       var result = await dlFn(
@@ -168,7 +171,7 @@ void _scheduleIntroAvatarDownloadIfMissing({
         ownerPeerId: ownerPeerId,
         avatarVersion: 'initial',
       );
-      if (result != null) return;
+      if (result != null || !shouldRetryAfterDelay) return;
 
       // Retry once after delay — relay may not have the profile yet
       await Future<void>.delayed(const Duration(seconds: 5));

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'bridge.dart';
 import '../utils/flow_event_emitter.dart';
@@ -159,7 +160,9 @@ Future<Map<String, dynamic>> callP2PRelayProbe(
     'payload': {'peerId': peerId},
   };
 
-  final responseJson = await bridge.send(jsonEncode(request));
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(const Duration(seconds: 5));
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   emitFlowEvent(
@@ -386,6 +389,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
   Bridge bridge, {
   required String toPeerId,
   required String message,
+  int? timeoutMs,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -395,10 +399,16 @@ Future<Map<String, dynamic>> callP2PInboxStore(
 
   final request = {
     'cmd': 'inbox:store',
-    'payload': {'toPeerId': toPeerId, 'message': message},
+    'payload': {
+      'toPeerId': toPeerId,
+      'message': message,
+      if (timeoutMs != null) 'timeoutMs': timeoutMs,
+    },
   };
 
-  final responseJson = await bridge.send(jsonEncode(request));
+  final responseJson = await bridge
+      .send(jsonEncode(request))
+      .timeout(Duration(milliseconds: timeoutMs ?? 15000));
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   emitFlowEvent(

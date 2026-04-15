@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../../core/services/p2p_service.dart';
+import '../../../../core/utils/flow_event_emitter.dart';
 import '../../domain/models/node_state.dart';
 
 /// Connection health derived from NodeState.
@@ -62,6 +63,9 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
   StreamSubscription<NodeState>? _sub;
   Timer? _downgradeTimer;
 
+  /// §24: Timestamp when the last stateStream event arrived.
+  DateTime? _lastStateReceivedAt;
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +77,8 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
   }
 
   void _onState(NodeState state) {
+    final stateReceivedAt = DateTime.now();
+    _lastStateReceivedAt = stateReceivedAt;
     final incoming = healthFromState(state);
     final count = state.connections.length;
 
@@ -86,10 +92,22 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
       return;
     }
 
-    // Upgrade (to online): apply immediately.
+    // Upgrade (to online): apply immediately + emit widget timing.
     if (incoming == ConnectionHealth.online) {
       _downgradeTimer?.cancel();
       _downgradeTimer = null;
+
+      final widgetTransitionMs =
+          DateTime.now().difference(stateReceivedAt).inMilliseconds;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'TIME_TO_ONLINE_BADGE_WIDGET',
+        details: {
+          'widgetTransitionMs': widgetTransitionMs,
+          'previousHealth': _displayedHealth.name,
+        },
+      );
+
       setState(() {
         _displayedHealth = incoming;
         _connectionCount = count;

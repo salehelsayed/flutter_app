@@ -480,7 +480,7 @@ func TestRelayInboxStoreRetrieve(t *testing.T) {
 	t.Logf("NodeA=%s  NodeB=%s", peerIdA, peerIdB)
 
 	// NodeA stores a message for NodeB in the relay inbox.
-	if err := nodeA.InboxStore(peerIdB, "hello from A"); err != nil {
+	if err := nodeA.InboxStore(peerIdB, "hello from A", 0); err != nil {
 		t.Fatalf("InboxStore: %v", err)
 	}
 	t.Log("InboxStore succeeded")
@@ -555,7 +555,7 @@ func TestRelayInboxMultipleMessages(t *testing.T) {
 	// NodeA stores 3 messages for NodeB.
 	for i := 1; i <= 3; i++ {
 		msg := fmt.Sprintf("message %d from A", i)
-		if err := nodeA.InboxStore(peerIdB, msg); err != nil {
+		if err := nodeA.InboxStore(peerIdB, msg, 0); err != nil {
 			t.Fatalf("InboxStore msg %d: %v", i, err)
 		}
 		t.Logf("stored message %d", i)

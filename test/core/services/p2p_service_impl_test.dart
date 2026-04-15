@@ -1,15 +1,47 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
+
+/// Captures [FLOW] log lines emitted during [action] and returns parsed events.
+Future<List<Map<String, dynamic>>> _captureFlowEvents(
+  Future<void> Function() action,
+) async {
+  final printed = <String>[];
+  final previousLogging = flowEventLoggingEnabled;
+  final originalDebugPrint = debugPrint;
+  flowEventLoggingEnabled = true;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await action();
+  } finally {
+    debugPrint = originalDebugPrint;
+    flowEventLoggingEnabled = previousLogging;
+  }
+
+  return printed
+      .where((line) => line.startsWith('[FLOW] '))
+      .map(
+        (line) =>
+            jsonDecode(line.substring('[FLOW] '.length))
+                as Map<String, dynamic>,
+      )
+      .toList();
+}
 
 /// A fake bridge that records commands and returns configurable responses.
 class _FakeBridge extends Bridge {
@@ -1909,5 +1941,258 @@ void main() {
         expect(service.currentState.circuitAddresses, isNotEmpty);
       },
     );
+  });
+
+  group('§24 TIME_TO_ONLINE_BADGE', () {
+    test('cold start emits TIME_TO_ONLINE_BADGE after first online state via relay push', () async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+          'relayState': 'starting',
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+
+      final events = await _captureFlowEvents(() async {
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        // Simulate relay coming online after a delay
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        });
+      });
+
+      final badge = events.where(
+        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
+      ).toList();
+      expect(badge, hasLength(1));
+      final details = badge.first['details'] as Map<String, dynamic>;
+      expect(details['totalMs'], greaterThanOrEqualTo(50));
+      expect(details['phase'], 'cold_start');
+      expect(details['source'], 'relay_state_push');
+    });
+
+    test('fast circuit check path emits timing via health_check_poll', () async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': [],
+          'connections': [],
+          'relayState': 'starting',
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+
+      final events = await _captureFlowEvents(() async {
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        // No relay push — health check poll discovers online
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        await service.performImmediateHealthCheck();
+      });
+
+      final badge = events.where(
+        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
+      ).toList();
+      expect(badge, hasLength(1));
+      final details = badge.first['details'] as Map<String, dynamic>;
+      expect(details['totalMs'], greaterThanOrEqualTo(50));
+      expect(details['source'], 'health_check_poll');
+      expect(details['phase'], 'cold_start');
+    });
+
+    test('already-online start emits near-zero timing', () async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+
+      final events = await _captureFlowEvents(() async {
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+      });
+
+      final badge = events.where(
+        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
+      ).toList();
+      expect(badge, hasLength(1));
+      final details = badge.first['details'] as Map<String, dynamic>;
+      expect(details['totalMs'], lessThan(500));
+      expect(details['phase'], 'cold_start');
+      expect(details['source'], 'start_response');
+    });
+
+    test('recovery emits TIME_TO_ONLINE_BADGE with phase=recovery', () async {
+      // Start online
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+      bridge.whenCommand(
+        'relay:reconnect',
+        (_) => jsonEncode({'ok': true, 'recoveryMode': 'in_place'}),
+      );
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      // Now capture events during degradation → recovery
+      final events = await _captureFlowEvents(() async {
+        // Go degraded
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+        });
+
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+
+        // Come back online
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        });
+      });
+
+      final badge = events.where(
+        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
+      ).toList();
+      expect(badge, hasLength(1));
+      final details = badge.first['details'] as Map<String, dynamic>;
+      expect(details['totalMs'], greaterThanOrEqualTo(50));
+      expect(details['phase'], 'recovery');
+      expect(details['source'], 'relay_state_push');
+    });
+
+    test('no duplicate timing on transient flicker', () async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+
+      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+      final events = await _captureFlowEvents(() async {
+        // Flicker: online → degraded → online quickly
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+        });
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        });
+        // Second flicker
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+        });
+        bridge.onRelayStateChanged?.call({
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        });
+      });
+
+      // Each degraded→online transition emits one recovery event
+      final badges = events.where(
+        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
+      ).toList();
+      // Two distinct recovery cycles = two events (not four)
+      expect(badges, hasLength(2));
+      for (final b in badges) {
+        expect((b['details'] as Map<String, dynamic>)['phase'], 'recovery');
+      }
+    });
+
+    test('hot restart emits timing with phase=hot_restart', () async {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': false,
+          'errorCode': 'ALREADY_STARTED',
+          'errorMessage': 'node already started',
+        }),
+      );
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'test-peer',
+          'isStarted': true,
+          'listenAddresses': [],
+          'circuitAddresses': ['/p2p-circuit/relay1'],
+          'connections': [],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+
+      final events = await _captureFlowEvents(() async {
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+      });
+
+      final badge = events.where(
+        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
+      ).toList();
+      expect(badge, hasLength(1));
+      final details = badge.first['details'] as Map<String, dynamic>;
+      expect(details['phase'], 'hot_restart');
+      expect(details['totalMs'], greaterThanOrEqualTo(0));
+    });
   });
 }
