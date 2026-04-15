@@ -24,6 +24,26 @@ import '../utils/push_diagnostics_logger.dart';
 class GoBridgeClient extends Bridge {
   static const _methodChannel = MethodChannel('com.mknoon/go_bridge');
   static const _eventChannel = EventChannel('com.mknoon/go_bridge_events');
+  static const _rawFlowPassthroughEvents = <String>{
+    'node:startup_timing',
+    'relay:warm_timing',
+    'circuit_address:timing',
+    'inbox:store_timing',
+    'inbox:retrieve_timing',
+    'media:stream_open_timing',
+    'media:upload_progress',
+    'media:upload_complete',
+    'profile:upload_progress',
+    'message:direct_ack_timing',
+    'timeout:fired',
+    'group_message:received',
+    'group:decryption_failed',
+    'group:payload_parse_failed',
+    'group:discovery',
+    'group:publish_debug',
+    'group:dispatcher_pressure',
+    'group:dispatcher_overflow',
+  };
 
   bool _initialized = false;
   StreamSubscription<dynamic>? _eventSubscription;
@@ -235,6 +255,13 @@ class GoBridgeClient extends Bridge {
   @visibleForTesting
   void debugHandleEventForTest(dynamic event) => _handleEvent(event);
 
+  void _emitRawGoFlowEvent(String? eventName, Map<String, dynamic> eventData) {
+    if (eventName == null || !_rawFlowPassthroughEvents.contains(eventName)) {
+      return;
+    }
+    emitFlowEvent(layer: 'GO', event: eventName, details: eventData);
+  }
+
   /// Handle push events from the Go layer.
   void _handleEvent(dynamic event) {
     try {
@@ -249,6 +276,7 @@ class GoBridgeClient extends Bridge {
         event: 'P2P_PUSH_EVENT_RECEIVED',
         details: {'event': eventName},
       );
+      _emitRawGoFlowEvent(eventName, eventData);
 
       switch (eventName) {
         case 'message:received':
@@ -310,6 +338,18 @@ class GoBridgeClient extends Bridge {
 
         case 'media:upload_progress':
           emitMediaUploadProgressEvent(eventData);
+          break;
+
+        case 'node:startup_timing':
+        case 'relay:warm_timing':
+        case 'circuit_address:timing':
+        case 'inbox:store_timing':
+        case 'inbox:retrieve_timing':
+        case 'media:stream_open_timing':
+        case 'media:upload_complete':
+        case 'profile:upload_progress':
+        case 'message:direct_ack_timing':
+        case 'timeout:fired':
           break;
 
         case 'group_message:received':
@@ -390,6 +430,7 @@ class GoBridgeClient extends Bridge {
       details: {'cmd': cmd, 'method': spec.methodName},
     );
 
+    final bridgeStopwatch = Stopwatch()..start();
     try {
       final String? result;
       if (spec.hasPayload && payload != null) {
@@ -400,6 +441,17 @@ class GoBridgeClient extends Bridge {
       } else {
         result = await _methodChannel.invokeMethod<String>(spec.methodName);
       }
+      bridgeStopwatch.stop();
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'BRIDGE_CALL_TIMING',
+        details: {
+          'cmd': cmd,
+          'bridgeMs': bridgeStopwatch.elapsedMilliseconds,
+          'outcome': 'success',
+        },
+      );
 
       return result ??
           jsonEncode({
@@ -408,6 +460,16 @@ class GoBridgeClient extends Bridge {
             'errorMessage': 'Native bridge returned null',
           });
     } on MissingPluginException catch (e) {
+      bridgeStopwatch.stop();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'BRIDGE_CALL_TIMING',
+        details: {
+          'cmd': cmd,
+          'bridgeMs': bridgeStopwatch.elapsedMilliseconds,
+          'outcome': 'missing_plugin',
+        },
+      );
       final errorMessage =
           'Native bridge method ${spec.methodName} is not available for '
           '$cmd on channel com.mknoon/go_bridge. Rebuild the app with the '
@@ -428,6 +490,16 @@ class GoBridgeClient extends Bridge {
         'errorMessage': errorMessage,
       });
     } on PlatformException catch (e) {
+      bridgeStopwatch.stop();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'BRIDGE_CALL_TIMING',
+        details: {
+          'cmd': cmd,
+          'bridgeMs': bridgeStopwatch.elapsedMilliseconds,
+          'outcome': 'platform_error',
+        },
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'GO_BRIDGE_PLATFORM_ERROR',
@@ -439,6 +511,16 @@ class GoBridgeClient extends Bridge {
         'errorMessage': e.message ?? 'Platform channel error',
       });
     } catch (e) {
+      bridgeStopwatch.stop();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'BRIDGE_CALL_TIMING',
+        details: {
+          'cmd': cmd,
+          'bridgeMs': bridgeStopwatch.elapsedMilliseconds,
+          'outcome': 'error',
+        },
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'GO_BRIDGE_UNEXPECTED_ERROR',

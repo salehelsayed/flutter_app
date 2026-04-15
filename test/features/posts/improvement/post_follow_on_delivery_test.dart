@@ -286,7 +286,7 @@ class _ControlledP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     inboxAttempts.add(toPeerId);
     return (policies[toPeerId] ?? const _PeerPolicy()).storeInInboxResult ??
         true;

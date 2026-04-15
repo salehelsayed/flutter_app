@@ -92,6 +92,12 @@ func handleCommand(cmd string, params map[string]interface{}) map[string]interfa
 	case "wait_message":
 		return cmdWaitMessage(params)
 
+	case "get_group_messages":
+		return cmdGetGroupMessages()
+
+	case "wait_group_message":
+		return cmdWaitGroupMessage(params)
+
 	case "clear_messages":
 		return cmdClearMessages()
 
@@ -580,7 +586,7 @@ func cmdInboxStoreV1(params map[string]interface{}) map[string]interface{} {
 		return errResult(fmt.Sprintf("build v1: %v", err))
 	}
 
-	if err := state.node.InboxStore(peerId, envelope); err != nil {
+	if err := state.node.InboxStore(peerId, envelope, 0); err != nil {
 		return errResult(fmt.Sprintf("inbox store: %v", err))
 	}
 
@@ -623,7 +629,7 @@ func cmdInboxStoreV2(params map[string]interface{}) map[string]interface{} {
 		return errResult(fmt.Sprintf("build v2: %v", err))
 	}
 
-	if err := state.node.InboxStore(peerId, envelope); err != nil {
+	if err := state.node.InboxStore(peerId, envelope, 0); err != nil {
 		return errResult(fmt.Sprintf("inbox store: %v", err))
 	}
 
@@ -643,7 +649,7 @@ func cmdInboxStoreRaw(params map[string]interface{}) map[string]interface{} {
 		return errResult("missing peerId or envelope")
 	}
 
-	if err := state.node.InboxStore(peerId, envelope); err != nil {
+	if err := state.node.InboxStore(peerId, envelope, 0); err != nil {
 		return errResult(fmt.Sprintf("inbox store raw: %v", err))
 	}
 
@@ -709,6 +715,47 @@ func cmdWaitMessage(params map[string]interface{}) map[string]interface{} {
 		"to":        msg.To,
 		"content":   msg.Content,
 		"timestamp": msg.Timestamp,
+	})
+}
+
+func cmdGetGroupMessages() map[string]interface{} {
+	if state.collector == nil {
+		return okResult(map[string]interface{}{
+			"messages": []incomingGroupMessage{},
+			"count":    0,
+		})
+	}
+
+	msgs := state.collector.getGroupMessages()
+	return okResult(map[string]interface{}{
+		"messages": msgs,
+		"count":    len(msgs),
+	})
+}
+
+func cmdWaitGroupMessage(params map[string]interface{}) map[string]interface{} {
+	if state.collector == nil {
+		return errResult("no collector — node not started")
+	}
+
+	groupId, _ := params["groupId"].(string)
+	timeoutSec := floatParam(params, "timeoutSec", 30)
+	timeout := time.Duration(timeoutSec) * time.Second
+
+	msg := state.collector.waitGroupMessage(groupId, timeout)
+	if msg == nil {
+		return errResult("timeout waiting for group message")
+	}
+
+	return okResult(map[string]interface{}{
+		"groupId":        msg.GroupId,
+		"senderId":       msg.SenderId,
+		"senderUsername": msg.SenderUsername,
+		"text":           msg.Text,
+		"timestamp":      msg.Timestamp,
+		"messageId":      msg.MessageId,
+		"deliveryMs":     msg.DeliveryMs,
+		"decryptMs":      msg.DecryptMs,
 	})
 }
 

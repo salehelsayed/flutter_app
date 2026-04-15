@@ -192,7 +192,7 @@ Future<Process> _startHarnessRole({
       '--target=$_harnessPath',
       '--publish-port',
       '--no-pub',
-    ] else ...<String>['test', '--no-dds', '--no-pub', _harnessPath],
+    ] else ...<String>['test', '--no-pub', _harnessPath],
     '--dart-define=CLI_PEER_FIXTURE=$cliFixturePath',
     '--dart-define=E2E_SHARED_DIR=${sharedDir.path}',
     '--dart-define=MD004_ROLE=$role',

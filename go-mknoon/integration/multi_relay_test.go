@@ -170,7 +170,7 @@ func TestInboxRetrieveFallsBackToSecondRelay(t *testing.T) {
 	t.Logf("NodeA=%s (fake-first relay), NodeB=%s", peerIdA, peerIdB)
 
 	// NodeA stores a message for NodeB — should fall back to real relay.
-	if err := nodeA.InboxStore(peerIdB, "hello from fake-first relay"); err != nil {
+	if err := nodeA.InboxStore(peerIdB, "hello from fake-first relay", 0); err != nil {
 		t.Fatalf("InboxStore: %v", err)
 	}
 	t.Log("InboxStore succeeded via second relay fallback")

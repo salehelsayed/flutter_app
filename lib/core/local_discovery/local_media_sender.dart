@@ -35,6 +35,23 @@ class LocalMediaSender {
     List<double>? waveform,
     String? filename,
   }) async {
+    final sendTimingStopwatch = Stopwatch()..start();
+    void emitSendTiming({
+      required String outcome,
+      Map<String, dynamic> details = const {},
+    }) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'LOCAL_MEDIA_SEND_TIMING',
+        details: {
+          'elapsedMs': sendTimingStopwatch.elapsedMilliseconds,
+          'outcome': outcome,
+          'mediaId': mediaId,
+          ...details,
+        },
+      );
+    }
+
     try {
       final file = File(filePath);
       if (!await file.exists()) {
@@ -43,6 +60,7 @@ class LocalMediaSender {
           event: 'LOCAL_MEDIA_SEND_FILE_NOT_FOUND',
           details: {'path': filePath},
         );
+        emitSendTiming(outcome: 'file_not_found');
         return false;
       }
 
@@ -86,6 +104,10 @@ class LocalMediaSender {
         nonce: nonce,
       );
       if (!offerAccepted) {
+        emitSendTiming(
+          outcome: 'offer_rejected_or_timeout',
+          details: {'sizeBytes': fileSize},
+        );
         return false;
       }
 
@@ -109,6 +131,10 @@ class LocalMediaSender {
             event: 'LOCAL_MEDIA_UPLOAD_HTTP_ERROR',
             details: {'id': mediaId, 'status': response.statusCode},
           );
+          emitSendTiming(
+            outcome: 'upload_http_error',
+            details: {'sizeBytes': fileSize, 'httpStatus': response.statusCode},
+          );
           return false;
         }
         await response.drain<void>();
@@ -123,6 +149,10 @@ class LocalMediaSender {
         nonce: nonce,
       );
       if (!uploadConfirmed) {
+        emitSendTiming(
+          outcome: 'uploaded_timeout',
+          details: {'sizeBytes': fileSize},
+        );
         return false;
       }
 
@@ -130,6 +160,10 @@ class LocalMediaSender {
         layer: 'FL',
         event: 'LOCAL_MEDIA_SEND_SUCCESS',
         details: {'id': mediaId, 'size': fileSize},
+      );
+      emitSendTiming(
+        outcome: 'success',
+        details: {'sizeBytes': fileSize},
       );
 
       return true;
@@ -139,6 +173,7 @@ class LocalMediaSender {
         event: 'LOCAL_MEDIA_SEND_ERROR',
         details: {'id': mediaId, 'error': e.toString()},
       );
+      emitSendTiming(outcome: 'error');
       return false;
     }
   }

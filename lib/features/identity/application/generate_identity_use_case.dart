@@ -91,10 +91,18 @@ Future<GenerateIdentityResult> generateNewIdentity({
   var identity = IdentityModel.fromJson(identityJson);
 
   // Await ML-KEM keygen — failure is fatal (no plaintext-only identities)
+  final keygenStopwatch = Stopwatch()..start();
   final Map<String, dynamic> mlKemResponse;
   try {
     mlKemResponse = await mlKemFuture;
+    keygenStopwatch.stop();
   } catch (e) {
+    keygenStopwatch.stop();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'MLKEM_KEYGEN_TIMING',
+      details: {'keygenMs': keygenStopwatch.elapsedMilliseconds, 'outcome': 'error'},
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'ID_M1_MLKEM_KEYGEN_ERROR',
@@ -102,6 +110,15 @@ Future<GenerateIdentityResult> generateNewIdentity({
     );
     return GenerateIdentityResult.coreLibError;
   }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'MLKEM_KEYGEN_TIMING',
+    details: {
+      'keygenMs': keygenStopwatch.elapsedMilliseconds,
+      'outcome': mlKemResponse['ok'] == true ? 'success' : 'failed',
+    },
+  );
 
   if (mlKemResponse['ok'] != true) {
     emitFlowEvent(

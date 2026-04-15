@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
+    as p2p;
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
@@ -35,12 +37,34 @@ class FakeP2PService implements P2PService {
   /// Last timeout passed to [sendLocalMessage].
   int? lastLocalTimeoutMs;
 
+  /// Override for [probeRelay] return value. Defaults to [RelayProbeResult.error].
+  RelayProbeResult probeRelayResult = RelayProbeResult.error;
+
+  /// When true, [dialPeer] always returns false regardless of network state.
+  bool dialAlwaysFails = false;
+
+  /// When true, [discoverPeer] always returns null regardless of network state.
+  bool discoverAlwaysFails = false;
+
+  /// Artificial delay before [discoverPeer] returns (simulates slow discovery).
+  Duration? discoverDelay;
+
+  /// Artificial delay before [dialPeer] returns (simulates slow dial).
+  Duration? dialDelay;
+
+  /// Artificial delay before [sendMessageWithReply] returns.
+  Duration? sendDelay;
+
   /// Current transport mode for test assertions.
   /// Can be 'wifi', 'relay', or 'inbox'. Defaults to 'relay'.
   String transportMode = 'relay';
 
   /// Peers that we consider "connected" for [isConnectedToPeer].
   final Set<String> connectedPeers = {};
+
+  /// Connections reported via [currentState]. Add entries here to simulate
+  /// connection reuse in send path tests.
+  final List<p2p.ConnectionState> testConnections = [];
 
   /// Whether this node is registered (online) on the network.
   bool get isOnline => network.hasPeer(peerId);
@@ -100,7 +124,11 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  NodeState get currentState => NodeState(isStarted: true, peerId: peerId);
+  NodeState get currentState => NodeState(
+        isStarted: true,
+        peerId: peerId,
+        connections: testConnections,
+      );
 
   @override
   Stream<NodeState> get stateStream => const Stream.empty();
@@ -119,6 +147,7 @@ class FakeP2PService implements P2PService {
     String message, {
     int? timeoutMs,
   }) async {
+    if (sendDelay != null) await Future.delayed(sendDelay!);
     _sendAttempts++;
     if (_sendAttempts <= sendFailCount) {
       return const SendMessageResult(sent: false);
@@ -138,6 +167,8 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {
+    if (discoverDelay != null) await Future.delayed(discoverDelay!);
+    if (discoverAlwaysFails) return null;
     if (network.hasPeer(peerId)) {
       return DiscoveredPeer(
         id: peerId,
@@ -152,10 +183,14 @@ class FakeP2PService implements P2PService {
     String peerId, {
     List<String>? addresses,
     int? timeoutMs,
-  }) async => network.hasPeer(peerId);
+  }) async {
+    if (dialDelay != null) await Future.delayed(dialDelay!);
+    if (dialAlwaysFails) return false;
+    return network.hasPeer(peerId);
+  }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     return network.storeInInbox(peerId, toPeerId, message);
   }
 
@@ -172,7 +207,7 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<RelayProbeResult> probeRelay(String peerId) async =>
-      RelayProbeResult.error;
+      probeRelayResult;
 
   @override
   bool isConnectedToPeer(String peerId) => connectedPeers.contains(peerId);

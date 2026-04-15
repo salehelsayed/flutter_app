@@ -112,7 +112,7 @@ class _FakeP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>

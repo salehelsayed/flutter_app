@@ -105,7 +105,6 @@ Future<int> _runSmokeForDevice(_DeviceTarget device) async {
       '--publish-port',
     ] else ...<String>[
       'test',
-      '--no-dds',
       'integration_test/notification_open_ui_smoke_test.dart',
     ],
     '-d',

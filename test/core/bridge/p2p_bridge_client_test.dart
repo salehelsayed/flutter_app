@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -38,6 +39,27 @@ class _MockBridge extends Bridge {
     lastParsedRequest = jsonDecode(message) as Map<String, dynamic>;
     return jsonEncode(nextResponse);
   }
+}
+
+/// Bridge that never completes — simulates a MethodChannel stall or Go deadlock.
+class _HangingBridge extends Bridge {
+  @override
+  bool get isInitialized => true;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<bool> checkHealth() async => true;
+
+  @override
+  Future<void> reinitialize() async {}
+
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> send(String message) => Completer<String>().future; // never completes
 }
 
 void main() {
@@ -749,6 +771,55 @@ void main() {
 
       expect(() => callP2PNodeStop(bridge), throwsA(isA<Exception>()));
     });
+  });
+
+  // ---------------------------------------------------------------------------
+  // §1: callP2PInboxStore Dart-side timeout
+  // ---------------------------------------------------------------------------
+  group('callP2PInboxStore timeout', () {
+    test('successful inbox store still works (no regression)', () async {
+      bridge.nextResponse = {'ok': true, 'stored': true};
+
+      final result = await callP2PInboxStore(
+        bridge,
+        toPeerId: 'abc',
+        message: 'hello',
+      );
+
+      expect(result['ok'], isTrue);
+      expect(result['stored'], isTrue);
+    });
+
+    test('bridge hang triggers TimeoutException after 15s', () async {
+      final hanging = _HangingBridge();
+
+      expect(
+        () => callP2PInboxStore(hanging, toPeerId: 'abc', message: 'hello'),
+        throwsA(isA<TimeoutException>()),
+      );
+    }, timeout: const Timeout(Duration(seconds: 20)));
+  });
+
+  // ---------------------------------------------------------------------------
+  // §2: callP2PRelayProbe Dart-side timeout
+  // ---------------------------------------------------------------------------
+  group('callP2PRelayProbe timeout', () {
+    test('successful probe still works (no regression)', () async {
+      bridge.nextResponse = {'ok': true};
+
+      final result = await callP2PRelayProbe(bridge, peerId: 'abc');
+
+      expect(result['ok'], isTrue);
+    });
+
+    test('bridge hang triggers TimeoutException after 5s', () async {
+      final hanging = _HangingBridge();
+
+      expect(
+        () => callP2PRelayProbe(hanging, peerId: 'abc'),
+        throwsA(isA<TimeoutException>()),
+      );
+    }, timeout: const Timeout(Duration(seconds: 10)));
   });
 
   // ---------------------------------------------------------------------------

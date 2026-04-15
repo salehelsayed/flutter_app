@@ -56,6 +56,11 @@ const (
 // the manager sets needsGroupRecovery and transitions to watchdog_restart.
 const WatchdogMaxConsecutiveFailures = 5
 
+// RecoveryWaitTimeout is the maximum time a waiter will block on a shared
+// recovery promise before giving up. This prevents permanent hangs when the
+// owning goroutine stalls (panic, deadlock, network hang).
+const RecoveryWaitTimeout = 30 * time.Second
+
 // RelaySessionManager tracks per-relay reservation state and provides
 // aggregate health without requiring a full host restart.
 type RelaySessionManager struct {
@@ -90,9 +95,10 @@ type RecoveryResult struct {
 }
 
 type recoveryPromise struct {
-	done   chan struct{}
-	result *RecoveryResult
-	err    error
+	done    chan struct{}
+	result  *RecoveryResult
+	err     error
+	manager *RelaySessionManager // back-reference for timeout gate clearing
 }
 
 // NewRelaySessionManager creates a new relay session manager.
@@ -317,20 +323,29 @@ func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 	}
 
 	m.recovering = true
-	m.recovery = &recoveryPromise{done: make(chan struct{})}
+	m.recovery = &recoveryPromise{done: make(chan struct{}), manager: m}
 	m.aggregateState = AggregateRelayRecovering
 
 	return m.recovery, true
 }
 
 // Wait blocks until the shared recovery completes and returns the final
-// structured outcome to every waiter.
+// structured outcome to every waiter. If the recovery does not complete
+// within RecoveryWaitTimeout, returns a timeout error.
 func (p *recoveryPromise) Wait() (*RecoveryResult, error) {
 	if p == nil {
 		return nil, nil
 	}
-	<-p.done
-	return p.result, p.err
+	select {
+	case <-p.done:
+		return p.result, p.err
+	case <-time.After(RecoveryWaitTimeout):
+		// Clear the stalled recovery gate so the next BeginRecovery can start fresh.
+		if p.manager != nil {
+			p.manager.ClearStalledRecovery()
+		}
+		return &RecoveryResult{RecoveryMode: "timeout"}, fmt.Errorf("RECOVERY_TIMEOUT")
+	}
 }
 
 // CompleteRecovery signals that recovery is done and publishes the result to
@@ -351,6 +366,19 @@ func (m *RelaySessionManager) CompleteRecovery(result *RecoveryResult, err error
 		recovery.result = result
 		recovery.err = err
 		close(recovery.done)
+	}
+}
+
+// ClearStalledRecovery clears the recovery gate after a timeout so the next
+// BeginRecovery call can start fresh. Safe to call concurrently.
+func (m *RelaySessionManager) ClearStalledRecovery() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recovering {
+		m.recovering = false
+		m.recovery = nil
+		m.recomputeAggregateLocked()
+		log.Printf("[RELAY_SESSION] Cleared stalled recovery gate (timeout)")
 	}
 }
 

@@ -97,6 +97,7 @@ class PostDeliveryRunner {
 
   Future<(SendPostResult, PostModel)> execute(CreatedLocalPost created) async {
     _PostDeliveryProgress? progress;
+    final deliveryStopwatch = Stopwatch()..start();
 
     try {
       progress = _PostDeliveryProgress(
@@ -130,6 +131,16 @@ class PostDeliveryRunner {
         },
       );
     } catch (error) {
+      deliveryStopwatch.stop();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_SEND_DELIVERY_TIMING',
+        details: {
+          'elapsedMs': deliveryStopwatch.elapsedMilliseconds,
+          'outcome': 'error',
+          'recipientCount': created.resolvedRecipients.length,
+        },
+      );
       return _persistTerminalFailure(
         created.post.id,
         progress?.latestPost ?? created.post,
@@ -137,6 +148,18 @@ class PostDeliveryRunner {
         postRepo,
       );
     }
+
+    deliveryStopwatch.stop();
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_SEND_DELIVERY_TIMING',
+      details: {
+        'elapsedMs': deliveryStopwatch.elapsedMilliseconds,
+        'outcome': _resultForAggregate(progress.aggregate).name,
+        'recipientCount': created.resolvedRecipients.length,
+        'deliveryStatus': progress.aggregate.deliveryStatus,
+      },
+    );
 
     return (_resultForAggregate(progress.aggregate), progress.latestPost);
   }

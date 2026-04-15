@@ -205,6 +205,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final sendStopwatch = Stopwatch()..start();
   final sanitizedText = sanitizeMessageText(text);
   final hasMedia = mediaAttachments != null && mediaAttachments.isNotEmpty;
+  int? prepareMs;
+  int? publishMs;
+  int? inboxMs;
   void emitGroupSendTiming({
     required String outcome,
     Map<String, dynamic> details = const {},
@@ -218,6 +221,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'outcome': outcome,
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'hasMedia': hasMedia,
+        if (prepareMs != null) 'prepareMs': prepareMs,
+        if (publishMs != null) 'publishMs': publishMs,
+        if (inboxMs != null) 'inboxMs': inboxMs,
         ...details,
       },
     );
@@ -300,6 +306,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   }
 
   // 3. Prepare all parameters
+  final prepareStopwatch = Stopwatch()..start();
   final now = timestamp ?? DateTime.now().toUtc();
   final latestKeyFuture = groupRepo.getLatestKey(groupId);
   final recipientPeerIdsFuture = _loadGroupPushRecipients(
@@ -420,8 +427,11 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   );
 
   await msgRepo.saveMessage(prePersistMessage);
+  prepareStopwatch.stop();
+  prepareMs = prepareStopwatch.elapsedMilliseconds;
 
   // 5. Start publish + inbox store concurrently
+  final publishStopwatch = Stopwatch()..start();
   final publishFuture = callGroupPublish(
     bridge,
     groupId: groupId,
@@ -435,6 +445,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     media: mediaJson,
   );
   bool? inboxResult;
+  final inboxStopwatch = Stopwatch()..start();
   final inboxFuture =
       (replayEnvelope == null
               ? Future<bool>.value(false)
@@ -449,6 +460,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
                   pushBody: pushBody,
                 ))
           .then((value) {
+            inboxStopwatch.stop();
+            inboxMs = inboxStopwatch.elapsedMilliseconds;
             inboxResult = value;
             return value;
           });
@@ -460,6 +473,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   try {
     publishResult = await publishFuture;
+    publishStopwatch.stop();
+    publishMs = publishStopwatch.elapsedMilliseconds;
     publishOk = publishResult['ok'] == true;
     publishErrorCode = publishResult['errorCode']?.toString();
 
@@ -471,6 +486,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       );
     }
   } catch (e) {
+    publishStopwatch.stop();
+    publishMs = publishStopwatch.elapsedMilliseconds;
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_ERROR',

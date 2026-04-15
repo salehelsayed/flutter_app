@@ -139,6 +139,22 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   final normalizedSenderUsername = sanitizeUsername(senderUsername);
   final hasMedia = mediaDrafts.isNotEmpty;
   final createStopwatch = Stopwatch()..start();
+  void emitPostTiming({
+    required String outcome,
+    Map<String, dynamic> details = const {},
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_CREATE_LOCAL_TIMING',
+      details: {
+        'elapsedMs': createStopwatch.elapsedMilliseconds,
+        'outcome': outcome,
+        'hasMedia': hasMedia,
+        ...details,
+      },
+    );
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'POST_CREATE_LOCAL_START',
@@ -158,6 +174,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
         'elapsedMs': createStopwatch.elapsedMilliseconds,
       },
     );
+    emitPostTiming(outcome: 'invalid_post');
     return (SendPostResult.invalidPost, null);
   }
 
@@ -193,6 +210,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
         'elapsedMs': createStopwatch.elapsedMilliseconds,
       },
     );
+    emitPostTiming(outcome: 'no_eligible_recipients');
     return (SendPostResult.noEligibleRecipients, null);
   }
 
@@ -273,6 +291,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
         'elapsedMs': createStopwatch.elapsedMilliseconds,
       },
     );
+    emitPostTiming(outcome: 'save_failed');
     rethrow;
   }
   await _savePendingRecipientDeliveries(
@@ -302,6 +321,10 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
         'elapsedMs': createStopwatch.elapsedMilliseconds,
       },
     );
+    emitPostTiming(
+      outcome: 'success',
+      details: {'recipientCount': resolvedRecipients.length},
+    );
     return (
       SendPostResult.success,
       CreatedLocalPost(post: post, resolvedRecipients: resolvedRecipients),
@@ -316,6 +339,10 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
       'hasMedia': true,
       'elapsedMs': createStopwatch.elapsedMilliseconds,
     },
+  );
+  emitPostTiming(
+    outcome: 'success',
+    details: {'recipientCount': resolvedRecipients.length},
   );
   return (
     SendPostResult.success,

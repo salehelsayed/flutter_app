@@ -89,8 +89,8 @@ class _AckDropP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) =>
-      _inner.storeInInbox(toPeerId, message);
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) =>
+      _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>

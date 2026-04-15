@@ -6627,7 +6627,7 @@ class _GatedP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     await sendGate.future;
     return true;
   }

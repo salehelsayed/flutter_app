@@ -173,8 +173,8 @@ class _WifiFirstVoiceP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) =>
-      _inner.storeInInbox(toPeerId, message);
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) =>
+      _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
@@ -289,7 +289,7 @@ class _WidgetVoiceP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async => false;
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>

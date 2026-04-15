@@ -395,6 +395,202 @@ func TestRelaySession_ResetPreservesInFlightRecovery(t *testing.T) {
 	}
 }
 
+// --- §4: Recovery Promise Timeout Tests ---
+
+func TestRecoveryPromise_StalledRecoveryTimesOut(t *testing.T) {
+	m := NewRelaySessionManager()
+
+	// Goroutine A starts recovery but NEVER completes it.
+	_, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("expected new recovery")
+	}
+
+	// Goroutine B joins the recovery and waits.
+	recovery2, isNew2 := m.BeginRecovery()
+	if isNew2 {
+		t.Fatal("expected coalesced recovery")
+	}
+
+	start := time.Now()
+	result, err := recovery2.Wait()
+	elapsed := time.Since(start)
+
+	// Should time out with RECOVERY_TIMEOUT error.
+	if err == nil || err.Error() != "RECOVERY_TIMEOUT" {
+		t.Fatalf("expected RECOVERY_TIMEOUT error, got: %v", err)
+	}
+	if result == nil || result.RecoveryMode != "timeout" {
+		t.Fatalf("expected RecoveryResult with RecoveryMode=timeout, got: %+v", result)
+	}
+
+	// Should have taken roughly RecoveryWaitTimeout (30s), with margin.
+	if elapsed < RecoveryWaitTimeout-time.Second || elapsed > RecoveryWaitTimeout+2*time.Second {
+		t.Errorf("timeout took %v, expected ~%v", elapsed, RecoveryWaitTimeout)
+	}
+}
+
+func TestRecoveryPromise_TimeoutClearsRecoveryGate(t *testing.T) {
+	m := NewRelaySessionManager()
+
+	// Start recovery, never complete.
+	_, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("expected new recovery")
+	}
+
+	// Wait for timeout on a second promise.
+	recovery2, _ := m.BeginRecovery()
+	_, err := recovery2.Wait()
+	if err == nil || err.Error() != "RECOVERY_TIMEOUT" {
+		t.Fatalf("expected RECOVERY_TIMEOUT, got: %v", err)
+	}
+
+	// After timeout, recovery gate should be cleared.
+	// A new call should get isNew=true.
+	recovery3, isNew3 := m.BeginRecovery()
+	if !isNew3 {
+		t.Error("after timeout, next BeginRecovery should get isNew=true (gate cleared)")
+	}
+	if recovery3 == nil {
+		t.Fatal("recovery3 should not be nil")
+	}
+
+	// Clean up.
+	m.CompleteRecovery(&RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
+}
+
+func TestRecoveryPromise_LateCompletionAfterTimeoutIsIgnored(t *testing.T) {
+	m := NewRelaySessionManager()
+
+	// Start recovery, never complete within timeout.
+	_, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("expected new recovery")
+	}
+
+	// Wait for timeout.
+	recovery2, _ := m.BeginRecovery()
+	_, err := recovery2.Wait()
+	if err == nil || err.Error() != "RECOVERY_TIMEOUT" {
+		t.Fatalf("expected RECOVERY_TIMEOUT, got: %v", err)
+	}
+
+	// Late completion: should NOT panic or crash.
+	m.CompleteRecovery(&RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
+
+	// Start a new recovery — should work fine.
+	recovery3, isNew3 := m.BeginRecovery()
+	if !isNew3 {
+		t.Error("expected new recovery after late completion")
+	}
+	m.CompleteRecovery(&RecoveryResult{RecoveryMode: "in_place", Success: true}, nil)
+	result, err := recovery3.Wait()
+	if err != nil {
+		t.Fatalf("new recovery should succeed: %v", err)
+	}
+	if result.RecoveryMode != "in_place" {
+		t.Errorf("expected in_place, got %s", result.RecoveryMode)
+	}
+}
+
+func TestRecoveryPromise_ConcurrentWaitersAllReceiveTimeout(t *testing.T) {
+	m := NewRelaySessionManager()
+
+	// Start recovery, never complete.
+	_, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("expected new recovery")
+	}
+
+	type waitResult struct {
+		result *RecoveryResult
+		err    error
+		at     time.Time
+	}
+
+	results := make(chan waitResult, 3)
+
+	// Launch 3 concurrent waiters.
+	for i := 0; i < 3; i++ {
+		go func() {
+			p, _ := m.BeginRecovery()
+			r, e := p.Wait()
+			results <- waitResult{r, e, time.Now()}
+		}()
+	}
+
+	// Collect all results.
+	var wr []waitResult
+	for i := 0; i < 3; i++ {
+		wr = append(wr, <-results)
+	}
+
+	// All should have timed out.
+	for i, w := range wr {
+		if w.err == nil || w.err.Error() != "RECOVERY_TIMEOUT" {
+			t.Errorf("waiter %d: expected RECOVERY_TIMEOUT, got: %v", i, w.err)
+		}
+	}
+
+	// All should have fired within 2s of each other (not sequential).
+	earliest := wr[0].at
+	latest := wr[0].at
+	for _, w := range wr[1:] {
+		if w.at.Before(earliest) {
+			earliest = w.at
+		}
+		if w.at.After(latest) {
+			latest = w.at
+		}
+	}
+	if latest.Sub(earliest) > 2*time.Second {
+		t.Errorf("waiters should all time out within 2s of each other, spread was %v", latest.Sub(earliest))
+	}
+}
+
+func TestRecoveryPromise_NormalRecoveryStillWorks(t *testing.T) {
+	m := NewRelaySessionManager()
+
+	promise, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("expected new recovery")
+	}
+
+	// Second and third waiters coalesce.
+	promise2, _ := m.BeginRecovery()
+	promise3, _ := m.BeginRecovery()
+
+	expected := &RecoveryResult{
+		RecoveryMode:      "in_place",
+		Success:           true,
+		RelayState:        "online",
+		HealthyRelayCount: 1,
+	}
+
+	// Complete before timeout fires.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		m.CompleteRecovery(expected, nil)
+	}()
+
+	r1, err1 := promise.Wait()
+	r2, err2 := promise2.Wait()
+	r3, err3 := promise3.Wait()
+
+	for i, pair := range []struct {
+		r   *RecoveryResult
+		err error
+	}{{r1, err1}, {r2, err2}, {r3, err3}} {
+		if pair.err != nil {
+			t.Errorf("waiter %d: unexpected error: %v", i, pair.err)
+		}
+		if pair.r == nil || pair.r.RecoveryMode != "in_place" {
+			t.Errorf("waiter %d: expected in_place result, got %+v", i, pair.r)
+		}
+	}
+}
+
 // --- Phase 7 RED Tests: Watchdog Policy ---
 
 func TestWatchdog_TriggersAfterNConsecutiveRefreshFailures(t *testing.T) {

@@ -315,7 +315,7 @@ func TestInboxStore_TriesSecondRelayWhenFirstFails(t *testing.T) {
 	n := startLocalNodeForMultiRelayTest(t)
 	setFakeRelays(t, n)
 
-	err := n.InboxStore("12D3KooWFakePeer", "test message")
+	err := n.InboxStore("12D3KooWFakePeer", "test message", 0)
 	if err == nil {
 		t.Fatal("expected error (both fake relays unreachable)")
 	}

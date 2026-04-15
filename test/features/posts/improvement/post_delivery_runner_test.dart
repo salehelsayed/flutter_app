@@ -555,7 +555,7 @@ class _PolicyFakeP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message) async {
+  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
     final policy = policies[toPeerId];
     if (policy?.throwOnInbox == true) {
       throw StateError('inbox failed for $toPeerId');

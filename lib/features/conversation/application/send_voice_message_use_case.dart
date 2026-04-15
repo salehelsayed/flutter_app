@@ -95,6 +95,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   // 2. Upload
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_START', details: {});
 
+  final uploadStopwatch = Stopwatch()..start();
   final uploaded = await uploadMedia(
     bridge: bridge,
     localFilePath: recording.filePath,
@@ -105,16 +106,22 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     waveform: waveform,
     blobId: blobId,
   );
+  uploadStopwatch.stop();
+  final uploadMs = uploadStopwatch.elapsedMilliseconds;
 
   if (uploaded == null) {
     emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_FAILED', details: {});
-    emitVoiceTiming(outcome: 'upload_failed');
+    emitVoiceTiming(
+      outcome: 'upload_failed',
+      details: {'uploadMs': uploadMs},
+    );
     return (SendVoiceMessageResult.uploadFailed, null);
   }
 
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_DONE', details: {});
 
   // 3. Send via existing sendChatMessage with the uploaded attachment
+  final voiceSendStopwatch = Stopwatch()..start();
   final (result, message) = await sendChatMessage(
     p2pService: p2pService,
     messageRepo: messageRepo,
@@ -132,9 +139,15 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     emitTimingEvent: false,
   );
 
+  voiceSendStopwatch.stop();
+  final voiceSendMs = voiceSendStopwatch.elapsedMilliseconds;
+
   if (result == SendChatMessageResult.success) {
     emitFlowEvent(layer: 'FL', event: 'VOICE_SEND_SUCCESS', details: {});
-    emitVoiceTiming(outcome: 'success');
+    emitVoiceTiming(
+      outcome: 'success',
+      details: {'uploadMs': uploadMs, 'sendMs': voiceSendMs},
+    );
     return (SendVoiceMessageResult.success, message);
   }
 
@@ -143,6 +156,9 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     event: 'VOICE_SEND_FAILED',
     details: {'result': result.name},
   );
-  emitVoiceTiming(outcome: 'send_failed', details: {'result': result.name});
+  emitVoiceTiming(
+    outcome: 'send_failed',
+    details: {'result': result.name, 'uploadMs': uploadMs, 'sendMs': voiceSendMs},
+  );
   return (SendVoiceMessageResult.sendFailed, null);
 }
