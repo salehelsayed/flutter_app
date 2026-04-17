@@ -567,7 +567,9 @@ func RendezvousDiscover(paramsJSON string) (result string) {
 //
 // Phase 4: Returns structured recovery fields so callers can branch on
 // recoveryMode instead of parsing error strings.
-// Returns JSON: { "ok": true, "recoveryMode": "in_place"|"watchdog_restart", "relayState": "...", "healthyRelayCount": N }
+// Returns JSON with structured recovery attribution fields including
+// recoveryMode, relayState, healthyRelayCount, reusedHost, coalescing counts,
+// and timing breakdowns.
 func RelayReconnect() (result string) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -597,6 +599,19 @@ func RelayReconnect() (result string) {
 		resp["recoveryMode"] = recoveryResult.RecoveryMode
 		resp["relayState"] = recoveryResult.RelayState
 		resp["healthyRelayCount"] = recoveryResult.HealthyRelayCount
+		resp["reusedHost"] = recoveryResult.ReusedHost
+		resp["coalescedRecoveryRequests"] = recoveryResult.CoalescedRecoveryRequests
+		resp["relayRefreshMs"] = recoveryResult.RelayRefreshMs
+		resp["relayWarmMs"] = recoveryResult.RelayWarmMs
+		resp["reserveRpcMs"] = recoveryResult.ReserveRpcMs
+		resp["circuitAddressWaitMs"] = recoveryResult.CircuitAddressWaitMs
+		if recoveryResult.ReservationPath != "" {
+			resp["reservationPath"] = recoveryResult.ReservationPath
+		}
+		if recoveryResult.ReservationWinnerPeer != "" {
+			resp["reservationWinnerPeer"] = recoveryResult.ReservationWinnerPeer
+		}
+		resp["personalReregisterMs"] = recoveryResult.PersonalReregisterMs
 		if recoveryResult.ErrorCode != "" {
 			resp["errorCode"] = recoveryResult.ErrorCode
 		}

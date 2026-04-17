@@ -86,19 +86,29 @@ type RelaySessionManager struct {
 
 // RecoveryResult carries the structured result of a relay session refresh.
 type RecoveryResult struct {
-	RecoveryMode      string `json:"recoveryMode"` // "in_place" or "watchdog_restart"
-	Success           bool   `json:"success"`
-	ErrorCode         string `json:"errorCode,omitempty"`
-	Reason            string `json:"reason,omitempty"`
-	RelayState        string `json:"relayState"`
-	HealthyRelayCount int    `json:"healthyRelayCount"`
+	RecoveryMode              string `json:"recoveryMode"` // "in_place" or "watchdog_restart"
+	Success                   bool   `json:"success"`
+	ErrorCode                 string `json:"errorCode,omitempty"`
+	Reason                    string `json:"reason,omitempty"`
+	RelayState                string `json:"relayState"`
+	HealthyRelayCount         int    `json:"healthyRelayCount"`
+	ReusedHost                bool   `json:"reusedHost"`
+	CoalescedRecoveryRequests int    `json:"coalescedRecoveryRequests"`
+	RelayRefreshMs            int64  `json:"relayRefreshMs"`
+	RelayWarmMs               int64  `json:"relayWarmMs"`
+	ReserveRpcMs              int64  `json:"reserveRpcMs"`
+	CircuitAddressWaitMs      int64  `json:"circuitAddressWaitMs"`
+	ReservationPath           string `json:"reservationPath,omitempty"`
+	ReservationWinnerPeer     string `json:"reservationWinnerPeer,omitempty"`
+	PersonalReregisterMs      int64  `json:"personalReregisterMs"`
 }
 
 type recoveryPromise struct {
-	done    chan struct{}
-	result  *RecoveryResult
-	err     error
-	manager *RelaySessionManager // back-reference for timeout gate clearing
+	done             chan struct{}
+	result           *RecoveryResult
+	err              error
+	manager          *RelaySessionManager // back-reference for timeout gate clearing
+	coalescedWaiters int
 }
 
 // NewRelaySessionManager creates a new relay session manager.
@@ -319,6 +329,9 @@ func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 	defer m.mu.Unlock()
 
 	if m.recovering {
+		if m.recovery != nil {
+			m.recovery.coalescedWaiters++
+		}
 		return m.recovery, false
 	}
 
@@ -354,6 +367,9 @@ func (m *RelaySessionManager) CompleteRecovery(result *RecoveryResult, err error
 	m.mu.Lock()
 	recovery := m.recovery
 	m.recovering = false
+	if result != nil && recovery != nil {
+		result.CoalescedRecoveryRequests = recovery.coalescedWaiters
+	}
 	if result != nil && result.RecoveryMode == "watchdog_restart" {
 		m.watchdogRestartCount++
 		m.needsGroupRecovery = true

@@ -93,6 +93,12 @@ class P2PServiceImpl implements P2PService {
   /// §24: Timestamp when the app resumed from background (for background_resume timing).
   DateTime? _resumeStartedAt;
 
+  /// Section 8: source that triggered the next relay recovery attempt.
+  String? _pendingRecoverySource;
+
+  /// Section 8: source currently attributed to the in-flight recovery attempt.
+  String? _activeRecoverySource;
+
   /// Phase 5: Threshold for escalating from in-place refresh to watchdog.
   static const int refreshFailureThreshold = 3;
 
@@ -249,7 +255,10 @@ class P2PServiceImpl implements P2PService {
         final statusResponse = await callP2PNodeStatus(_bridge);
         if (statusResponse['ok'] == true) {
           _stopped = false;
-          _emitState(NodeState.fromJson(statusResponse), source: 'start_response');
+          _emitState(
+            NodeState.fromJson(statusResponse),
+            source: 'start_response',
+          );
 
           if (_stateHasHealthyRelay(_currentState)) {
             _hasEverBeenOnline = true;
@@ -1289,12 +1298,138 @@ class P2PServiceImpl implements P2PService {
         layer: 'FL',
         event: 'TIME_TO_ONLINE_BADGE',
         details: {
-          'totalMs': DateTime.now().difference(_resumeStartedAt!).inMilliseconds,
+          'totalMs': DateTime.now()
+              .difference(_resumeStartedAt!)
+              .inMilliseconds,
           'phase': 'background_resume_already_online',
           'source': 'resume_check',
         },
       );
       _resumeStartedAt = null;
+    }
+  }
+
+  void _beginRecoveryInstrumentation(String recoverySource) {
+    _activeRecoverySource = recoverySource;
+    final details = <String, dynamic>{'recoverySource': recoverySource};
+    final resumeStartedAt = _resumeStartedAt;
+    if (resumeStartedAt != null) {
+      details['resumeToRecoveryStartMs'] = DateTime.now()
+          .difference(resumeStartedAt)
+          .inMilliseconds;
+    }
+    emitFlowEvent(layer: 'FL', event: 'RELAY_RECOVERY_START', details: details);
+  }
+
+  void _clearRecoveryInstrumentation() {
+    _activeRecoverySource = null;
+  }
+
+  Future<void> _attemptRelayRecovery({required String recoverySource}) async {
+    _beginRecoveryInstrumentation(recoverySource);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_HEALTH_CHECK_RECOVERY_ATTEMPT',
+      details: {
+        'method': 'relay:reconnect',
+        'consecutiveRefreshFailures': _consecutiveRefreshFailures,
+      },
+    );
+
+    try {
+      final reconnectStart = DateTime.now();
+      final reconnectResponse = await callP2PRelayReconnect(_bridge);
+      final reconnectMs = DateTime.now()
+          .difference(reconnectStart)
+          .inMilliseconds;
+      final relayRefreshMs =
+          (reconnectResponse['relayRefreshMs'] as num?)?.toInt() ?? reconnectMs;
+      final relayWarmMs =
+          (reconnectResponse['relayWarmMs'] as num?)?.toInt() ?? 0;
+      final reserveRpcMs =
+          (reconnectResponse['reserveRpcMs'] as num?)?.toInt() ?? 0;
+      final circuitAddressWaitMs =
+          (reconnectResponse['circuitAddressWaitMs'] as num?)?.toInt() ?? 0;
+      final personalReregisterMs =
+          (reconnectResponse['personalReregisterMs'] as num?)?.toInt() ?? 0;
+      final coalescedRecoveryRequests =
+          (reconnectResponse['coalescedRecoveryRequests'] as num?)?.toInt() ??
+          0;
+
+      if (reconnectResponse['ok'] == true) {
+        final recoveryMode = reconnectResponse['recoveryMode'] as String?;
+        final reusedHost =
+            reconnectResponse['reusedHost'] as bool? ??
+            recoveryMode != 'watchdog_restart';
+        final recoveredSource = recoveryMode == 'watchdog_restart'
+            ? 'watchdog_restart'
+            : recoverySource;
+        if (recoveryMode != null) {
+          _lastRecoveryMethod = recoveryMode;
+          if (kDebugMode) {
+            debugPrint(
+              '[HEALTH] relay:reconnect SUCCESS via $recoveryMode '
+              '(took ${reconnectMs}ms)',
+            );
+          }
+        } else {
+          _lastRecoveryMethod = 'in_place';
+          if (kDebugMode) {
+            debugPrint(
+              '[HEALTH] relay:reconnect SUCCESS (took ${reconnectMs}ms)',
+            );
+          }
+        }
+        final totalOutageMs = _outageDetectedAt != null
+            ? DateTime.now().difference(_outageDetectedAt!).inMilliseconds
+            : reconnectMs;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RELAY_OUTAGE_TIMING',
+          details: {
+            'phase': 'recovered',
+            'recoveryMs': reconnectMs,
+            'totalOutageMs': totalOutageMs,
+            'recoveryMode': reconnectResponse['recoveryMode'],
+            'recoverySource': recoveredSource,
+            'recoveryTriggerSource': recoverySource,
+            'reusedHost': reusedHost,
+            'coalescedRecoveryRequests': coalescedRecoveryRequests,
+            'relayRefreshMs': relayRefreshMs,
+            'relayWarmMs': relayWarmMs,
+            'reserveRpcMs': reserveRpcMs,
+            'circuitAddressWaitMs': circuitAddressWaitMs,
+            'reservationPath': reconnectResponse['reservationPath'],
+            if (reconnectResponse['reservationWinnerPeer'] != null)
+              'reservationWinnerPeer':
+                  reconnectResponse['reservationWinnerPeer'],
+            'personalReregisterMs': personalReregisterMs,
+          },
+        );
+        _outageDetectedAt = null;
+        _consecutiveRefreshFailures = 0;
+        return;
+      }
+
+      _consecutiveRefreshFailures++;
+      if (kDebugMode) {
+        debugPrint(
+          '[HEALTH] relay:reconnect FAILED '
+          '(failure #$_consecutiveRefreshFailures, took ${reconnectMs}ms)',
+        );
+      }
+    } catch (e) {
+      _consecutiveRefreshFailures++;
+      if (kDebugMode) {
+        debugPrint(
+          '[HEALTH] relay:reconnect FAILED: $e '
+          '(failure #$_consecutiveRefreshFailures)',
+        );
+      }
+      // Relay still unreachable — will retry on next health check.
+    } finally {
+      _clearRecoveryInstrumentation();
     }
   }
 
@@ -1313,7 +1448,9 @@ class P2PServiceImpl implements P2PService {
     final nowOnline = _stateHasHealthyRelay(_currentState);
 
     // §24: Cold start / hot restart — first time reaching online after node start.
-    if (nowOnline && !wasOnline && !_coldStartOnlineEmitted &&
+    if (nowOnline &&
+        !wasOnline &&
+        !_coldStartOnlineEmitted &&
         _nodeStartRequestedAt != null) {
       _coldStartOnlineEmitted = true;
       final totalMs = DateTime.now()
@@ -1341,7 +1478,9 @@ class P2PServiceImpl implements P2PService {
     }
 
     // §24: Recovery — was online, went offline, now back online.
-    if (nowOnline && !wasOnline && _coldStartOnlineEmitted &&
+    if (nowOnline &&
+        !wasOnline &&
+        _coldStartOnlineEmitted &&
         _lastWentOfflineAt != null) {
       // If this recovery was triggered by a background resume, emit
       // background_resume phase instead of (in addition to) recovery.
@@ -1349,15 +1488,11 @@ class P2PServiceImpl implements P2PService {
       final int totalMs;
       if (_resumeStartedAt != null) {
         phase = 'background_resume';
-        totalMs = DateTime.now()
-            .difference(_resumeStartedAt!)
-            .inMilliseconds;
+        totalMs = DateTime.now().difference(_resumeStartedAt!).inMilliseconds;
         _resumeStartedAt = null;
       } else {
         phase = 'recovery';
-        totalMs = DateTime.now()
-            .difference(_lastWentOfflineAt!)
-            .inMilliseconds;
+        totalMs = DateTime.now().difference(_lastWentOfflineAt!).inMilliseconds;
       }
       emitFlowEvent(
         layer: 'FL',
@@ -1466,6 +1601,10 @@ class P2PServiceImpl implements P2PService {
         final detectionMs = _lastHealthyRelayAt != null
             ? DateTime.now().difference(_lastHealthyRelayAt!).inMilliseconds
             : -1;
+        final recoverySource =
+            _pendingRecoverySource ??
+            (_resumeStartedAt != null ? 'resume_trigger' : 'health_check_poll');
+        _pendingRecoverySource = null;
         emitFlowEvent(
           layer: 'FL',
           event: 'RELAY_OUTAGE_TIMING',
@@ -1483,76 +1622,7 @@ class P2PServiceImpl implements P2PService {
             'Attempting recovery via relay:reconnect...',
           );
         }
-
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'P2P_HEALTH_CHECK_RECOVERY_ATTEMPT',
-          details: {
-            'method': 'relay:reconnect',
-            'consecutiveRefreshFailures': _consecutiveRefreshFailures,
-          },
-        );
-
-        try {
-          final reconnectStart = DateTime.now();
-          final reconnectResponse = await callP2PRelayReconnect(_bridge);
-          final reconnectMs = DateTime.now()
-              .difference(reconnectStart)
-              .inMilliseconds;
-
-          if (reconnectResponse['ok'] == true) {
-            // Phase 5: Parse the real structured recovery field from Go.
-            final recoveryMode = reconnectResponse['recoveryMode'] as String?;
-            if (recoveryMode != null) {
-              _lastRecoveryMethod = recoveryMode;
-              if (kDebugMode) {
-                debugPrint(
-                  '[HEALTH] relay:reconnect SUCCESS via $recoveryMode '
-                  '(took ${reconnectMs}ms)',
-                );
-              }
-            } else {
-              _lastRecoveryMethod = 'in_place';
-              if (kDebugMode) {
-                debugPrint(
-                  '[HEALTH] relay:reconnect SUCCESS (took ${reconnectMs}ms)',
-                );
-              }
-            }
-            final totalOutageMs = _outageDetectedAt != null
-                ? DateTime.now().difference(_outageDetectedAt!).inMilliseconds
-                : reconnectMs;
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'RELAY_OUTAGE_TIMING',
-              details: {
-                'phase': 'recovered',
-                'recoveryMs': reconnectMs,
-                'totalOutageMs': totalOutageMs,
-                'recoveryMode': reconnectResponse['recoveryMode'],
-              },
-            );
-            _outageDetectedAt = null;
-            _consecutiveRefreshFailures = 0;
-          } else {
-            _consecutiveRefreshFailures++;
-            if (kDebugMode) {
-              debugPrint(
-                '[HEALTH] relay:reconnect FAILED '
-                '(failure #$_consecutiveRefreshFailures, took ${reconnectMs}ms)',
-              );
-            }
-          }
-        } catch (e) {
-          _consecutiveRefreshFailures++;
-          if (kDebugMode) {
-            debugPrint(
-              '[HEALTH] relay:reconnect FAILED: $e '
-              '(failure #$_consecutiveRefreshFailures)',
-            );
-          }
-          // Relay still unreachable — will retry on next health check
-        }
+        await _attemptRelayRecovery(recoverySource: recoverySource);
         if (_stopped) return;
 
         // Re-poll status after dialing the relay
@@ -1615,12 +1685,15 @@ class P2PServiceImpl implements P2PService {
       } else if (freshState.isStarted &&
           !_stateHasHealthyRelay(freshState) &&
           !_hasEverBeenOnline) {
+        _pendingRecoverySource = null;
         if (kDebugMode) {
           debugPrint(
             '[HEALTH] DEGRADED — relay not healthy yet '
             '(relayState=${freshState.relayState}, first startup). Waiting...',
           );
         }
+      } else {
+        _pendingRecoverySource = null;
       }
 
       // Drain offline inbox on each health check so we pick up
@@ -1667,8 +1740,7 @@ class P2PServiceImpl implements P2PService {
 
       // Only assume the node is down after 3 consecutive poll failures.
       // A single transient error should not flash "Offline".
-      if (_currentState.isStarted &&
-          _consecutiveHealthCheckExceptions >= 3) {
+      if (_currentState.isStarted && _consecutiveHealthCheckExceptions >= 3) {
         _emitState(NodeState.stopped);
 
         emitFlowEvent(
@@ -1840,6 +1912,7 @@ class P2PServiceImpl implements P2PService {
         event: 'P2P_SERVICE_RELAY_STATE_PUSH_RECOVERY',
         details: {},
       );
+      _pendingRecoverySource ??= 'relay_state_push';
       // Fire-and-forget: don't block the push event handler.
       // performImmediateHealthCheck handles coalescing internally.
       unawaited(performImmediateHealthCheck());
@@ -1931,6 +2004,7 @@ class P2PServiceImpl implements P2PService {
           if (data['reason'] != null) 'reason': data['reason'],
         },
       );
+      _pendingRecoverySource ??= 'relay_state_push';
       unawaited(performImmediateHealthCheck());
     }
   }
@@ -2000,7 +2074,11 @@ class P2PServiceImpl implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     emitFlowEvent(
       layer: 'FL',
       event: 'P2P_SERVICE_INBOX_STORE_BEGIN',
@@ -2157,10 +2235,14 @@ class P2PServiceImpl implements P2PService {
       if (kDebugMode) {
         debugPrint('[HEALTH] Recovery already in progress — coalescing');
       }
+      _pendingRecoverySource = null;
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_RECOVERY_COALESCED',
-        details: {},
+        details: {
+          if (_activeRecoverySource != null)
+            'recoverySource': _activeRecoverySource,
+        },
       );
       await _recoveryInProgress!.future;
       return;

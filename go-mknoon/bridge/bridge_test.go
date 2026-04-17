@@ -1170,6 +1170,10 @@ func TestRelayReconnect_ReturnsRecoveryMode(t *testing.T) {
 	if recoveryMode != "in_place" && recoveryMode != "watchdog_restart" {
 		t.Errorf("recoveryMode should be 'in_place' or 'watchdog_restart', got %q", recoveryMode)
 	}
+
+	if _, ok := m["reusedHost"].(bool); !ok {
+		t.Fatalf("RelayReconnect missing reusedHost field")
+	}
 }
 
 func TestRelayReconnect_ConcurrentBridgeCallsShareSingleRecovery(t *testing.T) {
@@ -1224,7 +1228,19 @@ func TestRelayReconnect_ReturnsStructuredRecoveryFields(t *testing.T) {
 	assertOk(t, m)
 
 	// Verify structured fields exist so callers don't need string matching.
-	structuredFields := []string{"recoveryMode", "relayState", "healthyRelayCount"}
+	structuredFields := []string{
+		"recoveryMode",
+		"relayState",
+		"healthyRelayCount",
+		"reusedHost",
+		"coalescedRecoveryRequests",
+		"relayRefreshMs",
+		"relayWarmMs",
+		"reserveRpcMs",
+		"circuitAddressWaitMs",
+		"reservationPath",
+		"personalReregisterMs",
+	}
 	for _, field := range structuredFields {
 		if _, exists := m[field]; !exists {
 			t.Errorf("RelayReconnect response missing structured field %q", field)

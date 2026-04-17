@@ -187,9 +187,14 @@ Add additive fields or benchmark rows for:
 
 - `resumeToRecoveryStartMs`
 - `relayRefreshMs`
+- `relayWarmMs`
+- `reserveRpcMs`
+- `circuitAddressWaitMs`
 - `personalReregisterMs`
 - `groupReregisterMs` if executed on the foreground path
 - `recoverySource` with distinct values for `resume_trigger`, `relay_state_push`, `health_check_poll`, `watchdog_restart`
+- `reservationPath` with distinct values for `direct_reserve`, `autorelay_scheduler`, `poll_fallback`
+- `reservationWinnerPeer` when multiple relays are configured
 - `reusedHost` or equivalent boolean
 - `coalescedRecoveryRequests`
 
@@ -337,6 +342,43 @@ Promotion rule:
 Abort condition:
 
 - if in-place refresh creates state corruption, duplicate subscriptions, or group regressions, revert and treat it as not yet safe
+
+### Phase 3a. Direct reservation after warm dial
+
+Hypothesis:
+
+- host-preserving refresh may still stay slow because it warms the relay connection and then waits for AutoRelay's reservation scheduler instead of issuing the reservation RPC immediately
+
+Likely files:
+
+- `go-mknoon/node/node.go`
+- `go-mknoon/node/relay_session.go`
+- `go-mknoon/node/node_test.go`
+- `go-mknoon/bridge/bridge.go`
+- `go-mknoon/bridge/bridge_test.go`
+
+RED tests:
+
+- after a successful warm dial, refresh issues a direct reservation attempt instead of only waiting for AutoRelay timing
+- a successful direct reservation can complete recovery without depending on the polling-only `waitForCircuitAddress` path
+- relay/local-address update events can complete recovery as soon as a circuit address appears, without adding a 200ms polling tail
+- when multiple relays are configured, reservation attempts can race and the first success wins without duplicate registration or duplicate recovery side effects
+- if direct reservation fails, the existing AutoRelay fallback path remains correct and observable in instrumentation
+
+Benchmark to compare:
+
+- `C-Sim`
+- `BR-Sim-2`
+- `M-Sim-3`
+
+Promotion rule:
+
+- keep only if the winning reservation path shifts to `direct_reserve` and either `C-Sim p50` or `BR-Sim-2` improves by at least `1500ms` with no healthy-resume regression
+
+Abort condition:
+
+- if direct reservation only changes labels or sub-step timings but does not move headline recovery time, do not stack native lifecycle or QUIC work on top of it yet
+- if this experiment introduces duplicate reservations, stale relay state, or bridge/reporting ambiguity, revert and tighten the seam before any follow-on optimization
 
 ### Phase 4. Recovery coalescing and storm prevention
 
@@ -565,6 +607,7 @@ There is still one evidence gap before implementation:
 - exact field names for new recovery instrumentation
 - whether experiment isolation uses short-lived feature flags or separate branches
 - whether the final target should be `<4s` or `<3s` once the first successful experiment lands
+- native lifecycle prewarm, QUIC session-ticket persistence, and proactive TTL refresh until direct reservation proves AutoRelay scheduling is a material foreground bottleneck
 
 ---
 

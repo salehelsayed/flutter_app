@@ -130,8 +130,10 @@ void main() {
           await service.startNodeCore(testBase64Key, testPeerId);
         });
 
-        final coldStartBadges =
-            harness.filterEvents(coldStartEvents, 'TIME_TO_ONLINE_BADGE');
+        final coldStartBadges = harness.filterEvents(
+          coldStartEvents,
+          'TIME_TO_ONLINE_BADGE',
+        );
         expect(coldStartBadges, isNotEmpty, reason: 'Should emit cold start');
         final coldStartDetails =
             coldStartBadges.first['details'] as Map<String, dynamic>;
@@ -147,8 +149,10 @@ void main() {
           await Future<void>.delayed(Duration.zero);
         });
 
-        final resumeBadges =
-            harness.filterEvents(resumeEvents, 'TIME_TO_ONLINE_BADGE');
+        final resumeBadges = harness.filterEvents(
+          resumeEvents,
+          'TIME_TO_ONLINE_BADGE',
+        );
         expect(resumeBadges, isNotEmpty, reason: 'Should emit resume badge');
         final resumeDetails =
             resumeBadges.first['details'] as Map<String, dynamic>;
@@ -159,6 +163,80 @@ void main() {
           coldStartDetails['phase'],
           isNot(equals(resumeDetails['phase'])),
           reason: 'Cold start and resume badges should have different phases',
+        );
+      },
+    );
+
+    test(
+      'BR5: degraded resume emits RELAY_RECOVERY_START with source=resume_trigger',
+      () async {
+        bridge.phase = 'startup';
+        await service.startNodeCore(testBase64Key, testPeerId);
+
+        bridge.simulateBackground();
+        service.markResumeStarted();
+
+        final events = await harness.captureFlowEvents(() async {
+          await service.performImmediateHealthCheck();
+        });
+
+        final starts = harness.filterEvents(events, 'RELAY_RECOVERY_START');
+        expect(starts, isNotEmpty, reason: 'Should emit RELAY_RECOVERY_START');
+
+        final details = starts.first['details'] as Map<String, dynamic>;
+        expect(details['recoverySource'], 'resume_trigger');
+        expect(details['resumeToRecoveryStartMs'], isA<int>());
+        expect(details['resumeToRecoveryStartMs'], greaterThanOrEqualTo(0));
+      },
+    );
+
+    test('BR6: healthy resume does not emit RELAY_RECOVERY_START', () async {
+      bridge.phase = 'startup';
+      await service.startNodeCore(testBase64Key, testPeerId);
+
+      service.markResumeStarted();
+
+      final events = await harness.captureFlowEvents(() async {
+        service.checkResumeAlreadyOnline();
+        await Future<void>.delayed(Duration.zero);
+      });
+
+      final starts = harness.filterEvents(events, 'RELAY_RECOVERY_START');
+      expect(
+        starts,
+        isEmpty,
+        reason: 'Healthy resume should not start recovery',
+      );
+    });
+
+    test(
+      'BR7: TIME_TO_ONLINE_BADGE source stays distinct from recovery-start source',
+      () async {
+        bridge.phase = 'startup';
+        await service.startNodeCore(testBase64Key, testPeerId);
+
+        bridge.simulateBackground();
+        service.markResumeStarted();
+
+        final events = await harness.captureFlowEvents(() async {
+          await service.performImmediateHealthCheck();
+          bridge.simulateRecoveryComplete();
+          await Future<void>.delayed(Duration.zero);
+        });
+
+        final starts = harness.filterEvents(events, 'RELAY_RECOVERY_START');
+        final badges = harness.filterEvents(events, 'TIME_TO_ONLINE_BADGE');
+
+        expect(starts, isNotEmpty, reason: 'Should emit recovery-start event');
+        expect(badges, isNotEmpty, reason: 'Should emit recovery badge');
+
+        final startDetails = starts.first['details'] as Map<String, dynamic>;
+        final badgeDetails = badges.first['details'] as Map<String, dynamic>;
+        expect(startDetails['recoverySource'], 'resume_trigger');
+        expect(badgeDetails['source'], 'relay_state_push');
+        expect(
+          badgeDetails['source'],
+          isNot(equals(startDetails['recoverySource'])),
         );
       },
     );
