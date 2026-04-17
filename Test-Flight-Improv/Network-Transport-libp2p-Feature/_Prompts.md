@@ -224,3 +224,45 @@ I wan t you to run this prompt 3 times in seqwuence using a new agent each time 
 
   If you want, I can also create a companion 05-relay-recovery-experiment-results.md template so every phase writes
   results into the same file in a consistent format.
+
+
+====
+• Committed and pushed pre-phase1 on Test-Flight-Improv.
+
+  Current baseline:
+
+  - Branch: Test-Flight-Improv
+  - Commit: 2647e9fa541026588179d94763983e6648df37bd
+  - Remote: origin/Test-Flight-Improv
+  - Worktree: clean
+
+
+==> Rollback Prompt:
+Return this repo to the pre-experiment baseline, regardless of which later phase or experiment branch was
+  implemented.
+
+  Baseline source of truth:
+  - branch: Test-Flight-Improv
+  - commit: 70beff450980157ef95a7a6aa089b2c79daf1556
+  - commit message: clarify section8 verdict
+
+  Requirements:
+  - This must work after any later phase or experiment work, including but not limited to Phase 1, Phase 2, Phase
+  3, Phase 3a, Phase 4, or Phase 5.
+  - If I am on any experiment branch, switch me away from it safely.
+  - If there are uncommitted changes anywhere in the current worktree, show me exactly what would be lost before
+  doing anything destructive.
+  - Restore the repo to the baseline commit `70beff450980157ef95a7a6aa089b2c79daf1556`.
+  - Prefer switching back to `Test-Flight-Improv` if it still points to that baseline.
+  - If `Test-Flight-Improv` has moved since that snapshot, create a recovery branch from the baseline commit
+  instead of rewriting shared history.
+    - Use branch name: `pre-phase-baseline-recovery`
+  - Do not keep any later phase changes.
+  - After restoring, report:
+    - final branch
+    - final commit SHA
+    - whether it exactly matches the baseline commit
+    - git status
+  - Stop after reporting.
+
+
