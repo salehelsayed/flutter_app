@@ -1805,17 +1805,30 @@ void main() {
         await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
         bridge.calledCommands.clear();
 
-        bridge.onRelayStateChanged?.call({
-          'relayState': 'degraded',
-          'healthyRelayCount': 0,
-          'watchdogRestartCount': 0,
-          'reason': 'relay_disconnected',
+        final events = await _captureFlowEvents(() async {
+          bridge.onRelayStateChanged?.call({
+            'relayState': 'degraded',
+            'healthyRelayCount': 0,
+            'watchdogRestartCount': 0,
+            'reason': 'relay_disconnected',
+          });
+          await Future<void>.delayed(const Duration(milliseconds: 20));
         });
-        await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(bridge.calledCommands, contains('relay:reconnect'));
         expect(service.lastRecoveryMethod, equals('in_place'));
         expect(service.currentState.relayState, 'online');
+
+        final starts = events
+            .where((event) => event['event'] == 'RELAY_RECOVERY_START')
+            .toList(growable: false);
+        expect(
+          starts,
+          isNotEmpty,
+          reason: 'Push recovery should be attributed',
+        );
+        final details = starts.first['details'] as Map<String, dynamic>;
+        expect(details['recoverySource'], 'relay_state_push');
       },
     );
 
@@ -1944,93 +1957,99 @@ void main() {
   });
 
   group('§24 TIME_TO_ONLINE_BADGE', () {
-    test('cold start emits TIME_TO_ONLINE_BADGE after first online state via relay push', () async {
-      bridge.whenCommand(
-        'node:start',
-        (_) => jsonEncode({
-          'ok': true,
-          'peerId': 'test-peer',
-          'isStarted': true,
-          'listenAddresses': [],
-          'circuitAddresses': [],
-          'connections': [],
-          'relayState': 'starting',
-        }),
-      );
-      bridge.whenCommand(
-        'inbox:retrieve',
-        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
-      );
+    test(
+      'cold start emits TIME_TO_ONLINE_BADGE after first online state via relay push',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'starting',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
 
-      final events = await _captureFlowEvents(() async {
-        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        final events = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
-        // Simulate relay coming online after a delay
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        bridge.onRelayStateChanged?.call({
-          'relayState': 'online',
-          'healthyRelayCount': 1,
+          // Simulate relay coming online after a delay
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          bridge.onRelayStateChanged?.call({
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+          });
         });
-      });
 
-      final badge = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
-      ).toList();
-      expect(badge, hasLength(1));
-      final details = badge.first['details'] as Map<String, dynamic>;
-      expect(details['totalMs'], greaterThanOrEqualTo(50));
-      expect(details['phase'], 'cold_start');
-      expect(details['source'], 'relay_state_push');
-    });
+        final badge = events
+            .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE')
+            .toList();
+        expect(badge, hasLength(1));
+        final details = badge.first['details'] as Map<String, dynamic>;
+        expect(details['totalMs'], greaterThanOrEqualTo(50));
+        expect(details['phase'], 'cold_start');
+        expect(details['source'], 'relay_state_push');
+      },
+    );
 
-    test('fast circuit check path emits timing via health_check_poll', () async {
-      bridge.whenCommand(
-        'node:start',
-        (_) => jsonEncode({
-          'ok': true,
-          'peerId': 'test-peer',
-          'isStarted': true,
-          'listenAddresses': [],
-          'circuitAddresses': [],
-          'connections': [],
-          'relayState': 'starting',
-        }),
-      );
-      bridge.whenCommand(
-        'inbox:retrieve',
-        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
-      );
-      bridge.whenCommand(
-        'node:status',
-        (_) => jsonEncode({
-          'ok': true,
-          'peerId': 'test-peer',
-          'isStarted': true,
-          'listenAddresses': [],
-          'circuitAddresses': ['/p2p-circuit/relay1'],
-          'connections': [],
-          'relayState': 'online',
-          'healthyRelayCount': 1,
-        }),
-      );
+    test(
+      'fast circuit check path emits timing via health_check_poll',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'starting',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        bridge.whenCommand(
+          'node:status',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+          }),
+        );
 
-      final events = await _captureFlowEvents(() async {
-        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        final events = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
 
-        // No relay push — health check poll discovers online
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        await service.performImmediateHealthCheck();
-      });
+          // No relay push — health check poll discovers online
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          await service.performImmediateHealthCheck();
+        });
 
-      final badge = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
-      ).toList();
-      expect(badge, hasLength(1));
-      final details = badge.first['details'] as Map<String, dynamic>;
-      expect(details['totalMs'], greaterThanOrEqualTo(50));
-      expect(details['source'], 'health_check_poll');
-      expect(details['phase'], 'cold_start');
-    });
+        final badge = events
+            .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE')
+            .toList();
+        expect(badge, hasLength(1));
+        final details = badge.first['details'] as Map<String, dynamic>;
+        expect(details['totalMs'], greaterThanOrEqualTo(50));
+        expect(details['source'], 'health_check_poll');
+        expect(details['phase'], 'cold_start');
+      },
+    );
 
     test('already-online start emits near-zero timing', () async {
       bridge.whenCommand(
@@ -2051,9 +2070,9 @@ void main() {
         await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
       });
 
-      final badge = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
-      ).toList();
+      final badge = events
+          .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE')
+          .toList();
       expect(badge, hasLength(1));
       final details = badge.first['details'] as Map<String, dynamic>;
       expect(details['totalMs'], lessThan(500));
@@ -2100,9 +2119,9 @@ void main() {
         });
       });
 
-      final badge = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
-      ).toList();
+      final badge = events
+          .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE')
+          .toList();
       expect(badge, hasLength(1));
       final details = badge.first['details'] as Map<String, dynamic>;
       expect(details['totalMs'], greaterThanOrEqualTo(50));
@@ -2149,9 +2168,9 @@ void main() {
       });
 
       // Each degraded→online transition emits one recovery event
-      final badges = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
-      ).toList();
+      final badges = events
+          .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE')
+          .toList();
       // Two distinct recovery cycles = two events (not four)
       expect(badges, hasLength(2));
       for (final b in badges) {
@@ -2186,9 +2205,9 @@ void main() {
         await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
       });
 
-      final badge = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE',
-      ).toList();
+      final badge = events
+          .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE')
+          .toList();
       expect(badge, hasLength(1));
       final details = badge.first['details'] as Map<String, dynamic>;
       expect(details['phase'], 'hot_restart');

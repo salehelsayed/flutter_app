@@ -97,7 +97,9 @@ func (n *Node) registerPersonalRendezvousNamespace(namespace string, serverAddre
 	return nil
 }
 
-func (n *Node) recoverPersonalRendezvousRegistration(trigger string) error {
+func (n *Node) recoverPersonalRendezvousRegistration(trigger string) (int64, error) {
+	start := time.Now()
+
 	n.mu.RLock()
 	started := n.isStarted
 	ctx := n.ctx
@@ -106,19 +108,19 @@ func (n *Node) recoverPersonalRendezvousRegistration(trigger string) error {
 	n.mu.RUnlock()
 
 	if !started || ctx == nil || ctx.Err() != nil || cfg == nil || !cfg.AutoRegister || namespace == "" {
-		return nil
+		return 0, nil
 	}
 
 	if err := n.registerPersonalRendezvousNamespace(namespace, nil); err != nil {
 		if errors.Is(err, errPersonalRendezvousRegisterInFlight) {
 			log.Printf("[NODE] %s personal re-register coalesced: registration already in flight", trigger)
-			return nil
+			return 0, nil
 		}
-		return err
+		return 0, err
 	}
 
 	log.Printf("[NODE] %s personal namespace re-registered: ns=%s", trigger, namespace)
-	return nil
+	return time.Since(start).Milliseconds(), nil
 }
 
 func (n *Node) finalizeRelayRecoveryResult(result *RecoveryResult, trigger string) *RecoveryResult {
@@ -134,7 +136,9 @@ func (n *Node) finalizeRelayRecoveryResult(result *RecoveryResult, trigger strin
 		return result
 	}
 
-	if err := n.recoverPersonalRendezvousRegistration(trigger); err != nil {
+	personalReregisterMs, err := n.recoverPersonalRendezvousRegistration(trigger)
+	result.PersonalReregisterMs = personalReregisterMs
+	if err != nil {
 		result.Success = false
 		result.ErrorCode = "PERSONAL_REREGISTER_FAILED"
 		result.Reason = err.Error()

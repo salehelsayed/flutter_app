@@ -36,6 +36,37 @@ Map<String, dynamic> _findBadge(
   return matches.first['details'] as Map<String, dynamic>;
 }
 
+Map<String, dynamic>? _maybeFindRecoveryStart(
+  List<Map<String, dynamic>> events,
+) {
+  final matches = filterEvents(events, 'RELAY_RECOVERY_START');
+  if (matches.isEmpty) {
+    return null;
+  }
+  return matches.first['details'] as Map<String, dynamic>;
+}
+
+Map<String, dynamic> _findRecoveredOutage(List<Map<String, dynamic>> events) {
+  final matches = filterEvents(events, 'RELAY_OUTAGE_TIMING')
+      .where(
+        (event) =>
+            (event['details'] as Map<String, dynamic>)['phase'] == 'recovered',
+      )
+      .toList(growable: false);
+  expect(matches, isNotEmpty, reason: 'Missing recovered RELAY_OUTAGE_TIMING');
+  return matches.first['details'] as Map<String, dynamic>;
+}
+
+Map<String, dynamic>? _maybeFindResumeComplete(
+  List<Map<String, dynamic>> events,
+) {
+  final matches = filterEvents(events, 'APP_LIFECYCLE_RESUME_COMPLETE');
+  if (matches.isEmpty) {
+    return null;
+  }
+  return matches.first['details'] as Map<String, dynamic>;
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -138,6 +169,67 @@ void main() {
         '[BENCHMARK] sim_background_resume_degraded_source = '
         '${badge['source']}',
       );
+
+      final recovered = _findRecoveredOutage(events);
+      final recoveryStart = _maybeFindRecoveryStart(events);
+      final resumeComplete = _maybeFindResumeComplete(events);
+      if (recoveryStart != null &&
+          recoveryStart['resumeToRecoveryStartMs'] != null) {
+        printBenchmarkSingle(
+          'sim_background_resume_to_recovery_start_ms',
+          (recoveryStart['resumeToRecoveryStartMs'] as num).toInt(),
+        );
+      }
+      print(
+        '[BENCHMARK] sim_background_resume_recovery_start_source = '
+        '${recoveryStart?['recoverySource'] ?? recovered['recoveryTriggerSource']}',
+      );
+      print(
+        '[BENCHMARK] sim_background_resume_recovery_source = '
+        '${recovered['recoverySource']}',
+      );
+      print(
+        '[BENCHMARK] sim_background_resume_reused_host = '
+        '${recovered['reusedHost']}',
+      );
+      print(
+        '[BENCHMARK] sim_background_resume_coalesced_recovery_requests = '
+        '${recovered['coalescedRecoveryRequests']}',
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_relay_refresh_ms',
+        (recovered['relayRefreshMs'] as num).toInt(),
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_relay_warm_ms',
+        (recovered['relayWarmMs'] as num).toInt(),
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_reserve_rpc_ms',
+        (recovered['reserveRpcMs'] as num).toInt(),
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_circuit_address_wait_ms',
+        (recovered['circuitAddressWaitMs'] as num).toInt(),
+      );
+      print(
+        '[BENCHMARK] sim_background_resume_reservation_path = '
+        '${recovered['reservationPath']}',
+      );
+      print(
+        '[BENCHMARK] sim_background_resume_reservation_winner_peer = '
+        '${recovered['reservationWinnerPeer'] ?? 'n/a'}',
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_personal_reregister_ms',
+        (recovered['personalReregisterMs'] as num).toInt(),
+      );
+      if (resumeComplete?['groupReregisterMs'] != null) {
+        printBenchmarkSingle(
+          'sim_background_resume_group_reregister_ms',
+          (resumeComplete!['groupReregisterMs'] as num).toInt(),
+        );
+      }
     } finally {
       await node.dispose();
     }

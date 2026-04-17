@@ -1080,6 +1080,9 @@ func TestReconnectRelays_WatchdogRestart_ReRegistersPersonalNamespace(t *testing
 	if result.RecoveryMode != "watchdog_restart" {
 		t.Fatalf("expected watchdog_restart, got %+v", result)
 	}
+	if result.ReusedHost {
+		t.Fatalf("watchdog restart should report ReusedHost=false, got %+v", result)
+	}
 	if got := refreshCalls.Load(); got != 1 {
 		t.Fatalf("expected exactly 1 failed in-place refresh before watchdog restart, got %d", got)
 	}
@@ -1196,6 +1199,9 @@ func TestRecoveryCoalescing_PerformsSinglePersonalReregister(t *testing.T) {
 		if !outcome.result.Success || outcome.result.RecoveryMode != "watchdog_restart" {
 			t.Fatalf("ReconnectRelays() caller %d got %+v, want successful watchdog_restart", i+1, outcome.result)
 		}
+		if got := outcome.result.CoalescedRecoveryRequests; got != 1 {
+			t.Fatalf("ReconnectRelays() caller %d coalescedRecoveryRequests=%d, want 1", i+1, got)
+		}
 	}
 
 	if got := refreshCalls.Load(); got != 1 {
@@ -1277,6 +1283,15 @@ func TestRefreshRelaySession_DoesNotReplaceHost(t *testing.T) {
 	// Recovery mode should be "in_place".
 	if result.RecoveryMode != "in_place" {
 		t.Errorf("expected recoveryMode=in_place, got %s", result.RecoveryMode)
+	}
+	if !result.ReusedHost {
+		t.Fatalf("in-place refresh should report ReusedHost=true, got %+v", result)
+	}
+	if result.RelayRefreshMs < 0 {
+		t.Fatalf("relay refresh timing should be non-negative, got %+v", result)
+	}
+	if result.ReservationPath == "" {
+		t.Fatalf("reservation path should be populated, got %+v", result)
 	}
 }
 

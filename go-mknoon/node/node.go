@@ -634,6 +634,7 @@ func waitForSharedRecoveryResult(recovery *recoveryPromise) *RecoveryResult {
 			Success:      false,
 			ErrorCode:    "RECOVERY_FAILED",
 			Reason:       err.Error(),
+			ReusedHost:   true,
 		}
 	}
 	return &RecoveryResult{
@@ -641,6 +642,7 @@ func waitForSharedRecoveryResult(recovery *recoveryPromise) *RecoveryResult {
 		Success:      false,
 		ErrorCode:    "RECOVERY_NIL",
 		Reason:       "coalesced recovery returned nil result",
+		ReusedHost:   true,
 	}
 }
 
@@ -654,14 +656,17 @@ func waitForSharedRecoveryOutcome(recovery *recoveryPromise) (*RecoveryResult, e
 		Success:      false,
 		ErrorCode:    "RECOVERY_NIL",
 		Reason:       "coalesced recovery returned nil result",
+		ReusedHost:   true,
 	}, nil
 }
 
 func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
+	refreshStart := time.Now()
 	n.mu.RLock()
 	h := n.host
 	started := n.isStarted
 	relayAddrs := n.relayAddresses
+	relayPeerOrder := append([]peer.ID(nil), n.relayPeerOrder...)
 	mgr := n.relaySessionMgr
 	n.mu.RUnlock()
 
@@ -671,6 +676,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 			Success:      false,
 			ErrorCode:    "NOT_STARTED",
 			Reason:       "node not started",
+			ReusedHost:   true,
 		}
 	}
 
@@ -682,6 +688,10 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		result = n.refreshRelaySessionHook()
 	} else {
 		var refreshErr error
+		var relayWarmMs int64
+		var circuitAddressWaitMs int64
+		reservationPath := "poll_fallback"
+		reservationWinnerPeer := ""
 
 		// Build relay AddrInfos for warm connection.
 		if len(relayAddrs) == 0 {
@@ -706,6 +716,7 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		}
 
 		// Attempt to reconnect to each relay peer.
+		warmStart := time.Now()
 		for _, info := range relayInfoMap {
 			if err := n.warmRelayConnection(*info); err != nil {
 				log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v",
@@ -716,22 +727,37 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 					info.ID.String()[:min(20, len(info.ID.String()))])
 			}
 		}
+		relayWarmMs = time.Since(warmStart).Milliseconds()
 
 		// Wait for AutoRelay to re-establish circuit addresses.
+		waitStart := time.Now()
 		if ok := n.waitForCircuitAddress(10 * time.Second); ok {
 			log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained ✓")
 			refreshErr = nil
 		} else if refreshErr == nil {
 			refreshErr = fmt.Errorf("no circuit addresses after 10s wait")
 		}
+		circuitAddressWaitMs = time.Since(waitStart).Milliseconds()
 		_, circuitAddrs := splitHostAddresses(h)
+		for _, relayPeerID := range relayPeerOrder {
+			if relayPeerHasCircuitAddress(relayPeerID, circuitAddrs) {
+				reservationWinnerPeer = relayPeerID.String()
+				break
+			}
+		}
 		n.syncRelaySessionFromRuntime("refresh_relay_session", circuitAddrs)
 
 		result = &RecoveryResult{
-			RecoveryMode:      "in_place",
-			Success:           refreshErr == nil,
-			RelayState:        string(mgr.AggregateState()),
-			HealthyRelayCount: mgr.HealthyRelayCount(),
+			RecoveryMode:          "in_place",
+			Success:               refreshErr == nil,
+			RelayState:            string(mgr.AggregateState()),
+			HealthyRelayCount:     mgr.HealthyRelayCount(),
+			ReusedHost:            true,
+			RelayWarmMs:           relayWarmMs,
+			ReserveRpcMs:          0,
+			CircuitAddressWaitMs:  circuitAddressWaitMs,
+			ReservationPath:       reservationPath,
+			ReservationWinnerPeer: reservationWinnerPeer,
 		}
 		if refreshErr != nil {
 			result.ErrorCode = "REFRESH_FAILED"
@@ -739,6 +765,15 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		}
 	}
 
+	if result != nil {
+		result.RelayRefreshMs = time.Since(refreshStart).Milliseconds()
+		if result.RecoveryMode == "in_place" {
+			result.ReusedHost = true
+			if result.ReservationPath == "" {
+				result.ReservationPath = "poll_fallback"
+			}
+		}
+	}
 	result = n.finalizeRelayRecoveryResult(result, "relay refresh")
 	return result
 }
@@ -765,6 +800,7 @@ func (n *Node) ReconnectRelays() (*RecoveryResult, error) {
 }
 
 func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
+	restartStart := time.Now()
 	n.mu.RLock()
 	started := n.isStarted
 	cfg := n.lastConfig
@@ -806,6 +842,7 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 			Success:      false,
 			ErrorCode:    "RESTART_FAILED",
 			Reason:       err.Error(),
+			ReusedHost:   false,
 		}, fmt.Errorf("restart Start() failed: %w", err)
 	}
 
@@ -817,7 +854,9 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 	log.Printf("[NODE] ReconnectRelays: node restarted, peerId=%s, waiting for circuit addresses...",
 		state.PeerId)
 
+	waitStart := time.Now()
 	circuitOk := n.waitForCircuitAddress(10 * time.Second)
+	circuitAddressWaitMs := time.Since(waitStart).Milliseconds()
 	if circuitOk {
 		log.Printf("[NODE] ReconnectRelays: circuit addresses obtained ✓")
 	} else {
@@ -829,10 +868,15 @@ func (n *Node) reconnectRelaysOwned() (*RecoveryResult, error) {
 	n.mu.RUnlock()
 
 	watchdogResult := &RecoveryResult{
-		RecoveryMode:      "watchdog_restart",
-		Success:           circuitOk,
-		RelayState:        string(mgr.AggregateState()),
-		HealthyRelayCount: mgr.HealthyRelayCount(),
+		RecoveryMode:         "watchdog_restart",
+		Success:              circuitOk,
+		RelayState:           string(mgr.AggregateState()),
+		HealthyRelayCount:    mgr.HealthyRelayCount(),
+		ReusedHost:           false,
+		RelayRefreshMs:       time.Since(restartStart).Milliseconds(),
+		ReserveRpcMs:         0,
+		CircuitAddressWaitMs: circuitAddressWaitMs,
+		ReservationPath:      "poll_fallback",
 	}
 	if !circuitOk {
 		watchdogResult.ErrorCode = "NO_CIRCUIT"

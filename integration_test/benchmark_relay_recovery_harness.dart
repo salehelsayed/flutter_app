@@ -41,16 +41,17 @@ void main() {
     // Disconnect relay peer to simulate relay drop
     print('[PHASE 2] Disconnecting relay peer...');
     final disconnectSw = Stopwatch()..start();
-    await node.bridge.send(jsonEncode({
-      'cmd': 'peer:disconnect',
-      'payload': {'peerId': relayPeerId},
-    }));
+    await node.bridge.send(
+      jsonEncode({
+        'cmd': 'peer:disconnect',
+        'payload': {'peerId': relayPeerId},
+      }),
+    );
 
     // Wait for degraded state
     final degraded = await waitFor(
       () =>
-          healthFromState(node.service.currentState) !=
-          ConnectionHealth.online,
+          healthFromState(node.service.currentState) != ConnectionHealth.online,
       timeout: const Duration(seconds: 15),
       label: 'Degraded after disconnect',
     );
@@ -80,16 +81,59 @@ void main() {
 
     if (recovered) {
       printBenchmarkSingle(
-          'sim_relay_detection_ms', disconnectSw.elapsedMilliseconds);
+        'sim_relay_detection_ms',
+        disconnectSw.elapsedMilliseconds,
+      );
       printBenchmarkSingle(
-          'sim_relay_recovery_ms', recoverySw.elapsedMilliseconds);
+        'sim_relay_recovery_ms',
+        recoverySw.elapsedMilliseconds,
+      );
 
       // Check for RELAY_OUTAGE_TIMING events
       final outageEvents = filterEvents(events, 'RELAY_OUTAGE_TIMING');
       for (final e in outageEvents) {
         final d = e['details'] as Map<String, dynamic>;
-        print('[BENCHMARK] sim_relay_outage_phase=${d['phase']} '
-            'ms=${d['recoveryMs'] ?? d['detectionMs'] ?? 'n/a'}');
+        print(
+          '[BENCHMARK] sim_relay_outage_phase=${d['phase']} '
+          'ms=${d['recoveryMs'] ?? d['detectionMs'] ?? 'n/a'}',
+        );
+        if (d['phase'] == 'recovered') {
+          print('[BENCHMARK] sim_recovery_source = ${d['recoverySource']}');
+          print(
+            '[BENCHMARK] sim_recovery_trigger_source = '
+            '${d['recoveryTriggerSource']}',
+          );
+          print('[BENCHMARK] sim_reused_host = ${d['reusedHost']}');
+          print(
+            '[BENCHMARK] sim_coalesced_recovery_requests = '
+            '${d['coalescedRecoveryRequests']}',
+          );
+          printBenchmarkSingle(
+            'sim_relay_refresh_ms',
+            (d['relayRefreshMs'] as num).toInt(),
+          );
+          printBenchmarkSingle(
+            'sim_relay_warm_ms',
+            (d['relayWarmMs'] as num).toInt(),
+          );
+          printBenchmarkSingle(
+            'sim_reserve_rpc_ms',
+            (d['reserveRpcMs'] as num).toInt(),
+          );
+          printBenchmarkSingle(
+            'sim_circuit_address_wait_ms',
+            (d['circuitAddressWaitMs'] as num).toInt(),
+          );
+          print('[BENCHMARK] sim_reservation_path = ${d['reservationPath']}');
+          print(
+            '[BENCHMARK] sim_reservation_winner_peer = '
+            '${d['reservationWinnerPeer'] ?? 'n/a'}',
+          );
+          printBenchmarkSingle(
+            'sim_personal_reregister_ms',
+            (d['personalReregisterMs'] as num).toInt(),
+          );
+        }
       }
 
       // Check for TIME_TO_ONLINE_BADGE recovery
@@ -97,17 +141,20 @@ void main() {
       for (final b in badge) {
         final d = b['details'] as Map<String, dynamic>;
         printBenchmarkSingle(
-            'sim_recovery_time_to_online_ms', d['totalMs'] as int);
+          'sim_recovery_time_to_online_ms',
+          d['totalMs'] as int,
+        );
       }
 
       // §24: Widget transition timing
-      final widgetBadge =
-          filterEvents(events, 'TIME_TO_ONLINE_BADGE_WIDGET');
+      final widgetBadge = filterEvents(events, 'TIME_TO_ONLINE_BADGE_WIDGET');
       for (final w in widgetBadge) {
         final wd = w['details'] as Map<String, dynamic>;
         if (wd.containsKey('widgetTransitionMs')) {
-          printBenchmarkSingle('sim_recovery_widget_transition_ms',
-              (wd['widgetTransitionMs'] as num).toInt());
+          printBenchmarkSingle(
+            'sim_recovery_widget_transition_ms',
+            (wd['widgetTransitionMs'] as num).toInt(),
+          );
         }
       }
 
@@ -116,8 +163,10 @@ void main() {
       for (final t in timeoutEvents) {
         final td = t['details'] as Map<String, dynamic>;
         if (td['timeoutName'] == 'RecoveryWaitTimeout') {
-          print('[BENCHMARK] sim_recovery_timeout_fired = true '
-              'actualMs=${td['actualMs']} configuredMs=${td['configuredMs']}');
+          print(
+            '[BENCHMARK] sim_recovery_timeout_fired = true '
+            'actualMs=${td['actualMs']} configuredMs=${td['configuredMs']}',
+          );
         }
       }
     } else {
@@ -142,10 +191,12 @@ void main() {
       print('\n--- Cycle ${i + 1}/3 ---');
 
       // Disconnect relay
-      await node.bridge.send(jsonEncode({
-        'cmd': 'peer:disconnect',
-        'payload': {'peerId': relayPeerId},
-      }));
+      await node.bridge.send(
+        jsonEncode({
+          'cmd': 'peer:disconnect',
+          'payload': {'peerId': relayPeerId},
+        }),
+      );
 
       await waitFor(
         () =>

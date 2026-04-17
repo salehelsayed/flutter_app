@@ -66,6 +66,8 @@ Future<bool?> handleAppResumed({
   emitFlowEvent(layer: 'FL', event: 'APP_LIFECYCLE_RESUME_BEGIN', details: {});
 
   try {
+    int? groupReregisterMs;
+
     // 1. Check bridge health — reinitialize if dead
     final healthStart = DateTime.now();
     debugPrint('[RESUME] Step 1: bridge.checkHealth() starting...');
@@ -149,6 +151,7 @@ Future<bool?> handleAppResumed({
           reason: reason,
         );
         final rejoinMs = DateTime.now().difference(rejoinStart).inMilliseconds;
+        groupReregisterMs = rejoinMs;
         debugPrint(
           '[RESUME] Step 3b: rejoinGroupTopics done '
           '(joined=${rejoinResult.joinedGroupCount}, '
@@ -207,6 +210,7 @@ Future<bool?> handleAppResumed({
         reason: reason,
       );
       final rejoinMs = DateTime.now().difference(rejoinStart).inMilliseconds;
+      groupReregisterMs = rejoinMs;
       debugPrint(
         '[RESUME] Step 3b: rejoinGroupTopics done '
         '(joined=${rejoinResult.joinedGroupCount}, '
@@ -501,7 +505,11 @@ Future<bool?> handleAppResumed({
     emitFlowEvent(
       layer: 'FL',
       event: 'APP_LIFECYCLE_RESUME_COMPLETE',
-      details: {'bridgeWasHealthy': bridgeOk, 'totalMs': totalMs},
+      details: {
+        'bridgeWasHealthy': bridgeOk,
+        'totalMs': totalMs,
+        if (groupReregisterMs != null) 'groupReregisterMs': groupReregisterMs,
+      },
     );
 
     return bridgeOk;
