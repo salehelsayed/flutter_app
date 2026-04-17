@@ -141,6 +141,31 @@ I wan t you to run this prompt 3 times in seqwuence using a new agent each time 
   - Update the experiment results markdown with before/after numbers and a keep/revert recommendation.
   - Stop after reporting.
 
+  Phase 3a:
+
+  Use Test-Flight-Improv/Network-Transport-libp2p-Feature/05-relay-recovery-improvement-tdd-plan.md as the source of
+  truth.
+
+  Execute Phase 3a only: direct reservation after warm dial.
+
+  Requirements:
+  - Start from the instrumentation baseline, not from a later experiment.
+  - Add the RED tests for Phase 3a first.
+  - Implement only the minimum code needed to issue direct reservation after successful warm dial and to complete
+  recovery from event-driven circuit-address updates when possible.
+  - Do not include Phase 4 or later work.
+  - Do not add native lifecycle prewarm, QUIC session-ticket persistence, or proactive TTL refresh in this phase.
+  - Add or expose the Phase 3a attribution fields if they are still missing:
+    - relayWarmMs
+    - reserveRpcMs
+    - circuitAddressWaitMs
+    - reservationPath
+    - reservationWinnerPeer
+  - Run the required benchmarks and regressions, especially C-Sim, BR-Sim-2, and M-Sim-3.
+  - Update the experiment results markdown with before/after numbers, the winning reservation path, and a keep/revert
+  recommendation.
+  - Stop after reporting.
+
   Phase 4:
 
   Use Test-Flight-Improv/Network-Transport-libp2p-Feature/05-relay-recovery-improvement-tdd-plan.md as the source of
