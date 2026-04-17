@@ -247,6 +247,15 @@ Stop rule:
 
 - if the baseline cannot be reproduced, stop and fix benchmark stability first
 
+Comparison rule after accepted phases:
+
+- `Phase 0` plus the accepted instrumentation pass remain the frozen historical baseline for the whole program
+- once any later phase is accepted, subsequent phases may be rerun on top of the current accepted branch if that accepted phase materially changed the bottleneck
+- when a later phase is rerun on top of an accepted branch, its results doc must report both:
+  - delta vs the current accepted baseline
+  - delta vs the frozen `Phase 0` baseline
+- do not treat an earlier rejected phase as permanently closed if an accepted earlier phase changed which sub-step dominates the user-visible path
+
 ### Phase 1. Immediate foreground recovery trigger
 
 Hypothesis:
@@ -488,6 +497,12 @@ Promotion rule:
 
 - keep only if degraded resume improves and post-resume send remains correct without delivery loss
 
+Rerun note:
+
+- the first Phase `5` verdict against the original `~9s` baseline does not permanently close this hypothesis
+- if an earlier accepted phase collapses relay or circuit-address wait enough that deferred follow-up work may now be visible in the foreground path, rerun Phase `5` on top of that accepted branch
+- for that rerun, the primary decision baseline is the current accepted branch, not only frozen `Phase 0`
+
 Abort condition:
 
 - if this phase risks silent backlog loss, duplicate drain, or group continuity breakage, stop and split the deferred work more narrowly
@@ -567,6 +582,7 @@ Recommended minimum rerun set after each accepted experiment:
 - `C-Sim`
 - `background_reconnect_test.dart`
 - transport gate
+- when the next phase is evaluated on top of an accepted branch, compare the rerun first against that accepted branch and second against frozen `Phase 0`
 
 ---
 
