@@ -188,8 +188,12 @@ Add additive fields or benchmark rows for:
 - `resumeToRecoveryStartMs`
 - `relayRefreshMs`
 - `relayWarmMs`
+- `relayWarmParallelism`
 - `reserveRpcMs`
 - `circuitAddressWaitMs`
+- `foregroundRecoveryPath` with distinct values for `foreground_success`, `background_fallback`
+- `foregroundRelayDialTimeoutMs`
+- `autorelayRetryCadenceMs`
 - `personalReregisterMs`
 - `groupReregisterMs` if executed on the foreground path
 - `recoverySource` with distinct values for `resume_trigger`, `relay_state_push`, `health_check_poll`, `watchdog_restart`
@@ -379,6 +383,50 @@ Abort condition:
 
 - if direct reservation only changes labels or sub-step timings but does not move headline recovery time, do not stack native lifecycle or QUIC work on top of it yet
 - if this experiment introduces duplicate reservations, stale relay state, or bridge/reporting ambiguity, revert and tighten the seam before any follow-on optimization
+
+### Phase 3b. Foreground AutoRelay cadence and timeout policy
+
+Hypothesis:
+
+- after direct reservation proved fast, foreground recovery may still stay slow because AutoRelay retry cadence, sequential relay warm-up, and generic relay dial/wait budgets are tuned for background healing instead of "resume and make the badge green quickly"
+
+Starting values for this experiment:
+
+- `autorelay.WithBackoff(1 * time.Second)`
+- `autorelay.WithMinInterval(1 * time.Second)`
+- foreground resume relay dial timeout target: `3 * time.Second`
+- keep the existing `10s` circuit-address wait only as fallback safety behavior, not as the intended foreground-success path
+
+Likely files:
+
+- `go-mknoon/node/node.go`
+- `go-mknoon/node/config.go`
+- `go-mknoon/node/relay_session.go`
+- `go-mknoon/node/node_test.go`
+- `go-mknoon/bridge/bridge.go`
+
+RED tests:
+
+- foreground recovery uses a shorter AutoRelay retry cadence than the default/background cadence
+- `RefreshRelaySession()` warms configured relays in parallel so one slow relay does not block the others
+- foreground resume recovery uses a shorter relay dial timeout than the general relay dial path
+- if the short foreground budget fails, recovery falls back to the existing longer wait path without leaving the node stuck or misreporting success
+- instrumentation distinguishes a foreground-success path from background fallback and records the configured cadence/timeout values that were used
+
+Benchmark to compare:
+
+- `C-Sim`
+- `BR-Sim-2`
+- `M-Sim-3`
+
+Promotion rule:
+
+- keep only if either `C-Sim p50` or `BR-Sim-2` improves by at least `1500ms`, healthy resume stays under `150ms`, and the foreground-success path wins often enough to explain the headline improvement
+
+Abort condition:
+
+- if `1s` AutoRelay cadence or `3s` foreground dial timeout is too flaky in the direct tests or simulator harnesses, relax to `2s` and/or `4s` inside this phase and record the final values used
+- if cadence/timeout tuning plus parallel warm-up still leaves `circuitAddressWaitMs` as the dominant bottleneck without moving headline recovery time, stop and do not keep tuning numbers blindly
 
 ### Phase 4. Recovery coalescing and storm prevention
 
@@ -607,7 +655,7 @@ There is still one evidence gap before implementation:
 - exact field names for new recovery instrumentation
 - whether experiment isolation uses short-lived feature flags or separate branches
 - whether the final target should be `<4s` or `<3s` once the first successful experiment lands
-- native lifecycle prewarm, QUIC session-ticket persistence, and proactive TTL refresh until direct reservation proves AutoRelay scheduling is a material foreground bottleneck
+- native lifecycle prewarm, QUIC session-ticket persistence, and proactive TTL refresh until the repo tests foreground AutoRelay cadence/timeouts and still cannot move the post-reservation `circuitAddressWaitMs` bottleneck
 
 ---
 

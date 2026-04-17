@@ -166,6 +166,39 @@ I wan t you to run this prompt 3 times in seqwuence using a new agent each time 
   recommendation.
   - Stop after reporting.
 
+  Phase 3b:
+
+  Use Test-Flight-Improv/Network-Transport-libp2p-Feature/05-relay-recovery-improvement-tdd-plan.md as the source of
+  truth.
+
+  Execute Phase 3b only: foreground AutoRelay cadence and timeout policy.
+
+  Requirements:
+  - Start from the instrumentation baseline, not from a later experiment.
+  - Add the RED tests for Phase 3b first.
+  - Implement only the minimum code needed to test:
+    - lower AutoRelay foreground retry cadence
+    - parallel relay warm-up during RefreshRelaySession()
+    - a shorter foreground resume relay dial timeout
+    - preserving the existing long wait only as fallback safety behavior
+  - Start with these experiment values unless direct tests prove they are too flaky:
+    - autorelay.WithBackoff(1 * time.Second)
+    - autorelay.WithMinInterval(1 * time.Second)
+    - foreground resume relay dial timeout = 3 * time.Second
+  - If those values are too flaky, relax inside this phase to 2s and/or 4s and record the final values used.
+  - Do not include Phase 4 or later work.
+  - Do not add native lifecycle prewarm, QUIC session-ticket persistence, or proactive TTL refresh in this phase.
+  - Add or expose the Phase 3b attribution fields if they are still missing:
+    - relayWarmParallelism
+    - foregroundRecoveryPath
+    - foregroundRelayDialTimeoutMs
+    - autorelayRetryCadenceMs
+    - circuitAddressWaitMs
+  - Run the required benchmarks and regressions, especially C-Sim, BR-Sim-2, and M-Sim-3.
+  - Update the experiment results markdown with before/after numbers, the actual cadence/timeout values used, whether
+  foreground success beat background fallback, and a keep/revert recommendation.
+  - Stop after reporting.
+
   Phase 4:
 
   Use Test-Flight-Improv/Network-Transport-libp2p-Feature/05-relay-recovery-improvement-tdd-plan.md as the source of
@@ -264,5 +297,4 @@ Return this repo to the pre-experiment baseline, regardless of which later phase
     - whether it exactly matches the baseline commit
     - git status
   - Stop after reporting.
-
 
