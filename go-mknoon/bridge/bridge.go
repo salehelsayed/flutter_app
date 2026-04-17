@@ -604,6 +604,12 @@ func RelayReconnect() (result string) {
 		resp["relayRefreshMs"] = recoveryResult.RelayRefreshMs
 		resp["relayWarmMs"] = recoveryResult.RelayWarmMs
 		resp["reserveRpcMs"] = recoveryResult.ReserveRpcMs
+		resp["relayWarmParallelism"] = recoveryResult.RelayWarmParallelism
+		if recoveryResult.ForegroundRecoveryPath != "" {
+			resp["foregroundRecoveryPath"] = recoveryResult.ForegroundRecoveryPath
+		}
+		resp["foregroundRelayDialTimeoutMs"] = recoveryResult.ForegroundRelayDialTimeoutMs
+		resp["autorelayRetryCadenceMs"] = recoveryResult.AutorelayRetryCadenceMs
 		resp["circuitAddressWaitMs"] = recoveryResult.CircuitAddressWaitMs
 		if recoveryResult.ReservationPath != "" {
 			resp["reservationPath"] = recoveryResult.ReservationPath

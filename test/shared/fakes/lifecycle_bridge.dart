@@ -85,6 +85,15 @@ class LifecycleBridge implements Bridge {
   /// 'in_place' or 'watchdog_restart'.
   String structuredRecoveryMode = 'in_place';
 
+  int structuredRelayWarmMs = 90;
+  int structuredReserveRpcMs = 0;
+  int structuredCircuitAddressWaitMs = 950;
+  int structuredPersonalReregisterMs = 40;
+  int structuredRelayWarmParallelism = 1;
+  String structuredForegroundRecoveryPath = 'foreground_success';
+  int structuredForegroundRelayDialTimeoutMs = 3000;
+  int structuredAutorelayRetryCadenceMs = 1000;
+
   /// Number of consecutive relay:reconnect failures before the bridge
   /// returns a 'watchdog_restart' result. Used for escalation testing.
   int refreshFailuresBeforeWatchdog = 3;
@@ -361,6 +370,14 @@ class LifecycleBridge implements Bridge {
         'ok': true,
         'recoveryMode': structuredRecoveryMode,
         'refreshed': true,
+        'relayWarmMs': structuredRelayWarmMs,
+        'reserveRpcMs': structuredReserveRpcMs,
+        'circuitAddressWaitMs': structuredCircuitAddressWaitMs,
+        'personalReregisterMs': structuredPersonalReregisterMs,
+        'relayWarmParallelism': structuredRelayWarmParallelism,
+        'foregroundRecoveryPath': structuredForegroundRecoveryPath,
+        'foregroundRelayDialTimeoutMs': structuredForegroundRelayDialTimeoutMs,
+        'autorelayRetryCadenceMs': structuredAutorelayRetryCadenceMs,
       };
     }
     return {'ok': true};

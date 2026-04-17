@@ -25,37 +25,44 @@ void main() {
   });
 
   group('Benchmark: Relay Recovery Timing', () {
-    test('C1: Relay recovery emits RELAY_OUTAGE_TIMING detected + recovered',
-        () async {
-      // Start online
-      bridge.phase = 'startup';
-      await service.startNodeCore(testBase64Key, testPeerId);
+    test(
+      'C1: Relay recovery emits RELAY_OUTAGE_TIMING detected + recovered',
+      () async {
+        // Start online
+        bridge.phase = 'startup';
+        await service.startNodeCore(testBase64Key, testPeerId);
 
-      // Go degraded
-      bridge.simulateBackground();
+        // Go degraded
+        bridge.simulateBackground();
 
-      // Capture health check → recovery events
-      final events = await harness.captureFlowEvents(() async {
-        await service.performImmediateHealthCheck();
-      });
+        // Capture health check → recovery events
+        final events = await harness.captureFlowEvents(() async {
+          await service.performImmediateHealthCheck();
+        });
 
-      final outageEvents =
-          harness.filterEvents(events, 'RELAY_OUTAGE_TIMING');
-      expect(outageEvents, isNotEmpty,
-          reason: 'Should emit RELAY_OUTAGE_TIMING');
+        final outageEvents = harness.filterEvents(
+          events,
+          'RELAY_OUTAGE_TIMING',
+        );
+        expect(
+          outageEvents,
+          isNotEmpty,
+          reason: 'Should emit RELAY_OUTAGE_TIMING',
+        );
 
-      // Find detected phase
-      final detected = outageEvents.where((e) {
-        final d = e['details'] as Map<String, dynamic>;
-        return d['phase'] == 'detected';
-      }).toList();
-      expect(detected, isNotEmpty, reason: 'Should have detected phase');
+        // Find detected phase
+        final detected = outageEvents.where((e) {
+          final d = e['details'] as Map<String, dynamic>;
+          return d['phase'] == 'detected';
+        }).toList();
+        expect(detected, isNotEmpty, reason: 'Should have detected phase');
 
-      final detectedDetails =
-          detected.first['details'] as Map<String, dynamic>;
-      expect(detectedDetails['detectionMs'], isA<int>());
-      expect(detectedDetails['detectionSource'], isA<String>());
-    });
+        final detectedDetails =
+            detected.first['details'] as Map<String, dynamic>;
+        expect(detectedDetails['detectionMs'], isA<int>());
+        expect(detectedDetails['detectionSource'], isA<String>());
+      },
+    );
 
     test('C2: Detection source is push for relay:state event', () async {
       // Start online
@@ -74,8 +81,7 @@ void main() {
         await Future<void>.delayed(Duration.zero);
       });
 
-      final outageEvents =
-          harness.filterEvents(events, 'RELAY_OUTAGE_TIMING');
+      final outageEvents = harness.filterEvents(events, 'RELAY_OUTAGE_TIMING');
       final detected = outageEvents.where((e) {
         final d = e['details'] as Map<String, dynamic>;
         return d['phase'] == 'detected';
@@ -99,8 +105,7 @@ void main() {
         await service.performImmediateHealthCheck();
       });
 
-      final outageEvents =
-          harness.filterEvents(events, 'RELAY_OUTAGE_TIMING');
+      final outageEvents = harness.filterEvents(events, 'RELAY_OUTAGE_TIMING');
       final detected = outageEvents.where((e) {
         final d = e['details'] as Map<String, dynamic>;
         return d['phase'] == 'detected';
@@ -111,33 +116,34 @@ void main() {
       expect(details['detectionSource'], 'poll');
     });
 
-    test('C4: Recovery emits TIME_TO_ONLINE_BADGE with phase=recovery',
-        () async {
-      // Start online
-      bridge.phase = 'startup';
-      await service.startNodeCore(testBase64Key, testPeerId);
+    test(
+      'C4: Recovery emits TIME_TO_ONLINE_BADGE with phase=recovery',
+      () async {
+        // Start online
+        bridge.phase = 'startup';
+        await service.startNodeCore(testBase64Key, testPeerId);
 
-      // Degrade
-      bridge.simulateBackground();
-      await service.performImmediateHealthCheck();
+        // Degrade
+        bridge.simulateBackground();
+        await service.performImmediateHealthCheck();
 
-      // Recover via push
-      final events = await harness.captureFlowEvents(() async {
-        bridge.simulateRecoveryComplete();
-        await Future<void>.delayed(Duration.zero);
-      });
+        // Recover via push
+        final events = await harness.captureFlowEvents(() async {
+          bridge.simulateRecoveryComplete();
+          await Future<void>.delayed(Duration.zero);
+        });
 
-      final badges = harness.filterEvents(events, 'TIME_TO_ONLINE_BADGE');
-      expect(badges, isNotEmpty);
+        final badges = harness.filterEvents(events, 'TIME_TO_ONLINE_BADGE');
+        expect(badges, isNotEmpty);
 
-      final details = badges.first['details'] as Map<String, dynamic>;
-      expect(details['phase'], 'recovery');
-      expect(details['totalMs'], isA<int>());
-      expect(details['totalMs'], greaterThanOrEqualTo(0));
-    });
+        final details = badges.first['details'] as Map<String, dynamic>;
+        expect(details['phase'], 'recovery');
+        expect(details['totalMs'], isA<int>());
+        expect(details['totalMs'], greaterThanOrEqualTo(0));
+      },
+    );
 
-    test('C5: Multiple outage-recovery cycles emit distinct events',
-        () async {
+    test('C5: Multiple outage-recovery cycles emit distinct events', () async {
       // Start online
       bridge.phase = 'startup';
       await service.startNodeCore(testBase64Key, testPeerId);
@@ -157,10 +163,14 @@ void main() {
       });
 
       // Each cycle should produce its own RELAY_OUTAGE_TIMING events
-      final cycle1Outage =
-          harness.filterEvents(cycle1Events, 'RELAY_OUTAGE_TIMING');
-      final cycle2Outage =
-          harness.filterEvents(cycle2Events, 'RELAY_OUTAGE_TIMING');
+      final cycle1Outage = harness.filterEvents(
+        cycle1Events,
+        'RELAY_OUTAGE_TIMING',
+      );
+      final cycle2Outage = harness.filterEvents(
+        cycle2Events,
+        'RELAY_OUTAGE_TIMING',
+      );
 
       expect(cycle1Outage, isNotEmpty, reason: 'Cycle 1 should emit events');
       expect(cycle2Outage, isNotEmpty, reason: 'Cycle 2 should emit events');
@@ -178,8 +188,7 @@ void main() {
         await service.performImmediateHealthCheck();
       });
 
-      final outageEvents =
-          harness.filterEvents(events, 'RELAY_OUTAGE_TIMING');
+      final outageEvents = harness.filterEvents(events, 'RELAY_OUTAGE_TIMING');
       final recovered = outageEvents.where((e) {
         final d = e['details'] as Map<String, dynamic>;
         return d['phase'] == 'recovered';
@@ -191,5 +200,46 @@ void main() {
         expect(details['totalOutageMs'], isA<int>());
       }
     });
+
+    test(
+      'C7: recovered outage exposes Phase 3b foreground attribution',
+      () async {
+        bridge.phase = 'startup';
+        bridge.useStructuredRecoveryResponse = true;
+        bridge.structuredRelayWarmParallelism = 2;
+        bridge.structuredForegroundRecoveryPath = 'foreground_success';
+        bridge.structuredForegroundRelayDialTimeoutMs = 3000;
+        bridge.structuredAutorelayRetryCadenceMs = 1000;
+
+        await service.startNodeCore(testBase64Key, testPeerId);
+
+        bridge.simulateBackground();
+
+        final events = await harness.captureFlowEvents(() async {
+          await service.performImmediateHealthCheck();
+        });
+
+        final outageEvents = harness.filterEvents(
+          events,
+          'RELAY_OUTAGE_TIMING',
+        );
+        final recovered = outageEvents.where((e) {
+          final d = e['details'] as Map<String, dynamic>;
+          return d['phase'] == 'recovered';
+        }).toList();
+
+        expect(
+          recovered,
+          isNotEmpty,
+          reason: 'Should emit recovered outage event',
+        );
+        final details = recovered.first['details'] as Map<String, dynamic>;
+        expect(details['relayWarmParallelism'], 2);
+        expect(details['foregroundRecoveryPath'], 'foreground_success');
+        expect(details['foregroundRelayDialTimeoutMs'], 3000);
+        expect(details['autorelayRetryCadenceMs'], 1000);
+        expect(details['circuitAddressWaitMs'], isA<int>());
+      },
+    );
   });
 }

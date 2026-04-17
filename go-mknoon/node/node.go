@@ -69,12 +69,13 @@ type Node struct {
 	groupRecoverySem  chan struct{}
 
 	// Test seams for startup timing behavior.
-	warmRelayConnectionHook   func(peer.AddrInfo) error
-	waitForCircuitAddressHook func(time.Duration) bool
-	rendezvousRegisterHook    func(string, []string) error
-	refreshRelaySessionHook   func() *RecoveryResult
-	openChatStreamHook        func(context.Context, host.Host, peer.ID) (network.Stream, error)
-	recoverPeerForSendHook    func(host.Host, peer.ID, string, time.Duration) error
+	warmRelayConnectionHook            func(peer.AddrInfo) error
+	warmRelayConnectionWithTimeoutHook func(peer.AddrInfo, time.Duration) error
+	waitForCircuitAddressHook          func(time.Duration) bool
+	rendezvousRegisterHook             func(string, []string) error
+	refreshRelaySessionHook            func() *RecoveryResult
+	openChatStreamHook                 func(context.Context, host.Host, peer.ID) (network.Stream, error)
+	recoverPeerForSendHook             func(host.Host, peer.ID, string, time.Duration) error
 
 	// Personal rendezvous refresh state.
 	personalRendezvousRefreshCancel context.CancelFunc
@@ -304,9 +305,12 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	if len(relayInfos) > 0 {
 		hostOpts = append(hostOpts,
 			libp2p.EnableAutoRelayWithStaticRelays(relayInfos,
-				autorelay.WithBootDelay(0),               // Static relays known; skip candidate wait
-				autorelay.WithBackoff(5*time.Second),     // Retry in 5s, not 1 hour
-				autorelay.WithMinInterval(5*time.Second), // Re-query peer source every 5s, not 30s
+				autorelay.WithBootDelay(0), // Static relays known; skip candidate wait
+				// Phase 3b experiment: lower the retry cadence from the
+				// instrumentation baseline so foreground recovery gets an
+				// earlier AutoRelay retry window after a warm dial.
+				autorelay.WithBackoff(ForegroundAutoRelayRetryCadence),
+				autorelay.WithMinInterval(ForegroundAutoRelayRetryCadence),
 			),
 		)
 	}
@@ -571,13 +575,25 @@ func (n *Node) WaitForRelayConnection(timeout time.Duration) error {
 // warming the connection lets AutoRelay's identify complete instantly when it
 // runs tryNode(), avoiding a 20s identify timeout + 30s retry wait.
 func (n *Node) warmRelayConnection(info peer.AddrInfo) error {
+	return n.warmRelayConnectionWithTimeout(info, DialTimeout)
+}
+
+func (n *Node) warmRelayConnectionWithTimeout(info peer.AddrInfo, timeout time.Duration) error {
+	if n.warmRelayConnectionWithTimeoutHook != nil {
+		return n.warmRelayConnectionWithTimeoutHook(info, timeout)
+	}
+	if n.warmRelayConnectionHook != nil {
+		return n.warmRelayConnectionHook(info)
+	}
+
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(n.ctx, DialTimeout)
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
 	defer cancel()
+	ctx = network.WithDialPeerTimeout(ctx, timeout)
 
 	if err := n.host.Connect(ctx, info); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			n.emitTimeoutFired("DialTimeout", DialTimeout, start)
+			n.emitTimeoutFired("DialTimeout", timeout, start)
 		}
 		n.emitEvent("relay:warm_timing", map[string]interface{}{
 			"elapsedMs": time.Since(start).Milliseconds(),
@@ -597,9 +613,6 @@ func (n *Node) warmRelayConnection(info peer.AddrInfo) error {
 }
 
 func (n *Node) warmRelayConnectionForStart(info peer.AddrInfo) error {
-	if n.warmRelayConnectionHook != nil {
-		return n.warmRelayConnectionHook(info)
-	}
 	return n.warmRelayConnection(info)
 }
 
@@ -690,8 +703,10 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		var refreshErr error
 		var relayWarmMs int64
 		var circuitAddressWaitMs int64
+		relayWarmParallelism := 0
 		reservationPath := "poll_fallback"
 		reservationWinnerPeer := ""
+		foregroundRecoveryPath := "background_fallback"
 
 		// Build relay AddrInfos for warm connection.
 		if len(relayAddrs) == 0 {
@@ -715,27 +730,76 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 			}
 		}
 
-		// Attempt to reconnect to each relay peer.
-		warmStart := time.Now()
-		for _, info := range relayInfoMap {
-			if err := n.warmRelayConnection(*info); err != nil {
-				log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v",
-					info.ID.String()[:min(20, len(info.ID.String()))], err)
-				refreshErr = err
-			} else {
-				log.Printf("[NODE] RefreshRelaySession: warm %s success",
-					info.ID.String()[:min(20, len(info.ID.String()))])
+		warmInfos := make([]peer.AddrInfo, 0, len(relayInfoMap))
+		for _, relayPeerID := range relayPeerOrder {
+			if info, ok := relayInfoMap[relayPeerID]; ok {
+				warmInfos = append(warmInfos, *info)
 			}
 		}
+		if len(warmInfos) == 0 {
+			for _, info := range relayInfoMap {
+				warmInfos = append(warmInfos, *info)
+			}
+		}
+
+		// Attempt to reconnect to each relay peer in parallel so one slow dial
+		// does not serialize the whole foreground recovery attempt.
+		warmStart := time.Now()
+		relayWarmParallelism = len(warmInfos)
+		type relayWarmAttempt struct {
+			peerID peer.ID
+			err    error
+		}
+		attempts := make(chan relayWarmAttempt, max(1, relayWarmParallelism))
+		var warmWG sync.WaitGroup
+		for _, info := range warmInfos {
+			info := info
+			warmWG.Add(1)
+			go func() {
+				defer warmWG.Done()
+				attempts <- relayWarmAttempt{
+					peerID: info.ID,
+					err:    n.warmRelayConnectionWithTimeout(info, ForegroundRelayDialTimeout),
+				}
+			}()
+		}
+		warmWG.Wait()
+		close(attempts)
 		relayWarmMs = time.Since(warmStart).Milliseconds()
 
-		// Wait for AutoRelay to re-establish circuit addresses.
+		warmSucceeded := false
+		var lastWarmErr error
+		for attempt := range attempts {
+			peerLabel := attempt.peerID.String()[:min(20, len(attempt.peerID.String()))]
+			if attempt.err != nil {
+				log.Printf("[NODE] RefreshRelaySession: warm %s failed: %v", peerLabel, attempt.err)
+				lastWarmErr = attempt.err
+				continue
+			}
+			warmSucceeded = true
+			log.Printf("[NODE] RefreshRelaySession: warm %s success", peerLabel)
+		}
+
+		// Give the faster foreground path a short chance to win first, then keep
+		// the existing long wait budget as fallback safety behavior.
 		waitStart := time.Now()
-		if ok := n.waitForCircuitAddress(10 * time.Second); ok {
+		if ok := n.waitForCircuitAddress(ForegroundCircuitAddressWaitTimeout); ok {
 			log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained ✓")
+			foregroundRecoveryPath = "foreground_success"
 			refreshErr = nil
-		} else if refreshErr == nil {
-			refreshErr = fmt.Errorf("no circuit addresses after 10s wait")
+		} else {
+			remainingWait := CircuitAddressWaitTimeout - ForegroundCircuitAddressWaitTimeout
+			if remainingWait < 0 {
+				remainingWait = 0
+			}
+			if remainingWait > 0 && n.waitForCircuitAddress(remainingWait) {
+				log.Printf("[NODE] RefreshRelaySession: circuit addresses obtained via fallback ✓")
+				refreshErr = nil
+			} else if !warmSucceeded && lastWarmErr != nil {
+				refreshErr = lastWarmErr
+			} else {
+				refreshErr = fmt.Errorf("no circuit addresses after %v wait", CircuitAddressWaitTimeout)
+			}
 		}
 		circuitAddressWaitMs = time.Since(waitStart).Milliseconds()
 		_, circuitAddrs := splitHostAddresses(h)
@@ -748,16 +812,20 @@ func (n *Node) refreshRelaySessionOwned() *RecoveryResult {
 		n.syncRelaySessionFromRuntime("refresh_relay_session", circuitAddrs)
 
 		result = &RecoveryResult{
-			RecoveryMode:          "in_place",
-			Success:               refreshErr == nil,
-			RelayState:            string(mgr.AggregateState()),
-			HealthyRelayCount:     mgr.HealthyRelayCount(),
-			ReusedHost:            true,
-			RelayWarmMs:           relayWarmMs,
-			ReserveRpcMs:          0,
-			CircuitAddressWaitMs:  circuitAddressWaitMs,
-			ReservationPath:       reservationPath,
-			ReservationWinnerPeer: reservationWinnerPeer,
+			RecoveryMode:                 "in_place",
+			Success:                      refreshErr == nil,
+			RelayState:                   string(mgr.AggregateState()),
+			HealthyRelayCount:            mgr.HealthyRelayCount(),
+			ReusedHost:                   true,
+			RelayWarmMs:                  relayWarmMs,
+			ReserveRpcMs:                 0,
+			RelayWarmParallelism:         relayWarmParallelism,
+			ForegroundRecoveryPath:       foregroundRecoveryPath,
+			ForegroundRelayDialTimeoutMs: ForegroundRelayDialTimeout.Milliseconds(),
+			AutorelayRetryCadenceMs:      ForegroundAutoRelayRetryCadence.Milliseconds(),
+			CircuitAddressWaitMs:         circuitAddressWaitMs,
+			ReservationPath:              reservationPath,
+			ReservationWinnerPeer:        reservationWinnerPeer,
 		}
 		if refreshErr != nil {
 			result.ErrorCode = "REFRESH_FAILED"

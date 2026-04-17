@@ -45,6 +45,36 @@ func generatePeerIDStr(t *testing.T) string {
 	return pid.String()
 }
 
+func configureRefreshRelayAddresses(t *testing.T, n *Node, addrs []string) []peer.AddrInfo {
+	t.Helper()
+
+	relayInfos := make([]peer.AddrInfo, 0, len(addrs))
+	relayPeerOrder := make([]peer.ID, 0, len(addrs))
+	for _, addr := range addrs {
+		maddr, err := ma.NewMultiaddr(addr)
+		if err != nil {
+			t.Fatalf("NewMultiaddr(%q): %v", addr, err)
+		}
+		info, err := peer.AddrInfoFromP2pAddr(maddr)
+		if err != nil {
+			t.Fatalf("AddrInfoFromP2pAddr(%q): %v", addr, err)
+		}
+		relayInfos = append(relayInfos, *info)
+		relayPeerOrder = append(relayPeerOrder, info.ID)
+	}
+
+	n.mu.Lock()
+	n.relayAddresses = append([]string(nil), addrs...)
+	n.relayPeerOrder = append([]peer.ID(nil), relayPeerOrder...)
+	n.mu.Unlock()
+
+	for _, relayPeerID := range relayPeerOrder {
+		n.relaySessionMgr.InitRelayPeer(relayPeerID)
+	}
+
+	return relayInfos
+}
+
 func TestNewNode(t *testing.T) {
 	n := NewNode()
 	if n == nil {
@@ -1292,6 +1322,247 @@ func TestRefreshRelaySession_DoesNotReplaceHost(t *testing.T) {
 	}
 	if result.ReservationPath == "" {
 		t.Fatalf("reservation path should be populated, got %+v", result)
+	}
+}
+
+func TestRefreshRelaySession_UsesForegroundCadenceAndDialTimeout(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	configureRefreshRelayAddresses(t, n, []string{generateFakeRelayAddr(t, 19030)})
+
+	var warmTimeout time.Duration
+	var waitTimeouts []time.Duration
+	n.warmRelayConnectionWithTimeoutHook = func(info peer.AddrInfo, timeout time.Duration) error {
+		warmTimeout = timeout
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		waitTimeouts = append(waitTimeouts, timeout)
+		return true
+	}
+
+	result := n.RefreshRelaySession()
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession() should succeed, got %+v", result)
+	}
+
+	if warmTimeout != ForegroundRelayDialTimeout {
+		t.Fatalf("warm timeout = %v, want %v", warmTimeout, ForegroundRelayDialTimeout)
+	}
+	if result.ForegroundRelayDialTimeoutMs != ForegroundRelayDialTimeout.Milliseconds() {
+		t.Fatalf(
+			"foregroundRelayDialTimeoutMs = %d, want %d",
+			result.ForegroundRelayDialTimeoutMs,
+			ForegroundRelayDialTimeout.Milliseconds(),
+		)
+	}
+	if result.ForegroundRelayDialTimeoutMs >= DialTimeout.Milliseconds() {
+		t.Fatalf(
+			"foregroundRelayDialTimeoutMs should be below general dial timeout %d, got %+v",
+			DialTimeout.Milliseconds(),
+			result,
+		)
+	}
+	if result.AutorelayRetryCadenceMs != ForegroundAutoRelayRetryCadence.Milliseconds() {
+		t.Fatalf(
+			"autorelayRetryCadenceMs = %d, want %d",
+			result.AutorelayRetryCadenceMs,
+			ForegroundAutoRelayRetryCadence.Milliseconds(),
+		)
+	}
+	if result.AutorelayRetryCadenceMs >= DefaultAutoRelayRetryCadence.Milliseconds() {
+		t.Fatalf(
+			"autorelayRetryCadenceMs should be below default cadence %d, got %+v",
+			DefaultAutoRelayRetryCadence.Milliseconds(),
+			result,
+		)
+	}
+	if len(waitTimeouts) != 1 || waitTimeouts[0] != ForegroundCircuitAddressWaitTimeout {
+		t.Fatalf(
+			"waitForCircuitAddress timeouts = %v, want [%v]",
+			waitTimeouts,
+			ForegroundCircuitAddressWaitTimeout,
+		)
+	}
+}
+
+func TestRefreshRelaySession_WarmsRelaysInParallel(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	configureRefreshRelayAddresses(t, n, []string{
+		generateFakeRelayAddr(t, 19031),
+		generateFakeRelayAddr(t, 19032),
+	})
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var concurrent atomic.Int32
+	var maxConcurrent atomic.Int32
+	n.warmRelayConnectionWithTimeoutHook = func(info peer.AddrInfo, timeout time.Duration) error {
+		current := concurrent.Add(1)
+		defer concurrent.Add(-1)
+
+		for {
+			previous := maxConcurrent.Load()
+			if current <= previous || maxConcurrent.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+
+		started <- struct{}{}
+		<-release
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+
+	resultCh := make(chan *RecoveryResult, 1)
+	go func() {
+		resultCh <- n.RefreshRelaySession()
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(200 * time.Millisecond):
+			close(release)
+			t.Fatal("expected refresh warm-up to start both relay dials in parallel")
+		}
+	}
+	close(release)
+
+	result := <-resultCh
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession() should succeed, got %+v", result)
+	}
+	if got := maxConcurrent.Load(); got < 2 {
+		t.Fatalf("max concurrent warm dials = %d, want at least 2", got)
+	}
+	if result.RelayWarmParallelism != 2 {
+		t.Fatalf("relayWarmParallelism = %d, want 2", result.RelayWarmParallelism)
+	}
+}
+
+func TestRefreshRelaySession_ForegroundFallbackKeepsLongCircuitWait(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	configureRefreshRelayAddresses(t, n, []string{generateFakeRelayAddr(t, 19033)})
+
+	var waitTimeouts []time.Duration
+	n.warmRelayConnectionWithTimeoutHook = func(info peer.AddrInfo, timeout time.Duration) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		waitTimeouts = append(waitTimeouts, timeout)
+		return len(waitTimeouts) == 2
+	}
+
+	result := n.RefreshRelaySession()
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession() should succeed via fallback, got %+v", result)
+	}
+
+	wantTimeouts := []time.Duration{
+		ForegroundCircuitAddressWaitTimeout,
+		CircuitAddressWaitTimeout - ForegroundCircuitAddressWaitTimeout,
+	}
+	if len(waitTimeouts) != len(wantTimeouts) {
+		t.Fatalf("waitForCircuitAddress call count = %d, want %d (%v)", len(waitTimeouts), len(wantTimeouts), waitTimeouts)
+	}
+	for i, want := range wantTimeouts {
+		if waitTimeouts[i] != want {
+			t.Fatalf("wait timeout[%d] = %v, want %v (all=%v)", i, waitTimeouts[i], want, waitTimeouts)
+		}
+	}
+	if result.ForegroundRecoveryPath != "background_fallback" {
+		t.Fatalf("foregroundRecoveryPath = %q, want background_fallback", result.ForegroundRecoveryPath)
+	}
+}
+
+func TestRefreshRelaySession_ReportsForegroundRecoveryAttribution(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	configureRefreshRelayAddresses(t, n, []string{generateFakeRelayAddr(t, 19034)})
+
+	n.warmRelayConnectionWithTimeoutHook = func(info peer.AddrInfo, timeout time.Duration) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+
+	result := n.RefreshRelaySession()
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession() should succeed, got %+v", result)
+	}
+
+	if result.ForegroundRecoveryPath != "foreground_success" {
+		t.Fatalf("foregroundRecoveryPath = %q, want foreground_success", result.ForegroundRecoveryPath)
+	}
+	if result.RelayWarmParallelism != 1 {
+		t.Fatalf("relayWarmParallelism = %d, want 1", result.RelayWarmParallelism)
+	}
+	if result.ForegroundRelayDialTimeoutMs != ForegroundRelayDialTimeout.Milliseconds() {
+		t.Fatalf(
+			"foregroundRelayDialTimeoutMs = %d, want %d",
+			result.ForegroundRelayDialTimeoutMs,
+			ForegroundRelayDialTimeout.Milliseconds(),
+		)
+	}
+	if result.AutorelayRetryCadenceMs != ForegroundAutoRelayRetryCadence.Milliseconds() {
+		t.Fatalf(
+			"autorelayRetryCadenceMs = %d, want %d",
+			result.AutorelayRetryCadenceMs,
+			ForegroundAutoRelayRetryCadence.Milliseconds(),
+		)
+	}
+	if result.CircuitAddressWaitMs < 0 {
+		t.Fatalf("circuitAddressWaitMs should be non-negative, got %+v", result)
 	}
 }
 

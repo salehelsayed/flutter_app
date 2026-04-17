@@ -240,5 +240,43 @@ void main() {
         );
       },
     );
+
+    test(
+      'BR8: degraded resume recovered event exposes Phase 3b foreground attribution',
+      () async {
+        bridge.phase = 'startup';
+        bridge.useStructuredRecoveryResponse = true;
+        bridge.structuredRelayWarmParallelism = 2;
+        bridge.structuredForegroundRecoveryPath = 'background_fallback';
+        bridge.structuredForegroundRelayDialTimeoutMs = 3000;
+        bridge.structuredAutorelayRetryCadenceMs = 1000;
+
+        await service.startNodeCore(testBase64Key, testPeerId);
+
+        bridge.simulateBackground();
+        service.markResumeStarted();
+
+        final events = await harness.captureFlowEvents(() async {
+          await service.performImmediateHealthCheck();
+        });
+
+        final outageEvents = harness.filterEvents(
+          events,
+          'RELAY_OUTAGE_TIMING',
+        );
+        final recovered = outageEvents.where((e) {
+          final d = e['details'] as Map<String, dynamic>;
+          return d['phase'] == 'recovered';
+        }).toList();
+
+        expect(recovered, isNotEmpty, reason: 'Should emit recovered outage');
+        final details = recovered.first['details'] as Map<String, dynamic>;
+        expect(details['relayWarmParallelism'], 2);
+        expect(details['foregroundRecoveryPath'], 'background_fallback');
+        expect(details['foregroundRelayDialTimeoutMs'], 3000);
+        expect(details['autorelayRetryCadenceMs'], 1000);
+        expect(details['circuitAddressWaitMs'], isA<int>());
+      },
+    );
   });
 }

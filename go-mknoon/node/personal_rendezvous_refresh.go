@@ -125,12 +125,21 @@ func (n *Node) recoverPersonalRendezvousRegistration(trigger string) (int64, err
 
 func (n *Node) finalizeRelayRecoveryResult(result *RecoveryResult, trigger string) *RecoveryResult {
 	if result == nil {
-		return &RecoveryResult{
+		result = &RecoveryResult{
 			RecoveryMode: "in_place",
 			Success:      false,
 			ErrorCode:    "RECOVERY_NIL",
 			Reason:       "recovery returned nil result",
 		}
+	}
+	if result.ForegroundRecoveryPath == "" {
+		result.ForegroundRecoveryPath = "background_fallback"
+	}
+	if result.ForegroundRelayDialTimeoutMs == 0 {
+		result.ForegroundRelayDialTimeoutMs = ForegroundRelayDialTimeout.Milliseconds()
+	}
+	if result.AutorelayRetryCadenceMs == 0 {
+		result.AutorelayRetryCadenceMs = ForegroundAutoRelayRetryCadence.Milliseconds()
 	}
 	if !result.Success {
 		return result

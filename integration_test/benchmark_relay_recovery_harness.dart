@@ -121,6 +121,22 @@ void main() {
             (d['reserveRpcMs'] as num).toInt(),
           );
           printBenchmarkSingle(
+            'sim_relay_warm_parallelism',
+            (d['relayWarmParallelism'] as num?)?.toInt() ?? 0,
+          );
+          print(
+            '[BENCHMARK] sim_foreground_recovery_path = '
+            '${d['foregroundRecoveryPath'] ?? 'n/a'}',
+          );
+          printBenchmarkSingle(
+            'sim_foreground_relay_dial_timeout_ms',
+            (d['foregroundRelayDialTimeoutMs'] as num?)?.toInt() ?? 0,
+          );
+          printBenchmarkSingle(
+            'sim_autorelay_retry_cadence_ms',
+            (d['autorelayRetryCadenceMs'] as num?)?.toInt() ?? 0,
+          );
+          printBenchmarkSingle(
             'sim_circuit_address_wait_ms',
             (d['circuitAddressWaitMs'] as num).toInt(),
           );
