@@ -32,17 +32,20 @@ go test ./node -run 'TestReconnectRelays_WatchdogRestart_ReRegistersPersonalName
 Benchmark subset:
 
 ```bash
-flutter test integration_test/benchmark_time_to_online_harness.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469 > /tmp/phase8_m_2026-04-17.log 2>&1
-flutter test integration_test/benchmark_background_resume_harness.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469 > /tmp/phase8_br_2026-04-17.log 2>&1
-flutter test integration_test/benchmark_relay_recovery_harness.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469 > /tmp/phase8_c_2026-04-17.log 2>&1
+flutter test integration_test/benchmark_time_to_online_harness.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469 > /tmp/section8_verify_m_2026-04-17T09-08-39.log 2>&1
+flutter test integration_test/benchmark_background_resume_harness.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469 > /tmp/section8_verify_br_2026-04-17T09-08-39.log 2>&1
+flutter test integration_test/benchmark_relay_recovery_harness.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469 > /tmp/section8_verify_c_2026-04-17T09-08-39.log 2>&1
+flutter test integration_test/benchmark_background_resume_harness.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469 > /tmp/section8_verify_br_rerun_2026-04-17T09-08-39.log 2>&1
 ```
 
 Notes:
-- A broad `go test ./bridge ./node` run was attempted first, but it did not converge in a reasonable window in this repo's long node suite, so the verification was narrowed to the directly affected Go tests above.
+- No production code changes were required in this pass; the current branch already contains the section `8` instrumentation and RED coverage described below.
+- `BR-Sim healthy` landed above the frozen Phase `0` rerun band on the first benchmark pass, so the background-resume harness was rerun once immediately to distinguish jitter from a repeatable drift.
 - Raw logs used for this report:
-  - `/tmp/phase8_m_2026-04-17.log`
-  - `/tmp/phase8_br_2026-04-17.log`
-  - `/tmp/phase8_c_2026-04-17.log`
+  - `/tmp/section8_verify_m_2026-04-17T09-08-39.log`
+  - `/tmp/section8_verify_br_2026-04-17T09-08-39.log`
+  - `/tmp/section8_verify_br_rerun_2026-04-17T09-08-39.log`
+  - `/tmp/section8_verify_c_2026-04-17T09-08-39.log`
   - `/tmp/phase0_m_2026-04-17.log`
   - `/tmp/phase0_br_2026-04-17.log`
   - `/tmp/phase0_c_2026-04-17.log`
@@ -101,22 +104,24 @@ Headline metrics:
 
 | Metric | Before | After | Delta | Within ±5% |
 | --- | ---: | ---: | ---: | --- |
-| `C-Sim p50` | `9105ms` | `9088ms` | `-17ms` (`-0.2%`) | `yes` |
-| `C-Sim p95` | `9510ms` | `9295ms` | `-215ms` (`-2.3%`) | `yes` |
-| `BR-Sim degraded` | `9114ms` | `9298ms` | `+184ms` (`+2.0%`) | `yes` |
-| `BR-Sim healthy` | `94ms` | `94ms` | `0ms` (`0.0%`) | `yes` |
+| `C-Sim p50` | `9105ms` | `9100ms` | `-5ms` (`-0.1%`) | `yes` |
+| `C-Sim p95` | `9510ms` | `9297ms` | `-213ms` (`-2.2%`) | `yes` |
+| `BR-Sim degraded` | `9114ms` | `9098ms` | `-16ms` (`-0.2%`) | `yes` |
+| `BR-Sim healthy` | `94ms` | `108ms` | `+14ms` (`+14.9%`) | `no` |
+| `BR-Sim healthy` confirmatory rerun | `94ms` | `112ms` | `+18ms` (`+19.1%`) | `no` |
 
 Supporting subset rows:
 
 | Metric | Before | After | Delta |
 | --- | ---: | ---: | ---: |
-| `M cold-start p50` | `158ms` | `153ms` | `-5ms` |
-| `M cold-start p95` | `168ms` | `157ms` | `-11ms` |
-| `M recovery badge` | `9607ms` | `9792ms` | `+185ms` |
-| `C single-run recovery` | `9100ms` | `9118ms` | `+18ms` |
-| `C recovered outage` | `9593ms` | `9612ms` | `+19ms` |
-| `C recovery badge` | `9598ms` | `9617ms` | `+19ms` |
-| `BR extended healthy` | `105ms` | `95ms` | `-10ms` |
+| `M cold-start p50` | `158ms` | `155ms` | `-3ms` |
+| `M cold-start p95` | `168ms` | `169ms` | `+1ms` |
+| `M recovery badge` | `9607ms` | `9598ms` | `-9ms` |
+| `C single-run recovery` | `9100ms` | `9111ms` | `+11ms` |
+| `C recovered outage` | `9593ms` | `9603ms` | `+10ms` |
+| `C recovery badge` | `9598ms` | `9609ms` | `+11ms` |
+| `BR extended healthy` | `105ms` | `96ms` | `-9ms` |
+| `BR extended healthy` confirmatory rerun | `105ms` | `103ms` | `-2ms` |
 
 ## Exact New Attribution Rows
 
@@ -127,13 +132,13 @@ Supporting subset rows:
 [BENCHMARK] sim_recovery_trigger_source = relay_state_push
 [BENCHMARK] sim_reused_host = true
 [BENCHMARK] sim_coalesced_recovery_requests = 0
-[BENCHMARK] sim_relay_refresh_ms = 9564ms
-[BENCHMARK] sim_relay_warm_ms = 110ms
+[BENCHMARK] sim_relay_refresh_ms = 9553ms
+[BENCHMARK] sim_relay_warm_ms = 93ms
 [BENCHMARK] sim_reserve_rpc_ms = 0ms
-[BENCHMARK] sim_circuit_address_wait_ms = 9453ms
+[BENCHMARK] sim_circuit_address_wait_ms = 9459ms
 [BENCHMARK] sim_reservation_path = poll_fallback
 [BENCHMARK] sim_reservation_winner_peer = 12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g
-[BENCHMARK] sim_personal_reregister_ms = 45ms
+[BENCHMARK] sim_personal_reregister_ms = 49ms
 ```
 
 `BR-Sim degraded`:
@@ -143,10 +148,10 @@ Supporting subset rows:
 [BENCHMARK] sim_background_resume_recovery_source = relay_state_push
 [BENCHMARK] sim_background_resume_reused_host = true
 [BENCHMARK] sim_background_resume_coalesced_recovery_requests = 0
-[BENCHMARK] sim_background_resume_relay_refresh_ms = 9750ms
-[BENCHMARK] sim_background_resume_relay_warm_ms = 95ms
+[BENCHMARK] sim_background_resume_relay_refresh_ms = 9548ms
+[BENCHMARK] sim_background_resume_relay_warm_ms = 98ms
 [BENCHMARK] sim_background_resume_reserve_rpc_ms = 0ms
-[BENCHMARK] sim_background_resume_circuit_address_wait_ms = 9654ms
+[BENCHMARK] sim_background_resume_circuit_address_wait_ms = 9450ms
 [BENCHMARK] sim_background_resume_reservation_path = poll_fallback
 [BENCHMARK] sim_background_resume_reservation_winner_peer = 12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g
 [BENCHMARK] sim_background_resume_personal_reregister_ms = 44ms
@@ -155,16 +160,18 @@ Supporting subset rows:
 Observation:
 - `sim_background_resume_to_recovery_start_ms` was not emitted in the live degraded-resume rerun because the current branch had already begun recovery from the degraded `relay:state` push before the captured foreground resume window. That is an attribution finding about existing behavior on this branch, not a new behavioral change introduced by this instrumentation pass.
 - `groupReregisterMs` was added to the lifecycle completion event, but it was not exercised by the benchmark subset because these harnesses do not pass group repositories into `handleAppResumed`.
+- The healthy resume path was the only headline metric outside the section `8` guardrail in this verification. It measured `108ms` on the first pass and `112ms` on the immediate rerun versus the frozen Phase `0` rerun value of `94ms`, while degraded resume and relay recovery stayed within band.
 
 ## Acceptance Verdict
 
 Instrumentation accepted:
-- `yes`
+- `no`
 
 Reason:
-- The headline recovery metrics stayed within the section `8` `±5%` allowance against the frozen Phase `0` rerun baseline.
-- The work stayed additive: it exposed recovery-start attribution, host reuse, coalescing, and sub-step timings without intentionally changing the recovery algorithm.
-- The new rows now show that the current branch's relay recovery time is dominated by the circuit-address wait path, not by relay warm-up or personal rendezvous re-registration.
+- The current branch already contains the additive section `8` instrumentation and RED coverage, and the rerun confirmed the new attribution rows without introducing an intentional recovery-behavior change.
+- `C-Sim` and degraded `BR-Sim` stayed within the section `8` `±5%` allowance against the frozen Phase `0` rerun baseline.
+- `BR-Sim healthy` did not stay within the allowed range on either of two back-to-back verification runs (`108ms`, then `112ms`, versus `94ms` before), so the section `8` acceptance rule was not re-satisfied on this branch.
+- The new rows still show the same dominant cost center: circuit-address wait remains much larger than relay warm-up or personal rendezvous re-registration.
 
 Stop point:
 - This report stops after the section `8` instrumentation-first pass.
