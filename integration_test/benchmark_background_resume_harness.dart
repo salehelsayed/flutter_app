@@ -209,6 +209,22 @@ void main() {
         (recovered['reserveRpcMs'] as num).toInt(),
       );
       printBenchmarkSingle(
+        'sim_background_resume_relay_warm_parallelism',
+        (recovered['relayWarmParallelism'] as num?)?.toInt() ?? 0,
+      );
+      print(
+        '[BENCHMARK] sim_background_resume_foreground_recovery_path = '
+        '${recovered['foregroundRecoveryPath'] ?? 'n/a'}',
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_foreground_relay_dial_timeout_ms',
+        (recovered['foregroundRelayDialTimeoutMs'] as num?)?.toInt() ?? 0,
+      );
+      printBenchmarkSingle(
+        'sim_background_resume_autorelay_retry_cadence_ms',
+        (recovered['autorelayRetryCadenceMs'] as num?)?.toInt() ?? 0,
+      );
+      printBenchmarkSingle(
         'sim_background_resume_circuit_address_wait_ms',
         (recovered['circuitAddressWaitMs'] as num).toInt(),
       );

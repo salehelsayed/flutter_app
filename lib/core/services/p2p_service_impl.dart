@@ -1349,6 +1349,16 @@ class P2PServiceImpl implements P2PService {
           (reconnectResponse['relayWarmMs'] as num?)?.toInt() ?? 0;
       final reserveRpcMs =
           (reconnectResponse['reserveRpcMs'] as num?)?.toInt() ?? 0;
+      final relayWarmParallelism =
+          (reconnectResponse['relayWarmParallelism'] as num?)?.toInt() ?? 0;
+      final foregroundRecoveryPath =
+          reconnectResponse['foregroundRecoveryPath'] as String?;
+      final foregroundRelayDialTimeoutMs =
+          (reconnectResponse['foregroundRelayDialTimeoutMs'] as num?)
+              ?.toInt() ??
+          0;
+      final autorelayRetryCadenceMs =
+          (reconnectResponse['autorelayRetryCadenceMs'] as num?)?.toInt() ?? 0;
       final circuitAddressWaitMs =
           (reconnectResponse['circuitAddressWaitMs'] as num?)?.toInt() ?? 0;
       final personalReregisterMs =
@@ -1399,6 +1409,11 @@ class P2PServiceImpl implements P2PService {
             'relayRefreshMs': relayRefreshMs,
             'relayWarmMs': relayWarmMs,
             'reserveRpcMs': reserveRpcMs,
+            'relayWarmParallelism': relayWarmParallelism,
+            if (foregroundRecoveryPath != null)
+              'foregroundRecoveryPath': foregroundRecoveryPath,
+            'foregroundRelayDialTimeoutMs': foregroundRelayDialTimeoutMs,
+            'autorelayRetryCadenceMs': autorelayRetryCadenceMs,
             'circuitAddressWaitMs': circuitAddressWaitMs,
             'reservationPath': reconnectResponse['reservationPath'],
             if (reconnectResponse['reservationWinnerPeer'] != null)

@@ -86,21 +86,25 @@ type RelaySessionManager struct {
 
 // RecoveryResult carries the structured result of a relay session refresh.
 type RecoveryResult struct {
-	RecoveryMode              string `json:"recoveryMode"` // "in_place" or "watchdog_restart"
-	Success                   bool   `json:"success"`
-	ErrorCode                 string `json:"errorCode,omitempty"`
-	Reason                    string `json:"reason,omitempty"`
-	RelayState                string `json:"relayState"`
-	HealthyRelayCount         int    `json:"healthyRelayCount"`
-	ReusedHost                bool   `json:"reusedHost"`
-	CoalescedRecoveryRequests int    `json:"coalescedRecoveryRequests"`
-	RelayRefreshMs            int64  `json:"relayRefreshMs"`
-	RelayWarmMs               int64  `json:"relayWarmMs"`
-	ReserveRpcMs              int64  `json:"reserveRpcMs"`
-	CircuitAddressWaitMs      int64  `json:"circuitAddressWaitMs"`
-	ReservationPath           string `json:"reservationPath,omitempty"`
-	ReservationWinnerPeer     string `json:"reservationWinnerPeer,omitempty"`
-	PersonalReregisterMs      int64  `json:"personalReregisterMs"`
+	RecoveryMode                 string `json:"recoveryMode"` // "in_place" or "watchdog_restart"
+	Success                      bool   `json:"success"`
+	ErrorCode                    string `json:"errorCode,omitempty"`
+	Reason                       string `json:"reason,omitempty"`
+	RelayState                   string `json:"relayState"`
+	HealthyRelayCount            int    `json:"healthyRelayCount"`
+	ReusedHost                   bool   `json:"reusedHost"`
+	CoalescedRecoveryRequests    int    `json:"coalescedRecoveryRequests"`
+	RelayRefreshMs               int64  `json:"relayRefreshMs"`
+	RelayWarmMs                  int64  `json:"relayWarmMs"`
+	ReserveRpcMs                 int64  `json:"reserveRpcMs"`
+	RelayWarmParallelism         int    `json:"relayWarmParallelism,omitempty"`
+	ForegroundRecoveryPath       string `json:"foregroundRecoveryPath,omitempty"`
+	ForegroundRelayDialTimeoutMs int64  `json:"foregroundRelayDialTimeoutMs,omitempty"`
+	AutorelayRetryCadenceMs      int64  `json:"autorelayRetryCadenceMs,omitempty"`
+	CircuitAddressWaitMs         int64  `json:"circuitAddressWaitMs"`
+	ReservationPath              string `json:"reservationPath,omitempty"`
+	ReservationWinnerPeer        string `json:"reservationWinnerPeer,omitempty"`
+	PersonalReregisterMs         int64  `json:"personalReregisterMs"`
 }
 
 type recoveryPromise struct {

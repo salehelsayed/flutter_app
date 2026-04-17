@@ -1897,6 +1897,103 @@ void main() {
     );
 
     test(
+      'relay reconnect forwards Phase 3b foreground attribution into recovery event',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        var statusCallCount = 0;
+        bridge.whenCommand('node:status', (_) {
+          statusCallCount++;
+          if (statusCallCount == 1) {
+            return jsonEncode({
+              'ok': true,
+              'peerId': 'test-peer',
+              'isStarted': true,
+              'listenAddresses': [],
+              'circuitAddresses': [],
+              'connections': [],
+              'relayState': 'degraded',
+              'healthyRelayCount': 0,
+              'watchdogRestartCount': 0,
+            });
+          }
+          return jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+          });
+        });
+        bridge.whenCommand(
+          'relay:reconnect',
+          (_) => jsonEncode({
+            'ok': true,
+            'recoveryMode': 'in_place',
+            'relayRefreshMs': 1250,
+            'relayWarmMs': 110,
+            'reserveRpcMs': 0,
+            'circuitAddressWaitMs': 970,
+            'personalReregisterMs': 45,
+            'relayWarmParallelism': 2,
+            'foregroundRecoveryPath': 'foreground_success',
+            'foregroundRelayDialTimeoutMs': 3000,
+            'autorelayRetryCadenceMs': 1000,
+          }),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        final events = await _captureFlowEvents(() async {
+          await service.performImmediateHealthCheck();
+        });
+
+        final recovered = events
+            .where((event) {
+              if (event['event'] != 'RELAY_OUTAGE_TIMING') {
+                return false;
+              }
+              final details = event['details'] as Map<String, dynamic>;
+              return details['phase'] == 'recovered';
+            })
+            .toList(growable: false);
+
+        expect(
+          recovered,
+          isNotEmpty,
+          reason: 'Should emit recovered outage event',
+        );
+        final details = recovered.first['details'] as Map<String, dynamic>;
+        expect(details['relayWarmParallelism'], 2);
+        expect(details['foregroundRecoveryPath'], 'foreground_success');
+        expect(details['foregroundRelayDialTimeoutMs'], 3000);
+        expect(details['autorelayRetryCadenceMs'], 1000);
+        expect(details['circuitAddressWaitMs'], 970);
+      },
+    );
+
+    test(
       'status push burst coalescing does not lose final online state',
       () async {
         bridge.whenCommand(

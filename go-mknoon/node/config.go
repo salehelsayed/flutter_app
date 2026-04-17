@@ -24,14 +24,19 @@ const (
 	MediaProtocol      = "/mknoon/media/1.0.0"
 
 	// Timeouts.
-	DialTimeout       = 15 * time.Second // Relay server connection
-	PeerDialTimeout   = 2 * time.Second  // Peer-to-peer dial
-	RelayProbeTimeout = 5 * time.Second  // Relay probe via circuit
-	SendTimeout       = 15 * time.Second
-	DiscoverTimeout   = 10 * time.Second
-	InboxTimeout      = 15 * time.Second
-	MediaTimeout      = 5 * time.Minute  // large files need generous timeout
-	MediaIdleTimeout  = 10 * time.Second // stall = no bytes for this long
+	DialTimeout                         = 15 * time.Second // Relay server connection
+	PeerDialTimeout                     = 2 * time.Second  // Peer-to-peer dial
+	RelayProbeTimeout                   = 5 * time.Second  // Relay probe via circuit
+	SendTimeout                         = 15 * time.Second
+	DiscoverTimeout                     = 10 * time.Second
+	InboxTimeout                        = 15 * time.Second
+	MediaTimeout                        = 5 * time.Minute  // large files need generous timeout
+	MediaIdleTimeout                    = 10 * time.Second // stall = no bytes for this long
+	CircuitAddressWaitTimeout           = 10 * time.Second
+	DefaultAutoRelayRetryCadence        = 5 * time.Second
+	ForegroundAutoRelayRetryCadence     = 1 * time.Second
+	ForegroundRelayDialTimeout          = 3 * time.Second
+	ForegroundCircuitAddressWaitTimeout = 3 * time.Second
 
 	// PubSub.
 	GroupTopicPrefix                  = "/mknoon/group/"
