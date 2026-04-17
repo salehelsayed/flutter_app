@@ -162,9 +162,12 @@ Observation:
 - `groupReregisterMs` was added to the lifecycle completion event, but it was not exercised by the benchmark subset because these harnesses do not pass group repositories into `handleAppResumed`.
 - The healthy resume path was the only headline metric outside the section `8` guardrail in this verification. It measured `108ms` on the first pass and `112ms` on the immediate rerun versus the frozen Phase `0` rerun value of `94ms`, while degraded resume and relay recovery stayed within band.
 
-## Acceptance Verdict
+## Implementation And Acceptance Verdict
 
-Instrumentation accepted:
+Instrumentation implemented:
+- `yes`
+
+Section `8` acceptance gate passed:
 - `no`
 
 Reason:
