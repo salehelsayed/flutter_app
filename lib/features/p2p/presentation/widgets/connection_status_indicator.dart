@@ -6,7 +6,10 @@ import '../../../../core/services/p2p_service.dart';
 import '../../../../core/utils/flow_event_emitter.dart';
 import '../../domain/models/node_state.dart';
 
-/// Connection health derived from NodeState.
+/// Legacy relay-health helper derived from [NodeState].
+///
+/// Kept for existing transport benchmarks and integration tests until the
+/// heavier Session 3 acceptance surfaces migrate to the Phase 6 contract.
 enum ConnectionHealth {
   /// Node is started and has circuit relay addresses.
   online,
@@ -18,11 +21,7 @@ enum ConnectionHealth {
   offline,
 }
 
-/// Derives [ConnectionHealth] from a [NodeState].
-///
-/// Considers both [relayState] and [circuitAddresses] — if either indicates
-/// the relay is healthy, the node is online.  This avoids "Connecting" flashes
-/// during the brief window where one signal arrives before the other.
+/// Derives relay-only [ConnectionHealth] from a [NodeState].
 ConnectionHealth healthFromState(NodeState state) {
   if (!state.isStarted) return ConnectionHealth.offline;
   if (state.relayState == 'online' || state.circuitAddresses.isNotEmpty) {
@@ -31,26 +30,51 @@ ConnectionHealth healthFromState(NodeState state) {
   return ConnectionHealth.degraded;
 }
 
-/// How long we stay "Online" before visually downgrading to "Connecting".
-/// Absorbs transient relay churn (address rotation, reconnect cycles).
-const _downgradeDelay = Duration(seconds: 3);
+bool _isReadyBadgeState(BadgeReadinessState state) {
+  return state == BadgeReadinessState.online ||
+      state == BadgeReadinessState.onlineDotted;
+}
+
+ConnectionHealth _legacyHealthForBadgeState(BadgeReadinessState state) {
+  return switch (state) {
+    BadgeReadinessState.offline => ConnectionHealth.offline,
+    BadgeReadinessState.connecting => ConnectionHealth.degraded,
+    BadgeReadinessState.online ||
+    BadgeReadinessState.onlineDotted => ConnectionHealth.online,
+  };
+}
+
+String _labelForBadgeState(BadgeReadinessState state) {
+  return switch (state) {
+    BadgeReadinessState.offline => 'Offline',
+    BadgeReadinessState.connecting => 'Connecting',
+    BadgeReadinessState.online => 'Online',
+    BadgeReadinessState.onlineDotted => 'Online.',
+  };
+}
+
+String _semanticsLabelForBadgeState(BadgeReadinessState state) {
+  return switch (state) {
+    BadgeReadinessState.offline => 'offline',
+    BadgeReadinessState.connecting => 'connecting',
+    BadgeReadinessState.online =>
+      'online, send and inbox ready, relay reservation pending',
+    BadgeReadinessState.onlineDotted =>
+      'online, send and inbox ready, relay reservation ready',
+  };
+}
 
 /// A compact indicator showing the P2P connection status.
 ///
-/// Displays one of three states:
-/// - "Online" (green) — node started with circuit relay
-/// - "Connecting" (amber) — node started but no relay yet
-/// - "Offline" (grey) — node not started
-///
-/// Downgrades from Online → Connecting are delayed by [_downgradeDelay]
-/// so that brief relay reconnections are invisible to the user.
+/// Displays one of four states from the service-owned Phase 6 contract:
+/// - "Offline"
+/// - "Connecting"
+/// - "Online"
+/// - "Online."
 class ConnectionStatusIndicator extends StatefulWidget {
   final P2PService p2pService;
 
-  const ConnectionStatusIndicator({
-    super.key,
-    required this.p2pService,
-  });
+  const ConnectionStatusIndicator({super.key, required this.p2pService});
 
   @override
   State<ConnectionStatusIndicator> createState() =>
@@ -58,163 +82,129 @@ class ConnectionStatusIndicator extends StatefulWidget {
 }
 
 class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
-  late ConnectionHealth _displayedHealth;
+  late BadgeReadinessState _displayedBadgeState;
   late int _connectionCount;
   StreamSubscription<NodeState>? _sub;
-  Timer? _downgradeTimer;
-
-  /// §24: Timestamp when the last stateStream event arrived.
-  DateTime? _lastStateReceivedAt;
 
   @override
   void initState() {
     super.initState();
     final initial = widget.p2pService.currentState;
-    _displayedHealth = healthFromState(initial);
+    _displayedBadgeState = initial.badgeReadinessState;
     _connectionCount = initial.connections.length;
 
     _sub = widget.p2pService.stateStream.listen(_onState);
   }
 
   void _onState(NodeState state) {
-    final stateReceivedAt = DateTime.now();
-    _lastStateReceivedAt = stateReceivedAt;
-    final incoming = healthFromState(state);
+    final incoming = state.badgeReadinessState;
     final count = state.connections.length;
 
-    if (incoming == _displayedHealth) {
-      // Health unchanged — just update connection count if needed.
-      _downgradeTimer?.cancel();
-      _downgradeTimer = null;
+    if (incoming == _displayedBadgeState) {
       if (count != _connectionCount) {
         setState(() => _connectionCount = count);
       }
       return;
     }
 
-    // Upgrade (to online): apply immediately + emit widget timing.
-    if (incoming == ConnectionHealth.online) {
-      _downgradeTimer?.cancel();
-      _downgradeTimer = null;
-
-      final widgetTransitionMs =
-          DateTime.now().difference(stateReceivedAt).inMilliseconds;
+    final wasReady = _isReadyBadgeState(_displayedBadgeState);
+    final isReady = _isReadyBadgeState(incoming);
+    if (isReady && !wasReady) {
       emitFlowEvent(
         layer: 'FL',
         event: 'TIME_TO_ONLINE_BADGE_WIDGET',
         details: {
-          'widgetTransitionMs': widgetTransitionMs,
-          'previousHealth': _displayedHealth.name,
+          'widgetTransitionMs': 0,
+          'previousHealth': _legacyHealthForBadgeState(
+            _displayedBadgeState,
+          ).name,
         },
       );
-
-      setState(() {
-        _displayedHealth = incoming;
-        _connectionCount = count;
-      });
-      return;
     }
 
-    // Downgrade from online → degraded: delay so transient relay churn
-    // is invisible.  If we're already degraded/offline, apply immediately.
-    if (_displayedHealth == ConnectionHealth.online &&
-        incoming == ConnectionHealth.degraded) {
-      _downgradeTimer ??= Timer(_downgradeDelay, () {
-        _downgradeTimer = null;
-        if (mounted) {
-          setState(() {
-            _displayedHealth = incoming;
-            _connectionCount = count;
-          });
-        }
-      });
-      return;
-    }
-
-    // All other transitions (e.g. degraded → offline, online → offline):
-    // apply immediately.
-    _downgradeTimer?.cancel();
-    _downgradeTimer = null;
     setState(() {
-      _displayedHealth = incoming;
+      _displayedBadgeState = incoming;
       _connectionCount = count;
     });
   }
 
   @override
   void dispose() {
-    _downgradeTimer?.cancel();
     _sub?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final health = _displayedHealth;
+    final badgeState = _displayedBadgeState;
     final connectionCount = _connectionCount;
 
     final Color baseColor;
     final Color textColor;
-    final String label;
-
-    switch (health) {
-      case ConnectionHealth.online:
+    switch (badgeState) {
+      case BadgeReadinessState.online:
+      case BadgeReadinessState.onlineDotted:
         baseColor = Colors.green;
         textColor = Colors.green[300]!;
-        label = 'Online';
-      case ConnectionHealth.degraded:
+      case BadgeReadinessState.connecting:
         baseColor = Colors.amber;
         textColor = Colors.amber[300]!;
-        label = 'Connecting';
-      case ConnectionHealth.offline:
+      case BadgeReadinessState.offline:
         baseColor = Colors.grey;
         textColor = Colors.grey[400]!;
-        label = 'Offline';
     }
+    final label = _labelForBadgeState(badgeState);
+    final semanticsLabel = _semanticsLabelForBadgeState(badgeState);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: baseColor.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: baseColor.withValues(alpha: 0.4),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: baseColor,
-              shape: BoxShape.circle,
+    return Semantics(
+      container: true,
+      label: semanticsLabel,
+      child: ExcludeSemantics(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: baseColor.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: baseColor.withValues(alpha: 0.4),
+              width: 1,
             ),
           ),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          if (kDebugMode &&
-              health == ConnectionHealth.online &&
-              connectionCount > 0) ...[
-            const SizedBox(width: 4),
-            Text(
-              '($connectionCount)',
-              style: TextStyle(
-                color: Colors.green[300]?.withValues(alpha: 0.7),
-                fontSize: 11,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: baseColor,
+                  shape: BoxShape.circle,
+                ),
               ),
-            ),
-          ],
-        ],
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (kDebugMode &&
+                  _isReadyBadgeState(badgeState) &&
+                  connectionCount > 0) ...[
+                const SizedBox(width: 4),
+                Text(
+                  '($connectionCount)',
+                  style: TextStyle(
+                    color: Colors.green[300]?.withValues(alpha: 0.7),
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

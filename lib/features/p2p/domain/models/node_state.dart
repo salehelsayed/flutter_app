@@ -1,5 +1,7 @@
 import 'connection_state.dart';
 
+enum BadgeReadinessState { offline, connecting, online, onlineDotted }
+
 /// Node state representing the P2P node status.
 class NodeState {
   final String? peerId;
@@ -15,6 +17,8 @@ class NodeState {
   final int? watchdogRestartCount;
   final bool? needsGroupRecovery;
   final Map<String, bool>? featureFlags;
+  final bool sendCapabilityReady;
+  final bool inboxCapabilityReady;
 
   const NodeState({
     this.peerId,
@@ -28,6 +32,8 @@ class NodeState {
     this.watchdogRestartCount,
     this.needsGroupRecovery,
     this.featureFlags,
+    this.sendCapabilityReady = false,
+    this.inboxCapabilityReady = false,
   });
 
   /// Stopped node state constant.
@@ -65,6 +71,8 @@ class NodeState {
       featureFlags: (json['featureFlags'] as Map<String, dynamic>?)?.map(
         (key, value) => MapEntry(key, value == true),
       ),
+      sendCapabilityReady: json['sendCapabilityReady'] == true,
+      inboxCapabilityReady: json['inboxCapabilityReady'] == true,
     );
   }
 
@@ -87,6 +95,8 @@ class NodeState {
     if (needsGroupRecovery != null)
       result['needsGroupRecovery'] = needsGroupRecovery;
     if (featureFlags != null) result['featureFlags'] = featureFlags;
+    result['sendCapabilityReady'] = sendCapabilityReady;
+    result['inboxCapabilityReady'] = inboxCapabilityReady;
 
     return result;
   }
@@ -103,6 +113,8 @@ class NodeState {
     int? watchdogRestartCount,
     bool? needsGroupRecovery,
     Map<String, bool>? featureFlags,
+    bool? sendCapabilityReady,
+    bool? inboxCapabilityReady,
   }) {
     return NodeState(
       peerId: peerId ?? this.peerId,
@@ -116,12 +128,35 @@ class NodeState {
       watchdogRestartCount: watchdogRestartCount ?? this.watchdogRestartCount,
       needsGroupRecovery: needsGroupRecovery ?? this.needsGroupRecovery,
       featureFlags: featureFlags ?? this.featureFlags,
+      sendCapabilityReady: sendCapabilityReady ?? this.sendCapabilityReady,
+      inboxCapabilityReady: inboxCapabilityReady ?? this.inboxCapabilityReady,
     );
+  }
+
+  bool get relayReady {
+    if (!isStarted) return false;
+    if (relayState != null) {
+      return relayState == 'online';
+    }
+    return circuitAddresses.isNotEmpty;
+  }
+
+  bool get usabilityReady =>
+      isStarted && sendCapabilityReady && inboxCapabilityReady;
+
+  BadgeReadinessState get badgeReadinessState {
+    if (!isStarted) return BadgeReadinessState.offline;
+    if (!usabilityReady) return BadgeReadinessState.connecting;
+    return relayReady
+        ? BadgeReadinessState.onlineDotted
+        : BadgeReadinessState.online;
   }
 
   @override
   String toString() {
-    return 'NodeState(peerId: $peerId, isStarted: $isStarted, connections: ${connections.length}'
+    return 'NodeState(peerId: $peerId, isStarted: $isStarted, '
+        'connections: ${connections.length}, sendReady: $sendCapabilityReady, '
+        'inboxReady: $inboxCapabilityReady'
         '${relayState != null ? ', relayState: $relayState' : ''})';
   }
 }

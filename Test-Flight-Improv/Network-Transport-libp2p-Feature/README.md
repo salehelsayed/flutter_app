@@ -42,6 +42,12 @@ Experiment-driven TDD plan for reducing the current `~9.1s` degraded relay recov
 
 Scope: relay recovery and degraded background resume. Changes when recovery sequencing, relay-state truth, or resume orchestration changes.
 
+### 06-sendable-online-badge-spec — "When should the badge say Online versus Online.?"
+
+Product and verification spec for redefining the green badge so `Online` means the app is usable now (send + inbox) and `Online.` means relay reservation is also ready. Includes the required widget, service, integration, smoke, and benchmark coverage for a later Phase 6 implementation pass.
+
+Scope: readiness semantics and user-visible connection-state UX. Changes when badge meaning, readiness proof, or Phase 6 verification coverage changes.
+
 ---
 
 ## How the documents relate
@@ -54,8 +60,9 @@ Scope: relay recovery and degraded background resume. Changes when recovery sequ
 | 03 | | | Timing, bottlenecks, hazards | |
 | 04 | | | | Routing strategy, test coverage |
 | 05 | | | Relay recovery experiments | Candidate fixes, benchmark gates |
+| 06 | | Dart/UI readiness semantics | Badge meaning, usability vs relay-ready | Phase 6 acceptance contract |
 
-00 is the parts list. 01 and 02 are the wiring diagrams. 03 is the performance profile. 04 is the routing contract. 05 is the recovery experiment plan.
+00 is the parts list. 01 and 02 are the wiring diagrams. 03 is the performance profile. 04 is the routing contract. 05 is the recovery experiment plan. 06 is the readiness-semantics contract for the optional Phase 6 product change.
 
 ---
 
@@ -75,3 +82,4 @@ Scope: relay recovery and degraded background resume. Changes when recovery sequ
 | Is the group inbox fallback tested when publish times out? | 04 (Section 5) |
 | I'm adding a new transport path — what do I touch? | 04 (Section 7) |
 | Which relay-recovery change should we benchmark first? | 05 |
+| What should `Online` versus `Online.` mean to users? | 06 |

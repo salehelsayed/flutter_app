@@ -50,6 +50,55 @@ Future<bool> waitForOnline(
   );
 }
 
+bool isSendableBadgeState(NodeState state) {
+  return state.badgeReadinessState == BadgeReadinessState.online ||
+      state.badgeReadinessState == BadgeReadinessState.onlineDotted;
+}
+
+bool isPlainOnlineBadgeState(NodeState state) {
+  return state.badgeReadinessState == BadgeReadinessState.online;
+}
+
+bool isRelayReadyBadgeState(NodeState state) {
+  return state.badgeReadinessState == BadgeReadinessState.onlineDotted;
+}
+
+/// Wait for the service-owned badge to reach a usable green state.
+Future<bool> waitForSendableBadge(
+  P2PServiceImpl service, {
+  Duration timeout = const Duration(seconds: 30),
+}) {
+  return waitFor(
+    () => isSendableBadgeState(service.currentState),
+    timeout: timeout,
+    label: 'Sendable badge',
+  );
+}
+
+/// Wait for the badge to reach plain `Online` before dotted relay-ready.
+Future<bool> waitForPlainOnlineBadge(
+  P2PServiceImpl service, {
+  Duration timeout = const Duration(seconds: 30),
+}) {
+  return waitFor(
+    () => isPlainOnlineBadgeState(service.currentState),
+    timeout: timeout,
+    label: 'Plain Online badge',
+  );
+}
+
+/// Wait for the badge to reach the dotted relay-ready state.
+Future<bool> waitForRelayReadyBadge(
+  P2PServiceImpl service, {
+  Duration timeout = const Duration(seconds: 30),
+}) {
+  return waitFor(
+    () => isRelayReadyBadgeState(service.currentState),
+    timeout: timeout,
+    label: 'Online. badge',
+  );
+}
+
 /// Initialize bridge, generate identity, and return the components.
 Future<BenchmarkNode> createBenchmarkNode() async {
   final bridge = GoBridgeClient();
@@ -145,6 +194,96 @@ List<Map<String, dynamic>> filterEvents(
   String eventName,
 ) => events.where((e) => e['event'] == eventName).toList();
 
+/// Returns the first matching event details, optionally scoped by phase.
+Map<String, dynamic>? firstEventDetails(
+  List<Map<String, dynamic>> events,
+  String eventName, {
+  String? phase,
+}) {
+  for (final event in events) {
+    if (event['event'] != eventName) {
+      continue;
+    }
+    final details = event['details'] as Map<String, dynamic>;
+    if (phase == null || details['phase'] == phase) {
+      return details;
+    }
+  }
+  return null;
+}
+
+int? totalMsFromDetails(Map<String, dynamic>? details) {
+  return (details?['totalMs'] as num?)?.toInt();
+}
+
+/// Returns the gap between two Phase 6 timing events when they share a proof window.
+int? phaseEventGapMs(
+  List<Map<String, dynamic>> events, {
+  required String phase,
+  required String earlierEvent,
+  required String laterEvent,
+}) {
+  final earlier = firstEventDetails(events, earlierEvent, phase: phase);
+  final later = firstEventDetails(events, laterEvent, phase: phase);
+  if (earlier == null || later == null) {
+    return null;
+  }
+  final earlierWindowId = earlier['proofWindowId'];
+  final laterWindowId = later['proofWindowId'];
+  if (earlierWindowId != null &&
+      laterWindowId != null &&
+      earlierWindowId != laterWindowId) {
+    return null;
+  }
+  final earlierMs = totalMsFromDetails(earlier);
+  final laterMs = totalMsFromDetails(later);
+  if (earlierMs == null || laterMs == null) {
+    return null;
+  }
+  return laterMs - earlierMs;
+}
+
+/// Returns the badge-honesty gap for one Phase 6 proof window.
+int? badgeHonestyGapMs(
+  List<Map<String, dynamic>> events, {
+  required String phase,
+}) {
+  final sendable = firstEventDetails(
+    events,
+    'TIME_TO_SENDABLE_BADGE',
+    phase: phase,
+  );
+  final firstSend = firstEventDetails(
+    events,
+    'FIRST_SEND_SUCCESS_IN_WINDOW',
+    phase: phase,
+  );
+  final firstInbox = firstEventDetails(
+    events,
+    'FIRST_INBOX_SUCCESS_IN_WINDOW',
+    phase: phase,
+  );
+  if (sendable == null || firstSend == null || firstInbox == null) {
+    return null;
+  }
+
+  final proofWindowId = sendable['proofWindowId'];
+  if (proofWindowId != null &&
+      (firstSend['proofWindowId'] != proofWindowId ||
+          firstInbox['proofWindowId'] != proofWindowId)) {
+    return null;
+  }
+
+  final sendableMs = totalMsFromDetails(sendable);
+  final firstSendMs = totalMsFromDetails(firstSend);
+  final firstInboxMs = totalMsFromDetails(firstInbox);
+  if (sendableMs == null || firstSendMs == null || firstInboxMs == null) {
+    return null;
+  }
+  final usableProofMs = firstSendMs > firstInboxMs ? firstSendMs : firstInboxMs;
+  return sendableMs - usableProofMs;
+}
+
 /// Compute percentile from a sorted list.
 int percentile(List<int> sortedValues, int p) {
   if (sortedValues.isEmpty) return 0;
@@ -194,6 +333,24 @@ class BenchmarkNode {
     final started = await service.startNode(privateKey, peerId);
     if (!started) return false;
     return waitForOnline(service, timeout: timeout);
+  }
+
+  /// Start the node and wait for the first usable green badge state.
+  Future<bool> startAndWaitSendable({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final started = await service.startNode(privateKey, peerId);
+    if (!started) return false;
+    return waitForSendableBadge(service, timeout: timeout);
+  }
+
+  /// Start the node and wait for the dotted relay-ready badge.
+  Future<bool> startAndWaitRelayReady({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final started = await service.startNode(privateKey, peerId);
+    if (!started) return false;
+    return waitForRelayReadyBadge(service, timeout: timeout);
   }
 
   /// Stop and clean up.

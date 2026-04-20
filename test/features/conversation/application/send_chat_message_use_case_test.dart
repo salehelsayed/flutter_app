@@ -21,7 +21,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 import '../domain/repositories/fake_media_attachment_repository.dart';
 
 // -- Fake P2P Service --
-class FakeP2PService implements P2PService {
+class FakeP2PService implements P2PService, ReadinessProofRecorder {
   final NodeState _currentState;
   bool sendMessageResult;
   String? sendMessageReply;
@@ -55,6 +55,10 @@ class FakeP2PService implements P2PService {
   bool localSendResult = true;
   int localSendCallCount = 0;
   int? lastLocalSendTimeoutMs;
+  int recordSuccessfulSendProofCallCount = 0;
+  String? lastReadinessProofSource;
+  String? lastReadinessTrigger;
+  String? lastReadinessSendPath;
 
   /// Use [useNullDiscover] to explicitly request null discoverPeer results.
   FakeP2PService({
@@ -143,7 +147,11 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     storeInInboxCallCount++;
     lastInboxPeerId = toPeerId;
     lastInboxMessage = message;
@@ -207,6 +215,30 @@ class FakeP2PService implements P2PService {
 
   @override
   Future<void> warmBackground() async {}
+
+  @override
+  bool get hasPendingResumeStarted => false;
+
+  @override
+  void markResumeStarted() {}
+
+  @override
+  void clearResumeStarted() {}
+
+  @override
+  void noteTransportSessionReset({required String trigger}) {}
+
+  @override
+  void recordSuccessfulSendProof({
+    required String source,
+    required String trigger,
+    String? sendPath,
+  }) {
+    recordSuccessfulSendProofCallCount++;
+    lastReadinessProofSource = source;
+    lastReadinessTrigger = trigger;
+    lastReadinessSendPath = sendPath;
+  }
 
   @override
   String? get lastRecoveryMethod => null;
@@ -569,40 +601,44 @@ void main() {
       },
     );
 
-    test('sends GIF-only media with image/gif preserved in the wire envelope', () async {
-      final attachment = MediaAttachment(
-        id: 'gif-attachment',
-        messageId: '',
-        mime: 'image/gif',
-        size: 4096,
-        mediaType: 'image',
-        localPath: '/tmp/funny.gif',
-        downloadStatus: 'done',
-        createdAt: '2026-03-15T11:00:00.000Z',
-      );
+    test(
+      'sends GIF-only media with image/gif preserved in the wire envelope',
+      () async {
+        final attachment = MediaAttachment(
+          id: 'gif-attachment',
+          messageId: '',
+          mime: 'image/gif',
+          size: 4096,
+          mediaType: 'image',
+          localPath: '/tmp/funny.gif',
+          downloadStatus: 'done',
+          createdAt: '2026-03-15T11:00:00.000Z',
+        );
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: '',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-        mediaAttachments: [attachment],
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: [attachment],
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      expect(message!.media, hasLength(1));
-      expect(message.media.single.mime, 'image/gif');
-      expect(message.media.single.isAnimated, isTrue);
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.media, hasLength(1));
+        expect(message.media.single.mime, 'image/gif');
+        expect(message.media.single.isAnimated, isTrue);
 
-      final envelope = jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-      final payload = envelope['payload'] as Map<String, dynamic>;
-      final media = payload['media'] as List<dynamic>;
-      expect(media, hasLength(1));
-      expect((media.single as Map<String, dynamic>)['mime'], 'image/gif');
-    });
+        final envelope =
+            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+        final payload = envelope['payload'] as Map<String, dynamic>;
+        final media = payload['media'] as List<dynamic>;
+        expect(media, hasLength(1));
+        expect((media.single as Map<String, dynamic>)['mime'], 'image/gif');
+      },
+    );
 
     test('sends correct JSON envelope via P2P', () async {
       await sendChatMessage(
@@ -782,6 +818,10 @@ void main() {
         expect(p2pService.lastInboxPeerId, 'target-peer');
         expect(p2pService.lastInboxMessage, isNotNull);
         expect(p2pService.lastInboxMessage, contains('"type":"chat_message"'));
+        expect(p2pService.recordSuccessfulSendProofCallCount, 1);
+        expect(p2pService.lastReadinessProofSource, 'chat_send_inbox');
+        expect(p2pService.lastReadinessTrigger, 'user_action');
+        expect(p2pService.lastReadinessSendPath, 'inbox');
       },
     );
 
@@ -887,6 +927,10 @@ void main() {
 
       expect(result, SendChatMessageResult.success);
       expect(message!.status, 'delivered');
+      expect(p2pService.recordSuccessfulSendProofCallCount, 1);
+      expect(p2pService.lastReadinessProofSource, 'chat_send_direct');
+      expect(p2pService.lastReadinessTrigger, 'user_action');
+      expect(p2pService.lastReadinessSendPath, 'direct');
     });
 
     test('success without ack keeps sent when inbox handoff fails', () async {
@@ -975,6 +1019,9 @@ void main() {
       // Local send was attempted (race includes local + direct)
       expect(p2pService.localSendCallCount, 1);
       expect(p2pService.probeRelayCallCount, 0);
+      expect(p2pService.recordSuccessfulSendProofCallCount, 1);
+      expect(p2pService.lastReadinessProofSource, 'chat_send_local');
+      expect(p2pService.lastReadinessSendPath, 'local');
     });
 
     test('falls through to relay when local send fails', () async {
@@ -1989,8 +2036,11 @@ class _ThrowOnInboxP2PService implements P2PService {
   }) async => p2pSucceeds;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async =>
-      throw Exception('Inbox store exploded');
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => throw Exception('Inbox store exploded');
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -2092,7 +2142,11 @@ class _ThrowOnSendP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -2198,7 +2252,11 @@ class _FlakyDiscoverP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -2299,7 +2357,11 @@ class _SlowLocalFastDirectP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>

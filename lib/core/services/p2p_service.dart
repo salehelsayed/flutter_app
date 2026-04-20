@@ -10,6 +10,31 @@ enum RelayProbeResult {
   error, // Network/bridge error — unknown state, fall through to dial
 }
 
+/// Narrow additive hook for Session 1 readiness-proof ownership.
+///
+/// Kept separate from [P2PService] so existing fake services do not all need
+/// to grow Phase 6 behavior before the rollout is complete.
+abstract interface class ReadinessProofRecorder {
+  /// Whether a caller-owned resume assessment window is already active.
+  bool get hasPendingResumeStarted;
+
+  /// Marks the beginning of a resume assessment window.
+  void markResumeStarted();
+
+  /// Clears any outstanding resume assessment state.
+  void clearResumeStarted();
+
+  /// Starts a new proof window because the current transport session was reset.
+  void noteTransportSessionReset({required String trigger});
+
+  /// Records the first truthful successful send proof for the current window.
+  void recordSuccessfulSendProof({
+    required String source,
+    required String trigger,
+    String? sendPath,
+  });
+}
+
 /// Abstract interface for P2P networking service.
 ///
 /// This service manages the P2P node lifecycle, peer connections,

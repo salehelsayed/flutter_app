@@ -515,6 +515,10 @@ Hypothesis:
 
 This phase is optional because it changes product semantics, not just recovery mechanics.
 
+Detailed product contract and verification matrix:
+
+- `06-sendable-online-badge-spec.md`
+
 RED tests:
 
 - degraded resume allows deterministic inbox/direct fallback before green badge return
