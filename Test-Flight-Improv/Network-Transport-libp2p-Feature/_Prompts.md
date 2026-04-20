@@ -221,12 +221,18 @@ I wan t you to run this prompt 3 times in seqwuence using a new agent each time 
   Execute Phase 5 only: remove noncritical work from the foreground recovery critical path.
 
   Requirements:
+  - Start from the current accepted Phase 3b branch/baseline, not from the old Phase 0 branch state.
   - Add the RED tests for Phase 5 first.
   - Implement only the minimum deferral needed for this phase.
   - Protect against inbox, registration, and group continuity regressions.
-  - Run the required benchmarks and regressions.
-  - Update the experiment results markdown with before/after numbers and a keep/revert recommendation.
-  - Stop after reporting.
+  - Run the required benchmarks and regressions for Phase 5.
+  - Update the experiment results markdown with:
+    - before/after numbers versus the current accepted Phase 3b baseline
+    - before/after numbers versus the frozen Phase 0 baseline
+    - whether degraded resume improved on top of Phase 3b
+    - whether post-resume correctness stayed green
+    - keep or revert recommendation
+  - Stop after reporting. Do not continue to any other phase.
 
   Phase 6 optional:
 
@@ -297,4 +303,3 @@ Return this repo to the pre-experiment baseline, regardless of which later phase
     - whether it exactly matches the baseline commit
     - git status
   - Stop after reporting.
-

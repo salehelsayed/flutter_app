@@ -53,6 +53,11 @@ Future<bool?> handleAppResumed({
   Future<void> Function()? retryPushRegistrationFn,
 }) async {
   final resumeStart = DateTime.now();
+  final readinessProofRecorder = p2pService is ReadinessProofRecorder
+      ? p2pService as ReadinessProofRecorder
+      : null;
+  final hadPendingResumeStarted =
+      readinessProofRecorder?.hasPendingResumeStarted ?? false;
   debugPrint(
     '[RESUME] ====== APP RESUME BEGIN ====== ${resumeStart.toIso8601String()}',
   );
@@ -64,6 +69,7 @@ Future<bool?> handleAppResumed({
   );
 
   emitFlowEvent(layer: 'FL', event: 'APP_LIFECYCLE_RESUME_BEGIN', details: {});
+  readinessProofRecorder?.markResumeStarted();
 
   try {
     int? groupReregisterMs;
@@ -84,6 +90,9 @@ Future<bool?> handleAppResumed({
       final reinitMs = DateTime.now().difference(reinitStart).inMilliseconds;
       debugPrint(
         '[RESUME] Step 1b: bridge.reinitialize() done (took ${reinitMs}ms)',
+      );
+      readinessProofRecorder?.noteTransportSessionReset(
+        trigger: 'bridge_reinitialize',
       );
     }
 
@@ -525,5 +534,9 @@ Future<bool?> handleAppResumed({
       details: {'error': e.toString()},
     );
     return null;
+  } finally {
+    if (!hadPendingResumeStarted) {
+      readinessProofRecorder?.clearResumeStarted();
+    }
   }
 }

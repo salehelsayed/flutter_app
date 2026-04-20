@@ -64,32 +64,68 @@ Future<List<Map<String, dynamic>>> _captureFlowEvents(
       .toList();
 }
 
+NodeState _stateForBadgeState(BadgeReadinessState state) {
+  return switch (state) {
+    BadgeReadinessState.offline => const NodeState(isStarted: false),
+    BadgeReadinessState.connecting => const NodeState(
+      isStarted: true,
+      relayState: 'degraded',
+    ),
+    BadgeReadinessState.online => const NodeState(
+      isStarted: true,
+      relayState: 'degraded',
+      sendCapabilityReady: true,
+      inboxCapabilityReady: true,
+    ),
+    BadgeReadinessState.onlineDotted => const NodeState(
+      isStarted: true,
+      relayState: 'online',
+      circuitAddresses: ['/p2p-circuit/relay1'],
+      sendCapabilityReady: true,
+      inboxCapabilityReady: true,
+    ),
+  };
+}
+
+Future<_FakeP2PService> _pumpIndicator(
+  WidgetTester tester,
+  NodeState initialState,
+) async {
+  final fakeService = _FakeP2PService(initialState);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(body: ConnectionStatusIndicator(p2pService: fakeService)),
+    ),
+  );
+  return fakeService;
+}
+
 void main() {
-  group('Phase 1 — connection status indicator health logic', () {
+  group('Legacy relay health helper', () {
     test('stays connecting until circuit or reservation-ready state arrives', () {
       // Node is started but has no circuit addresses — should be "degraded" (connecting)
-      const state = NodeState(
-        isStarted: true,
-        circuitAddresses: [],
-      );
+      const state = NodeState(isStarted: true, circuitAddresses: []);
 
       final health = healthFromState(state);
       expect(health, ConnectionHealth.degraded);
     });
 
-    test('does not turn online from relay-edge signal without circuit or reservation readiness', () {
-      // Node is started, has connections (relay socket) but no circuit addresses
-      const state = NodeState(
-        isStarted: true,
-        circuitAddresses: [],
-        // Having connections doesn't mean we have circuit relay
-      );
+    test(
+      'does not turn online from relay-edge signal without circuit or reservation readiness',
+      () {
+        // Node is started, has connections (relay socket) but no circuit addresses
+        const state = NodeState(
+          isStarted: true,
+          circuitAddresses: [],
+          // Having connections doesn't mean we have circuit relay
+        );
 
-      final health = healthFromState(state);
-      // Should still be degraded (connecting), not online
-      expect(health, isNot(ConnectionHealth.online));
-      expect(health, ConnectionHealth.degraded);
-    });
+        final health = healthFromState(state);
+        // Should still be degraded (connecting), not online
+        expect(health, isNot(ConnectionHealth.online));
+        expect(health, ConnectionHealth.degraded);
+      },
+    );
 
     test('turns online when circuit addresses are present', () {
       const state = NodeState(
@@ -108,126 +144,241 @@ void main() {
       expect(health, ConnectionHealth.offline);
     });
 
-    test('turns online when relayState is online even without circuit addresses', () {
-      const state = NodeState(
-        isStarted: true,
-        circuitAddresses: [],
-        relayState: 'online',
-      );
+    test(
+      'turns online when relayState is online even without circuit addresses',
+      () {
+        const state = NodeState(
+          isStarted: true,
+          circuitAddresses: [],
+          relayState: 'online',
+        );
 
-      final health = healthFromState(state);
-      expect(health, ConnectionHealth.online);
-    });
+        final health = healthFromState(state);
+        expect(health, ConnectionHealth.online);
+      },
+    );
 
-    test('stays online when relayState is not online but circuit addresses exist', () {
-      const state = NodeState(
-        isStarted: true,
-        circuitAddresses: ['/p2p-circuit/relay1'],
-        relayState: 'reconnecting',
-      );
-
-      final health = healthFromState(state);
-      // Circuit addresses present → online, even if relayState is stale
-      expect(health, ConnectionHealth.online);
-    });
-
-    test('shows degraded when relayState is not online and no circuit addresses', () {
-      const state = NodeState(
-        isStarted: true,
-        circuitAddresses: [],
-        relayState: 'reconnecting',
-      );
-
-      final health = healthFromState(state);
-      expect(health, ConnectionHealth.degraded);
-    });
-
-    test('falls back to circuitAddresses when relayState is null (legacy bridge)', () {
-      const state = NodeState(
-        isStarted: true,
-        circuitAddresses: ['/p2p-circuit/relay1'],
-      );
-
-      final health = healthFromState(state);
-      expect(health, ConnectionHealth.online);
-    });
-  });
-
-  group('§24 TIME_TO_ONLINE_BADGE_WIDGET', () {
-    testWidgets('emits timing when widget transitions to online', (tester) async {
-      final fakeService = _FakeP2PService(const NodeState(
-        isStarted: true,
-        circuitAddresses: [],
-        relayState: 'starting',
-      ));
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: ConnectionStatusIndicator(p2pService: fakeService),
-          ),
-        ),
-      );
-
-      // Widget starts in degraded state
-      expect(find.text('Connecting'), findsOneWidget);
-
-      final events = await _captureFlowEvents(() async {
-        // Push online state
-        fakeService.pushState(const NodeState(
+    test(
+      'stays online when relayState is not online but circuit addresses exist',
+      () {
+        const state = NodeState(
           isStarted: true,
           circuitAddresses: ['/p2p-circuit/relay1'],
-          relayState: 'online',
-        ));
+          relayState: 'reconnecting',
+        );
 
-        await tester.pump();
-      });
+        final health = healthFromState(state);
+        // Circuit addresses present → online, even if relayState is stale
+        expect(health, ConnectionHealth.online);
+      },
+    );
 
+    test(
+      'shows degraded when relayState is not online and no circuit addresses',
+      () {
+        const state = NodeState(
+          isStarted: true,
+          circuitAddresses: [],
+          relayState: 'reconnecting',
+        );
+
+        final health = healthFromState(state);
+        expect(health, ConnectionHealth.degraded);
+      },
+    );
+
+    test(
+      'falls back to circuitAddresses when relayState is null (legacy bridge)',
+      () {
+        const state = NodeState(
+          isStarted: true,
+          circuitAddresses: ['/p2p-circuit/relay1'],
+        );
+
+        final health = healthFromState(state);
+        expect(health, ConnectionHealth.online);
+      },
+    );
+  });
+
+  group('Phase 6 badge rendering', () {
+    testWidgets('renders the exact visible text for all four badge states', (
+      tester,
+    ) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.offline),
+      );
+
+      expect(find.text('Offline'), findsOneWidget);
+
+      fakeService.pushState(
+        _stateForBadgeState(BadgeReadinessState.connecting),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Connecting'), findsOneWidget);
+
+      fakeService.pushState(_stateForBadgeState(BadgeReadinessState.online));
+      await tester.pump();
+      await tester.pump();
       expect(find.text('Online'), findsOneWidget);
 
-      final widgetBadge = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET',
-      ).toList();
-      expect(widgetBadge, hasLength(1));
-      final details = widgetBadge.first['details'] as Map<String, dynamic>;
-      expect(details['widgetTransitionMs'], greaterThanOrEqualTo(0));
-      expect(details['previousHealth'], 'degraded');
+      fakeService.pushState(
+        _stateForBadgeState(BadgeReadinessState.onlineDotted),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Online.'), findsOneWidget);
 
       fakeService.dispose();
     });
 
-    testWidgets('does not emit timing when health unchanged', (tester) async {
-      final fakeService = _FakeP2PService(const NodeState(
-        isStarted: true,
-        circuitAddresses: ['/p2p-circuit/relay1'],
-        relayState: 'online',
-      ));
+    testWidgets('Online and Online. expose distinct semantics labels', (
+      tester,
+    ) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.online),
+      );
+      final semanticsHandle = tester.ensureSemantics();
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: ConnectionStatusIndicator(p2pService: fakeService),
-          ),
-        ),
+      expect(
+        tester.getSemantics(find.byType(ConnectionStatusIndicator)).label,
+        'online, send and inbox ready, relay reservation pending',
       );
 
-      expect(find.text('Online'), findsOneWidget);
+      fakeService.pushState(
+        _stateForBadgeState(BadgeReadinessState.onlineDotted),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        tester.getSemantics(find.byType(ConnectionStatusIndicator)).label,
+        'online, send and inbox ready, relay reservation ready',
+      );
+
+      semanticsHandle.dispose();
+      fakeService.dispose();
+    });
+
+    testWidgets('Online and Online. keep the same green text styling', (
+      tester,
+    ) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.online),
+      );
+      final onlineText = tester.widget<Text>(find.text('Online'));
+      final onlineColor = onlineText.style?.color;
+
+      fakeService.pushState(
+        _stateForBadgeState(BadgeReadinessState.onlineDotted),
+      );
+      await tester.pump();
+
+      final dottedText = tester.widget<Text>(find.text('Online.'));
+      expect(dottedText.style?.color, onlineColor);
+
+      fakeService.dispose();
+    });
+  });
+
+  group('§24 TIME_TO_ONLINE_BADGE_WIDGET', () {
+    testWidgets('emits timing when widget first transitions to Online', (
+      tester,
+    ) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.connecting),
+      );
 
       final events = await _captureFlowEvents(() async {
-        // Push same health state (still online)
-        fakeService.pushState(const NodeState(
-          isStarted: true,
-          circuitAddresses: ['/p2p-circuit/relay1', '/p2p-circuit/relay2'],
-          relayState: 'online',
-        ));
-
+        fakeService.pushState(_stateForBadgeState(BadgeReadinessState.online));
+        await tester.pump();
         await tester.pump();
       });
 
-      final widgetBadge = events.where(
-        (e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET',
-      ).toList();
+      final widgetBadge = events
+          .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+          .toList();
+      expect(widgetBadge, hasLength(1));
+      final details = widgetBadge.first['details'] as Map<String, dynamic>;
+      expect(details['widgetTransitionMs'], greaterThanOrEqualTo(0));
+      expect(details['previousHealth'], 'degraded');
+      expect(find.text('Online'), findsOneWidget);
+
+      fakeService.dispose();
+    });
+
+    testWidgets('emits timing when widget goes directly to Online.', (
+      tester,
+    ) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.connecting),
+      );
+
+      final events = await _captureFlowEvents(() async {
+        fakeService.pushState(
+          _stateForBadgeState(BadgeReadinessState.onlineDotted),
+        );
+        await tester.pump();
+        await tester.pump();
+      });
+
+      final widgetBadge = events
+          .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+          .toList();
+      expect(widgetBadge, hasLength(1));
+      expect(find.text('Online.'), findsOneWidget);
+
+      fakeService.dispose();
+    });
+
+    testWidgets('does not emit timing when moving between Online and Online.', (
+      tester,
+    ) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.online),
+      );
+
+      final events = await _captureFlowEvents(() async {
+        fakeService.pushState(
+          _stateForBadgeState(BadgeReadinessState.onlineDotted),
+        );
+        await tester.pump();
+        await tester.pump();
+      });
+
+      final widgetBadge = events
+          .where((e) => e['event'] == 'TIME_TO_ONLINE_BADGE_WIDGET')
+          .toList();
       expect(widgetBadge, isEmpty);
+      expect(find.text('Online.'), findsOneWidget);
+
+      fakeService.dispose();
+    });
+
+    testWidgets('applies ready-state downgrades immediately', (tester) async {
+      final fakeService = await _pumpIndicator(
+        tester,
+        _stateForBadgeState(BadgeReadinessState.onlineDotted),
+      );
+
+      fakeService.pushState(_stateForBadgeState(BadgeReadinessState.online));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Online'), findsOneWidget);
+
+      fakeService.pushState(
+        _stateForBadgeState(BadgeReadinessState.connecting),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Connecting'), findsOneWidget);
 
       fakeService.dispose();
     });

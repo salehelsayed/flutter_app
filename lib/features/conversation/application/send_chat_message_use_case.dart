@@ -29,6 +29,36 @@ const Duration interactiveInboxBudget = Duration(seconds: 3);
 const int relayProbeSendAttempts = 2;
 const Duration relayProbeRetryBackoff = Duration(milliseconds: 250);
 
+void _recordSuccessfulSendReadinessProof(
+  P2PService p2pService,
+  ConversationMessage message,
+) {
+  if (message.status != 'delivered') {
+    return;
+  }
+
+  if (p2pService case final ReadinessProofRecorder recorder) {
+    final sendPath = switch (message.transport) {
+      'local' => 'local',
+      'relay' => 'relay',
+      'inbox' => 'inbox',
+      'reuse' => 'direct',
+      _ => 'direct',
+    };
+    final source = switch (sendPath) {
+      'local' => 'chat_send_local',
+      'relay' => 'chat_send_relay',
+      'inbox' => 'chat_send_inbox',
+      _ => 'chat_send_direct',
+    };
+    recorder.recordSuccessfulSendProof(
+      source: source,
+      trigger: 'user_action',
+      sendPath: sendPath,
+    );
+  }
+}
+
 /// Result of sending a chat message.
 enum SendChatMessageResult {
   success,
@@ -278,7 +308,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       reuseSendStopwatch.stop();
       stepTimings = {
         'sendMs': reuseSendStopwatch.elapsedMilliseconds,
-        if (sendResult.streamOpenMs != null) 'streamOpenMs': sendResult.streamOpenMs!,
+        if (sendResult.streamOpenMs != null)
+          'streamOpenMs': sendResult.streamOpenMs!,
         if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
         if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
       };
@@ -527,6 +558,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         status: 'delivered',
         text: sanitizedText,
       );
+      _recordSuccessfulSendReadinessProof(p2pService, deliveredMessage);
       return (
         SendChatMessageResult.success,
         deliveredMessage.copyWith(media: normalizedAttachments ?? const []),
@@ -869,9 +901,11 @@ Future<_RaceResult> _tryRelayProbeSend(
               acknowledged: sendResult.acknowledged,
               stepTimings: {
                 'relayProbeMs': relayProbeStopwatch.elapsedMilliseconds,
-                if (sendResult.streamOpenMs != null) 'streamOpenMs': sendResult.streamOpenMs!,
+                if (sendResult.streamOpenMs != null)
+                  'streamOpenMs': sendResult.streamOpenMs!,
                 if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
-                if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
+                if (sendResult.ackWaitMs != null)
+                  'ackWaitMs': sendResult.ackWaitMs!,
               },
             );
           }
@@ -1030,6 +1064,7 @@ Future<(SendChatMessageResult, ConversationMessage)> _completeSuccessfulSend({
     status: message.status,
     text: text,
   );
+  _recordSuccessfulSendReadinessProof(p2pService, message);
   return (
     SendChatMessageResult.success,
     message.copyWith(media: attachments ?? const []),

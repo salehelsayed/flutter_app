@@ -9,7 +9,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 /// In-memory [P2PService] for tests.
 ///
 /// Configurable return values, tracks call counts and last arguments.
-class FakeP2PService implements P2PService {
+class FakeP2PService implements P2PService, ReadinessProofRecorder {
   NodeState _currentState;
   final _stateController = StreamController<NodeState>.broadcast();
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -42,6 +42,14 @@ class FakeP2PService implements P2PService {
   int retrieveInboxCallCount = 0;
   int performImmediateHealthCheckCallCount = 0;
   int drainOfflineInboxCallCount = 0;
+  int markResumeStartedCallCount = 0;
+  int clearResumeStartedCallCount = 0;
+  int noteTransportSessionResetCallCount = 0;
+  int recordSuccessfulSendProofCallCount = 0;
+  String? lastReadinessTrigger;
+  String? lastReadinessProofSource;
+  String? lastReadinessSendPath;
+  bool hasPendingResumeStartedValue = false;
 
   // Last arguments
   String? lastStartNodePrivateKey;
@@ -154,7 +162,11 @@ class FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     storeInInboxCallCount++;
     lastStoreInInboxPeerId = toPeerId;
     lastStoreInInboxMessage = message;
@@ -231,6 +243,39 @@ class FakeP2PService implements P2PService {
 
   @override
   String? get lastRecoveryMethod => recoveryMethod;
+
+  @override
+  void markResumeStarted() {
+    markResumeStartedCallCount++;
+    hasPendingResumeStartedValue = true;
+  }
+
+  @override
+  void clearResumeStarted() {
+    clearResumeStartedCallCount++;
+    hasPendingResumeStartedValue = false;
+  }
+
+  @override
+  bool get hasPendingResumeStarted => hasPendingResumeStartedValue;
+
+  @override
+  void noteTransportSessionReset({required String trigger}) {
+    noteTransportSessionResetCallCount++;
+    lastReadinessTrigger = trigger;
+  }
+
+  @override
+  void recordSuccessfulSendProof({
+    required String source,
+    required String trigger,
+    String? sendPath,
+  }) {
+    recordSuccessfulSendProofCallCount++;
+    lastReadinessProofSource = source;
+    lastReadinessTrigger = trigger;
+    lastReadinessSendPath = sendPath;
+  }
 
   @override
   void dispose() {

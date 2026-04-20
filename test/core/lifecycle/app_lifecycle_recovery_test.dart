@@ -72,6 +72,8 @@ void main() {
       await handleAppResumed(bridge: bridge, p2pService: p2pService);
 
       expect(bridge.reinitializeCallCount, equals(1));
+      expect(p2pService.noteTransportSessionResetCallCount, equals(1));
+      expect(p2pService.lastReadinessTrigger, 'bridge_reinitialize');
     });
 
     test('calls performImmediateHealthCheck on p2pService', () async {
@@ -79,6 +81,29 @@ void main() {
 
       expect(p2pService.performImmediateHealthCheckCallCount, equals(1));
     });
+
+    test(
+      'marks and clears readiness resume tracking around resume handling',
+      () async {
+        await handleAppResumed(bridge: bridge, p2pService: p2pService);
+
+        expect(p2pService.markResumeStartedCallCount, equals(1));
+        expect(p2pService.clearResumeStartedCallCount, equals(1));
+      },
+    );
+
+    test(
+      'preserves caller-owned resume tracking for post-resume checks',
+      () async {
+        p2pService.markResumeStarted();
+
+        await handleAppResumed(bridge: bridge, p2pService: p2pService);
+
+        expect(p2pService.markResumeStartedCallCount, equals(2));
+        expect(p2pService.clearResumeStartedCallCount, equals(0));
+        expect(p2pService.hasPendingResumeStarted, isTrue);
+      },
+    );
 
     test('calls drainOfflineInbox on p2pService', () async {
       await handleAppResumed(bridge: bridge, p2pService: p2pService);

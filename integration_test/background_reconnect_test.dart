@@ -1,11 +1,12 @@
-// Integration test: Background → Foreground reconnection smoke test.
+// Integration test: Phase 6 background reconnect smoke test.
 //
 // Runs on a REAL device with the real Go bridge and relay server.
-// Exercises the full reconnection lifecycle:
-//   1. Start node → wait for Online (circuit addresses from relay)
-//   2. Disconnect relay peer → verify Degraded (simulates background drop)
-//   3. Run handleAppResumed() → verify recovery back to Online
-//   4. Measure timing at each step
+// Exercises the Phase 6 user-visible contract:
+//   1. Start node -> wait for dotted relay-ready badge (`Online.`)
+//   2. Disconnect relay peer -> lose dotted readiness
+//   3. Start a fresh readiness proof window
+//   4. Prove send and inbox success while relay is still absent -> plain `Online`
+//   5. Reconnect relay -> dotted `Online.` returns
 //
 // Run on device:
 //   flutter test integration_test/background_reconnect_test.dart -d <DEVICE_ID>
@@ -22,17 +23,13 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
-import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
-import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 
-/// Relay peer ID extracted from the default rendezvous address.
 final _relayPeerId = defaultRendezvousAddress.split('/p2p/').last;
 
-/// Wait for a condition with timeout, polling every [interval].
 Future<bool> _waitFor(
   bool Function() condition, {
   Duration timeout = const Duration(seconds: 30),
@@ -55,6 +52,28 @@ Future<bool> _waitFor(
   return false;
 }
 
+bool _isSendable(NodeState state) {
+  return state.badgeReadinessState == BadgeReadinessState.online ||
+      state.badgeReadinessState == BadgeReadinessState.onlineDotted;
+}
+
+bool _isPlainOnline(NodeState state) {
+  return state.badgeReadinessState == BadgeReadinessState.online;
+}
+
+bool _isRelayReady(NodeState state) {
+  return state.badgeReadinessState == BadgeReadinessState.onlineDotted;
+}
+
+String _badgeLabel(NodeState state) {
+  return switch (state.badgeReadinessState) {
+    BadgeReadinessState.offline => 'Offline',
+    BadgeReadinessState.connecting => 'Connecting',
+    BadgeReadinessState.online => 'Online',
+    BadgeReadinessState.onlineDotted => 'Online.',
+  };
+}
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -64,23 +83,17 @@ void main() {
   }
 
   testWidgets(
-    'Background → Foreground reconnection smoke test',
+    'Background reconnect exposes plain Online before dotted Online.',
     (tester) async {
       print('\n');
       print('═' * 60);
-      print('  BACKGROUND → FOREGROUND RECONNECTION TEST');
+      print('  PHASE 6 BACKGROUND RECONNECT SMOKE');
       print('═' * 60);
       print('');
 
-      // ---------------------------------------------------------------
-      // 1. Initialize bridge and generate identity
-      // ---------------------------------------------------------------
-      print('[PHASE 1] Initializing bridge...');
       final bridge = GoBridgeClient();
       await bridge.initialize();
-      print('[PHASE 1] Bridge initialized');
 
-      print('[PHASE 1] Generating identity...');
       final genResponse = await bridge.send(
         jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
       );
@@ -89,246 +102,190 @@ void main() {
       final identity = genResult['identity'] as Map<String, dynamic>;
       final peerId = identity['peerId'] as String;
       final privateKey = identity['privateKey'] as String;
-      print('[PHASE 1] Identity: ${peerId.substring(0, 24)}...');
-
-      // ---------------------------------------------------------------
-      // 2. Start node and wait for Online
-      // ---------------------------------------------------------------
-      print('');
-      print('─' * 60);
-      print('[PHASE 2] Starting P2P node and waiting for Online...');
-      final startTime = DateTime.now();
 
       final p2pService = P2PServiceImpl(
         bridge: bridge,
         inboxStagingRepository: InMemoryInboxStagingRepository(),
       );
 
-      // Collect state transitions for reporting
       final stateLog = <String>[];
+      final startTime = DateTime.now();
       final stateSub = p2pService.stateStream.listen((state) {
-        final health = healthFromState(state);
         final elapsed = DateTime.now().difference(startTime).inMilliseconds;
         final entry =
-            '  +${elapsed}ms  ${health.name.toUpperCase()}'
-            '  circuits=${state.circuitAddresses.length}'
-            '  conns=${state.connections.length}';
+            '  +${elapsed}ms  badge=${_badgeLabel(state)} '
+            'sendReady=${state.sendCapabilityReady} '
+            'inboxReady=${state.inboxCapabilityReady} '
+            'relayReady=${state.relayReady} '
+            'circuits=${state.circuitAddresses.length}';
         stateLog.add(entry);
         print('[STATE] $entry');
       });
 
-      final started = await p2pService.startNode(privateKey, peerId);
-      if (!started) {
-        stateSub.cancel();
-        p2pService.dispose();
-        bridge.dispose();
-        fail('P2P node failed to start (relay unreachable)');
-      }
+      try {
+        print('[PHASE 1] Starting node...');
+        final started = await p2pService.startNode(privateKey, peerId);
+        if (!started) {
+          fail('P2P node failed to start');
+        }
 
-      final nodeStartedMs = DateTime.now().difference(startTime).inMilliseconds;
-      print('[PHASE 2] Node started in ${nodeStartedMs}ms');
-      print(
-        '[PHASE 2] Initial state: '
-        'isStarted=${p2pService.currentState.isStarted}, '
-        'circuits=${p2pService.currentState.circuitAddresses.length}',
-      );
-
-      // Wait for circuit addresses (Online)
-      final reachedOnline = await _waitFor(
-        () =>
-            healthFromState(p2pService.currentState) == ConnectionHealth.online,
-        timeout: const Duration(seconds: 30),
-        label: 'Online after start',
-      );
-
-      final timeToOnlineMs = DateTime.now()
-          .difference(startTime)
-          .inMilliseconds;
-
-      if (!reachedOnline) {
-        print(
-          '[PHASE 2] FAILED: Never reached Online after ${timeToOnlineMs}ms',
+        final reachedRelayReady = await _waitFor(
+          () => _isRelayReady(p2pService.currentState),
+          timeout: const Duration(seconds: 30),
+          label: 'Initial Online.',
+        );
+        expect(
+          reachedRelayReady,
+          isTrue,
+          reason: 'Node should reach Online. before the reconnect scenario',
         );
         print(
-          '[PHASE 2] Final state: '
-          'circuits=${p2pService.currentState.circuitAddresses.length}',
+          '[PHASE 1] Initial badge: ${_badgeLabel(p2pService.currentState)}',
         );
 
-        stateSub.cancel();
-        await p2pService.stopNode();
-        p2pService.dispose();
-        bridge.dispose();
-        fail('Node did not reach Online within 30s');
-      }
-
-      print('[PHASE 2] ONLINE in ${timeToOnlineMs}ms');
-      print('[PHASE 2] Circuit addresses:');
-      for (final addr in p2pService.currentState.circuitAddresses) {
-        print('  $addr');
-      }
-
-      // ---------------------------------------------------------------
-      // 3. Simulate background: disconnect relay peer
-      // ---------------------------------------------------------------
-      print('');
-      print('─' * 60);
-      print('[PHASE 3] Simulating background — disconnecting relay peer...');
-      print('[PHASE 3] Relay peer: $_relayPeerId');
-
-      final disconnectStart = DateTime.now();
-
-      // Disconnect from the relay to simulate what happens when iOS/Android
-      // suspends the app and the relay connection times out.
-      final disconnectResponse = await bridge.send(
-        jsonEncode({
-          'cmd': 'peer:disconnect',
-          'payload': {'peerId': _relayPeerId},
-        }),
-      );
-      final disconnectResult =
-          jsonDecode(disconnectResponse) as Map<String, dynamic>;
-      print('[PHASE 3] Disconnect result: ${disconnectResult['ok']}');
-
-      // Wait a moment for the node to notice the disconnect
-      await Future<void>.delayed(const Duration(seconds: 2));
-
-      // Poll current status
-      final statusResponse = await bridge.send(
-        jsonEncode({'cmd': 'node:status', 'payload': {}}),
-      );
-      final statusResult = jsonDecode(statusResponse) as Map<String, dynamic>;
-      final postDisconnectState = NodeState.fromJson(statusResult);
-      final postDisconnectHealth = healthFromState(postDisconnectState);
-
-      final disconnectMs = DateTime.now()
-          .difference(disconnectStart)
-          .inMilliseconds;
-      print('[PHASE 3] Post-disconnect state (${disconnectMs}ms):');
-      print('  isStarted: ${postDisconnectState.isStarted}');
-      print('  circuits: ${postDisconnectState.circuitAddresses.length}');
-      print('  connections: ${postDisconnectState.connections.length}');
-      print('  health: ${postDisconnectHealth.name}');
-
-      if (postDisconnectHealth == ConnectionHealth.online) {
+        print('');
+        print('─' * 60);
         print(
-          '[PHASE 3] NOTE: Still online after disconnect — '
-          'relay may have auto-reconnected. Trying again with longer wait...',
+          '[PHASE 2] Disconnecting relay peer to simulate background loss...',
         );
-        // Try disconnecting again and waiting longer
-        await bridge.send(
+        final disconnectStart = DateTime.now();
+        final disconnectResponse = await bridge.send(
           jsonEncode({
             'cmd': 'peer:disconnect',
             'payload': {'peerId': _relayPeerId},
           }),
         );
-        await Future<void>.delayed(const Duration(seconds: 5));
-      }
+        final disconnectResult =
+            jsonDecode(disconnectResponse) as Map<String, dynamic>;
+        print('[PHASE 2] Disconnect result: ${disconnectResult['ok']}');
 
-      // ---------------------------------------------------------------
-      // 4. Trigger resume recovery (handleAppResumed)
-      // ---------------------------------------------------------------
-      print('');
-      print('─' * 60);
-      print('[PHASE 4] Running handleAppResumed() — simulating foreground...');
-
-      final resumeStart = DateTime.now();
-
-      // Snapshot state before recovery
-      print(
-        '[PHASE 4] State BEFORE resume: '
-        'circuits=${p2pService.currentState.circuitAddresses.length}, '
-        'health=${healthFromState(p2pService.currentState).name}',
-      );
-
-      final bridgeOk = await handleAppResumed(
-        bridge: bridge,
-        p2pService: p2pService,
-      );
-
-      final resumeMs = DateTime.now().difference(resumeStart).inMilliseconds;
-      print('[PHASE 4] handleAppResumed() completed in ${resumeMs}ms');
-      print('[PHASE 4] Bridge was healthy: $bridgeOk');
-      print(
-        '[PHASE 4] State AFTER resume: '
-        'circuits=${p2pService.currentState.circuitAddresses.length}, '
-        'health=${healthFromState(p2pService.currentState).name}',
-      );
-
-      // ---------------------------------------------------------------
-      // 5. Wait for Online (may need additional health checks)
-      // ---------------------------------------------------------------
-      print('');
-      print('─' * 60);
-      print('[PHASE 5] Waiting for Online after resume...');
-
-      final recoveryStart = DateTime.now();
-      final recoveredOnline = await _waitFor(
-        () =>
-            healthFromState(p2pService.currentState) == ConnectionHealth.online,
-        timeout: const Duration(seconds: 60),
-        interval: const Duration(seconds: 1),
-        label: 'Online after resume',
-      );
-
-      final recoveryMs = DateTime.now()
-          .difference(recoveryStart)
-          .inMilliseconds;
-      final totalMs = DateTime.now().difference(startTime).inMilliseconds;
-
-      // ---------------------------------------------------------------
-      // 6. Report results
-      // ---------------------------------------------------------------
-      print('');
-      print('═' * 60);
-      print('  RESULTS');
-      print('═' * 60);
-      print('');
-      print('  Time to first Online:     ${timeToOnlineMs}ms');
-      print('  handleAppResumed() took:  ${resumeMs}ms');
-      print('  Recovery to Online:       ${recoveryMs}ms');
-      print('  Total test time:          ${totalMs}ms');
-      print('');
-      print('  Final state:');
-      print('    isStarted:  ${p2pService.currentState.isStarted}');
-      print(
-        '    circuits:   ${p2pService.currentState.circuitAddresses.length}',
-      );
-      print('    connections:${p2pService.currentState.connections.length}');
-      print('    health:     ${healthFromState(p2pService.currentState).name}');
-      print('');
-      print('  State transition log:');
-      for (final entry in stateLog) {
-        print(entry);
-      }
-      print('');
-
-      if (recoveredOnline) {
-        print('  ✓ PASS: Recovered to Online after ${recoveryMs}ms');
-      } else {
-        print('  ✗ FAIL: Did NOT recover to Online within 60s');
-        print(
-          '    → This confirms the bug: relay reservation is not completing',
+        final relayDropped = await _waitFor(
+          () => !_isRelayReady(p2pService.currentState),
+          timeout: const Duration(seconds: 15),
+          label: 'Relay-ready badge dropped',
         );
+        expect(
+          relayDropped,
+          isTrue,
+          reason: 'Disconnect should remove dotted relay-ready state',
+        );
+        final disconnectMs = DateTime.now()
+            .difference(disconnectStart)
+            .inMilliseconds;
+        print('[PHASE 2] Relay-ready removed in ${disconnectMs}ms');
+        print(
+          '[PHASE 2] Badge after disconnect: ${_badgeLabel(p2pService.currentState)}',
+        );
+
+        print('');
+        print('─' * 60);
+        print('[PHASE 3] Starting a fresh proof window without relay-ready...');
+        p2pService.markResumeStarted();
+        p2pService.noteTransportSessionReset(
+          trigger: 'background_reconnect_phase6_smoke',
+        );
+
+        final sendStart = DateTime.now();
+        final stored = await p2pService.storeInInbox(
+          peerId,
+          jsonEncode({
+            'type': 'phase6_probe',
+            'version': '1',
+            'timestamp': DateTime.now().toUtc().toIso8601String(),
+          }),
+        );
+        final sendMs = DateTime.now().difference(sendStart).inMilliseconds;
+        expect(
+          stored,
+          isTrue,
+          reason: 'Inbox-backed send proof should succeed',
+        );
+        print('[PHASE 3] storeInInbox succeeded in ${sendMs}ms');
+        print(
+          '[PHASE 3] Badge after send proof: ${_badgeLabel(p2pService.currentState)}',
+        );
+
+        final inboxStart = DateTime.now();
+        final inboxMessages = await p2pService.retrieveInbox();
+        final inboxMs = DateTime.now().difference(inboxStart).inMilliseconds;
+        print('[PHASE 3] retrieveInbox succeeded in ${inboxMs}ms');
+        print('[PHASE 3] Retrieved ${inboxMessages.length} messages');
+
+        final reachedPlainOnline = await _waitFor(
+          () => _isPlainOnline(p2pService.currentState),
+          timeout: const Duration(seconds: 15),
+          label: 'Plain Online before dotted reconnect',
+        );
+        expect(
+          reachedPlainOnline,
+          isTrue,
+          reason:
+              'The device smoke must surface plain Online after truthful send '
+              'and inbox proof while relay-ready is still absent.',
+        );
+        expect(_isSendable(p2pService.currentState), isTrue);
+        expect(_isRelayReady(p2pService.currentState), isFalse);
+        print(
+          '[PHASE 3] Plain usable badge reached: ${_badgeLabel(p2pService.currentState)}',
+        );
+
+        print('');
+        print('─' * 60);
+        print('[PHASE 4] Reconnecting relay to recover dotted readiness...');
+        final reconnectStart = DateTime.now();
+        final reconnectResponse = await bridge.send(
+          jsonEncode({'cmd': 'relay:reconnect', 'payload': {}}),
+        );
+        final reconnectResult =
+            jsonDecode(reconnectResponse) as Map<String, dynamic>;
+        print('[PHASE 4] relay:reconnect result: ${reconnectResult['ok']}');
+
+        final reachedDottedOnline = await _waitFor(
+          () => _isRelayReady(p2pService.currentState),
+          timeout: const Duration(seconds: 30),
+          label: 'Relay-ready Online. restored',
+        );
+        final reconnectMs = DateTime.now()
+            .difference(reconnectStart)
+            .inMilliseconds;
+        expect(
+          reachedDottedOnline,
+          isTrue,
+          reason:
+              'After the plain Online window, relay reconnect should restore '
+              'the dotted Online. badge.',
+        );
+
+        print('');
+        print('═' * 60);
+        print('  RESULTS');
+        print('═' * 60);
+        print('');
+        print('  Relay disconnect to non-dotted: ${disconnectMs}ms');
+        print('  Plain Online send proof:        ${sendMs}ms');
+        print('  Plain Online inbox proof:       ${inboxMs}ms');
+        print('  Relay reconnect to Online.:     ${reconnectMs}ms');
+        print('');
+        print('  Final badge: ${_badgeLabel(p2pService.currentState)}');
+        print(
+          '  Final sendReady: ${p2pService.currentState.sendCapabilityReady}',
+        );
+        print(
+          '  Final inboxReady: ${p2pService.currentState.inboxCapabilityReady}',
+        );
+        print('  Final relayReady: ${p2pService.currentState.relayReady}');
+        print('');
+        print('  State transition log:');
+        for (final entry in stateLog) {
+          print(entry);
+        }
+        print('');
+      } finally {
+        await stateSub.cancel();
+        await p2pService.stopNode();
+        p2pService.dispose();
+        bridge.dispose();
       }
-
-      print('');
-      print('═' * 60);
-
-      // Expect recovery — this is the assertion that will catch the bug
-      expect(
-        recoveredOnline,
-        isTrue,
-        reason:
-            'App should recover to Online after background → foreground. '
-            'Recovery took ${recoveryMs}ms. '
-            'If this fails, the relay reservation is broken.',
-      );
-
-      // Cleanup
-      await stateSub.cancel();
-      await p2pService.stopNode();
-      p2pService.dispose();
-      bridge.dispose();
     },
     skip: _shouldSkipBackgroundReconnectSmoke(),
   );

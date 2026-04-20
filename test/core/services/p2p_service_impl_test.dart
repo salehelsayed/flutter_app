@@ -10,6 +10,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
@@ -2049,6 +2050,385 @@ void main() {
 
         // The final state should reflect online.
         expect(service.currentState.circuitAddresses, isNotEmpty);
+      },
+    );
+  });
+
+  group('Phase 6 readiness proof windows', () {
+    test(
+      'warmBackground reaches sendable state from proactive proofs before relay-ready',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'degraded',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        bridge.whenCommand('inbox:store', (_) => jsonEncode({'ok': true}));
+
+        final events = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+          await service.warmBackground();
+        });
+
+        expect(service.currentState.sendCapabilityReady, isTrue);
+        expect(service.currentState.inboxCapabilityReady, isTrue);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.online,
+        );
+
+        final windowStarts = events
+            .where((e) => e['event'] == 'READINESS_PROOF_WINDOW_START')
+            .toList();
+        expect(windowStarts, hasLength(1));
+
+        final proofResults = events
+            .where((e) => e['event'] == 'READINESS_PROOF_RESULT')
+            .map((e) => e['details'] as Map<String, dynamic>)
+            .toList();
+        expect(
+          proofResults.any(
+            (details) =>
+                details['capability'] == 'send' && details['success'] == true,
+          ),
+          isTrue,
+        );
+        expect(
+          proofResults.any(
+            (details) =>
+                details['capability'] == 'inbox' && details['success'] == true,
+          ),
+          isTrue,
+        );
+
+        final sendable = events
+            .where((e) => e['event'] == 'TIME_TO_SENDABLE_BADGE')
+            .toList();
+        expect(sendable, hasLength(1));
+        final relayReady = events
+            .where((e) => e['event'] == 'TIME_TO_RELAY_READY_BADGE')
+            .toList();
+        expect(relayReady, isEmpty);
+      },
+    );
+
+    test(
+      'warmBackground retries proactive send proof after an initial startup failure and reaches Online without user action',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'degraded',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        var inboxStoreCallCount = 0;
+        bridge.whenCommand('inbox:store', (_) {
+          inboxStoreCallCount += 1;
+          return jsonEncode({'ok': inboxStoreCallCount >= 2});
+        });
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        final reachedPlainOnline = service.stateStream.firstWhere(
+          (state) => state.badgeReadinessState == BadgeReadinessState.online,
+        );
+
+        final events = await _captureFlowEvents(() async {
+          await service.warmBackground();
+          await reachedPlainOnline;
+        });
+
+        expect(inboxStoreCallCount, 2);
+        expect(service.currentState.sendCapabilityReady, isTrue);
+        expect(service.currentState.inboxCapabilityReady, isTrue);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.online,
+        );
+
+        final sendProofResults = events
+            .where((e) => e['event'] == 'READINESS_PROOF_RESULT')
+            .map((e) => e['details'] as Map<String, dynamic>)
+            .where((details) => details['capability'] == 'send')
+            .toList(growable: false);
+        expect(
+          sendProofResults.any(
+            (details) =>
+                details['success'] == false &&
+                details['proofSource'] == 'system_inbox_store_probe' &&
+                details['failureReason'] == 'store_returned_false',
+          ),
+          isTrue,
+        );
+        expect(
+          sendProofResults.any(
+            (details) =>
+                details['success'] == true &&
+                details['proofSource'] == 'system_inbox_store_probe',
+          ),
+          isTrue,
+        );
+
+        final firstSend = events
+            .where((e) => e['event'] == 'FIRST_SEND_SUCCESS_IN_WINDOW')
+            .map((e) => e['details'] as Map<String, dynamic>)
+            .single;
+        expect(firstSend['source'], 'system_inbox_store_probe');
+        expect(firstSend['trigger'], 'system_action');
+
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_SENDABLE_BADGE'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'relay-ready transition retries proactive send proof after earlier startup failures and reaches Online. without user action',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'degraded',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        var inboxStoreCallCount = 0;
+        bridge.whenCommand('inbox:store', (_) {
+          inboxStoreCallCount += 1;
+          return jsonEncode({'ok': inboxStoreCallCount >= 3});
+        });
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        await service.warmBackground();
+        for (var i = 0; i < 10 && inboxStoreCallCount < 2; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        expect(inboxStoreCallCount, 2);
+        expect(service.currentState.sendCapabilityReady, isFalse);
+        expect(service.currentState.inboxCapabilityReady, isTrue);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.connecting,
+        );
+
+        final reachedRelayReady = service.stateStream.firstWhere(
+          (state) =>
+              state.badgeReadinessState == BadgeReadinessState.onlineDotted,
+        );
+
+        final events = await _captureFlowEvents(() async {
+          bridge.onRelayStateChanged?.call({
+            'relayState': 'online',
+            'healthyRelayCount': 1,
+            'watchdogRestartCount': 0,
+            'needsGroupRecovery': false,
+            'reason': 'relay_connected',
+          });
+          await reachedRelayReady;
+        });
+
+        expect(inboxStoreCallCount, 3);
+        expect(service.currentState.sendCapabilityReady, isTrue);
+        expect(service.currentState.inboxCapabilityReady, isTrue);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDotted,
+        );
+
+        final firstSend = events
+            .where((e) => e['event'] == 'FIRST_SEND_SUCCESS_IN_WINDOW')
+            .map((e) => e['details'] as Map<String, dynamic>)
+            .single;
+        expect(firstSend['source'], 'system_inbox_store_probe');
+        expect(firstSend['trigger'], 'system_action');
+
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_SENDABLE_BADGE'),
+          hasLength(1),
+        );
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_RELAY_READY_BADGE'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'relay-ready alone does not unlock the service-owned ready state',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+          }),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+
+        expect(service.currentState.relayReady, isTrue);
+        expect(service.currentState.sendCapabilityReady, isFalse);
+        expect(service.currentState.inboxCapabilityReady, isFalse);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.connecting,
+        );
+      },
+    );
+
+    test(
+      'successful inbox retrieval completes a send-only proof window when relay-ready is already true',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        service.recordSuccessfulSendProof(
+          source: 'test_send',
+          trigger: 'user_action',
+          sendPath: 'direct',
+        );
+
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.connecting,
+        );
+
+        final events = await _captureFlowEvents(() async {
+          final messages = await service.retrieveInbox();
+          expect(messages, isEmpty);
+        });
+
+        expect(service.currentState.inboxCapabilityReady, isTrue);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDotted,
+        );
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_SENDABLE_BADGE'),
+          hasLength(1),
+        );
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_RELAY_READY_BADGE'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'background resume starts a new proof window instead of reusing stale proof',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': ['/p2p-circuit/relay1'],
+            'connections': [],
+            'relayState': 'online',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        var inboxStoreCallCount = 0;
+        bridge.whenCommand('inbox:store', (_) {
+          inboxStoreCallCount += 1;
+          return jsonEncode({'ok': inboxStoreCallCount == 1});
+        });
+        var statusCallCount = 0;
+        bridge.whenCommand('node:status', (_) {
+          statusCallCount += 1;
+          return jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': <String>[],
+            'connections': [],
+            'relayState': statusCallCount == 1 ? 'degraded' : 'degraded',
+          });
+        });
+        bridge.whenCommand('relay:reconnect', (_) => jsonEncode({'ok': true}));
+
+        await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+        await service.warmBackground();
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.onlineDotted,
+        );
+
+        service.markResumeStarted();
+        final events = await _captureFlowEvents(() async {
+          await service.performImmediateHealthCheck();
+          service.clearResumeStarted();
+        });
+
+        expect(service.currentState.sendCapabilityReady, isFalse);
+        expect(service.currentState.inboxCapabilityReady, isFalse);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.connecting,
+        );
+
+        final windowStart = events
+            .where((e) => e['event'] == 'READINESS_PROOF_WINDOW_START')
+            .map((e) => e['details'] as Map<String, dynamic>)
+            .last;
+        expect(windowStart['phase'], 'background_resume');
       },
     );
   });

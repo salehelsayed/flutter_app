@@ -34,7 +34,7 @@ typedef ReplayRecoveredInboxIntroductionMessage =
     Future<RecoveredInboxReplayOutcome> Function(ChatMessage message);
 
 /// Implementation of P2PService backed by the Go native bridge.
-class P2PServiceImpl implements P2PService {
+class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
   final Bridge _bridge;
   final LocalP2PService? _localP2P;
   final PushTokenStore? _pushTokenStore;
@@ -92,6 +92,33 @@ class P2PServiceImpl implements P2PService {
 
   /// §24: Timestamp when the app resumed from background (for background_resume timing).
   DateTime? _resumeStartedAt;
+
+  /// Phase 6: monotonically increasing proof-window sequence.
+  int _readinessProofWindowSequence = 0;
+
+  /// Phase 6: current proof-window identity and phase.
+  String? _activeReadinessProofWindowId;
+  String? _activeReadinessPhase;
+  DateTime? _activeReadinessProofWindowStartedAt;
+
+  /// Phase 6: first-attempt timing for each capability inside the current window.
+  DateTime? _sendProofAttemptStartedAt;
+  DateTime? _inboxProofAttemptStartedAt;
+
+  /// Phase 6: source attribution for the first successful proof in the window.
+  String? _sendProofSource;
+  String? _inboxProofSource;
+
+  /// Phase 6: emit first-success events only once per window.
+  bool _sendSuccessEventEmitted = false;
+  bool _inboxSuccessEventEmitted = false;
+
+  /// Phase 6: tracks whether the current trigger already fired a proactive
+  /// send proof attempt. Failures may clear this so later system triggers can
+  /// retry within the same proof window.
+  bool _proactiveSendProofAttemptedInWindow = false;
+  bool _proactiveSendProofInFlight = false;
+  String? _pendingProactiveSendProofTrigger;
 
   /// Section 8: source that triggered the next relay recovery attempt.
   String? _pendingRecoverySource;
@@ -227,6 +254,11 @@ class P2PServiceImpl implements P2PService {
       if (response['ok'] == true) {
         _stopped = false;
         _emitState(NodeState.fromJson(response), source: 'start_response');
+        _beginReadinessProofWindow(
+          phase: 'cold_start',
+          trigger: 'start_response',
+          startedAt: _nodeStartRequestedAt ?? DateTime.now(),
+        );
 
         if (_stateHasHealthyRelay(_currentState)) {
           _hasEverBeenOnline = true;
@@ -258,6 +290,11 @@ class P2PServiceImpl implements P2PService {
           _emitState(
             NodeState.fromJson(statusResponse),
             source: 'start_response',
+          );
+          _beginReadinessProofWindow(
+            phase: 'hot_restart',
+            trigger: 'already_started_resync',
+            startedAt: _nodeStartRequestedAt ?? DateTime.now(),
           );
 
           if (_stateHasHealthyRelay(_currentState)) {
@@ -347,6 +384,7 @@ class P2PServiceImpl implements P2PService {
 
     // Run inbox drain and local discovery concurrently.
     final futures = <Future>[];
+    futures.add(_attemptProactiveSendProofIfNeeded(trigger: 'warm_background'));
     futures.add(
       _drainOfflineInbox().timeout(warmTaskTimeout).catchError((_) {}),
     );
@@ -964,11 +1002,21 @@ class P2PServiceImpl implements P2PService {
           },
         );
       }
+      _recordSuccessfulInboxProof(
+        source: 'drain_offline_inbox',
+        trigger: 'system_action',
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_STAGED_DRAIN_EXCEPTION',
         details: {'error': e.toString()},
+      );
+      _recordCapabilityProofFailure(
+        capability: 'inbox',
+        source: 'drain_offline_inbox',
+        trigger: 'system_action',
+        failureReason: e.toString(),
       );
     }
   }
@@ -995,6 +1043,7 @@ class P2PServiceImpl implements P2PService {
 
       if (response['ok'] == true) {
         _hasEverBeenOnline = false;
+        _clearActiveReadinessProofWindow();
         _emitState(NodeState.stopped);
 
         emitFlowEvent(
@@ -1277,16 +1326,361 @@ class P2PServiceImpl implements P2PService {
     _healthCheckTimer = null;
   }
 
+  NodeState _stateWithReadinessProjection(
+    NodeState state, {
+    bool? sendCapabilityReady,
+    bool? inboxCapabilityReady,
+  }) {
+    if (!state.isStarted) {
+      return state.copyWith(
+        sendCapabilityReady: false,
+        inboxCapabilityReady: false,
+      );
+    }
+
+    return state.copyWith(
+      sendCapabilityReady:
+          sendCapabilityReady ?? _currentState.sendCapabilityReady,
+      inboxCapabilityReady:
+          inboxCapabilityReady ?? _currentState.inboxCapabilityReady,
+    );
+  }
+
+  void _ensureActiveReadinessProofWindow({
+    required String phase,
+    required String trigger,
+    DateTime? startedAt,
+  }) {
+    if (_activeReadinessProofWindowId != null) {
+      return;
+    }
+    _beginReadinessProofWindow(
+      phase: phase,
+      trigger: trigger,
+      startedAt: startedAt,
+    );
+  }
+
+  void _beginReadinessProofWindow({
+    required String phase,
+    required String trigger,
+    DateTime? startedAt,
+  }) {
+    if (!_currentState.isStarted) {
+      return;
+    }
+
+    final alreadyResetForPhase =
+        _activeReadinessPhase == phase &&
+        !_currentState.sendCapabilityReady &&
+        !_currentState.inboxCapabilityReady;
+    if (alreadyResetForPhase) {
+      return;
+    }
+
+    _readinessProofWindowSequence += 1;
+    _activeReadinessProofWindowId =
+        'readiness_${_readinessProofWindowSequence}';
+    _activeReadinessPhase = phase;
+    _activeReadinessProofWindowStartedAt = startedAt ?? DateTime.now();
+    _sendProofAttemptStartedAt = _activeReadinessProofWindowStartedAt;
+    _inboxProofAttemptStartedAt = _activeReadinessProofWindowStartedAt;
+    _sendProofSource = null;
+    _inboxProofSource = null;
+    _sendSuccessEventEmitted = false;
+    _inboxSuccessEventEmitted = false;
+    _proactiveSendProofAttemptedInWindow = false;
+    _pendingProactiveSendProofTrigger = null;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'READINESS_PROOF_WINDOW_START',
+      details: {
+        'proofWindowId': _activeReadinessProofWindowId,
+        'phase': phase,
+        'trigger': trigger,
+      },
+    );
+
+    final resetState = _stateWithReadinessProjection(
+      _currentState,
+      sendCapabilityReady: false,
+      inboxCapabilityReady: false,
+    );
+    if (_stateMeaningfullyChanged(_currentState, resetState)) {
+      _emitState(
+        resetState,
+        source: 'readiness_window_start',
+        mergeServiceOwnedReadiness: false,
+      );
+    }
+  }
+
+  void _clearActiveReadinessProofWindow() {
+    _activeReadinessProofWindowId = null;
+    _activeReadinessPhase = null;
+    _activeReadinessProofWindowStartedAt = null;
+    _sendProofAttemptStartedAt = null;
+    _inboxProofAttemptStartedAt = null;
+    _sendProofSource = null;
+    _inboxProofSource = null;
+    _sendSuccessEventEmitted = false;
+    _inboxSuccessEventEmitted = false;
+    _proactiveSendProofAttemptedInWindow = false;
+    _pendingProactiveSendProofTrigger = null;
+  }
+
+  String _phaseForImplicitReadinessWindow() {
+    if (_resumeStartedAt != null) {
+      return 'background_resume';
+    }
+    if (_nodeStartRequestedAt != null && !_hasEverBeenOnline) {
+      return _isHotRestart ? 'hot_restart' : 'cold_start';
+    }
+    return 'recovery';
+  }
+
+  DateTime _startedAtForImplicitReadinessWindow() {
+    return _resumeStartedAt ??
+        _nodeStartRequestedAt ??
+        _lastWentOfflineAt ??
+        DateTime.now();
+  }
+
+  void _emitCapabilitySuccessIfNeeded({
+    required String capability,
+    required String source,
+    required String trigger,
+    String? sendPath,
+  }) {
+    final proofWindowId = _activeReadinessProofWindowId;
+    final phase = _activeReadinessPhase;
+    final startedAt = _activeReadinessProofWindowStartedAt;
+    if (proofWindowId == null || phase == null || startedAt == null) {
+      return;
+    }
+
+    final totalMs = DateTime.now().difference(startedAt).inMilliseconds;
+    if (capability == 'send' && !_sendSuccessEventEmitted) {
+      _sendSuccessEventEmitted = true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FIRST_SEND_SUCCESS_IN_WINDOW',
+        details: {
+          'proofWindowId': proofWindowId,
+          'phase': phase,
+          'totalMs': totalMs,
+          'source': source,
+          if (sendPath != null) 'sendPath': sendPath,
+          'trigger': trigger,
+        },
+      );
+      return;
+    }
+
+    if (capability == 'inbox' && !_inboxSuccessEventEmitted) {
+      _inboxSuccessEventEmitted = true;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FIRST_INBOX_SUCCESS_IN_WINDOW',
+        details: {
+          'proofWindowId': proofWindowId,
+          'phase': phase,
+          'totalMs': totalMs,
+          'source': source,
+          'trigger': trigger,
+        },
+      );
+    }
+  }
+
+  void _recordCapabilityProofResult({
+    required String capability,
+    required bool success,
+    required String proofSource,
+    String? trigger,
+    String? sendPath,
+    String? failureReason,
+  }) {
+    _ensureActiveReadinessProofWindow(
+      phase: _phaseForImplicitReadinessWindow(),
+      trigger: trigger ?? 'implicit_$capability',
+      startedAt: _startedAtForImplicitReadinessWindow(),
+    );
+
+    final proofWindowId = _activeReadinessProofWindowId;
+    final phase = _activeReadinessPhase;
+    if (proofWindowId == null || phase == null) {
+      return;
+    }
+
+    final attemptStartedAt = capability == 'send'
+        ? (_sendProofAttemptStartedAt ?? _activeReadinessProofWindowStartedAt)
+        : (_inboxProofAttemptStartedAt ?? _activeReadinessProofWindowStartedAt);
+    final elapsedMs = attemptStartedAt == null
+        ? 0
+        : DateTime.now().difference(attemptStartedAt).inMilliseconds;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'READINESS_PROOF_RESULT',
+      details: {
+        'proofWindowId': proofWindowId,
+        'phase': phase,
+        'capability': capability,
+        'success': success,
+        'proofSource': proofSource,
+        'elapsedMs': elapsedMs,
+        if (trigger != null) 'trigger': trigger,
+        if (sendPath != null) 'sendPath': sendPath,
+        if (!success && failureReason != null) 'failureReason': failureReason,
+      },
+    );
+
+    if (capability == 'send') {
+      _sendProofAttemptStartedAt = null;
+    } else {
+      _inboxProofAttemptStartedAt = null;
+    }
+  }
+
   /// Records when the app resumed from background.
   /// Called by lifecycle handler before health check.
+  @override
+  bool get hasPendingResumeStarted => _resumeStartedAt != null;
+
+  /// Records when the app resumed from background.
+  /// Called by lifecycle handler before health check.
+  @override
   void markResumeStarted() {
     _resumeStartedAt = DateTime.now();
   }
 
   /// Clears any unconsumed resume timestamp.
   /// Called in finally block to prevent stale timestamps.
+  @override
   void clearResumeStarted() {
     _resumeStartedAt = null;
+  }
+
+  @override
+  void noteTransportSessionReset({required String trigger}) {
+    _beginReadinessProofWindow(
+      phase: _resumeStartedAt != null ? 'background_resume' : 'recovery',
+      trigger: trigger,
+      startedAt: _resumeStartedAt ?? DateTime.now(),
+    );
+  }
+
+  @override
+  void recordSuccessfulSendProof({
+    required String source,
+    required String trigger,
+    String? sendPath,
+  }) {
+    _recordCapabilityProofResult(
+      capability: 'send',
+      success: true,
+      proofSource: source,
+      trigger: trigger,
+      sendPath: sendPath,
+    );
+    _sendProofSource = source;
+    _emitCapabilitySuccessIfNeeded(
+      capability: 'send',
+      source: source,
+      trigger: trigger,
+      sendPath: sendPath,
+    );
+
+    final updatedState = _stateWithReadinessProjection(
+      _currentState,
+      sendCapabilityReady: true,
+    );
+    if (_stateMeaningfullyChanged(_currentState, updatedState)) {
+      _emitState(
+        updatedState,
+        source: 'send_proof_success',
+        mergeServiceOwnedReadiness: false,
+      );
+    }
+  }
+
+  void _recordSuccessfulInboxProof({
+    required String source,
+    required String trigger,
+  }) {
+    _recordCapabilityProofResult(
+      capability: 'inbox',
+      success: true,
+      proofSource: source,
+      trigger: trigger,
+    );
+    _inboxProofSource = source;
+    _emitCapabilitySuccessIfNeeded(
+      capability: 'inbox',
+      source: source,
+      trigger: trigger,
+    );
+
+    final updatedState = _stateWithReadinessProjection(
+      _currentState,
+      inboxCapabilityReady: true,
+    );
+    if (_stateMeaningfullyChanged(_currentState, updatedState)) {
+      _emitState(
+        updatedState,
+        source: 'inbox_proof_success',
+        mergeServiceOwnedReadiness: false,
+      );
+    }
+
+    _retryProactiveSendProofIfNeeded(trigger: 'inbox_proof_success');
+  }
+
+  void _recordCapabilityProofFailure({
+    required String capability,
+    required String source,
+    required String trigger,
+    String? failureReason,
+  }) {
+    _recordCapabilityProofResult(
+      capability: capability,
+      success: false,
+      proofSource: source,
+      trigger: trigger,
+      failureReason: failureReason,
+    );
+
+    final updatedState = capability == 'send'
+        ? _stateWithReadinessProjection(
+            _currentState,
+            sendCapabilityReady: false,
+          )
+        : _stateWithReadinessProjection(
+            _currentState,
+            inboxCapabilityReady: false,
+          );
+    if (_stateMeaningfullyChanged(_currentState, updatedState)) {
+      _emitState(
+        updatedState,
+        source: '${capability}_proof_failure',
+        mergeServiceOwnedReadiness: false,
+      );
+    }
+  }
+
+  void _retryProactiveSendProofIfNeeded({required String trigger}) {
+    if (!_currentState.isStarted ||
+        _currentState.sendCapabilityReady ||
+        _activeReadinessProofWindowId == null) {
+      return;
+    }
+    if (_proactiveSendProofInFlight) {
+      _pendingProactiveSendProofTrigger = trigger;
+      return;
+    }
+    unawaited(_attemptProactiveSendProofIfNeeded(trigger: trigger));
   }
 
   /// If the badge is already green when resume fires, emit immediately.
@@ -1306,6 +1700,73 @@ class P2PServiceImpl implements P2PService {
         },
       );
       _resumeStartedAt = null;
+    }
+  }
+
+  String _buildReadinessSendProbeEnvelope() {
+    return jsonEncode({
+      'type': 'readiness_proof',
+      'version': '1',
+      'proofWindowId': _activeReadinessProofWindowId,
+      'timestamp': DateTime.now().toIso8601String(),
+    });
+  }
+
+  Future<void> _attemptProactiveSendProofIfNeeded({
+    required String trigger,
+  }) async {
+    if (!_currentState.isStarted ||
+        _currentState.sendCapabilityReady ||
+        _activeReadinessProofWindowId == null ||
+        _proactiveSendProofAttemptedInWindow ||
+        _proactiveSendProofInFlight) {
+      return;
+    }
+
+    final peerId = _currentState.peerId;
+    if (peerId == null || peerId.isEmpty) {
+      return;
+    }
+
+    _proactiveSendProofAttemptedInWindow = true;
+    _proactiveSendProofInFlight = true;
+    _sendProofAttemptStartedAt ??= DateTime.now();
+    try {
+      final stored = await storeInInbox(
+        peerId,
+        _buildReadinessSendProbeEnvelope(),
+        timeoutMs: foregroundInboxTimeout.inMilliseconds,
+      );
+      if (stored) {
+        recordSuccessfulSendProof(
+          source: 'system_inbox_store_probe',
+          trigger: 'system_action',
+          sendPath: 'inbox',
+        );
+      } else {
+        _proactiveSendProofAttemptedInWindow = false;
+        _recordCapabilityProofFailure(
+          capability: 'send',
+          source: 'system_inbox_store_probe',
+          trigger: trigger,
+          failureReason: 'store_returned_false',
+        );
+      }
+    } catch (e) {
+      _proactiveSendProofAttemptedInWindow = false;
+      _recordCapabilityProofFailure(
+        capability: 'send',
+        source: 'system_inbox_store_probe',
+        trigger: trigger,
+        failureReason: e.toString(),
+      );
+    } finally {
+      _proactiveSendProofInFlight = false;
+      final pendingTrigger = _pendingProactiveSendProofTrigger;
+      _pendingProactiveSendProofTrigger = null;
+      if (pendingTrigger != null) {
+        _retryProactiveSendProofIfNeeded(trigger: pendingTrigger);
+      }
     }
   }
 
@@ -1453,14 +1914,71 @@ class P2PServiceImpl implements P2PService {
   ///
   /// [source] tags the caller for §24 TIME_TO_ONLINE_BADGE instrumentation:
   /// 'start_response', 'relay_state_push', 'health_check_poll', 'addresses_push'.
-  void _emitState(NodeState newState, {String? source}) {
-    final wasOnline = _stateHasHealthyRelay(_currentState);
-    _currentState = newState;
+  void _emitState(
+    NodeState newState, {
+    String? source,
+    bool mergeServiceOwnedReadiness = true,
+  }) {
+    final previousState = _currentState;
+    final wasOnline = _stateHasHealthyRelay(previousState);
+    final wasSendable = previousState.usabilityReady;
+    final wasRelayReadyBadge =
+        previousState.badgeReadinessState == BadgeReadinessState.onlineDotted;
+
+    _currentState = mergeServiceOwnedReadiness
+        ? _stateWithReadinessProjection(newState)
+        : newState;
     if (!_stateController.isClosed) {
       _stateController.add(_currentState);
     }
 
     final nowOnline = _stateHasHealthyRelay(_currentState);
+    final nowSendable = _currentState.usabilityReady;
+    final nowRelayReadyBadge =
+        _currentState.badgeReadinessState == BadgeReadinessState.onlineDotted;
+
+    final readinessStartedAt = _activeReadinessProofWindowStartedAt;
+    final readinessPhase = _activeReadinessPhase;
+    final proofWindowId = _activeReadinessProofWindowId;
+    if (proofWindowId != null &&
+        readinessPhase != null &&
+        readinessStartedAt != null &&
+        nowSendable &&
+        !wasSendable) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'TIME_TO_SENDABLE_BADGE',
+        details: {
+          'proofWindowId': proofWindowId,
+          'phase': readinessPhase,
+          'totalMs': DateTime.now()
+              .difference(readinessStartedAt)
+              .inMilliseconds,
+          'source': source ?? 'readiness_state_transition',
+          'sendProofSource': _sendProofSource,
+          'inboxProofSource': _inboxProofSource,
+        },
+      );
+    }
+
+    if (proofWindowId != null &&
+        readinessPhase != null &&
+        readinessStartedAt != null &&
+        nowRelayReadyBadge &&
+        !wasRelayReadyBadge) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'TIME_TO_RELAY_READY_BADGE',
+        details: {
+          'proofWindowId': proofWindowId,
+          'phase': readinessPhase,
+          'totalMs': DateTime.now()
+              .difference(readinessStartedAt)
+              .inMilliseconds,
+          'source': source ?? 'readiness_state_transition',
+        },
+      );
+    }
 
     // §24: Cold start / hot restart — first time reaching online after node start.
     if (nowOnline &&
@@ -1570,7 +2088,9 @@ class P2PServiceImpl implements P2PService {
         previous.relayState != next.relayState ||
         previous.healthyRelayCount != next.healthyRelayCount ||
         previous.watchdogRestartCount != next.watchdogRestartCount ||
-        previous.needsGroupRecovery != next.needsGroupRecovery;
+        previous.needsGroupRecovery != next.needsGroupRecovery ||
+        previous.sendCapabilityReady != next.sendCapabilityReady ||
+        previous.inboxCapabilityReady != next.inboxCapabilityReady;
   }
 
   /// Poll node:status, attempt recovery if degraded, and emit state changes.
@@ -1620,6 +2140,11 @@ class P2PServiceImpl implements P2PService {
             _pendingRecoverySource ??
             (_resumeStartedAt != null ? 'resume_trigger' : 'health_check_poll');
         _pendingRecoverySource = null;
+        _beginReadinessProofWindow(
+          phase: _resumeStartedAt != null ? 'background_resume' : 'recovery',
+          trigger: recoverySource,
+          startedAt: _resumeStartedAt ?? DateTime.now(),
+        );
         emitFlowEvent(
           layer: 'FL',
           event: 'RELAY_OUTAGE_TIMING',
@@ -1909,6 +2434,10 @@ class P2PServiceImpl implements P2PService {
       unawaited(_reregisterStoredPushTokenIfAvailable());
     }
 
+    if (!wasHealthy && nowHealthy) {
+      _retryProactiveSendProofIfNeeded(trigger: 'addresses_became_healthy');
+    }
+
     // Keep the older addresses-based fallback only for legacy bridges that
     // still do not publish relay:state. Event-driven recovery now prefers the
     // real relay:state push path.
@@ -1916,6 +2445,11 @@ class P2PServiceImpl implements P2PService {
         wasHealthy &&
         !nowHealthy &&
         _hasEverBeenOnline) {
+      _beginReadinessProofWindow(
+        phase: _resumeStartedAt != null ? 'background_resume' : 'recovery',
+        trigger: 'addresses_push',
+        startedAt: _resumeStartedAt ?? DateTime.now(),
+      );
       if (kDebugMode) {
         debugPrint(
           '[ADDR] Legacy addresses push shows degradation — '
@@ -1992,11 +2526,20 @@ class P2PServiceImpl implements P2PService {
       unawaited(_reregisterStoredPushTokenIfAvailable());
     }
 
+    if (!wasHealthy && nowHealthy) {
+      _retryProactiveSendProofIfNeeded(trigger: 'relay_became_healthy');
+    }
+
     if (wasHealthy && !nowHealthy && _hasEverBeenOnline) {
       _outageDetectedAt ??= DateTime.now();
       final detectionMs = _lastHealthyRelayAt != null
           ? DateTime.now().difference(_lastHealthyRelayAt!).inMilliseconds
           : -1;
+      _beginReadinessProofWindow(
+        phase: _resumeStartedAt != null ? 'background_resume' : 'recovery',
+        trigger: 'relay_state_push',
+        startedAt: _resumeStartedAt ?? DateTime.now(),
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'RELAY_OUTAGE_TIMING',
@@ -2158,6 +2701,10 @@ class P2PServiceImpl implements P2PService {
             'note': 'server deleted retrieved messages from memory',
           },
         );
+        _recordSuccessfulInboxProof(
+          source: 'retrieve_inbox',
+          trigger: 'user_action',
+        );
         return messages;
       }
       emitFlowEvent(
@@ -2165,12 +2712,24 @@ class P2PServiceImpl implements P2PService {
         event: 'P2P_SERVICE_INBOX_RETRIEVE_ERROR',
         details: {'errorMessage': response['errorMessage']},
       );
+      _recordCapabilityProofFailure(
+        capability: 'inbox',
+        source: 'retrieve_inbox',
+        trigger: 'user_action',
+        failureReason: response['errorMessage']?.toString(),
+      );
       return [];
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_RETRIEVE_EXCEPTION',
         details: {'error': e.toString()},
+      );
+      _recordCapabilityProofFailure(
+        capability: 'inbox',
+        source: 'retrieve_inbox',
+        trigger: 'user_action',
+        failureReason: e.toString(),
       );
       return [];
     }
@@ -2266,6 +2825,9 @@ class P2PServiceImpl implements P2PService {
     _recoveryInProgress = Completer<void>();
     try {
       await _performHealthCheck();
+      await _attemptProactiveSendProofIfNeeded(
+        trigger: 'immediate_health_check',
+      );
 
       // Restart mDNS advertising (e.g. after iOS returns from background)
       try {
