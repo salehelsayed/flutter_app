@@ -25,6 +25,16 @@ void main() {
       expect(routeTarget.groupId, 'group-123');
     });
 
+    test('fromRemoteMessageData falls back to payload-only group routes', () {
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+        'payload': 'group:group-123',
+      });
+
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+      expect(routeTarget.groupId, 'group-123');
+    });
+
     test(
       'fromRemoteMessageData preserves group message anchors when present',
       () {
@@ -63,6 +73,15 @@ void main() {
 
       expect(routeTarget, isNotNull);
       expect(routeTarget!.kind, NotificationRouteTargetKind.intros);
+    });
+
+    test('fromRemoteMessageData rejects group_message with empty groupId', () {
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+        'type': 'group_message',
+        'groupId': '   ',
+      });
+
+      expect(routeTarget, isNull);
     });
 
     test('fromPayload maps intros to intros route', () {

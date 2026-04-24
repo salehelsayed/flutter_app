@@ -31,6 +31,12 @@ void main() {
       drainExpectation: _DrainExpectation.groupInbox,
     ),
     _RouteContractCase(
+      label: 'payload-only group',
+      remoteData: {'payload': 'group:group-team'},
+      target: NotificationRouteTarget.group('group-team'),
+      drainExpectation: _DrainExpectation.groupInbox,
+    ),
+    _RouteContractCase(
       label: 'post',
       remoteData: {'type': 'post_create', 'post_id': 'post-42'},
       target: NotificationRouteTarget.post('post-42'),

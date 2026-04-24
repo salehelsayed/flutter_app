@@ -14,6 +14,7 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - `test/features/feed/presentation/screens/feed_wired_test.dart` now carries the Session 2 feed inline 1:1 parity regression and the Session 35 delayed-mutual-acceptance / later-block follow-up regression; it stays outside the frozen named gate lists.
 - `test/features/orbit/presentation/screens/orbit_wired_test.dart` and `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` now carry the Session 35 stale-intro-reload and intro follow-up wiring regressions; they stay outside the frozen named gate lists and should be run directly with the Intro / Reintroduction Gate when intro-to-Orbit or intro-to-Feed follow-up wiring changes.
 - `test/features/groups/integration/announcement_happy_path_test.dart` carries the Session 6 announcement create/send/read-only/react regression and stays in the Optional / Manual direct-suite bucket so the frozen named gate lists do not widen.
+- `integration_test/group_recovery_e2e_test.dart` now carries the Session 72 device-backed dissolved local-cleanup recovery proof and stays in the Nightly / Release Pool because it remains simulator-bound and should not widen the frozen named gates.
 - `test/features/groups/integration/group_startup_rejoin_smoke_test.dart` stays in the Group Messaging Gate, not Startup / Transport. It validates group-topic rejoin behavior with fake infrastructure rather than the real transport gate.
 - `integration_test/multi_relay_failover_test.dart` stays nightly-only because it needs multi-relay runtime configuration and composes heavier real-stack coverage than the named transport gate.
 
@@ -220,6 +221,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/features/conversation/integration/emoji_reaction_exchange_test.dart` | Optional / manual direct suite | Reaction pipeline coverage, not shared durable-send coverage |
 | `test/features/contact_request/integration/contact_request_flow_test.dart` | Optional / manual direct suite | Contact bootstrap and acceptance flow; run with invite or onboarding entry work |
 | `test/features/contact_request/integration/key_exchange_retry_flow_test.dart` | Optional / manual direct suite | Contact key-bootstrap retry logic, not a named gate member |
+| `test/features/push/application/handle_foreground_remote_message_use_case_test.dart` | Optional / manual direct suite | Foreground FCM kind-aware drain regression for Report 71 without widening the frozen named gates |
 | `test/features/push/application/show_notification_use_case_test.dart` | Optional / manual direct suite | Notification display and suppression boundary, including the route-payload remote-announcement dedupe regression for group pushes |
 | `test/features/push/application/chat_and_group_push_open_flow_test.dart` | Optional / manual direct suite | Notification open sequencing across chat, group, intros, and contact-request routes without widening named gates |
 | `test/features/push/application/resolve_group_notification_route_target_use_case_test.dart` | Optional / manual direct suite | Group push recovery regression for missing local group state, pending invite discovery, inbox-drain retry, and Orbit intro redirect fallback |
@@ -233,6 +235,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `integration_test/conversation_wired_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation screen wiring |
 | `integration_test/conversation_wired_subscription_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation subscription churn |
 | `integration_test/feed_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
+| `integration_test/foreground_group_push_drain_test.dart` | Optional / manual direct suite | Foreground group push targeted drain and no-duplicate regression for Report 71 without widening the frozen named gates. Companion simulator approximation: `dart run integration_test/scripts/run_foreground_group_push_simulator_smoke.dart -d <alice>,<bob>` for real-stack two-simulator gap + replay coverage. |
 | `integration_test/feed_wired_init_performance_test.dart` | Optional / manual direct suite | Performance-only validation for feed initialization |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/media_message_journey_e2e_test.dart` | Optional / manual direct suite | End-to-end media delivery journey coverage that stays outside the frozen named gates |
