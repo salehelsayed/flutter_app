@@ -332,6 +332,10 @@ void main() {
         isTrue,
       );
       expect(
+        result.singleWhere((item) => item.groupId == 'g1').canReact,
+        isTrue,
+      );
+      expect(
         result.singleWhere((item) => item.groupId == 'g2').myRole,
         GroupRole.member,
       );
@@ -339,6 +343,35 @@ void main() {
         result.singleWhere((item) => item.groupId == 'g2').canWrite,
         isFalse,
       );
+      expect(
+        result.singleWhere((item) => item.groupId == 'g2').canReact,
+        isTrue,
+      );
+    });
+
+    test('preserves dissolved state and freezes write and reaction entry', () {
+      final dissolvedGroup = _makeGroup('g1', 'Frozen Group').copyWith(
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 2, 9, 11, 59),
+        dissolvedBy: 'admin-peer',
+      );
+
+      final result = groupGroupMessagesIntoThreads(
+        allGroupMessages: [
+          _makeMsg(
+            id: 'm1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Frozen history',
+            timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+          ),
+        ],
+        groups: [dissolvedGroup],
+      );
+
+      expect(result.single.isDissolved, isTrue);
+      expect(result.single.canWrite, isFalse);
+      expect(result.single.canReact, isFalse);
     });
 
     test('preserves quotedMessageId on projected thread messages', () {

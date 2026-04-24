@@ -91,7 +91,8 @@ class GroupConversationWired extends StatefulWidget {
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
   final ReactionRepository? reactionRepo;
-  final GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository;
+  final GroupReactionReplayOutboxRepository?
+  groupReactionReplayOutboxRepository;
   final UploadMediaFn uploadMediaFn;
   final int maxAttachmentBudgetBytes;
   final DateTime? notificationTappedAt;
@@ -2568,6 +2569,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   bool get _canWrite => _canWriteForGroup(_group);
 
+  bool get _canMutateReactions =>
+      !_group.isDissolved &&
+      widget.reactionRepo != null &&
+      widget.groupReactionReplayOutboxRepository != null;
+
   Future<void> _refreshVisibleGroup() async {
     final refreshedGroup = await widget.groupRepo.getGroup(widget.group.id);
     if (refreshedGroup == null || !mounted) {
@@ -2645,12 +2651,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _onReactionSelected(String messageId, String emoji) async {
-    if (widget.reactionRepo == null) return;
-    if (widget.groupReactionReplayOutboxRepository == null) return;
+    if (!_canMutateReactions) return;
     if (_ownPeerId == null) return;
 
+    final previousReactions = List<MessageReaction>.from(
+      _reactions[messageId] ?? const <MessageReaction>[],
+    );
+
     // Check if we already have a reaction with this emoji — toggle off
-    final existing = (_reactions[messageId] ?? []).where(
+    final existing = previousReactions.where(
       (r) => r.senderPeerId == _ownPeerId && r.emoji == emoji,
     );
 
@@ -2662,7 +2671,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _reactions = {..._reactions, messageId: list};
       });
 
-      await removeGroupReaction(
+      final result = await removeGroupReaction(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
         reactionRepo: widget.reactionRepo!,
@@ -2674,6 +2683,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         senderPublicKey: _senderPublicKey,
         senderPrivateKey: _senderPrivateKey,
       );
+      if (result == RemoveGroupReactionResult.groupDissolved) {
+        await _restoreReactionStateAfterDissolve(messageId, previousReactions);
+      }
       return;
     }
 
@@ -2715,7 +2727,22 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         list.add(reaction);
         _reactions = {..._reactions, messageId: list};
       });
+    } else if (result == SendGroupReactionResult.groupDissolved) {
+      await _restoreReactionStateAfterDissolve(messageId, previousReactions);
     }
+  }
+
+  Future<void> _restoreReactionStateAfterDissolve(
+    String messageId,
+    List<MessageReaction> previousReactions,
+  ) async {
+    if (mounted) {
+      setState(() {
+        _reactions = {..._reactions, messageId: previousReactions};
+      });
+    }
+    await _refreshVisibleGroup();
+    _showFloatingSnackBar('This group has been dissolved');
   }
 
   Future<void> _onReactionTap(String messageId, String emoji) async {
@@ -2823,9 +2850,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         onMediaTap: _onMediaTap,
         reactions: _reactions,
         onReactionTap: _onReactionTap,
-        onReactionSelected: widget.reactionRepo != null
-            ? _onReactionSelected
-            : null,
+        onReactionSelected: _canMutateReactions ? _onReactionSelected : null,
         initialText: _draftText,
         onDraftChanged: _onDraftChanged,
         onQuoteReply: _canWrite ? _onQuoteReply : null,

@@ -163,6 +163,110 @@ void main() {
     expect(reaction, isNotNull);
   });
 
+  test(
+    'dissolved chat group rejects reactions without publishing or storing',
+    () async {
+      await groupRepo.updateGroup(
+        testGroup.copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 22, 9),
+          dissolvedBy: 'peer-1',
+        ),
+      );
+
+      final sentBefore = bridge.sentMessages.length;
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, SendGroupReactionResult.groupDissolved);
+      expect(reaction, isNull);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      expect(reactionReplayOutboxRepo.entries, isEmpty);
+      expect(bridge.sentMessages.length, sentBefore);
+    },
+  );
+
+  test('dissolved announcement member cannot add a reaction', () async {
+    final announcementGroup = GroupModel(
+      id: 'group-ann-dissolved',
+      name: 'Announcements',
+      type: GroupType.announcement,
+      topicName: 'group-topic-ann-dissolved',
+      createdAt: DateTime.now().toUtc(),
+      createdBy: 'peer-admin',
+      myRole: GroupRole.member,
+      isDissolved: true,
+      dissolvedAt: DateTime.utc(2026, 4, 22, 10),
+      dissolvedBy: 'peer-admin',
+    );
+    await groupRepo.saveGroup(announcementGroup);
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: 'group-ann-dissolved',
+        keyGeneration: 0,
+        encryptedKey: 'group-ann-dissolved-key-0',
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-ann-dissolved',
+        peerId: 'peer-reader',
+        username: 'Reader',
+        role: MemberRole.writer,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await msgRepo.saveMessage(
+      GroupMessage(
+        id: 'msg-ann-dissolved-1',
+        groupId: 'group-ann-dissolved',
+        senderPeerId: 'peer-admin',
+        senderUsername: 'Admin',
+        text: 'Ended announcement',
+        timestamp: DateTime.now().toUtc(),
+        keyGeneration: 0,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    final sentBefore = bridge.sentMessages.length;
+    final (result, reaction) = await sendGroupReaction(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: 'group-ann-dissolved',
+      messageId: 'msg-ann-dissolved-1',
+      emoji: '🔥',
+      senderPeerId: 'peer-reader',
+      senderPublicKey: 'pk-reader',
+      senderPrivateKey: 'sk-reader',
+    );
+
+    expect(result, SendGroupReactionResult.groupDissolved);
+    expect(reaction, isNull);
+    expect(
+      await reactionRepo.getReactionsForMessage('msg-ann-dissolved-1'),
+      isEmpty,
+    );
+    expect(bridge.sentMessages.length, sentBefore);
+  });
+
   test('non-member is rejected', () async {
     final (result, reaction) = await sendGroupReaction(
       bridge: bridge,

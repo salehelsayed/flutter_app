@@ -1,18 +1,25 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
+    as group_dissolve;
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 
 import '../test/core/bridge/fake_bridge.dart';
+import '../test/core/services/fake_p2p_service.dart';
+import '../test/features/identity/domain/repositories/fake_identity_repository.dart';
 import '../test/shared/fakes/fake_group_pubsub_network.dart';
 import '../test/shared/fakes/group_test_user.dart';
+import '../test/shared/fakes/in_memory_contact_repository.dart';
 
 /// Simulates cursor-based group inbox retrieval for simulator-backed smoke runs.
 class _CursorInboxBridge extends FakeBridge {
@@ -72,6 +79,22 @@ class _InboxPage {
 
 Future<void> _pumpNetwork() =>
     Future<void>.delayed(const Duration(milliseconds: 50));
+
+Future<void> _pumpFrames(WidgetTester tester, {int count = 10}) async {
+  for (var i = 0; i < count; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+}
+
+Map<String, dynamic> _decodeReplayPayload(Map<String, dynamic> inboxPayload) {
+  final envelope =
+      jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+  final ciphertext = envelope['ciphertext'];
+  if (envelope['kind'] == 'group_offline_replay' && ciphertext is String) {
+    return jsonDecode(ciphertext) as Map<String, dynamic>;
+  }
+  return envelope;
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -242,6 +265,167 @@ void main() {
 
         admin.dispose();
         reader.dispose();
+      },
+    );
+
+    testWidgets(
+      'offline recovered dissolved group exposes local-only cleanup on Group Info',
+      (tester) async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _CursorInboxBridge(),
+        );
+        final bobBridge = bob.bridge as _CursorInboxBridge;
+
+        const groupId = 'group-dissolved-cleanup-smoke';
+        final now = DateTime.now().toUtc();
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'Cleanup Smoke',
+          createdAt: now,
+        );
+        await alice.addMember(groupId: groupId, invitee: bob, joinedAt: now);
+        await alice.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'cleanup-key',
+            createdAt: now,
+          ),
+        );
+        await bob.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'cleanup-key',
+            createdAt: now,
+          ),
+        );
+
+        alice.start();
+
+        final (result, dissolvedGroup) = await alice.dissolveGroupViaBridge(
+          groupId: groupId,
+        );
+        expect(result, group_dissolve.DissolveGroupResult.success);
+        expect(dissolvedGroup, isNotNull);
+        expect(dissolvedGroup!.isDissolved, isTrue);
+
+        final inboxRaw = alice.bridge.sentMessages.lastWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        final inboxPayload =
+            (jsonDecode(inboxRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final replayPayload = _decodeReplayPayload(inboxPayload);
+        bobBridge.addPage(groupId, '', [replayPayload], '');
+
+        await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          groupMessageListener: bob.groupMessageListener,
+        );
+
+        final recoveredGroup = await bob.groupRepo.getGroup(groupId);
+        expect(recoveredGroup, isNotNull);
+        final resolvedGroup = recoveredGroup!;
+        expect(resolvedGroup.isDissolved, isTrue);
+        expect(await bob.msgRepo.getMessageCount(groupId), 1);
+
+        final identityRepo = FakeIdentityRepository()
+          ..seed(
+            FakeIdentityRepository.makeIdentity(
+              peerId: bob.peerId,
+              publicKey: bob.publicKey,
+              privateKey: bob.privateKey,
+            ),
+          );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: resolvedGroup,
+                          groupRepo: bob.groupRepo,
+                          msgRepo: bob.msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bob.bridge,
+                          identityRepo: identityRepo,
+                          p2pService: FakeP2PService(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await _pumpFrames(tester, count: 5);
+
+        await tester.tap(find.text('Open Info'));
+        await _pumpFrames(tester, count: 20);
+
+        expect(find.text('Group dissolved'), findsOneWidget);
+        expect(
+          find.text(
+            'This conversation is now read-only. Previous messages stay available for reference.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Delete from this device'), findsOneWidget);
+
+        bobBridge.commandLog.clear();
+
+        final deleteButton = find.byKey(
+          const ValueKey('group-delete-local-button'),
+        );
+        await tester.scrollUntilVisible(
+          deleteButton,
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await _pumpFrames(tester, count: 5);
+        await tester.tap(deleteButton);
+        await _pumpFrames(tester, count: 5);
+
+        expect(
+          find.byKey(const ValueKey('group-delete-local-confirm')),
+          findsOneWidget,
+        );
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-delete-local-confirm')),
+        );
+        await _pumpFrames(tester, count: 20);
+
+        expect(await bob.groupRepo.getGroup(groupId), isNull);
+        expect(await bob.groupRepo.getMembers(groupId), isEmpty);
+        expect(await bob.groupRepo.getLatestKey(groupId), isNull);
+        expect(await bob.msgRepo.getMessageCount(groupId), 0);
+        expect(bobBridge.commandLog, isNot(contains('group:leave')));
+        expect(find.byType(GroupInfoWired), findsNothing);
+        expect(find.text('Open Info'), findsOneWidget);
+
+        alice.dispose();
+        bob.dispose();
       },
     );
 

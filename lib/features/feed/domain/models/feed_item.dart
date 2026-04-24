@@ -282,6 +282,7 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
   final String groupName;
   final GroupType groupType;
   final GroupRole myRole;
+  final bool isDissolved;
   final String? avatarPath;
   final String? avatarCacheBustKey;
   @override
@@ -298,6 +299,7 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
     required this.groupName,
     required this.groupType,
     this.myRole = GroupRole.member,
+    this.isDissolved = false,
     this.avatarPath,
     this.avatarCacheBustKey,
     required this.messages,
@@ -319,7 +321,14 @@ class GroupThreadFeedItem extends CardThreadFeedItem {
   bool get isUnreadCard => false;
 
   bool get canWrite =>
-      groupType != GroupType.announcement || myRole == GroupRole.admin;
+      !isDissolved &&
+      (groupType != GroupType.announcement || myRole == GroupRole.admin);
+
+  bool get canReact => !isDissolved;
+
+  String get readOnlyBannerText => isDissolved
+      ? 'This group has been dissolved. History stays available, but new messages are disabled.'
+      : 'Only admins can send messages in this group';
 
   /// Whether the thread contains any sent (outgoing) message.
   bool get hasSentMessage => messages.any((m) => !m.isIncoming);

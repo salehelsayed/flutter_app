@@ -461,6 +461,52 @@ void main() {
       expect(result[1], isA<ConnectionFeedItem>());
     });
 
+    test(
+      'dissolved groups stay visible but project frozen feed affordances',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Frozen Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 2, 9, 11, 59),
+            dissolvedBy: 'admin',
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-1',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Frozen history',
+            timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+            createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+          ),
+        );
+
+        final result = await loadFeed(
+          contactRepo: FakeContactRepository(),
+          messageRepo: FakeMessageRepository(),
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        final groupItems = result.whereType<GroupThreadFeedItem>().toList();
+        expect(groupItems, hasLength(1));
+        expect(groupItems.first.isDissolved, isTrue);
+        expect(groupItems.first.canWrite, isFalse);
+        expect(groupItems.first.canReact, isFalse);
+      },
+    );
+
     test('no group items when group repos not provided', () async {
       final result = await loadFeed(
         contactRepo: FakeContactRepository(),

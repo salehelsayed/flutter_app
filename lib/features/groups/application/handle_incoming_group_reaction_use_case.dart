@@ -11,6 +11,7 @@ enum HandleGroupReactionResult {
   unknownGroup,
   unknownSender,
   senderMismatch,
+  ignoredAfterDissolve,
 }
 
 /// Handles an incoming group reaction event.
@@ -21,7 +22,7 @@ enum HandleGroupReactionResult {
 ///
 /// Returns (result, ReactionChange?) — change is non-null on success.
 Future<(HandleGroupReactionResult, ReactionChange?)>
-    handleIncomingGroupReaction({
+handleIncomingGroupReaction({
   required GroupRepository groupRepo,
   required ReactionRepository reactionRepo,
   required String groupId,
@@ -57,6 +58,22 @@ Future<(HandleGroupReactionResult, ReactionChange?)>
       details: {},
     );
     return (HandleGroupReactionResult.unknownGroup, null);
+  }
+
+  final reactionTimestamp = _parseReactionTimestamp(payload.timestamp);
+  final dissolvedAt = group.dissolvedAt?.toUtc();
+  if (group.isDissolved &&
+      (dissolvedAt == null || !reactionTimestamp.isBefore(dissolvedAt))) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_RECEIVE_IGNORED_AFTER_DISSOLVE',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        if (dissolvedAt != null) 'dissolvedAt': dissolvedAt.toIso8601String(),
+      },
+    );
+    return (HandleGroupReactionResult.ignoredAfterDissolve, null);
   }
 
   // 3. Bind the decrypted payload sender to the outer transport sender.
@@ -125,4 +142,12 @@ Future<(HandleGroupReactionResult, ReactionChange?)>
   );
 
   return (HandleGroupReactionResult.success, ReactionChange.upsert(reaction));
+}
+
+DateTime _parseReactionTimestamp(String timestamp) {
+  try {
+    return DateTime.parse(timestamp).toUtc();
+  } catch (_) {
+    return DateTime.now().toUtc();
+  }
 }

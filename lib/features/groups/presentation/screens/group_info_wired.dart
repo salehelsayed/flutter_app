@@ -16,6 +16,7 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
@@ -74,6 +75,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   bool _didMutateGroup = false;
   bool _isUpdatingMute = false;
   bool _isDissolving = false;
+  bool _isDeletingLocally = false;
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
 
@@ -315,6 +317,82 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         setState(() => _isDissolving = false);
       } else {
         _isDissolving = false;
+      }
+    }
+  }
+
+  Future<void> _confirmDeleteGroupLocally() async {
+    if (!mounted || _isDeletingLocally || widget.msgRepo == null) return;
+
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete this dissolved group from this device?'),
+        content: const Text(
+          'This removes the dissolved history from this device only. It will not affect anyone else or send a new leave event.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('group-delete-local-cancel'),
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('group-delete-local-confirm'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete Locally'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete == true) {
+      await _onDeleteGroupLocally();
+    }
+  }
+
+  Future<void> _onDeleteGroupLocally() async {
+    if (_isDeletingLocally || widget.msgRepo == null) {
+      return;
+    }
+
+    setState(() => _isDeletingLocally = true);
+
+    try {
+      await deleteGroupAndMessages(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        groupMessageRepo: widget.msgRepo!,
+        groupId: _group.id,
+        deleteLocallyIfDissolved: true,
+      );
+
+      _didMutateGroup = true;
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INFO_FL_DELETE_LOCAL_DISSOLVED_ERROR',
+        details: {
+          'groupId': _group.id.length > 8
+              ? _group.id.substring(0, 8)
+              : _group.id,
+          'error': e.toString(),
+        },
+      );
+      if (!mounted) return;
+      final message = e is StateError && e.message != null
+          ? e.message.toString()
+          : 'Failed to delete group locally';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } finally {
+      if (mounted) {
+        setState(() => _isDeletingLocally = false);
+      } else {
+        _isDeletingLocally = false;
       }
     }
   }
@@ -941,6 +1019,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   Widget build(BuildContext context) {
     final isAdmin = _group.myRole == GroupRole.admin;
     final canManageGroup = isAdmin && !_group.isDissolved;
+    final canDeleteLocally =
+        _group.isDissolved && widget.msgRepo != null && !_isDeletingLocally;
 
     return GroupInfoScreen(
       group: _group,
@@ -956,6 +1036,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       onDissolve: canManageGroup && widget.msgRepo != null && !_isDissolving
           ? _confirmDissolveGroup
           : null,
+      onDeleteLocally: canDeleteLocally ? _confirmDeleteGroupLocally : null,
       onRemoveMember: canManageGroup ? _confirmRemoveMember : null,
       onToggleAdminRole: canManageGroup ? _confirmRoleChange : null,
       onAddMember: canManageGroup ? _onAddMember : null,

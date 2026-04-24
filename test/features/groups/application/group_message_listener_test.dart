@@ -3114,6 +3114,15 @@ void main() {
     test(
       'marks the group dissolved, stores a timeline event, and leaves the topic',
       () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
         listener.start(sourceController.stream);
 
         sourceController.add({
@@ -3146,6 +3155,15 @@ void main() {
     );
 
     test('replayed group_dissolved is idempotent', () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          joinedAt: initialMemberJoinedAt,
+        ),
+      );
       await listener.handleReplayEnvelope({
         'groupId': 'group-1',
         'senderId': 'peer-admin',
@@ -3196,6 +3214,42 @@ void main() {
           '__sys': 'group_dissolved',
           'dissolvedAt': '2026-04-05T12:00:00.000Z',
           'dissolvedBy': 'peer-sender',
+        }),
+        'timestamp': '2026-04-05T12:00:00.000Z',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final group = await groupRepo.getGroup('group-1');
+      expect(group, isNotNull);
+      expect(group!.isDissolved, isFalse);
+      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+      expect(bridge.commandLog, isNot(contains('group:leave')));
+    });
+
+    test('stored creator who is no longer admin cannot dissolve the group',
+        () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.writer,
+          joinedAt: initialMemberJoinedAt,
+        ),
+      );
+
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': jsonEncode({
+          '__sys': 'group_dissolved',
+          'dissolvedAt': '2026-04-05T12:00:00.000Z',
+          'dissolvedBy': 'peer-admin',
         }),
         'timestamp': '2026-04-05T12:00:00.000Z',
       });

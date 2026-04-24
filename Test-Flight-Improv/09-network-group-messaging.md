@@ -122,7 +122,7 @@ Go GossipSub → validate signature → decrypt → emit group message
 | `members_added` | Batch persist and sync config only when the sender matches durable local creator/admin facts |
 | `member_removed` | Remove from DB or leave group if self only when the sender matches durable local creator/admin facts, persist a sender-specific removedAt cutoff for removed-sender traffic, and replay the same path during inbox drain |
 | `member_role_updated` | Apply the authenticated authoritative member snapshot, update badges/permissions/myRole, and persist the same membership-event watermark used to reject stale role or removal replays |
-| `group_dissolved` | Persist the group-wide dissolved state only when the sender matches durable local creator/admin facts, store a readable timeline event, retain read-only history, reject later sends, and skip future rejoin attempts during restart/recovery |
+| `group_dissolved` | Persist the group-wide dissolved state only when the sender matches current durable admin facts, store a readable timeline event, retain read-only history, reject later sends and reaction mutation, skip future rejoin attempts during restart/recovery, and keep later local cleanup device-local instead of publishing a new leave |
 | `key_rotated` | Update stored key + keyEpoch |
 
 ---
@@ -352,17 +352,27 @@ are rejected before mutation rather than treated as merely unprofiled.
   and a new member is added, then proves rejoin plus inbox drain converge the
   reconnecting bystander onto the same final member/admin map and metadata as
   live peers
-- Admin-initiated group dissolve is now directly covered: the repo publishes
-  authenticated `group_dissolved` system envelopes, persists dissolved
-  read-only history, blocks post-dissolve sends and rejoin, and replays the
-  same final state to offline peers through inbox drain. Direct proof lives in
+- Admin-initiated group dissolve is now directly covered as a frozen-state
+  network contract: the repo publishes authenticated `group_dissolved` system
+  envelopes, accepts them only from current admins on live and replay paths,
+  persists dissolved read-only history, blocks post-dissolve sends and
+  reaction mutation, keeps dissolved groups out of restart/recovery rejoin,
+  and lets each device later delete the recovered history locally from Group
+  Info without publishing a new leave event. Direct proof lives in
   `test/features/groups/application/dissolve_group_use_case_test.dart`,
   `test/features/groups/application/group_message_listener_test.dart`,
   `test/features/groups/application/send_group_message_use_case_test.dart`,
+  `test/features/groups/application/send_group_reaction_use_case_test.dart`,
+  `test/features/groups/application/remove_group_reaction_use_case_test.dart`,
+  `test/features/groups/application/handle_incoming_group_reaction_use_case_test.dart`,
   `test/features/groups/application/rejoin_group_topics_use_case_test.dart`,
+  `test/features/groups/application/delete_group_and_messages_use_case_test.dart`,
   `test/features/groups/integration/group_membership_smoke_test.dart`,
-  `test/features/groups/presentation/group_info_wired_test.dart`, and the
-  same-day `./scripts/run_test_gates.sh groups` run
+  `test/features/groups/presentation/group_info_wired_test.dart`,
+  `test/features/feed/presentation/screens/feed_wired_test.dart`,
+  `integration_test/group_recovery_e2e_test.dart`, and the same-day
+  `./scripts/run_test_gates.sh groups` and `./scripts/run_test_gates.sh feed`
+  runs
 - Post-creation admin-role propagation is now directly covered: promote,
   demote, multi-admin leave, and the concurrent/conflicting admin-change
   paths all converge under authenticated authoritative snapshots plus

@@ -809,6 +809,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `deleteGroupAndMessages` | deletes group messages first, then calls leaveGroup | Order of operations |
+| | dissolved local cleanup deletes group state without publishing group leave | Device-local dissolved cleanup |
 | | propagates errors from message deletion | Error propagation |
 
 ### 4.13 dissolveGroup
@@ -1082,6 +1083,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |------|----------------|
 | chat member can react | Happy path |
 | announcement member can react | Announcement react |
+| dissolved chat group rejects reactions without publishing or storing | Dissolved send guard |
+| dissolved announcement member cannot add a reaction | Dissolved announcement guard |
 | non-member is rejected | Auth guard |
 | unknown messageId is rejected | Missing message guard |
 | unknown group is rejected | Missing group guard |
@@ -1097,6 +1100,11 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | returns unknownGroup for nonexistent group | Missing group guard |
 | returns parseError for invalid JSON | Parse error |
 | still processes reaction from unknown sender (stale member list) | Stale member tolerance |
+| rejects add when payload sender mismatches outer sender | Sender auth guard |
+| rejects remove when payload sender mismatches outer sender | Sender auth guard |
+| ignores add reactions at or after the dissolve cutoff | Dissolve cutoff guard |
+| ignores remove reactions at or after the dissolve cutoff | Dissolve cutoff guard |
+| accepts late replayed reactions when the payload predates dissolve | Pre-dissolve replay tolerance |
 
 **File:** `test/features/groups/application/remove_group_reaction_use_case_test.dart`
 
@@ -1105,6 +1113,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | removes own reaction | Happy path |
 | is idempotent when reaction absent | Idempotency |
 | non-member is rejected | Auth guard |
+| dissolved group rejects remove and preserves the stored reaction | Dissolved remove guard |
 
 ### 4.31 rejoinGroupTopics
 **File:** `test/features/groups/application/rejoin_group_topics_use_case_test.dart`
@@ -1289,6 +1298,9 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | returning from group info reloads the latest group name | Name reload |
 | | non-admin in announcement group cannot write | Read-only mode |
 | | dissolved groups show read-only copy and no send controls | Dissolved state |
+| | announcement readers stay read-only for compose but still keep reaction entry | Reaction-entry parity |
+| | dissolved groups hide reaction entry even when reaction deps are wired | Dissolved reaction-entry guard |
+| | stale reaction entry restores local state when the group dissolves before publish | Dissolve race recovery |
 | | non-admin in announcement group still has no voice stop/cancel callbacks when durable voice deps are enabled | Voice guard |
 | | read-only announcement members cannot keep hidden quote state | Quote guard |
 | | stale writer callbacks cannot bypass read-only announcement mode | Stale callback guard |
@@ -1364,7 +1376,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | shows role-management controls only for eligible admin rows | Role controls |
 | shows Edit Details button when admin can edit metadata | Edit CTA |
 | hides Edit Details button when viewer is not admin | Edit guard |
-| dissolved groups show status and hide management controls | Dissolved state |
+| dissolved groups show local cleanup and hide management controls | Dissolved local cleanup |
 
 ### 5.11 GroupInfoWired
 **File:** `test/features/groups/presentation/group_info_wired_test.dart`
@@ -1382,6 +1394,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | admin metadata edit updates repo state, timeline, and bridge payloads | Metadata edit |
 | | promote member shows confirmation, updates badge, and emits member_role_updated payload | Promote flow |
 | | demote admin shows confirmation, updates badge, and emits success feedback | Demote flow |
+| | dissolved local delete clears local state without publishing group leave and pops to the first route | Local-only cleanup flow |
+| | canceling dissolved local delete keeps the group state and route intact | Local-delete cancel guard |
 | | leave group calls bridge and pops to first route | Leave flow |
 | | sole admin leave stays on screen and shows an error | Sole-admin guard |
 | | multi-admin leave broadcasts self-removal, rotates key, and pops to first route | Multi-admin leave |
@@ -1584,7 +1598,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | removed member notifications stay off until rejoin becomes effective | Notification guard |
 | | long mixed-content group text survives delivery and notification preview | Long message |
 | | remaining member receives readable re-add timeline event while member list updates | Re-add timeline |
-| | offline member converges to dissolved state through replay and cannot send afterwards | Offline dissolve |
+| | offline member converges to dissolved state through replay, cannot send afterwards, and can delete locally without affecting others | Offline dissolve + local cleanup |
 
 ### 6.3 Group Edge Cases Smoke
 **File:** `test/features/groups/integration/group_edge_cases_smoke_test.dart`
@@ -1858,6 +1872,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | messages sorted chronologically within thread | Sort order |
 | | preserves group type in thread item | Type preservation |
 | | preserves myRole and derives canWrite for announcement groups | Role + write flag |
+| | preserves dissolved state and freezes write and reaction entry | Dissolved frozen-state projection |
 | | preserves quotedMessageId on projected thread messages | Quote propagation |
 | | thread id is group_thread_ + groupId | ID construction |
 | | timestamp is latest message timestamp | Timestamp derivation |
@@ -1952,6 +1967,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |-------|------|----------------|
 | `loadFeed with group messages` | returns group thread items when group repos provided | Group thread loading |
 | | group items merge with contact items sorted by timestamp | Merge + sort |
+| | dissolved groups stay visible but project frozen feed affordances | Dissolved feed visibility + frozen affordances |
 | | no group items when group repos not provided | Feature gate |
 | | archived groups excluded from feed | Archive filter |
 | | groups with no messages produce no thread items | Empty group |
@@ -1963,7 +1979,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 
 | Group | Test | What it covers |
 |-------|------|----------------|
-| `feed projection parity` | group message upsert and reorder matches cold load | Incremental upsert |
+| `feed projection parity` | group message upsert and reorder matches cold load | Incremental upsert + frozen-state parity |
 | | group message with media flows through to ThreadMessage | Media propagation |
 | | archived group removal matches cold load | Archive removal |
 | | loadGroupFeedSnapshot includes media attachments | Snapshot media |
@@ -1986,6 +2002,8 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | GroupThreadFeedItem provides all CardThreadFeedItem getters | Interface |
 | has type groupThread | Type identity |
 | stores group type correctly for all types | Type mapping |
+| active announcement readers stay read-only for compose but can still react | Announcement affordance split |
+| dissolved groups disable both write and react affordances | Dissolved affordance freeze |
 
 ### 8.15 OpenModeCardBody (Feed group subset)
 **File:** `test/features/feed/presentation/widgets/open_mode_card_body_test.dart`
@@ -2027,6 +2045,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |------|----------------|
 | inline group reaction chips route through the dedicated inspection callback | Inline discussion reaction inspection |
 | announcement reader cards keep inline reaction inspection available while compose stays read-only | Inline announcement-reader parity |
+| dissolved group cards show dissolved copy and hide reply and reaction entry | Dissolved inline frozen-state |
 
 ### 8.18 FeedWired (Feed group subset)
 **File:** `test/features/feed/presentation/screens/feed_wired_test.dart`
@@ -2056,6 +2075,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | feed opens announcement admins with a writable group conversation | Announcement write |
 | feed entry keeps group long-press actions aligned with the shared conversation surface | Feed long-press parity |
 | feed entry keeps group reaction inspection aligned with the shared conversation surface | Feed reaction-inspection parity |
+| stale dissolved feed reaction entry restores prior state and refreshes the card | Dissolve race recovery |
 
 ### 8.19 OrbitWired (Orbit group subset)
 **File:** `test/features/orbit/presentation/screens/orbit_wired_test.dart`
@@ -2266,6 +2286,7 @@ Primary simulator / emulator targets for the remaining exploratory/device-proof 
 | group member receives missed group messages after resume drain | Resume drain delivery |
 | announcement reader receives missed announcement after resume drain | Announcement resume drain |
 | group inbox drain deduplicates message already received live | Cross-path dedup |
+| offline recovered dissolved group exposes local-only cleanup on Group Info | Device-backed dissolved cleanup |
 | watchdog restart rejoins topics and multi-group drain stays bounded | Watchdog batch recovery |
 
 ### 11.2 Group Recovery CLI E2E

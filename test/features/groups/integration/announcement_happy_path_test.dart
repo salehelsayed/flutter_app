@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -251,6 +252,41 @@ void main() {
       expect(storedReactions, hasLength(1));
       expect(storedReactions.single.emoji, '👍');
       expect(storedReactions.single.senderPeerId, reader.peerId);
+
+      final (dissolveResult, _) = await admin.dissolveGroupViaBridge(
+        groupId: created.id,
+      );
+      expect(
+        dissolveResult,
+        anyOf(DissolveGroupResult.success, DissolveGroupResult.bridgeError),
+      );
+
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final readerDissolvedGroup = await reader.groupRepo.getGroup(created.id);
+      expect(readerDissolvedGroup, isNotNull);
+      expect(readerDissolvedGroup!.isDissolved, isTrue);
+
+      final (blockedReactionResult, blockedReaction) = await sendGroupReaction(
+        bridge: reader.bridge,
+        groupRepo: reader.groupRepo,
+        msgRepo: reader.msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: created.id,
+        messageId: received.id,
+        emoji: '🔥',
+        senderPeerId: reader.peerId,
+        senderPublicKey: reader.publicKey,
+        senderPrivateKey: reader.privateKey,
+      );
+
+      expect(blockedReactionResult, SendGroupReactionResult.groupDissolved);
+      expect(blockedReaction, isNull);
+      expect(
+        await reactionRepo.getReactionsForMessage(received.id),
+        hasLength(1),
+      );
     },
   );
 
