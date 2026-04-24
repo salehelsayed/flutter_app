@@ -116,6 +116,36 @@ void main() {
     expect(bridge.commandLog, isEmpty);
   });
 
+  test('former creator who is no longer admin cannot dissolve the group',
+      () async {
+    await groupRepo.updateGroup(baseGroup.copyWith(myRole: GroupRole.member));
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.writer,
+        joinedAt: now,
+      ),
+    );
+
+    final (result, group) = await dissolveGroup(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      actorPeerId: 'peer-admin',
+      actorUsername: 'Admin',
+      actorPublicKey: 'pk-admin',
+      actorPrivateKey: 'sk-admin',
+    );
+
+    expect(result, DissolveGroupResult.unauthorized);
+    expect(group, isNotNull);
+    expect(group!.isDissolved, isFalse);
+    expect(bridge.commandLog, isEmpty);
+  });
+
   test('returns alreadyDissolved when the group is already closed', () async {
     await groupRepo.updateGroup(
       baseGroup.copyWith(

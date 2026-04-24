@@ -10,6 +10,7 @@ Future<void> deleteGroupAndMessages({
   required GroupRepository groupRepo,
   required GroupMessageRepository groupMessageRepo,
   required String groupId,
+  bool deleteLocallyIfDissolved = false,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -21,6 +22,9 @@ Future<void> deleteGroupAndMessages({
 
   try {
     final deletedCount = await groupMessageRepo.deleteMessagesForGroup(groupId);
+    final group = await groupRepo.getGroup(groupId);
+    final shouldDeleteLocallyOnly =
+        deleteLocallyIfDissolved && group?.isDissolved == true;
 
     emitFlowEvent(
       layer: 'UC',
@@ -28,20 +32,24 @@ Future<void> deleteGroupAndMessages({
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'deletedMessages': deletedCount,
+        'cleanupMode': shouldDeleteLocallyOnly ? 'local_only' : 'leave',
       },
     );
 
-    await leaveGroup(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-    );
+    if (shouldDeleteLocallyOnly) {
+      await groupRepo.removeAllMembers(groupId);
+      await groupRepo.removeAllKeys(groupId);
+      await groupRepo.deleteGroup(groupId);
+    } else {
+      await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: groupId);
+    }
 
     emitFlowEvent(
       layer: 'UC',
       event: 'DELETE_GROUP_AND_MESSAGES_SUCCESS',
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'cleanupMode': shouldDeleteLocallyOnly ? 'local_only' : 'leave',
       },
     );
   } catch (e) {
