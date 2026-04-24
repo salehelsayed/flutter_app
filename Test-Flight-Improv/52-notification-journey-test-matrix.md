@@ -225,6 +225,12 @@ Current limitation to keep explicit:
 | GMN-004 | Active group suppression | If B is already viewing the same group, no local group notification is shown. | P0 | Recommended | Required | Recommended | N/A | Required | Covered by `test/features/groups/application/group_message_listener_test.dart` and `test/features/push/application/show_notification_use_case_test.dart`. |
 | GMN-005 | Normal app-open clears delivered group notifications | Opening the app normally clears delivered group notifications just like 1:1 notifications. | P0 | Recommended | Required | Required | N/A | Required | Covered by the shared clear-on-resume seams in `test/core/lifecycle/app_lifecycle_recovery_test.dart` and `test/core/notifications/flutter_notification_service_test.dart`. |
 
+#### Foreground catch-up journeys
+
+| Test ID | Scenario | Expected Result | Priority | Unit | Integration | Smoke | Fake Network | 3-party E2E | Current coverage / notes |
+|---|---|---|---|---|---|---|---|---|---|
+| JRN-FG-GRP-01 | App foreground, user off the group mesh, group push arrives | The foreground push routes to targeted group catch-up and the thread reflects the missed message within the same session with exactly one user-visible materialization path. | P0 | Required | Required | Recommended | Required | Recommended | Covered by `test/features/push/application/handle_foreground_remote_message_use_case_test.dart`, `integration_test/foreground_group_push_drain_test.dart`, `integration_test/scripts/run_foreground_group_push_simulator_smoke.dart`, and the neighboring dedupe guard in `test/integration/group_notification_dedupe_integration_test.dart`. The new simulator smoke proves the real-stack app-side path under simulator-controlled topic-gap conditions; manual two-device hardware smoke remains complementary for APNs / OS-specific behavior. |
+
 ### Edge Cases
 
 #### 1:1 notification edge journeys

@@ -189,6 +189,7 @@ import 'package:flutter_app/features/contact_request/presentation/widgets/contac
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
+import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
@@ -2503,9 +2504,28 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         emitFlowEvent(
           layer: 'FL',
           event: 'PUSH_FOREGROUND_MESSAGE_RECEIVED',
-          details: {'messageId': message.messageId},
+          details: {
+            'messageId': message.messageId,
+            'dataKeys': message.data.keys.toList(),
+          },
         );
-        unawaited(widget.p2pService.drainOfflineInbox());
+        unawaited(
+          handleForegroundRemoteMessage(
+            data: message.data,
+            messageId: message.messageId,
+            drainOfflineInbox: widget.p2pService.drainOfflineInbox,
+            drainGroupOfflineInboxForGroup: (groupId) =>
+                drainGroupOfflineInboxForGroup(
+                  bridge: widget.bridge,
+                  groupRepo: widget.groupRepository,
+                  msgRepo: widget.groupMessageRepository,
+                  groupId: groupId,
+                  mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                  reactionRepo: widget.reactionRepository,
+                  groupMessageListener: widget.groupMessageListener,
+                ),
+          ),
+        );
       });
 
       FirebaseMessaging.onMessageOpenedApp.listen((message) {
