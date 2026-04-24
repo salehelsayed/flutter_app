@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import '../../../../test/shared/fakes/in_memory_group_repository.dart';
@@ -25,39 +27,45 @@ void main() {
     test('deletes group messages first, then calls leaveGroup', () async {
       // Save a group and some messages
       final now = DateTime.now().toUtc();
-      await groupRepo.saveGroup(GroupModel(
-        id: groupId,
-        name: 'Test Group',
-        type: GroupType.chat,
-        topicName: '/mknoon/group/$groupId',
-        createdBy: 'creator-peer',
-        myRole: GroupRole.admin,
-        createdAt: now,
-      ));
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdBy: 'creator-peer',
+          myRole: GroupRole.admin,
+          createdAt: now,
+        ),
+      );
 
-      await groupMessageRepo.saveMessage(GroupMessage(
-        id: 'msg-1',
-        groupId: groupId,
-        senderPeerId: 'sender-1',
-        senderUsername: 'Alice',
-        text: 'Hello',
-        timestamp: now,
-        createdAt: now,
-        isIncoming: true,
-        status: 'delivered',
-      ));
+      await groupMessageRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-1',
+          groupId: groupId,
+          senderPeerId: 'sender-1',
+          senderUsername: 'Alice',
+          text: 'Hello',
+          timestamp: now,
+          createdAt: now,
+          isIncoming: true,
+          status: 'delivered',
+        ),
+      );
 
-      await groupMessageRepo.saveMessage(GroupMessage(
-        id: 'msg-2',
-        groupId: groupId,
-        senderPeerId: 'sender-2',
-        senderUsername: 'Bob',
-        text: 'World',
-        timestamp: now,
-        createdAt: now,
-        isIncoming: true,
-        status: 'delivered',
-      ));
+      await groupMessageRepo.saveMessage(
+        GroupMessage(
+          id: 'msg-2',
+          groupId: groupId,
+          senderPeerId: 'sender-2',
+          senderUsername: 'Bob',
+          text: 'World',
+          timestamp: now,
+          createdAt: now,
+          isIncoming: true,
+          status: 'delivered',
+        ),
+      );
 
       await deleteGroupAndMessages(
         bridge: bridge,
@@ -76,6 +84,71 @@ void main() {
       // Bridge should have been called for group:leave
       expect(bridge.commandLog, contains('group:leave'));
     });
+
+    test(
+      'dissolved local cleanup deletes group state without publishing group leave',
+      () async {
+        final now = DateTime.now().toUtc();
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Dissolved Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdBy: 'creator-peer',
+            myRole: GroupRole.member,
+            createdAt: now,
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'creator-peer',
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'creator-peer',
+            username: 'Creator',
+            role: MemberRole.admin,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-1',
+            createdAt: now,
+          ),
+        );
+        await groupMessageRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-dissolved',
+            groupId: groupId,
+            senderPeerId: 'creator-peer',
+            senderUsername: 'Creator',
+            text: 'Group dissolved',
+            timestamp: now,
+            createdAt: now,
+            isIncoming: true,
+            status: 'delivered',
+          ),
+        );
+
+        await deleteGroupAndMessages(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupMessageRepo: groupMessageRepo,
+          groupId: groupId,
+          deleteLocallyIfDissolved: true,
+        );
+
+        expect(groupMessageRepo.count, 0);
+        expect(await groupRepo.getGroup(groupId), isNull);
+        expect(await groupRepo.getMembers(groupId), isEmpty);
+        expect(await groupRepo.getLatestKey(groupId), isNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
 
     test('propagates errors from message deletion', () async {
       final failingMsgRepo = _FailingGroupMessageRepository();
