@@ -45,6 +45,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
@@ -501,6 +502,7 @@ void main() {
           ImageQualityPreference.compressed,
       int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
       ReactionRepository? reactionRepo,
+      FakeGroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
       StreamController<ReactionChange>? reactionStreamController,
       StreamController<String>? removedStreamController,
     }) {
@@ -536,6 +538,7 @@ void main() {
           initialHighlightedMessageId: initialHighlightedMessageId,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           reactionRepo: reactionRepo,
+          groupReactionReplayOutboxRepository: reactionReplayOutboxRepo,
         ),
       );
     }
@@ -2255,6 +2258,165 @@ void main() {
       expect(screen.onRecordCancel, isNull);
       expect(screen.onQuoteReply, isNull);
     });
+
+    testWidgets(
+      'active groups expose the long-press reaction bar when mutation deps are wired',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: FakeReactionRepository(),
+            reactionReplayOutboxRepo: FakeGroupReactionReplayOutboxRepository(),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onReactionSelected, isNotNull);
+
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        expect(
+          find.byKey(MessageContextOverlay.reactionBarKey),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'announcement readers stay read-only for compose but still keep reaction entry',
+      (tester) async {
+        final group = makeAnnouncementGroup(role: GroupRole.member);
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: FakeReactionRepository(),
+            reactionReplayOutboxRepo: FakeGroupReactionReplayOutboxRepository(),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(
+          find.text('Only admins can send messages in this group'),
+          findsOneWidget,
+        );
+        expect(find.byType(TextField), findsNothing);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        expect(screen.onQuoteReply, isNull);
+        expect(screen.onReactionSelected, isNotNull);
+
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(
+          find.byKey(MessageContextOverlay.reactionBarKey),
+          findsOneWidget,
+        );
+        expect(find.byKey(MessageContextOverlay.replyActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'dissolved groups hide reaction entry even when reaction deps are wired',
+      (tester) async {
+        final group = makeChatGroup().copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+          dissolvedBy: 'peer-admin',
+        );
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: FakeReactionRepository(),
+            reactionReplayOutboxRepo: FakeGroupReactionReplayOutboxRepository(),
+          ),
+        );
+        await pumpFrames(tester);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onReactionSelected, isNull);
+
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(find.byKey(MessageContextOverlay.reactionBarKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'stale reaction entry restores local state when the group dissolves before publish',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(makeMessage(id: 'msg-1', text: 'Hello'));
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            reactionRepo: reactionRepo,
+            reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await groupRepo.updateGroup(
+          group.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 4, 22, 12),
+            dissolvedBy: 'peer-admin',
+          ),
+        );
+
+        await tester.longPress(find.text('Hello'));
+        await pumpFrames(tester);
+
+        final thumbsUp = find.descendant(
+          of: find.byKey(MessageContextOverlay.reactionBarKey),
+          matching: find.text('\u{1F44D}'),
+        );
+        expect(thumbsUp, findsOneWidget);
+
+        await tester.tap(thumbsUp);
+        await pumpFrames(tester, count: 20);
+
+        expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+        expect(find.text('This group has been dissolved'), findsOneWidget);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        expect(screen.onReactionSelected, isNull);
+        expect(find.byType(TextField), findsNothing);
+        expect(find.text('\u{1F44D}'), findsNothing);
+      },
+    );
 
     testWidgets(
       'non-admin in announcement group still has no voice stop/cancel callbacks when durable voice deps are enabled',

@@ -984,6 +984,7 @@ class _FeedWiredState extends State<FeedWired>
       groupName: group.name,
       groupType: group.type,
       myRole: group.myRole,
+      isDissolved: group.isDissolved,
       avatarPath: group.avatarPath,
       avatarCacheBustKey:
           group.lastMetadataEventAt?.toUtc().toIso8601String() ??
@@ -2000,6 +2001,7 @@ class _FeedWiredState extends State<FeedWired>
       createdAt: DateTime.now(),
       createdBy: '',
       myRole: groupThread.myRole,
+      isDissolved: groupThread.isDissolved,
     );
   }
 
@@ -2361,8 +2363,7 @@ class _FeedWiredState extends State<FeedWired>
     final reactionRepo = widget.reactionRepository;
     final groupRepo = widget.groupRepository;
     final msgRepo = widget.groupMessageRepository;
-    final reactionReplayOutboxRepo =
-        widget.groupReactionReplayOutboxRepository;
+    final reactionReplayOutboxRepo = widget.groupReactionReplayOutboxRepository;
     if (reactionRepo == null ||
         groupRepo == null ||
         msgRepo == null ||
@@ -2372,6 +2373,7 @@ class _FeedWiredState extends State<FeedWired>
 
     // Check if toggling (same emoji from same user)
     final currentReactions = _reactionStore.reactionsForMessage(messageId);
+    final previousReactions = List<MessageReaction>.from(currentReactions);
     final ownReaction = currentReactions
         .where((r) => r.senderPeerId == identity.peerId)
         .firstOrNull;
@@ -2383,7 +2385,7 @@ class _FeedWiredState extends State<FeedWired>
           .toList();
       _reactionStore.setMessageReactions(messageId, updated);
 
-      await removeGroupReaction(
+      final result = await removeGroupReaction(
         bridge: widget.bridge,
         groupRepo: groupRepo,
         reactionRepo: reactionRepo,
@@ -2395,6 +2397,13 @@ class _FeedWiredState extends State<FeedWired>
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
       );
+      if (result == RemoveGroupReactionResult.groupDissolved) {
+        await _restoreGroupReactionStateAfterDissolve(
+          groupId: groupId,
+          messageId: messageId,
+          previousReactions: previousReactions,
+        );
+      }
       return;
     }
 
@@ -2444,7 +2453,33 @@ class _FeedWiredState extends State<FeedWired>
         updated[idx] = reaction;
       }
       _reactionStore.setMessageReactions(messageId, updated);
+    } else if (result == SendGroupReactionResult.groupDissolved) {
+      await _restoreGroupReactionStateAfterDissolve(
+        groupId: groupId,
+        messageId: messageId,
+        previousReactions: previousReactions,
+      );
     }
+  }
+
+  Future<void> _restoreGroupReactionStateAfterDissolve({
+    required String groupId,
+    required String messageId,
+    required List<MessageReaction> previousReactions,
+  }) async {
+    _reactionStore.setMessageReactions(messageId, previousReactions);
+    await _refreshGroupFeedItem(groupId);
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('This group has been dissolved'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   Future<void> _onGroupReactionTap(

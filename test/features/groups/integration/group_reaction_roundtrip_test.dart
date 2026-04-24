@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 
@@ -86,6 +87,76 @@ void main() {
 
       expect(network.reactionPublishCallCount, 1);
       expect(network.totalReactionDeliveries, 1);
+    },
+  );
+
+  test(
+    'dissolved chat group blocks later reaction send and does not roundtrip',
+    () async {
+      final admin = GroupTestUser.create(
+        peerId: 'peer-admin',
+        username: 'Admin',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'peer-bob',
+        username: 'Bob',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      addTearDown(() {
+        admin.dispose();
+        bob.dispose();
+      });
+
+      const groupId = 'group-chat-reaction-dissolved';
+      final group = await admin.createGroup(groupId: groupId, name: 'Chat');
+      await admin.addMember(groupId: groupId, invitee: bob);
+
+      admin.start();
+      bob.start();
+
+      final (sendResult, sentMessage) = await admin.sendGroupMessageViaBridge(
+        groupId: group.id,
+        text: 'ended thread',
+      );
+      expect(sendResult, SendGroupMessageResult.success);
+      expect(sentMessage, isNotNull);
+
+      await pump();
+
+      final (dissolveResult, dissolvedGroup) = await admin
+          .dissolveGroupViaBridge(groupId: group.id);
+      expect(
+        dissolveResult,
+        anyOf(DissolveGroupResult.success, DissolveGroupResult.bridgeError),
+      );
+      expect(dissolvedGroup, isNotNull);
+
+      await pump();
+
+      final bobGroup = await bob.groupRepo.getGroup(group.id);
+      expect(bobGroup, isNotNull);
+      expect(bobGroup!.isDissolved, isTrue);
+
+      final (reactionResult, reaction) = await bob.sendGroupReactionViaBridge(
+        groupId: group.id,
+        messageId: sentMessage!.id,
+        emoji: '🔥',
+      );
+      expect(reactionResult, SendGroupReactionResult.groupDissolved);
+      expect(reaction, isNull);
+      expect(
+        await bob.reactionRepo!.getReactionsForMessage(sentMessage.id),
+        isEmpty,
+      );
+      expect(
+        await admin.reactionRepo!.getReactionsForMessage(sentMessage.id),
+        isEmpty,
+      );
+      expect(network.reactionPublishCallCount, 0);
+      expect(network.totalReactionDeliveries, 0);
     },
   );
 }

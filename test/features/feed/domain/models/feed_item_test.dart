@@ -170,27 +170,29 @@ void main() {
       );
     }
 
-    test('unreadMessages returns only unread incoming in chronological order',
-        () {
-      final item = ThreadFeedItem(
-        id: 'thread_1',
-        timestamp: DateTime(2026, 2, 9),
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-        messages: [
-          _msg(id: 'm1'), // read incoming
-          _msg(id: 'm2', isIncoming: false), // sent
-          _msg(id: 'm3', isUnread: true), // unread incoming
-          _msg(id: 'm4', isUnread: true), // unread incoming
-          _msg(id: 'm5', isUnread: true, isIncoming: false), // unread sent
-        ],
-      );
+    test(
+      'unreadMessages returns only unread incoming in chronological order',
+      () {
+        final item = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            _msg(id: 'm1'), // read incoming
+            _msg(id: 'm2', isIncoming: false), // sent
+            _msg(id: 'm3', isUnread: true), // unread incoming
+            _msg(id: 'm4', isUnread: true), // unread incoming
+            _msg(id: 'm5', isUnread: true, isIncoming: false), // unread sent
+          ],
+        );
 
-      final unread = item.unreadMessages;
-      expect(unread.length, 2);
-      expect(unread[0].id, 'm3');
-      expect(unread[1].id, 'm4');
-    });
+        final unread = item.unreadMessages;
+        expect(unread.length, 2);
+        expect(unread[0].id, 'm3');
+        expect(unread[1].id, 'm4');
+      },
+    );
 
     test('previewMessages returns first 3 unread when unread > 3', () {
       final item = ThreadFeedItem(
@@ -228,22 +230,24 @@ void main() {
       expect(item.previewMessages.length, 2);
     });
 
-    test('hasEarlierHistory true when read messages exist before first unread',
-        () {
-      final item = ThreadFeedItem(
-        id: 'thread_1',
-        timestamp: DateTime(2026, 2, 9),
-        contactPeerId: 'peer1',
-        contactUsername: 'Alice',
-        messages: [
-          _msg(id: 'm1'), // read
-          _msg(id: 'm2'), // read
-          _msg(id: 'm3', isUnread: true), // unread
-        ],
-      );
+    test(
+      'hasEarlierHistory true when read messages exist before first unread',
+      () {
+        final item = ThreadFeedItem(
+          id: 'thread_1',
+          timestamp: DateTime(2026, 2, 9),
+          contactPeerId: 'peer1',
+          contactUsername: 'Alice',
+          messages: [
+            _msg(id: 'm1'), // read
+            _msg(id: 'm2'), // read
+            _msg(id: 'm3', isUnread: true), // unread
+          ],
+        );
 
-      expect(item.hasEarlierHistory, isTrue);
-    });
+        expect(item.hasEarlierHistory, isTrue);
+      },
+    );
 
     test('hasEarlierHistory false when all messages are unread', () {
       final item = ThreadFeedItem(
@@ -454,25 +458,25 @@ void main() {
     });
 
     test('0 unread, 2 total returns both', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2'),
-      ]);
+      final item = _thread([_msg(id: 'm1'), _msg(id: 'm2')]);
       expect(item.recentInteractionMessages.length, 2);
     });
 
-    test('interleaved: read, sent, unread, sent, unread → from first unread', () {
-      final item = _thread([
-        _msg(id: 'm1'),               // read incoming
-        _msg(id: 'm2', isIncoming: false),  // sent
-        _msg(id: 'm3', isUnread: true),     // unread incoming
-        _msg(id: 'm4', isIncoming: false),  // sent
-        _msg(id: 'm5', isUnread: true),     // unread incoming
-      ]);
-      final result = item.recentInteractionMessages;
-      expect(result.length, 3);
-      expect(result[0].id, 'm3');
-    });
+    test(
+      'interleaved: read, sent, unread, sent, unread → from first unread',
+      () {
+        final item = _thread([
+          _msg(id: 'm1'), // read incoming
+          _msg(id: 'm2', isIncoming: false), // sent
+          _msg(id: 'm3', isUnread: true), // unread incoming
+          _msg(id: 'm4', isIncoming: false), // sent
+          _msg(id: 'm5', isUnread: true), // unread incoming
+        ]);
+        final result = item.recentInteractionMessages;
+        expect(result.length, 3);
+        expect(result[0].id, 'm3');
+      },
+    );
 
     test('only sent, 5 total returns last 3', () {
       final item = _thread([
@@ -553,19 +557,12 @@ void main() {
     });
 
     test('0 unread, exactly maxPreview returns false', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2'),
-        _msg(id: 'm3'),
-      ]);
+      final item = _thread([_msg(id: 'm1'), _msg(id: 'm2'), _msg(id: 'm3')]);
       expect(item.hasEarlierInteractionHistory, isFalse);
     });
 
     test('0 unread, less than maxPreview returns false', () {
-      final item = _thread([
-        _msg(id: 'm1'),
-        _msg(id: 'm2'),
-      ]);
+      final item = _thread([_msg(id: 'm1'), _msg(id: 'm2')]);
       expect(item.hasEarlierInteractionHistory, isFalse);
     });
   });
@@ -607,17 +604,23 @@ void main() {
         groupType: GroupType.chat,
         messages: [
           ThreadMessage(
-            id: 'm1', text: 'Hi', time: '3:00 PM',
+            id: 'm1',
+            text: 'Hi',
+            time: '3:00 PM',
             timestamp: DateTime(2026, 2, 9, 15, 0),
             isIncoming: true,
           ),
           ThreadMessage(
-            id: 'm2', text: 'Reply', time: '3:05 PM',
+            id: 'm2',
+            text: 'Reply',
+            time: '3:05 PM',
             timestamp: DateTime(2026, 2, 9, 15, 5),
             isIncoming: false,
           ),
           ThreadMessage(
-            id: 'm3', text: 'New', time: '3:10 PM',
+            id: 'm3',
+            text: 'New',
+            time: '3:10 PM',
             timestamp: DateTime(2026, 2, 9, 15, 10),
             isUnread: true,
             isIncoming: true,
@@ -652,7 +655,9 @@ void main() {
         contactUsername: 'Alice',
         messages: [
           ThreadMessage(
-            id: 'm1', text: 'Hi', time: '3:00 PM',
+            id: 'm1',
+            text: 'Hi',
+            time: '3:00 PM',
             timestamp: DateTime(2026, 2, 9, 15, 0),
             isIncoming: true,
           ),
@@ -750,16 +755,22 @@ void main() {
         groupType: GroupType.chat,
         messages: [
           ThreadMessage(
-            id: 'gm-1', text: 'read', time: '3:00 PM',
+            id: 'gm-1',
+            text: 'read',
+            time: '3:00 PM',
             timestamp: DateTime(2026, 2, 9, 15, 0),
           ),
           ThreadMessage(
-            id: 'gm-2', text: 'unread', time: '3:30 PM',
+            id: 'gm-2',
+            text: 'unread',
+            time: '3:30 PM',
             timestamp: DateTime(2026, 2, 9, 15, 30),
             isUnread: true,
           ),
           ThreadMessage(
-            id: 'gm-3', text: 'sent', time: '3:31 PM',
+            id: 'gm-3',
+            text: 'sent',
+            time: '3:31 PM',
             timestamp: DateTime(2026, 2, 9, 15, 31),
             isIncoming: false,
           ),
@@ -779,11 +790,15 @@ void main() {
         groupType: GroupType.chat,
         messages: [
           ThreadMessage(
-            id: 'gm-1', text: 'First', time: '3:00 PM',
+            id: 'gm-1',
+            text: 'First',
+            time: '3:00 PM',
             timestamp: DateTime(2026, 2, 9, 15, 0),
           ),
           ThreadMessage(
-            id: 'gm-2', text: 'Last', time: '3:30 PM',
+            id: 'gm-2',
+            text: 'Last',
+            time: '3:30 PM',
             timestamp: DateTime(2026, 2, 9, 15, 30),
           ),
         ],
@@ -800,11 +815,15 @@ void main() {
         groupType: GroupType.chat,
         messages: [
           ThreadMessage(
-            id: 'gm-1', text: 'Incoming', time: '3:00 PM',
+            id: 'gm-1',
+            text: 'Incoming',
+            time: '3:00 PM',
             timestamp: DateTime(2026, 2, 9, 15, 0),
           ),
           ThreadMessage(
-            id: 'gm-2', text: 'My msg', time: '3:05 PM',
+            id: 'gm-2',
+            text: 'My msg',
+            time: '3:05 PM',
             timestamp: DateTime(2026, 2, 9, 15, 5),
             isIncoming: false,
           ),
@@ -820,7 +839,9 @@ void main() {
         groupType: GroupType.chat,
         messages: [
           ThreadMessage(
-            id: 'gm-1', text: 'Incoming', time: '3:00 PM',
+            id: 'gm-1',
+            text: 'Incoming',
+            time: '3:00 PM',
             timestamp: DateTime(2026, 2, 9, 15, 0),
           ),
         ],
@@ -866,6 +887,48 @@ void main() {
       );
       expect(item.unreadCount, 0);
       expect(item.conversationState, ConversationState.read);
+    });
+
+    test(
+      'active announcement readers stay read-only for compose but can still react',
+      () {
+        final item = GroupThreadFeedItem(
+          id: 'announce-reader',
+          timestamp: DateTime(2026, 2, 9),
+          groupId: 'announce-reader',
+          groupName: 'Announcements',
+          groupType: GroupType.announcement,
+          myRole: GroupRole.member,
+          messages: const [],
+        );
+
+        expect(item.canWrite, isFalse);
+        expect(item.canReact, isTrue);
+        expect(
+          item.readOnlyBannerText,
+          'Only admins can send messages in this group',
+        );
+      },
+    );
+
+    test('dissolved groups disable both write and react affordances', () {
+      final item = GroupThreadFeedItem(
+        id: 'dissolved-group',
+        timestamp: DateTime(2026, 2, 9),
+        groupId: 'dissolved-group',
+        groupName: 'Frozen Group',
+        groupType: GroupType.chat,
+        myRole: GroupRole.admin,
+        isDissolved: true,
+        messages: const [],
+      );
+
+      expect(item.canWrite, isFalse);
+      expect(item.canReact, isFalse);
+      expect(
+        item.readOnlyBannerText,
+        'This group has been dissolved. History stays available, but new messages are disabled.',
+      );
     });
   });
 

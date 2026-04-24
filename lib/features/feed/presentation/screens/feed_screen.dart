@@ -608,7 +608,7 @@ class FeedScreen extends StatelessWidget {
         : null;
     final showReplyAction = thread.canWrite && onQuoteReply != null;
     final showCopyAction = message.text.trim().isNotEmpty;
-    final showReactionBar = onGroupReactionSelected != null;
+    final showReactionBar = thread.canReact && onGroupReactionSelected != null;
     if (!showReplyAction && !showCopyAction && !showReactionBar) {
       return;
     }
@@ -679,6 +679,10 @@ class FeedScreen extends StatelessWidget {
           activeQuoteMessageIds?['group:${item.groupId}'];
       final groupDraftKey = 'group:${item.groupId}';
       final canWrite = item.canWrite;
+      final canReact = item.canReact;
+      final hasCopyableMessage = item.messages.any(
+        (message) => message.text.trim().isNotEmpty,
+      );
       return FeedCard(
         thread: item,
         canWrite: canWrite,
@@ -713,9 +717,9 @@ class FeedScreen extends StatelessWidget {
         reactionListenableForMessage: reactionListenableForMessage,
         ownPeerId: userPeerId,
         onMessageLongPress:
-            onGroupReactionSelected != null ||
-                onQuoteReply != null ||
-                item.messages.any((message) => message.text.trim().isNotEmpty)
+            (canReact && onGroupReactionSelected != null) ||
+                (canWrite && onQuoteReply != null) ||
+                hasCopyableMessage
             ? (message, bubbleContext) => _showGroupMessageContextOverlay(
                 context,
                 item,

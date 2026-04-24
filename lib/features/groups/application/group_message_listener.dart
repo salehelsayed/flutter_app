@@ -580,11 +580,17 @@ class GroupMessageListener {
       return false;
     }
 
+    final senderMember = await _groupRepo.getMember(groupId, senderId);
+    // Dissolve must stay current-admin-only; stored creator identity alone
+    // is not sufficient once the creator has been demoted.
+    if (sysType == 'group_dissolved') {
+      return senderMember?.role == MemberRole.admin;
+    }
+
     if (group.createdBy == senderId) {
       return true;
     }
 
-    final senderMember = await _groupRepo.getMember(groupId, senderId);
     if (sysType == 'member_removed') {
       final memberData = parsed?['member'] as Map<String, dynamic>?;
       final removedPeerId = memberData?['peerId'] as String?;

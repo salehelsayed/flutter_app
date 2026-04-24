@@ -154,20 +154,22 @@ void main() {
     expect(change, isNull);
   });
 
-  test('still processes reaction from unknown sender (stale member list)',
-      () async {
-    final (result, change) = await handleIncomingGroupReaction(
-      groupRepo: groupRepo,
-      reactionRepo: reactionRepo,
-      groupId: 'group-1',
-      senderId: 'unknown-peer',
-      reactionJson: makeReactionJson(senderPeerId: 'unknown-peer'),
-    );
+  test(
+    'still processes reaction from unknown sender (stale member list)',
+    () async {
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'unknown-peer',
+        reactionJson: makeReactionJson(senderPeerId: 'unknown-peer'),
+      );
 
-    // Should succeed — unknown sender is logged but not rejected
-    expect(result, HandleGroupReactionResult.success);
-    expect(change, isNotNull);
-  });
+      // Should succeed — unknown sender is logged but not rejected
+      expect(result, HandleGroupReactionResult.success);
+      expect(change, isNotNull);
+    },
+  );
 
   test('rejects add when payload sender mismatches outer sender', () async {
     final (result, change) = await handleIncomingGroupReaction(
@@ -213,4 +215,108 @@ void main() {
     expect(stored, hasLength(1));
     expect(stored.single.senderPeerId, 'peer-sender');
   });
+
+  test('ignores add reactions at or after the dissolve cutoff', () async {
+    await groupRepo.updateGroup(
+      GroupModel(
+        id: 'group-1',
+        name: 'Test Group',
+        type: GroupType.chat,
+        topicName: 'group-topic-1',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-1',
+        myRole: GroupRole.admin,
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 4, 22, 12),
+        dissolvedBy: 'peer-admin',
+      ),
+    );
+
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(timestamp: '2026-04-22T12:00:00.000Z'),
+    );
+
+    expect(result, HandleGroupReactionResult.ignoredAfterDissolve);
+    expect(change, isNull);
+    expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+  });
+
+  test('ignores remove reactions at or after the dissolve cutoff', () async {
+    await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(timestamp: '2026-04-22T11:59:59.000Z'),
+    );
+    await groupRepo.updateGroup(
+      GroupModel(
+        id: 'group-1',
+        name: 'Test Group',
+        type: GroupType.chat,
+        topicName: 'group-topic-1',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-1',
+        myRole: GroupRole.admin,
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 4, 22, 12),
+        dissolvedBy: 'peer-admin',
+      ),
+    );
+
+    final (result, change) = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(
+        id: 'r-remove-after-dissolve',
+        action: 'remove',
+        timestamp: '2026-04-22T12:00:00.000Z',
+      ),
+    );
+
+    expect(result, HandleGroupReactionResult.ignoredAfterDissolve);
+    expect(change, isNull);
+    expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+  });
+
+  test(
+    'accepts late replayed reactions when the payload predates dissolve',
+    () async {
+      await groupRepo.updateGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: 'group-topic-1',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-1',
+          myRole: GroupRole.admin,
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 22, 12),
+          dissolvedBy: 'peer-admin',
+        ),
+      );
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'r-before-dissolve',
+          timestamp: '2026-04-22T11:59:59.000Z',
+        ),
+      );
+
+      expect(result, HandleGroupReactionResult.success);
+      expect(change, isNotNull);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+    },
+  );
 }

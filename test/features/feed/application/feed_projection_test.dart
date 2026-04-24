@@ -164,6 +164,11 @@ Map<String, Object?> _summarizeFeedItem(FeedItem item) {
       'timestamp': item.timestamp.toUtc().toIso8601String(),
       'groupId': item.groupId,
       'groupName': item.groupName,
+      'groupType': item.groupType.name,
+      'myRole': item.myRole.name,
+      'isDissolved': item.isDissolved,
+      'canWrite': item.canWrite,
+      'canReact': item.canReact,
       'unreadCount': item.unreadCount,
       'conversationState': item.conversationState.name,
       'messages': item.messages
@@ -674,33 +679,35 @@ void main() {
       );
     });
 
-    test('loadGroupFeedSnapshot without media repos returns empty media',
-        () async {
-      await groupRepo.saveGroup(
-        _group(
-          id: 'group-1',
-          name: 'Alpha',
-          createdAt: DateTime.utc(2026, 2, 1),
-        ),
-      );
-      await groupMessageRepo.saveMessage(
-        _groupMessage(
-          id: 'gm-1',
+    test(
+      'loadGroupFeedSnapshot without media repos returns empty media',
+      () async {
+        await groupRepo.saveGroup(
+          _group(
+            id: 'group-1',
+            name: 'Alpha',
+            createdAt: DateTime.utc(2026, 2, 1),
+          ),
+        );
+        await groupMessageRepo.saveMessage(
+          _groupMessage(
+            id: 'gm-1',
+            groupId: 'group-1',
+            senderPeerId: 'peer-B',
+            text: 'No media loaded',
+            timestamp: DateTime.utc(2026, 2, 1, 11, 0),
+          ),
+        );
+
+        final snapshot = await loadGroupFeedSnapshot(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMessageRepo,
           groupId: 'group-1',
-          senderPeerId: 'peer-B',
-          text: 'No media loaded',
-          timestamp: DateTime.utc(2026, 2, 1, 11, 0),
-        ),
-      );
+        );
 
-      final snapshot = await loadGroupFeedSnapshot(
-        groupRepo: groupRepo,
-        groupMsgRepo: groupMessageRepo,
-        groupId: 'group-1',
-      );
-
-      expect(snapshot, isNotNull);
-      expect(snapshot!.messages.first.media, isEmpty);
-    });
+        expect(snapshot, isNotNull);
+        expect(snapshot!.messages.first.media, isEmpty);
+      },
+    );
   });
 }

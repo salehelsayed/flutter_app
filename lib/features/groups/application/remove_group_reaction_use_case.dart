@@ -16,6 +16,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 enum RemoveGroupReactionResult {
   success,
   groupNotFound,
+  groupDissolved,
   notMember,
   publishFailed,
 }
@@ -48,6 +49,19 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
   final group = await groupRepo.getGroup(groupId);
   if (group == null) {
     return RemoveGroupReactionResult.groupNotFound;
+  }
+
+  if (group.isDissolved) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_REMOVE_GROUP_DISSOLVED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        if (group.dissolvedAt != null)
+          'dissolvedAt': group.dissolvedAt!.toUtc().toIso8601String(),
+      },
+    );
+    return RemoveGroupReactionResult.groupDissolved;
   }
 
   // 2. Validate sender is a member

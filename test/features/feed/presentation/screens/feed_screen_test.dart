@@ -661,6 +661,111 @@ void main() {
   );
 
   testWidgets(
+    'announcement reader long-press keeps reaction entry while reply stays hidden',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final groupItem = GroupThreadFeedItem(
+        id: 'group_thread_announce_overlay',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        groupId: 'announce-overlay',
+        groupName: 'Announcements',
+        groupType: GroupType.announcement,
+        myRole: GroupRole.member,
+        messages: [
+          ThreadMessage(
+            id: 'announce-overlay-msg-1',
+            text: 'Announcement overlay message',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Admin',
+            senderPeerId: 'peer-admin',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [groupItem],
+          onGroupReactionSelected: (_, __, ___) {},
+          onQuoteReply: (_, __) {},
+        ),
+      );
+      await tester.pump();
+
+      await tester.longPress(find.text('Announcement overlay message'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.reactionBarKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'dissolved group cards show dissolved copy and hide reply and reaction entry',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      final groupItem = GroupThreadFeedItem(
+        id: 'group_thread_dissolved',
+        timestamp: DateTime.utc(2026, 3, 1, 10),
+        groupId: 'dissolved-group',
+        groupName: 'Frozen Group',
+        groupType: GroupType.chat,
+        isDissolved: true,
+        messages: [
+          ThreadMessage(
+            id: 'dissolved-msg-1',
+            text: 'Frozen history',
+            time: '12:00',
+            timestamp: DateTime.utc(2026, 3, 1, 9, 55),
+            isIncoming: true,
+            isUnread: true,
+            senderUsername: 'Bob',
+            senderPeerId: 'peer-bob',
+          ),
+        ],
+        unreadCount: 1,
+        conversationState: ConversationState.unread,
+      );
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: [groupItem],
+          onGroupInlineSend: (_, __) {},
+          onGroupAttach: (_) {},
+          onQuoteReply: (_, __) {},
+          onGroupReactionSelected: (_, __, ___) {},
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.text(
+          'This group has been dissolved. History stays available, but new messages are disabled.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(TextField), findsNothing);
+      expect(find.byIcon(Icons.add_rounded), findsNothing);
+
+      await tester.longPress(find.text('Frozen history'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+      expect(find.byKey(MessageContextOverlay.reactionBarKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.replyActionKey), findsNothing);
+      expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'group message long-press in Feed uses the shared context overlay with reactions reply and copy',
     (tester) async {
       setPhoneViewport(tester);

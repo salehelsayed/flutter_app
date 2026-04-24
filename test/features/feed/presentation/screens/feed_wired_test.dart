@@ -65,6 +65,7 @@ import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_group_repository.dart';
@@ -185,6 +186,8 @@ void main() {
     DeleteMessageForEveryoneFn? deleteForEveryoneFn,
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
+    FakeGroupReactionReplayOutboxRepository?
+    groupReactionReplayOutboxRepository,
     GroupMessageListener? groupMessageListener,
     GroupInviteListener? groupInviteListener,
     InMemoryIntroductionRepository? introductionRepository,
@@ -236,6 +239,8 @@ void main() {
         reactionListener: reactionListener,
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
+        groupReactionReplayOutboxRepository:
+            groupReactionReplayOutboxRepository,
         groupMessageListener: groupMessageListener,
         groupInviteListener: groupInviteListener,
         introductionRepository: introductionRepository,
@@ -745,6 +750,7 @@ void main() {
       (tester) async {
         suppressFeedNavErrors();
         identityRepo.seed(testIdentity);
+        final now = DateTime.now().toUtc();
 
         final introRepo = InMemoryIntroductionRepository();
         await introRepo.saveIntroduction(
@@ -752,7 +758,7 @@ void main() {
             id: 'intro-fresh',
             ownPeerId: testIdentity.peerId,
             otherPeerId: 'fresh-peer-id',
-            createdAt: '2026-03-20T12:00:00.000Z',
+            createdAt: now.subtract(const Duration(days: 5)).toIso8601String(),
           ),
         );
         await introRepo.saveIntroduction(
@@ -760,7 +766,7 @@ void main() {
             id: 'intro-expired',
             ownPeerId: testIdentity.peerId,
             otherPeerId: 'expired-peer-id',
-            createdAt: '2026-02-01T12:00:00.000Z',
+            createdAt: now.subtract(const Duration(days: 45)).toIso8601String(),
           ),
         );
 
@@ -5892,6 +5898,111 @@ void main() {
     );
 
     testWidgets(
+      'stale dissolved feed reaction entry restores prior state and refreshes the card',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final reactionRepo = FakeReactionRepository();
+        final reactionReplayOutboxRepo =
+            FakeGroupReactionReplayOutboxRepository();
+        final feedGroup = GroupModel(
+          id: 'g-feed-dissolved-race',
+          name: 'Frozen Feed Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g-feed-dissolved-race',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin-peer',
+          myRole: GroupRole.admin,
+        );
+        await groupRepo.saveGroup(feedGroup);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: feedGroup.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            joinedAt: DateTime.utc(2026, 2, 1, 10),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-feed-dissolved-race-1',
+            groupId: feedGroup.id,
+            senderPeerId: 'peer-bob',
+            senderUsername: 'Bob',
+            text: 'Feed reaction race message',
+            timestamp: DateTime.utc(2026, 2, 1, 11),
+            createdAt: DateTime.utc(2026, 2, 1, 11),
+            isIncoming: true,
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(
+            reactionRepository: reactionRepo,
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupReactionReplayOutboxRepository: reactionReplayOutboxRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        await groupRepo.updateGroup(
+          feedGroup.copyWith(
+            isDissolved: true,
+            dissolvedAt: DateTime.utc(2026, 2, 1, 11, 30),
+            dissolvedBy: 'admin-peer',
+          ),
+        );
+
+        await tester.longPress(find.text('Feed reaction race message'));
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(
+          find.byKey(MessageContextOverlay.reactionBarKey),
+          findsOneWidget,
+        );
+
+        final thumbsUp = find.descendant(
+          of: find.byKey(MessageContextOverlay.reactionBarKey),
+          matching: find.text('\u{1F44D}'),
+        );
+        expect(thumbsUp, findsOneWidget);
+
+        await tester.tap(thumbsUp);
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(
+          await reactionRepo.getReactionsForMessage('gm-feed-dissolved-race-1'),
+          isEmpty,
+        );
+        expect(find.text('This group has been dissolved'), findsOneWidget);
+        expect(
+          find.text(
+            'This group has been dissolved. History stays available, but new messages are disabled.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.byType(TextField), findsNothing);
+
+        await tester.longPress(find.text('Feed reaction race message').first);
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(find.byKey(MessageContextOverlay.overlayKey), findsOneWidget);
+        expect(find.byKey(MessageContextOverlay.reactionBarKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.replyActionKey), findsNothing);
+        expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      },
+    );
+
+    testWidgets(
       'feed delete-for-me removes the thread row and keeps the contact card',
       (tester) async {
         tester.view.physicalSize = const Size(390, 844);
@@ -6627,7 +6738,11 @@ class _GatedP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     await sendGate.future;
     return true;
   }

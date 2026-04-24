@@ -8,6 +8,7 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
@@ -116,6 +117,11 @@ Future<void> confirmDissolveGroupDialog(WidgetTester tester) async {
   await pumpFrames(tester, count: 30);
 }
 
+Future<void> confirmDeleteLocalGroupDialog(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey('group-delete-local-confirm')));
+  await pumpFrames(tester, count: 30);
+}
+
 Future<void> tapLeaveGroupButton(
   WidgetTester tester, {
   int settleFrameCount = 20,
@@ -134,6 +140,16 @@ Future<void> scrollToDissolveGroupButton(WidgetTester tester) async {
   final dissolveButton = find.byKey(const ValueKey('group-dissolve-button'));
   await tester.scrollUntilVisible(
     dissolveButton,
+    200,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await pumpFrames(tester, count: 5);
+}
+
+Future<void> scrollToDeleteLocalGroupButton(WidgetTester tester) async {
+  final deleteButton = find.byKey(const ValueKey('group-delete-local-button'));
+  await tester.scrollUntilVisible(
+    deleteButton,
     200,
     scrollable: find.byType(Scrollable).first,
   );
@@ -400,6 +416,10 @@ void main() {
           findsNothing,
         );
         expect(find.byKey(const ValueKey('group-leave-button')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('group-delete-local-button')),
+          findsOneWidget,
+        );
         expect(find.text('Add Member'), findsNothing);
         expect(
           find.byKey(const ValueKey('group-edit-details-button')),
@@ -979,6 +999,193 @@ void main() {
       expect(find.text(lastAdminLeaveBlockedMessage), findsOneWidget);
       expect(await groupRepo.getGroup(group.id), isNotNull);
     });
+
+    testWidgets(
+      'dissolved local delete clears local state without publishing group leave and pops to the first route',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup().copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+          dissolvedBy: 'peer-admin',
+        );
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-dissolved-1',
+            groupId: group.id,
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Admin dissolved the group',
+            timestamp: DateTime.utc(2026, 4, 5, 12, 0, 0),
+            createdAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+            isIncoming: false,
+            status: 'sent',
+          ),
+        );
+
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: testIdentity,
+                          ),
+                          p2pService: FakeP2PService(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 20);
+
+        await scrollToDeleteLocalGroupButton(tester);
+        expect(
+          find.byKey(const ValueKey('group-delete-local-button')),
+          findsOneWidget,
+        );
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-delete-local-button')),
+        );
+        await pumpFrames(tester, count: 5);
+
+        expect(
+          find.byKey(const ValueKey('group-delete-local-confirm')),
+          findsOneWidget,
+        );
+
+        await confirmDeleteLocalGroupDialog(tester);
+
+        expect(await groupRepo.getGroup(group.id), isNull);
+        expect(await groupRepo.getLatestKey(group.id), isNull);
+        expect(await groupRepo.getMembers(group.id), isEmpty);
+        expect(await msgRepo.getMessageCount(group.id), 0);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+        expect(find.byType(GroupInfoScreen), findsNothing);
+        expect(find.text('Open Info'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'canceling dissolved local delete keeps the group state and route intact',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup().copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+          dissolvedBy: 'peer-admin',
+        );
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-dissolved-2',
+            groupId: group.id,
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Admin dissolved the group',
+            timestamp: DateTime.utc(2026, 4, 5, 12, 0, 0),
+            createdAt: DateTime.utc(2026, 4, 5, 12, 0, 0),
+            isIncoming: false,
+            status: 'sent',
+          ),
+        );
+
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          msgRepo: msgRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: testIdentity,
+                          ),
+                          p2pService: FakeP2PService(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 20);
+
+        await scrollToDeleteLocalGroupButton(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('group-delete-local-button')),
+        );
+        await pumpFrames(tester, count: 5);
+
+        expect(
+          find.byKey(const ValueKey('group-delete-local-cancel')),
+          findsOneWidget,
+        );
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-delete-local-cancel')),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(await groupRepo.getGroup(group.id), isNotNull);
+        expect(await groupRepo.getLatestKey(group.id), isNotNull);
+        expect(await msgRepo.getMessageCount(group.id), 1);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+        expect(find.text('Open Info'), findsNothing);
+      },
+    );
 
     testWidgets(
       'multi-admin leave broadcasts self-removal, rotates key, and pops to first route',

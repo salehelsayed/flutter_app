@@ -57,14 +57,16 @@ void main() {
     bridge.responses['group:publishReaction'] = {'ok': true};
 
     // Seed an existing reaction
-    await reactionRepo.saveReaction(MessageReaction(
-      id: 'r-existing',
-      messageId: 'msg-1',
-      emoji: '👍',
-      senderPeerId: 'peer-1',
-      timestamp: '2026-03-08T00:00:00.000Z',
-      createdAt: '2026-03-08T00:00:00.000Z',
-    ));
+    await reactionRepo.saveReaction(
+      MessageReaction(
+        id: 'r-existing',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        timestamp: '2026-03-08T00:00:00.000Z',
+        createdAt: '2026-03-08T00:00:00.000Z',
+      ),
+    );
   });
 
   test('removes own reaction', () async {
@@ -126,32 +128,74 @@ void main() {
     expect(result, RemoveGroupReactionResult.notMember);
   });
 
-  test('successful remove replay store marks the durable outbox row stored', () async {
-    final result = await removeGroupReaction(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      reactionRepo: reactionRepo,
-      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-      groupId: 'group-1',
-      messageId: 'msg-1',
-      emoji: '👍',
-      senderPeerId: 'peer-1',
-      senderPublicKey: 'pk-1',
-      senderPrivateKey: 'sk-1',
-    );
+  test(
+    'dissolved group rejects remove and preserves the stored reaction',
+    () async {
+      await groupRepo.updateGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: 'group-topic-1',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-1',
+          myRole: GroupRole.admin,
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 22, 11),
+          dissolvedBy: 'peer-1',
+        ),
+      );
 
-    expect(result, RemoveGroupReactionResult.success);
+      final sentBefore = bridge.sentMessages.length;
+      final result = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
 
-    await pumpEventQueue();
+      expect(result, RemoveGroupReactionResult.groupDissolved);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), hasLength(1));
+      expect(reactionReplayOutboxRepo.entries, isEmpty);
+      expect(bridge.sentMessages.length, sentBefore);
+    },
+  );
 
-    final entry = reactionReplayOutboxRepo.entries.single;
-    expect(entry.groupId, 'group-1');
-    expect(entry.messageId, 'msg-1');
-    expect(entry.senderPeerId, 'peer-1');
-    expect(entry.emoji, '👍');
-    expect(entry.action, 'remove');
-    expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
-  });
+  test(
+    'successful remove replay store marks the durable outbox row stored',
+    () async {
+      final result = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, RemoveGroupReactionResult.success);
+
+      await pumpEventQueue();
+
+      final entry = reactionReplayOutboxRepo.entries.single;
+      expect(entry.groupId, 'group-1');
+      expect(entry.messageId, 'msg-1');
+      expect(entry.senderPeerId, 'peer-1');
+      expect(entry.emoji, '👍');
+      expect(entry.action, 'remove');
+      expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+    },
+  );
 
   test(
     'remove replay store failure still returns success and leaves a failed durable row',

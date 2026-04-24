@@ -413,6 +413,9 @@ class CollapsedModeCardBody extends StatelessWidget {
   }
 
   Widget _buildReadOnlyBanner() {
+    final groupThread = thread is GroupThreadFeedItem
+        ? thread as GroupThreadFeedItem
+        : null;
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
@@ -421,10 +424,11 @@ class CollapsedModeCardBody extends StatelessWidget {
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
-      child: const Text(
-        'Only admins can send messages in this group',
+      child: Text(
+        groupThread?.readOnlyBannerText ??
+            'Only admins can send messages in this group',
         textAlign: TextAlign.center,
-        style: TextStyle(
+        style: const TextStyle(
           fontSize: 13,
           color: Color.fromRGBO(255, 255, 255, 0.45),
         ),

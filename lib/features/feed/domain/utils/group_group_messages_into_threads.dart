@@ -82,6 +82,7 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
       groupName: group.name,
       groupType: group.type,
       myRole: group.myRole,
+      isDissolved: group.isDissolved,
       avatarPath: group.avatarPath,
       avatarCacheBustKey:
           group.lastMetadataEventAt?.toUtc().toIso8601String() ??

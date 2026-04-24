@@ -1987,4 +1987,51 @@ void main() {
     );
     expect(msgRepo.count, 0);
   });
+
+  test('replayed system messages trust the outer sender over payload sender',
+      () async {
+    final listener = GroupMessageListener(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      bridge: bridge,
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    final inboxMessage = jsonEncode({
+      'senderId': 'peer-admin',
+      'senderUsername': 'Admin',
+      'keyEpoch': 0,
+      'text': jsonEncode({
+        '__sys': 'group_dissolved',
+        'dissolvedAt': '2026-04-05T12:00:00.000Z',
+        'dissolvedBy': 'peer-admin',
+      }),
+      'timestamp': '2026-04-05T12:00:00.000Z',
+    });
+
+    bridge.addPage('group-1', '', [
+      {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+    ], '');
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupMessageListener: listener,
+    );
+
+    final group = await groupRepo.getGroup('group-1');
+    expect(group, isNotNull);
+    expect(group!.isDissolved, isFalse);
+    expect(await msgRepo.getLatestMessage('group-1'), isNull);
+    expect(bridge.commandLog, isNot(contains('group:leave')));
+  });
 }

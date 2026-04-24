@@ -23,6 +23,7 @@ class GroupInfoScreen extends StatelessWidget {
   final ValueChanged<bool>? onMuteChanged;
   final VoidCallback? onEditDetails;
   final VoidCallback? onDissolve;
+  final VoidCallback? onDeleteLocally;
   final ValueChanged<GroupMember>? onRemoveMember;
   final ValueChanged<GroupMember>? onToggleAdminRole;
   final VoidCallback? onAddMember;
@@ -40,6 +41,7 @@ class GroupInfoScreen extends StatelessWidget {
     this.onMuteChanged,
     this.onEditDetails,
     this.onDissolve,
+    this.onDeleteLocally,
     this.onRemoveMember,
     this.onToggleAdminRole,
     this.onAddMember,
@@ -72,6 +74,10 @@ class GroupInfoScreen extends StatelessWidget {
                         onDissolve != null) ...[
                       _buildDissolveButton(),
                       const SizedBox(height: 12),
+                    ],
+                    if (group.isDissolved && onDeleteLocally != null) ...[
+                      _buildDeleteLocallyCard(),
+                      const SizedBox(height: 24),
                     ],
                     if (!group.isDissolved) ...[
                       _buildLeaveButton(),
@@ -443,6 +449,69 @@ class GroupInfoScreen extends StatelessWidget {
               color: Color(0xFFFFB3AD),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeleteLocallyCard() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.08), width: 0.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Delete from this device',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Keep this dissolved history as long as you want, or remove it from this device only. This will not affect anyone else.',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withOpacity(0.62),
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 16),
+            GestureDetector(
+              key: const ValueKey('group-delete-local-button'),
+              onTap: onDeleteLocally,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.red.withOpacity(0.2),
+                    width: 0.5,
+                  ),
+                ),
+                child: const Text(
+                  'Delete Group Locally',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

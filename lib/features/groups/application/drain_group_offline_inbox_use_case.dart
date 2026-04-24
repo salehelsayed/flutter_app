@@ -265,6 +265,7 @@ Future<void> _drainGroupInbox({
       final mediaRaw = payload['media'] as List<dynamic>?;
       final media = mediaRaw?.cast<Map<String, dynamic>>();
       final resolvedGroupId = payload['groupId'] as String? ?? groupId;
+      final transportSenderId = msg['from'] as String? ?? '';
       final senderId =
           payload['senderId'] as String? ?? (msg['from'] as String? ?? '');
       final senderUsername = payload['senderUsername'] as String? ?? '';
@@ -273,7 +274,9 @@ Future<void> _drainGroupInbox({
       if (groupMessageListener != null && text.startsWith('{"__sys":')) {
         await groupMessageListener.handleReplayEnvelope({
           'groupId': resolvedGroupId,
-          'senderId': senderId,
+          'senderId': transportSenderId.isNotEmpty
+              ? transportSenderId
+              : senderId,
           'senderUsername': senderUsername,
           'keyEpoch': keyEpoch,
           'text': text,

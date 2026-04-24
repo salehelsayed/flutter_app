@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
+import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
@@ -1920,7 +1921,7 @@ void main() {
     );
 
     test(
-      'offline member converges to dissolved state through replay and cannot send afterwards',
+      'offline member converges to dissolved state through replay, cannot send afterwards, and can delete locally without affecting others',
       () async {
         const groupId = 'grp-dissolve-001';
 
@@ -1993,6 +1994,27 @@ void main() {
         expect(sendResult, group_send.SendGroupMessageResult.groupDissolved);
         expect(sendMessage, isNull);
         expect(bob.bridge.commandLog, isNot(contains('group:publish')));
+
+        bob.bridge.commandLog.clear();
+
+        await deleteGroupAndMessages(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          groupMessageRepo: bob.msgRepo,
+          groupId: groupId,
+          deleteLocallyIfDissolved: true,
+        );
+        await pump();
+
+        expect(await bob.groupRepo.getGroup(groupId), isNull);
+        expect(await bob.groupRepo.getMembers(groupId), isEmpty);
+        expect(await bob.groupRepo.getLatestKey(groupId), isNull);
+        expect(await bob.msgRepo.getMessageCount(groupId), 0);
+        expect(bob.bridge.commandLog, isNot(contains('group:leave')));
+
+        final aliceGroup = await alice.groupRepo.getGroup(groupId);
+        expect(aliceGroup, isNotNull);
+        expect(aliceGroup!.isDissolved, isTrue);
 
         alice.dispose();
         bob.dispose();

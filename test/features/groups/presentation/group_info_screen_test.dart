@@ -45,6 +45,7 @@ void main() {
     ValueChanged<bool>? onMuteChanged,
     VoidCallback? onEditDetails,
     VoidCallback? onDissolve,
+    VoidCallback? onDeleteLocally,
     ValueChanged<GroupMember>? onToggleAdminRole,
     ValueChanged<GroupMember>? onRemoveMember,
     VoidCallback? onAddMember,
@@ -61,6 +62,7 @@ void main() {
         onMuteChanged: onMuteChanged,
         onEditDetails: onEditDetails,
         onDissolve: onDissolve,
+        onDeleteLocally: onDeleteLocally,
         onRemoveMember: onRemoveMember,
         onToggleAdminRole: onToggleAdminRole,
         onAddMember: onAddMember,
@@ -103,6 +105,10 @@ void main() {
 
     expect(find.text('Leave Group'), findsOneWidget);
     expect(find.byKey(const ValueKey('group-leave-button')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('group-delete-local-button')),
+      findsNothing,
+    );
   });
 
   testWidgets('shows dissolve button for active admins', (tester) async {
@@ -245,7 +251,7 @@ void main() {
     );
   });
 
-  testWidgets('dissolved groups show status and hide management controls', (
+  testWidgets('dissolved groups show local cleanup and hide management controls', (
     tester,
   ) async {
     final dissolvedGroup = testGroup.copyWith(
@@ -262,6 +268,7 @@ void main() {
         ownPeerId: 'peer-admin',
         onEditDetails: () {},
         onDissolve: () {},
+        onDeleteLocally: () {},
         onAddMember: () {},
         onRemoveMember: (_) {},
         onToggleAdminRole: (_) {},
@@ -274,6 +281,23 @@ void main() {
       find.text(
         'This conversation is now read-only. Previous messages stay available for reference.',
       ),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('group-delete-local-button')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    expect(find.text('Delete from this device'), findsOneWidget);
+    expect(
+      find.text(
+        'Keep this dissolved history as long as you want, or remove it from this device only. This will not affect anyone else.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('group-delete-local-button')),
       findsOneWidget,
     );
     expect(
