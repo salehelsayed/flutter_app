@@ -123,8 +123,13 @@ wait_for_step_result() {
       status=$(python3 - "$result_file" "$step_id" <<'PY'
 import json, sys
 path, step_id = sys.argv[1], sys.argv[2]
-with open(path) as f:
-    data = json.load(f)
+try:
+    with open(path) as f:
+        data = json.load(f)
+except (OSError, json.JSONDecodeError):
+    # The app rewrites this file as it moves from running to complete.
+    print("running")
+    sys.exit(0)
 if data.get("stepId") != step_id:
     print("mismatch")
 elif data.get("status") == "failed":

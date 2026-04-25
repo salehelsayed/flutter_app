@@ -558,7 +558,7 @@ func TestInboxStore_RetrievePendingRequiresExplicitAckAcrossInstances(t *testing
 	}
 }
 
-func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
+func TestBuildChatPushMessage_LegacyPlaintextEnvelopeEmitsOnlyFallbackAndRouteData(t *testing.T) {
 	msg := buildPushMessage(
 		"fcm-token",
 		"peer-from",
@@ -577,31 +577,20 @@ func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
 	if msg.Data["message_id"] != "msg-chat-1" {
 		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "msg-chat-1")
 	}
-	if msg.Data["sender_username"] != "Alice" {
-		t.Fatalf("sender_username = %q, want %q", msg.Data["sender_username"], "Alice")
+	if _, ok := msg.Data["sender_username"]; ok {
+		t.Fatalf("sender_username should be omitted, got %q", msg.Data["sender_username"])
 	}
-	if msg.Data["title"] != "Alice" {
-		t.Fatalf("title = %q, want %q", msg.Data["title"], "Alice")
+	if _, ok := msg.Data["senderUsername"]; ok {
+		t.Fatalf("senderUsername should be omitted, got %q", msg.Data["senderUsername"])
 	}
-	if msg.Data["body"] != "hello" {
-		t.Fatalf("body = %q, want %q", msg.Data["body"], "hello")
+	if _, ok := msg.Data["title"]; ok {
+		t.Fatalf("title should be omitted, got %q", msg.Data["title"])
 	}
-	if msg.Notification == nil {
-		t.Fatal("expected top-level notification payload")
+	if _, ok := msg.Data["body"]; ok {
+		t.Fatalf("body should be omitted, got %q", msg.Data["body"])
 	}
-	if msg.Notification.Title != "Alice" {
-		t.Fatalf(
-			"notification title = %q, want %q",
-			msg.Notification.Title,
-			"Alice",
-		)
-	}
-	if msg.Notification.Body != "hello" {
-		t.Fatalf(
-			"notification body = %q, want %q",
-			msg.Notification.Body,
-			"hello",
-		)
+	if msg.Notification != nil {
+		t.Fatal("message pushes should omit top-level FCM notification payload")
 	}
 
 	if msg.Android == nil {
@@ -610,33 +599,34 @@ func TestBuildChatPushMessage_IncludesAndroidAlertAndData(t *testing.T) {
 	if msg.Android.Priority != "high" {
 		t.Fatalf("priority = %q, want %q", msg.Android.Priority, "high")
 	}
-	if msg.Android.Notification == nil {
-		t.Fatal("expected Android notification payload")
+	if msg.Android.Notification != nil {
+		t.Fatal("Android message pushes should be data-only")
 	}
-	if msg.Android.Notification.Title != "Alice" {
+	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
+		t.Fatal("expected APNS payload")
+	}
+	if !msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("expected APNS mutable-content for NSE decrypt")
+	}
+	if msg.APNS.Payload.Aps.Alert == nil {
+		t.Fatal("expected APNS fallback alert")
+	}
+	if msg.APNS.Payload.Aps.Sound != pushNotificationSound {
 		t.Fatalf(
-			"android title = %q, want %q",
-			msg.Android.Notification.Title,
-			"Alice",
+			"apns sound = %q, want %q",
+			msg.APNS.Payload.Aps.Sound,
+			pushNotificationSound,
 		)
 	}
-	if msg.Android.Notification.Body != "hello" {
-		t.Fatalf(
-			"android body = %q, want %q",
-			msg.Android.Notification.Body,
-			"hello",
-		)
+	if msg.APNS.Payload.Aps.Alert.Title == "Alice" {
+		t.Fatal("APNS fallback title leaked sender username")
 	}
-	if msg.Android.Notification.ChannelID != pushNotificationChannelID {
-		t.Fatalf(
-			"android channel = %q, want %q",
-			msg.Android.Notification.ChannelID,
-			pushNotificationChannelID,
-		)
+	if msg.APNS.Payload.Aps.Alert.Body == "hello" {
+		t.Fatal("APNS fallback body leaked message text")
 	}
 }
 
-func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
+func TestBuildChatPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *testing.T) {
 	msg := buildPushMessage(
 		"fcm-token",
 		"peer-from",
@@ -663,12 +653,8 @@ func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
 	if msg.APNS.Payload.Aps.Alert == nil {
 		t.Fatal("expected APNS alert")
 	}
-	if msg.APNS.Payload.Aps.Alert.Title != "Alice" {
-		t.Fatalf(
-			"apns title = %q, want %q",
-			msg.APNS.Payload.Aps.Alert.Title,
-			"Alice",
-		)
+	if msg.APNS.Payload.Aps.Alert.Title == "Alice" {
+		t.Fatal("APNS fallback title leaked sender username")
 	}
 	if msg.APNS.Payload.Aps.Alert.Body != pushNotificationBody {
 		t.Fatalf(
@@ -680,11 +666,40 @@ func TestBuildChatPushMessage_PreservesIOSAlertPayload(t *testing.T) {
 	if msg.Data["message_id"] != "msg-chat-2" {
 		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "msg-chat-2")
 	}
-	if msg.Data["sender_username"] != "Alice" {
-		t.Fatalf("sender_username = %q, want %q", msg.Data["sender_username"], "Alice")
+	if msg.Data["kem"] != "k" || msg.Data["ciphertext"] != "c" || msg.Data["nonce"] != "n" {
+		t.Fatalf("encrypted push data missing or wrong: %#v", msg.Data)
+	}
+	assertNoDirectPushSchemaVersionKeys(t, msg.Data)
+	if _, ok := msg.Data["sender_username"]; ok {
+		t.Fatalf("sender_username should be omitted, got %q", msg.Data["sender_username"])
+	}
+	if _, ok := msg.Data["senderUsername"]; ok {
+		t.Fatalf("senderUsername should be omitted, got %q", msg.Data["senderUsername"])
+	}
+	if _, ok := msg.Data["title"]; ok {
+		t.Fatalf("title should be omitted, got %q", msg.Data["title"])
+	}
+	if _, ok := msg.Data["body"]; ok {
+		t.Fatalf("body should be omitted, got %q", msg.Data["body"])
+	}
+	if msg.Notification != nil {
+		t.Fatal("message pushes should omit top-level FCM notification payload")
+	}
+	if msg.Android == nil || msg.Android.Notification != nil {
+		t.Fatal("Android encrypted message push should be data-only")
 	}
 	if !msg.APNS.Payload.Aps.ContentAvailable {
 		t.Fatal("expected APNS content-available")
+	}
+	if !msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("expected APNS mutable-content")
+	}
+	if msg.APNS.Payload.Aps.Sound != pushNotificationSound {
+		t.Fatalf(
+			"apns sound = %q, want %q",
+			msg.APNS.Payload.Aps.Sound,
+			pushNotificationSound,
+		)
 	}
 }
 
@@ -846,34 +861,19 @@ func TestInboxStore_KeyExchangeRetryContactRequestDoesNotSendPush(t *testing.T) 
 	}
 }
 
-func TestBuildGroupPushMessage_IncludesTopLevelNotificationAndData(t *testing.T) {
+func TestBuildGroupPushMessage_CarriesEncryptedDataWithoutPlaintextPreview(t *testing.T) {
 	msg := buildGroupPushMessage(
 		"fcm-token",
 		"group-1",
-		"Team Chat",
-		"Alice: hello",
 		"group-msg-1",
+		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"group-msg-1","ciphertext":"gc","nonce":"gn"}`,
 	)
 
 	if msg.Token != "fcm-token" {
 		t.Fatalf("token = %q, want %q", msg.Token, "fcm-token")
 	}
-	if msg.Notification == nil {
-		t.Fatal("expected top-level notification payload")
-	}
-	if msg.Notification.Title != "Team Chat" {
-		t.Fatalf(
-			"notification title = %q, want %q",
-			msg.Notification.Title,
-			"Team Chat",
-		)
-	}
-	if msg.Notification.Body != "Alice: hello" {
-		t.Fatalf(
-			"notification body = %q, want %q",
-			msg.Notification.Body,
-			"Alice: hello",
-		)
+	if msg.Notification != nil {
+		t.Fatal("group message pushes should omit top-level FCM notification payload")
 	}
 	if msg.Data["type"] != "group_message" {
 		t.Fatalf("type = %q, want %q", msg.Data["type"], "group_message")
@@ -884,22 +884,30 @@ func TestBuildGroupPushMessage_IncludesTopLevelNotificationAndData(t *testing.T)
 	if msg.Data["message_id"] != "group-msg-1" {
 		t.Fatalf("message_id = %q, want %q", msg.Data["message_id"], "group-msg-1")
 	}
-	if msg.Android == nil || msg.Android.Notification == nil {
-		t.Fatal("expected Android notification payload")
+	if msg.Data["kind"] != "group_offline_replay" {
+		t.Fatalf("kind = %q, want group_offline_replay", msg.Data["kind"])
 	}
-	if msg.Android.Notification.Title != "Team Chat" {
-		t.Fatalf(
-			"android title = %q, want %q",
-			msg.Android.Notification.Title,
-			"Team Chat",
-		)
+	if msg.Data["payloadType"] != "group_message" {
+		t.Fatalf("payloadType = %q, want group_message", msg.Data["payloadType"])
 	}
-	if msg.Android.Notification.Body != "Alice: hello" {
-		t.Fatalf(
-			"android body = %q, want %q",
-			msg.Android.Notification.Body,
-			"Alice: hello",
-		)
+	if msg.Data["keyEpoch"] != "7" {
+		t.Fatalf("keyEpoch = %q, want 7", msg.Data["keyEpoch"])
+	}
+	if msg.Data["ciphertext"] != "gc" || msg.Data["nonce"] != "gn" {
+		t.Fatalf("encrypted group push data missing or wrong: %#v", msg.Data)
+	}
+	assertNoDirectPushSchemaVersionKeys(t, msg.Data)
+	if _, ok := msg.Data["title"]; ok {
+		t.Fatalf("title should be omitted, got %q", msg.Data["title"])
+	}
+	if _, ok := msg.Data["body"]; ok {
+		t.Fatalf("body should be omitted, got %q", msg.Data["body"])
+	}
+	if msg.Android == nil {
+		t.Fatal("expected Android config")
+	}
+	if msg.Android.Notification != nil {
+		t.Fatal("Android group message push should be data-only")
 	}
 	if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil {
 		t.Fatal("expected APNS payload")
@@ -907,19 +915,31 @@ func TestBuildGroupPushMessage_IncludesTopLevelNotificationAndData(t *testing.T)
 	if msg.APNS.Payload.Aps.Alert == nil {
 		t.Fatal("expected APNS alert")
 	}
-	if msg.APNS.Payload.Aps.Alert.Title != "Team Chat" {
+	if msg.APNS.Payload.Aps.Alert.Title == "Team Chat" {
+		t.Fatal("APNS fallback title leaked group name")
+	}
+	if msg.APNS.Payload.Aps.Alert.Body == "Alice: hello" {
+		t.Fatal("APNS fallback body leaked plaintext preview")
+	}
+	if !msg.APNS.Payload.Aps.MutableContent {
+		t.Fatal("expected APNS mutable-content")
+	}
+	if msg.APNS.Payload.Aps.Sound != pushNotificationSound {
 		t.Fatalf(
-			"apns title = %q, want %q",
-			msg.APNS.Payload.Aps.Alert.Title,
-			"Team Chat",
+			"apns sound = %q, want %q",
+			msg.APNS.Payload.Aps.Sound,
+			pushNotificationSound,
 		)
 	}
-	if msg.APNS.Payload.Aps.Alert.Body != "Alice: hello" {
-		t.Fatalf(
-			"apns body = %q, want %q",
-			msg.APNS.Payload.Aps.Alert.Body,
-			"Alice: hello",
-		)
+}
+
+func assertNoDirectPushSchemaVersionKeys(t *testing.T, data map[string]string) {
+	t.Helper()
+
+	for _, key := range []string{"schemaVersion", "version", "v"} {
+		if value, ok := data[key]; ok {
+			t.Fatalf("push data should omit direct schema version key %q, got %q", key, value)
+		}
 	}
 }
 
@@ -994,9 +1014,8 @@ func TestPushService_SendGroupNotification_RetriesTransientFailure(t *testing.T)
 		context.Background(),
 		"peer-recipient",
 		"group-1",
-		"Team Chat",
-		"Alice: hello",
 		"group-msg-1",
+		`{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"group-msg-1","ciphertext":"gc","nonce":"gn"}`,
 	)
 
 	if recorder.SendCallCount() != 2 {
@@ -1057,10 +1076,8 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 			"action":           "group_store",
 			"groupId":          "group-push",
 			"from":             senderPeer,
-			"message":          `{"messageId":"group-msg-1","text":"hello"}`,
+			"message":          `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":7,"messageId":"group-msg-1","ciphertext":"gc","nonce":"gn"}`,
 			"recipientPeerIds": []string{senderPeer, recipientWithToken, recipientTwo},
-			"pushTitle":        "Team Chat",
-			"pushBody":         "Alice: hello",
 		}
 
 		data, err := json.Marshal(req)
@@ -1107,14 +1124,17 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 		if msg.Data["groupId"] != "group-push" {
 			t.Fatalf("groupId = %q, want group-push", msg.Data["groupId"])
 		}
-		if msg.Data["title"] != "Team Chat" {
-			t.Fatalf("title = %q, want Team Chat", msg.Data["title"])
+		if _, ok := msg.Data["title"]; ok {
+			t.Fatalf("title should be omitted, got %q", msg.Data["title"])
 		}
-		if msg.Data["body"] != "Alice: hello" {
-			t.Fatalf("body = %q, want Alice: hello", msg.Data["body"])
+		if _, ok := msg.Data["body"]; ok {
+			t.Fatalf("body should be omitted, got %q", msg.Data["body"])
 		}
 		if msg.Data["message_id"] != "group-msg-1" {
 			t.Fatalf("message_id = %q, want group-msg-1", msg.Data["message_id"])
+		}
+		if msg.Data["ciphertext"] != "gc" || msg.Data["nonce"] != "gn" {
+			t.Fatalf("encrypted group data missing or wrong: %#v", msg.Data)
 		}
 	}
 
