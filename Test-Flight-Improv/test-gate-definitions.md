@@ -194,6 +194,122 @@ Optional script form with an explicit device:
 FLUTTER_DEVICE_ID=<device-id> ./scripts/run_test_gates.sh transport
 ```
 
+### Runtime Telemetry Gate
+
+Run when push decrypt telemetry, flow-event emission, or TestFlight soak
+acceptance logic changes.
+
+Command:
+
+```bash
+./scripts/run_test_gates.sh runtime-telemetry
+```
+
+Files:
+
+- `test/features/push/application/push_preview_telemetry_gate_test.dart`
+
+Runtime gate definition:
+
+```yaml
+push_preview_degrade_rate_gate:
+  source: production telemetry flow events
+  window: trailing_7d_after_72h_soak
+  numerator_events:
+    - PUSH_NSE_DECRYPT_FAIL
+    - PUSH_NSE_TIMEOUT
+    - PUSH_ANDROID_DATA_DECRYPT_FAIL
+  denominator_events:
+    - PUSH_NSE_DECRYPT_OK
+    - PUSH_NSE_DECRYPT_FAIL
+    - PUSH_NSE_TIMEOUT
+    - PUSH_ANDROID_DATA_DECRYPT_OK
+    - PUSH_ANDROID_DATA_DECRYPT_FAIL
+  excluded_reasons:
+    - client_pre_decrypt
+    - keychain_locked
+    - migration_pending
+  block_threshold: 0.03
+```
+
+Required companion evidence:
+
+- iOS NSE flow events must use only `kind` and `reason` metadata.
+- Android data-decrypt flow events must use only `kind` and `reason`
+  metadata.
+- Runtime telemetry must not include sender names, group names, message text,
+  media descriptors, ciphertext, nonces, or canary values.
+
+### Push Decrypt Simulator Smoke
+
+Run when push decrypt fixtures, simulator injection scripts, iOS NSE payload
+shape, or Android data-only push intake changes.
+
+Script-shape check:
+
+```bash
+bash -n scripts/push_fixture_to_simulator.sh \
+  scripts/push_fixture_to_android_emulator.sh \
+  scripts/smoke_test_push_decrypt_simulator.sh
+scripts/smoke_test_push_decrypt_simulator.sh --dry-run
+```
+
+App-installed preflight for full OS-delivery smoke:
+
+```bash
+flutter build ios --simulator --debug
+xcrun simctl boot <iphone-17-udid-or-name> || true
+xcrun simctl boot <iphone-17-pro-udid-or-name> || true
+xcrun simctl install <iphone-17-udid-or-name> build/ios/iphonesimulator/Runner.app
+xcrun simctl install <iphone-17-pro-udid-or-name> build/ios/iphonesimulator/Runner.app
+xcrun simctl get_app_container <iphone-17-udid-or-name> com.mknoon.app
+xcrun simctl get_app_container <iphone-17-pro-udid-or-name> com.mknoon.app
+
+flutter build apk --debug
+/Users/I560101/Library/Android/sdk/platform-tools/adb -s emulator-5554 install -r \
+  build/app/outputs/flutter-apk/app-debug.apk
+/Users/I560101/Library/Android/sdk/platform-tools/adb -s emulator-5554 shell pm path com.mknoon.app
+```
+
+Current full non-dry-run simulator matrix:
+
+```bash
+SIMULATOR_DEVICE=<iphone-17-udid-or-name> \
+  IOS_SECONDARY_SIMULATOR_DEVICE=<iphone-17-pro-udid-or-name> \
+  scripts/smoke_test_push_decrypt_simulator.sh --ios-only
+SIMULATOR_DEVICE=<iphone-17-pro-udid-or-name> \
+  IOS_SECONDARY_SIMULATOR_DEVICE=<iphone-17-udid-or-name> \
+  scripts/smoke_test_push_decrypt_simulator.sh --ios-only
+ANDROID_SERIAL=emulator-5554 scripts/smoke_test_push_decrypt_simulator.sh --android-only
+```
+
+This covers S-iOS-1 through S-iOS-19 and S-And-1 through S-And-19. The iOS
+dual-simulator rows require `IOS_SECONDARY_SIMULATOR_DEVICE`; the Android
+force-stop row requires an explicit `ANDROID_SERIAL`.
+
+Required companion gates when closing plan 73 Session 8:
+
+```bash
+flutter test
+(cd go-relay-server && go test ./...)
+xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner \
+  -destination 'platform=iOS Simulator,name=iPhone 17'
+./scripts/run_test_gates.sh baseline
+./scripts/run_test_gates.sh 1to1
+./scripts/run_test_gates.sh groups
+./scripts/run_test_gates.sh runtime-telemetry
+./scripts/run_test_gates.sh completeness-check
+scripts/check_push_release_gate.sh
+```
+
+CI placement:
+
+- `--dry-run` is PR-safe and validates fixture-to-APNs/FCM payload shaping.
+- Full OS delivery belongs in the simulator matrix job with iPhone 17, iPhone
+  17 Pro, and Pixel 7 API 37 targets booted and the app installed.
+- Full S-iOS-1 through S-iOS-19 and S-And-1 through S-And-19 coverage is the
+  simulator-matrix acceptance gate, not a replacement for TestFlight telemetry.
+
 ## Nightly / Release Pool
 
 These stay outside the named gates because they are heavier, device-bound, env-bound, or real-stack confidence tests.
@@ -221,7 +337,10 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/features/conversation/integration/emoji_reaction_exchange_test.dart` | Optional / manual direct suite | Reaction pipeline coverage, not shared durable-send coverage |
 | `test/features/contact_request/integration/contact_request_flow_test.dart` | Optional / manual direct suite | Contact bootstrap and acceptance flow; run with invite or onboarding entry work |
 | `test/features/contact_request/integration/key_exchange_retry_flow_test.dart` | Optional / manual direct suite | Contact key-bootstrap retry logic, not a named gate member |
+| `test/core/notifications/local_notification_support_test.dart` | Optional / manual direct suite | Shared Android/iOS message-notification detail sound contract used by Report 75 without widening frozen named gates |
+| `test/features/push/application/background_message_handler_test.dart` | Optional / manual direct suite | Background fallback display, duplicate suppression, and Report 75 audible platform-specific detail proof without widening frozen named gates |
 | `test/features/push/application/handle_foreground_remote_message_use_case_test.dart` | Optional / manual direct suite | Foreground FCM kind-aware drain regression for Report 71 without widening the frozen named gates |
+| `test/features/push/application/ios_push_project_config_test.dart` | Optional / manual direct suite | iOS push project config, APNs diagnostics, and quiet foreground remote presentation contract for Report 75 without widening frozen named gates |
 | `test/features/push/application/show_notification_use_case_test.dart` | Optional / manual direct suite | Notification display and suppression boundary, including the route-payload remote-announcement dedupe regression for group pushes |
 | `test/features/push/application/chat_and_group_push_open_flow_test.dart` | Optional / manual direct suite | Notification open sequencing across chat, group, intros, and contact-request routes without widening named gates |
 | `test/features/push/application/resolve_group_notification_route_target_use_case_test.dart` | Optional / manual direct suite | Group push recovery regression for missing local group state, pending invite discovery, inbox-drain retry, and Orbit intro redirect fallback |
@@ -232,6 +351,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/integration/notification_deeplink_integration_test.dart` | Optional / manual direct suite | Notification routing boundary; Session 4 work will harden this area |
 | `test/integration/rapid_lock_unlock_integration_test.dart` | Optional / manual direct suite | Lifecycle retry edge case, narrower than the named gates |
 | `test/integration/relay_down_degradation_integration_test.dart` | Optional / manual direct suite | 1:1 degradation edge-case coverage, including failed-send during transport loss -> foreground online-transition retry healing the same row exactly once |
+| `integration_test/cold_start_sendable_no_user_action_test.dart` | Optional / manual direct suite | Cold-start sendability check without widening the startup or transport gates |
 | `integration_test/conversation_wired_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation screen wiring |
 | `integration_test/conversation_wired_subscription_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation subscription churn |
 | `integration_test/feed_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
@@ -266,6 +386,7 @@ These directories are intentionally outside the named gates, but they are not ac
 | `test/core/media/*.dart` | Direct suite | Media helper and processing behavior |
 | `test/core/secure_storage/*.dart` | Direct suite | Secure storage behavior |
 | `test/core/constants/*.dart`, `test/core/theme/*.dart`, `test/core/utils/*.dart` | Direct suite | Component-level contracts, not gate members |
+| `test/security/*.dart` | Direct suite | Security invariant and forbidden-field classifier coverage without widening frozen named gates |
 | `test/shared/widgets/*.dart` | Direct suite | Shared widget behavior |
 | `test/unit/*.dart` | Direct suite | Unit-level leaf coverage |
 

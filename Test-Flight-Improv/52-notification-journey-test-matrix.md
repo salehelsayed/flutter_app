@@ -210,6 +210,7 @@ Current limitation to keep explicit:
 | Test ID | Scenario | Expected Result | Priority | Unit | Integration | Smoke | Fake Network | 2-party E2E | Current coverage / notes |
 |---|---|---|---|---|---|---|---|---|---|
 | DM-001 | Backgrounded B receives one named 1:1 notification | Notification title/body use sender-aware copy and there is only one visible notification path. | P0 | Recommended | Required | Required | N/A | Required | Covered strongly at the app-owned seam by `test/features/push/application/show_notification_use_case_test.dart`; real device presentation remains complementary. |
+| DM-001A | iOS background-visible 1:1 push carries the audible contract | Relay APNs message payload carries `sound`, local fallback still uses sound-capable shared details, foreground remote presentation stays quiet, and any real speaker-level confirmation remains a separate 2-party device check. | P0 | Required | Recommended | Recommended | N/A | Required | Deterministic coverage: `go-relay-server/inbox_test.go` (`TestBuildChatPushMessage_LegacyPlaintextEnvelopeEmitsOnlyFallbackAndRouteData`, `TestBuildChatPushMessage_CarriesEncryptedDataWithoutPlaintextPreview`), `test/core/notifications/local_notification_support_test.dart`, `test/features/push/application/background_message_handler_test.dart`, `test/features/push/application/show_notification_use_case_test.dart`, and `test/features/push/application/ios_push_project_config_test.dart`. Manual simulator / TestFlight audible confirmation remains explicit follow-up only. |
 | DM-002 | Warm notification tap | B taps a notification while the app is backgrounded and the app performs `prepare -> drain -> route` to A's conversation. | P0 | N/A | Required | Required | N/A | Required | Covered by `test/features/push/application/chat_and_group_push_open_flow_test.dart`, `test/integration/notification_tap_smoke_test.dart`. |
 | DM-003 | Cold-start notification tap | B taps a notification from a terminated state and the app still performs `prepare -> drain -> route`. | P0 | N/A | Required | Required | N/A | Required | Covered by `test/features/push/application/chat_and_group_push_open_flow_test.dart`, `test/core/notifications/app_root_notification_open_test.dart`, `test/features/identity/presentation/screens/startup_router_notification_open_test.dart`. |
 | DM-004 | Active conversation suppression | If B is already viewing A's conversation, no duplicate local notification is shown. | P0 | Recommended | Required | Recommended | N/A | Required | Covered by `test/features/push/application/show_notification_use_case_test.dart`. |
@@ -220,6 +221,7 @@ Current limitation to keep explicit:
 | Test ID | Scenario | Expected Result | Priority | Unit | Integration | Smoke | Fake Network | 3-party E2E | Current coverage / notes |
 |---|---|---|---|---|---|---|---|---|---|
 | GMN-001 | A sends, B/C receive one correct group notification | B and C each get one notification for the correct group with sender-prefixed body text. | P0 | Recommended | Required | Required | N/A | Required | Current local evidence: `test/features/groups/application/group_message_listener_test.dart`, `test/features/push/application/show_notification_use_case_test.dart`. |
+| GMN-001A | iOS background-visible group push carries the audible contract | Relay APNs group-message payload carries `sound`, local fallback still uses sound-capable shared details, active-group suppression stays intact, and any real speaker-level confirmation remains a separate 3-party device check. | P0 | Required | Recommended | Recommended | N/A | Required | Deterministic coverage: `go-relay-server/inbox_test.go` (`TestBuildGroupPushMessage_CarriesEncryptedDataWithoutPlaintextPreview`), `test/core/notifications/local_notification_support_test.dart`, `test/features/push/application/background_message_handler_test.dart`, `test/features/push/application/show_notification_use_case_test.dart`, and `test/features/push/application/ios_push_project_config_test.dart`. Manual simulator / TestFlight audible confirmation remains explicit follow-up only. |
 | GMN-002 | Warm group notification tap | Tapping the notification performs targeted group catch-up before opening the group. | P0 | N/A | Required | Required | N/A | Required | Covered by `test/features/push/application/chat_and_group_push_open_flow_test.dart`, `test/integration/notification_tap_smoke_test.dart`. |
 | GMN-003 | Cold-start group notification tap | From a terminated launch, the app still does targeted group prepare/catch-up before route. | P0 | N/A | Required | Required | N/A | Required | Covered by `test/features/push/application/chat_and_group_push_open_flow_test.dart`, `test/core/notifications/app_root_notification_open_test.dart`. |
 | GMN-004 | Active group suppression | If B is already viewing the same group, no local group notification is shown. | P0 | Recommended | Required | Recommended | N/A | Required | Covered by `test/features/groups/application/group_message_listener_test.dart` and `test/features/push/application/show_notification_use_case_test.dart`. |
@@ -265,6 +267,8 @@ Current limitation to keep explicit:
 | RG-004 | Notification service dismissal / clear | Tapped or resumed opens dismiss delivered notifications and clear failures do not break lifecycle recovery. | P0 | Required | Required | Recommended | N/A | Recommended | Covered by `test/core/notifications/flutter_notification_service_test.dart`, `test/core/lifecycle/app_lifecycle_recovery_test.dart`. |
 | RG-005 | Local notification payload round-trip | Local notification payload survives show -> tap -> route for chat and group targets. | P0 | Recommended | Required | Recommended | N/A | Recommended | Covered by `test/core/notifications/app_root_notification_open_test.dart`, `test/integration/notification_deeplink_integration_test.dart`. |
 | RG-006 | Removed -> rejoined notification eligibility transition | Group notification eligibility stays off while removed and becomes valid again only after rejoin state is current. | P0 | Required | Required | Recommended | Required | Required | Current state-transition ingredients exist across `test/features/groups/application/group_message_listener_test.dart` and `test/features/groups/integration/group_membership_smoke_test.dart`, but one row-owned regression still needs to be landed. |
+| RG-007 | On-device push decrypt telemetry gate | Android data-decrypt and iOS NSE decrypt outcomes emit leak-safe success/failure/timeout events, and the TestFlight degrade-rate gate excludes expected rollout fallback reasons while counting real decrypt failures. | P0 | Required | Recommended | Recommended | N/A | Required | Covered by `test/features/push/application/push_preview_telemetry_gate_test.dart`, `test/features/push/application/push_decrypt_preview_test.dart`, and `ios/RunnerTests/NotificationPreviewResolverTests.swift`; TestFlight soak still needs production telemetry evidence for `push_preview_degrade_rate_gate`. |
+| RG-008 | Push decrypt simulator smoke harness | Shared fixtures can be converted into iOS APNs mutable-content payloads and Android FCM data-only broadcast payloads, and full OS-delivery smoke has a single runner for the simulator farm. | P0 | Required | Required | Required | N/A | Required | Covered by `scripts/smoke_test_push_decrypt_simulator.sh --dry-run` and full app-installed non-dry-run smoke on 2026-04-24. The harness enumerates S-iOS-1 through S-iOS-19 and S-And-1 through S-And-19; non-dry-run smoke passed on iPhone 17, iPhone 17 Pro, and Android `emulator-5554`. |
 
 ### Current runnable bundles
 
@@ -288,10 +292,25 @@ still only partly automated:
   - `flutter test test/core/notifications/flutter_notification_service_test.dart`
   - `flutter test test/core/lifecycle/app_lifecycle_recovery_test.dart`
   - `flutter test test/core/notifications/app_root_notification_open_test.dart test/features/identity/presentation/screens/startup_router_notification_open_test.dart`
+- Runtime telemetry:
+  - `./scripts/run_test_gates.sh runtime-telemetry`
+  - `flutter test test/features/push/application/push_decrypt_preview_test.dart`
+  - `xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination 'platform=iOS Simulator,id=<simulator-id>' CODE_SIGNING_ALLOWED=NO -only-testing:RunnerTests/NotificationPreviewResolverTests`
+- Push decrypt simulator smoke:
+  - `bash -n scripts/push_fixture_to_simulator.sh scripts/push_fixture_to_android_emulator.sh scripts/smoke_test_push_decrypt_simulator.sh`
+  - `scripts/smoke_test_push_decrypt_simulator.sh --dry-run`
+  - full app-installed non-dry-run smoke:
+    `SIMULATOR_DEVICE=<iphone-17> IOS_SECONDARY_SIMULATOR_DEVICE=<iphone-17-pro> scripts/smoke_test_push_decrypt_simulator.sh --ios-only`,
+    `SIMULATOR_DEVICE=<iphone-17-pro> IOS_SECONDARY_SIMULATOR_DEVICE=<iphone-17> scripts/smoke_test_push_decrypt_simulator.sh --ios-only`,
+    and
+    `ANDROID_SERIAL=emulator-5554 scripts/smoke_test_push_decrypt_simulator.sh --android-only`
+    with iPhone 17, iPhone 17 Pro, and Pixel 7 API 37 booted and the app
+    installed. This covers S-iOS-1..19 and S-And-1..19.
 
 Preservation / regression requirement:
 
 - any future notification refactor should keep the above bundles green
-- rows `SM-005`, `GMN-103`, `GMN-104`, and `RG-006` are the most important
+- rows `SM-005`, `GMN-103`, `GMN-104`, `RG-006`, and `RG-007` are the most important
   still-thin areas for future direct additions because they close the remaining
-  removal/rejoin notification boundary
+  removal/rejoin notification boundary, the runtime TestFlight telemetry
+  acceptance boundary, and related direct user-visible notification proof
