@@ -924,18 +924,22 @@ Scripted test runner (`scripts/push_fixture_to_simulator.sh`) steps:
    (matches the team's 2-iOS-simulator setup; the Pro role is used
    whenever a scenario needs a second receiver in parallel,
    e.g. multi-device smoke rows)
-2. `flutter run -d "iPhone 17" --dart-define=USE_TEST_RELAY=true`
-   (and a parallel run for "iPhone 17 Pro" when the scenario needs
-   it) — follows the existing memory-noted `reset_simulators.sh`
-   pattern (`--dart-define` auto-setup, no separate integration-test
-   build)
-3. `xcrun simctl push "iPhone 17" <bundle-id> <fixture.json>` —
+2. `flutter build ios --simulator --debug`, then install
+   `build/ios/iphonesimulator/Runner.app` onto both iOS simulators
+   with `xcrun simctl install`; verify
+   `xcrun simctl get_app_container <device> com.mknoon.app` succeeds
+   before any non-dry-run push delivery
+3. launch the installed app on each simulator with
+   `--dart-define=USE_TEST_RELAY=true` setup where the scenario
+   needs live app state, following the existing memory-noted
+   `reset_simulators.sh` auto-setup pattern
+4. `xcrun simctl push "iPhone 17" <bundle-id> <fixture.json>` —
    deliver fixture from 9.2 fixture pipeline to the primary; or
    use the "iPhone 17 Pro" device-id for the secondary
-4. capture `UNUserNotificationCenter.getDeliveredNotifications()`
+5. capture `UNUserNotificationCenter.getDeliveredNotifications()`
    result via an XCUITest harness OR by log-scraping the NSE's
    emitted flow events
-5. assert body, title, threadIdentifier match fixture expectations
+6. assert body, title, threadIdentifier match fixture expectations
 
 Test scenarios that run automatically on iOS Simulator in CI:
 
@@ -981,13 +985,18 @@ Scripted test runner (`scripts/push_fixture_to_android_emulator.sh`):
 
 1. `emulator @Pixel_7_API_37 -no-snapshot -no-audio &` — boot the
    team's single Android emulator (Pixel 7, API 37)
-2. `flutter run -d emulator-5554 --dart-define=USE_TEST_RELAY=true`
-   (or the actual emulator serial reported by `adb devices`)
-3. inject fixture via `adb shell am broadcast` with
+2. `flutter build apk --debug`, then install
+   `build/app/outputs/flutter-apk/app-debug.apk` onto the emulator
+   with `adb -s emulator-5554 install -r`; verify
+   `adb -s emulator-5554 shell pm path com.mknoon.app` succeeds
+   before any non-dry-run push delivery
+3. launch the installed app with `--dart-define=USE_TEST_RELAY=true`
+   setup where the scenario needs live app state
+4. inject fixture via `adb shell am broadcast` with
    `com.google.firebase.MESSAGING_EVENT` payload wrapping the
    fixture data block
-4. capture notification output via `adb shell dumpsys notification`
-5. assert body, title, group key match fixture expectations
+5. capture notification output via `adb shell dumpsys notification`
+6. assert body, title, group key match fixture expectations
 
 Test scenarios that run automatically on Android Emulator in CI:
 
@@ -1066,11 +1075,22 @@ New files added to `scripts/`:
 - `scripts/push_fixture_to_android_emulator.sh` — adb-based
   equivalent; injects FCM data message via broadcast intent
 - `scripts/smoke_test_push_decrypt_simulator.sh` — orchestrator;
-  boots both simulators, runs the scenario matrix, collects
-  assertions, returns exit code
+  builds and installs the app when needed, boots both simulators and
+  the Android emulator, verifies `com.mknoon.app` is installed,
+  runs the scenario matrix, collects assertions, returns exit code
 - extends the existing `reset_simulators.sh` (memory-noted pattern)
   so the same `--dart-define` auto-setup works with the
   push-decrypt scenarios without a separate build target
+
+Current Session 8 local acceptance note:
+
+- the repo now has fixture-injection wrappers and an app-installed local smoke
+  runner that enumerates S-iOS-1..19 and S-And-1..19
+- 2026-04-24 local evidence passed build/install/container/package preflight
+  and non-dry-run smoke for all S-iOS-1..19 rows on iPhone 17 and iPhone 17 Pro
+  plus all S-And-1..19 rows on Android `emulator-5554`
+- Session 8 closure is recorded in
+  `Test-Flight-Improv/73-on-device-push-decrypt-plan-session-breakdown.md`
 
 #### 9.4.1.6 Phase-gate placement
 
