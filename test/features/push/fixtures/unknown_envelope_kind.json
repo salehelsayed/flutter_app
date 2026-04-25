@@ -1,0 +1,18 @@
+{
+  "fixtureVersion": 1,
+  "kind": "unknown_envelope_kind",
+  "messageId": "fixture-chat-unknown-kind-1",
+  "routeData": {
+    "type": "new_message",
+    "sender_id": "peer-alice",
+    "message_id": "fixture-chat-unknown-kind-1",
+    "envelope_version": "2",
+    "envelope_kind": "unsupported_fixture_kind",
+    "kem": "fixture-kem-chat-unknown-kind-1",
+    "ciphertext": "fixture-ciphertext-chat-unknown-kind-1",
+    "nonce": "fixture-nonce-chat-unknown-kind-1"
+  },
+  "plaintext": {
+    "expectedFallback": "New message"
+  }
+}

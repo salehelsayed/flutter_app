@@ -1,5 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
@@ -8,10 +9,29 @@ import 'package:flutter_app/core/notifications/remote_notification_identity.dart
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 
 final FlutterLocalNotificationsPlugin _backgroundNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 bool _backgroundNotificationsInitialized = false;
+
+typedef BackgroundPushNotificationResolver =
+    Future<BackgroundPushNotificationFallback> Function(RemoteMessage message);
+
+BackgroundPushNotificationResolver _backgroundPushNotificationResolver =
+    resolveBackgroundPushNotification;
+
+@visibleForTesting
+void debugSetBackgroundPushNotificationResolver(
+  BackgroundPushNotificationResolver resolver,
+) {
+  _backgroundPushNotificationResolver = resolver;
+}
+
+@visibleForTesting
+void debugResetBackgroundPushNotificationResolver() {
+  _backgroundPushNotificationResolver = resolveBackgroundPushNotification;
+}
 
 Future<void> _initializeBackgroundNotifications() async {
   if (_backgroundNotificationsInitialized) return;
@@ -76,7 +96,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
   try {
     await _initializeBackgroundNotifications();
-    final fallback = buildBackgroundPushFallbackNotification(message);
+    final fallback = await _backgroundPushNotificationResolver(message);
     final dedupeKey = backgroundPushFallbackDedupeKey(message);
     if (dedupeKey != null &&
         await recentBackgroundNotificationGate.wasRecentlyShown(dedupeKey)) {

@@ -1,9 +1,13 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 import '../models/group_key_info.dart';
 import '../models/group_member.dart';
 import '../models/group_model.dart';
 import 'group_repository.dart';
+
+String sharedGroupPushKeyName(String groupId, int keyGeneration) =>
+    'group_key:$groupId:$keyGeneration';
 
 /// Implementation of GroupRepository using constructor-injected DB helper functions.
 class GroupRepositoryImpl implements GroupRepository {
@@ -20,22 +24,25 @@ class GroupRepositoryImpl implements GroupRepository {
   // --- Member DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupMember;
   final Future<List<Map<String, Object?>>> Function(String groupId)
-      dbLoadAllGroupMembers;
+  dbLoadAllGroupMembers;
   final Future<Map<String, Object?>?> Function(String groupId, String peerId)
-      dbLoadGroupMember;
+  dbLoadGroupMember;
   final Future<void> Function(String groupId, String peerId, String role)
-      dbUpdateGroupMemberRole;
+  dbUpdateGroupMemberRole;
   final Future<void> Function(String groupId, String peerId)
-      dbDeleteGroupMember;
+  dbDeleteGroupMember;
   final Future<void> Function(String groupId) dbDeleteAllGroupMembers;
 
   // --- Key DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupKey;
   final Future<Map<String, Object?>?> Function(String groupId)
-      dbLoadLatestGroupKey;
+  dbLoadLatestGroupKey;
   final Future<Map<String, Object?>?> Function(String groupId, int generation)
-      dbLoadGroupKeyByGeneration;
+  dbLoadGroupKeyByGeneration;
   final Future<void> Function(String groupId) dbDeleteAllGroupKeys;
+  final Future<List<Map<String, Object?>>> Function(String groupId)?
+  dbLoadAllGroupKeys;
+  final SecureKeyStore? pushSharedKeyStore;
 
   GroupRepositoryImpl({
     required this.dbInsertGroup,
@@ -56,6 +63,8 @@ class GroupRepositoryImpl implements GroupRepository {
     required this.dbLoadLatestGroupKey,
     required this.dbLoadGroupKeyByGeneration,
     required this.dbDeleteAllGroupKeys,
+    this.dbLoadAllGroupKeys,
+    this.pushSharedKeyStore,
   });
 
   // --- Groups ---
@@ -65,7 +74,9 @@ class GroupRepositoryImpl implements GroupRepository {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REPO_SAVE_START',
-      details: {'id': group.id.length > 8 ? group.id.substring(0, 8) : group.id},
+      details: {
+        'id': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+      },
     );
 
     try {
@@ -74,7 +85,9 @@ class GroupRepositoryImpl implements GroupRepository {
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_REPO_SAVE_SUCCESS',
-        details: {'id': group.id.length > 8 ? group.id.substring(0, 8) : group.id},
+        details: {
+          'id': group.id.length > 8 ? group.id.substring(0, 8) : group.id,
+        },
       );
     } catch (e) {
       emitFlowEvent(
@@ -169,6 +182,7 @@ class GroupRepositoryImpl implements GroupRepository {
   @override
   Future<void> saveKey(GroupKeyInfo key) async {
     await dbInsertGroupKey(key.toMap());
+    await _mirrorGroupKeyForPush(key);
   }
 
   @override
@@ -190,6 +204,83 @@ class GroupRepositoryImpl implements GroupRepository {
 
   @override
   Future<void> removeAllKeys(String groupId) async {
+    final existingKeys =
+        pushSharedKeyStore == null || dbLoadAllGroupKeys == null
+        ? const <Map<String, Object?>>[]
+        : await dbLoadAllGroupKeys!(groupId);
     await dbDeleteAllGroupKeys(groupId);
+    for (final row in existingKeys) {
+      final key = GroupKeyInfo.fromMap(row);
+      await _deleteGroupKeyMirror(key);
+    }
+  }
+
+  Future<void> mirrorAllKeysToSecureStore() async {
+    if (pushSharedKeyStore == null || dbLoadAllGroupKeys == null) {
+      return;
+    }
+
+    final groups = await dbLoadAllGroups();
+    for (final group in groups) {
+      final groupId = group['id'] as String?;
+      if (groupId == null) {
+        continue;
+      }
+      final keyRows = await dbLoadAllGroupKeys!(groupId);
+      for (final row in keyRows) {
+        await _mirrorGroupKeyForPush(GroupKeyInfo.fromMap(row));
+      }
+    }
+  }
+
+  Future<void> _mirrorGroupKeyForPush(GroupKeyInfo key) async {
+    final store = pushSharedKeyStore;
+    if (store == null) {
+      return;
+    }
+
+    try {
+      await store.write(
+        sharedGroupPushKeyName(key.groupId, key.keyGeneration),
+        key.encryptedKey,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REPO_PUSH_KEY_MIRROR_ERROR',
+        details: {
+          'groupId': key.groupId.length > 8
+              ? key.groupId.substring(0, 8)
+              : key.groupId,
+          'keyGeneration': key.keyGeneration,
+          'error': e.toString(),
+        },
+      );
+    }
+  }
+
+  Future<void> _deleteGroupKeyMirror(GroupKeyInfo key) async {
+    final store = pushSharedKeyStore;
+    if (store == null) {
+      return;
+    }
+
+    try {
+      await store.delete(
+        sharedGroupPushKeyName(key.groupId, key.keyGeneration),
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REPO_PUSH_KEY_DELETE_MIRROR_ERROR',
+        details: {
+          'groupId': key.groupId.length > 8
+              ? key.groupId.substring(0, 8)
+              : key.groupId,
+          'keyGeneration': key.keyGeneration,
+          'error': e.toString(),
+        },
+      );
+    }
   }
 }

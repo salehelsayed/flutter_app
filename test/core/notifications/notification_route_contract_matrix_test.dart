@@ -13,6 +13,20 @@ void main() {
       drainExpectation: _DrainExpectation.oneToOneInbox,
     ),
     _RouteContractCase(
+      label: 'ciphertext conversation',
+      remoteData: {
+        'type': 'new_message',
+        'sender_id': 'peer-alice',
+        'message_id': 'msg-chat-1',
+        'envelope_version': '2',
+        'kem': 'kem',
+        'ciphertext': 'ciphertext',
+        'nonce': 'nonce',
+      },
+      target: NotificationRouteTarget.conversation('peer-alice'),
+      drainExpectation: _DrainExpectation.oneToOneInbox,
+    ),
+    _RouteContractCase(
       label: 'contact request',
       remoteData: {'type': 'contact_request', 'sender_id': 'peer-bob'},
       target: NotificationRouteTarget.contactRequest('peer-bob'),
@@ -28,6 +42,24 @@ void main() {
       label: 'group',
       remoteData: {'type': 'group_message', 'groupId': 'group-team'},
       target: NotificationRouteTarget.group('group-team'),
+      drainExpectation: _DrainExpectation.groupInbox,
+    ),
+    _RouteContractCase(
+      label: 'ciphertext group',
+      remoteData: {
+        'type': 'group_message',
+        'groupId': 'group-team',
+        'message_id': 'msg-group-1',
+        'kind': 'group_offline_replay',
+        'payloadType': 'group_message',
+        'keyEpoch': '7',
+        'ciphertext': 'ciphertext',
+        'nonce': 'nonce',
+      },
+      target: NotificationRouteTarget.group(
+        'group-team',
+        messageId: 'msg-group-1',
+      ),
       drainExpectation: _DrainExpectation.groupInbox,
     ),
     _RouteContractCase(

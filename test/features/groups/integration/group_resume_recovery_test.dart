@@ -1041,7 +1041,8 @@ Future<void> _section10WidgetVoiceLifecycleProof(
   final sent = await _latestOutgoingMessage(admin.msgRepo, groupId, text: '');
   expect(sent.status, 'sent');
   final inboxPayload = latestBridgePayload(senderBridge, 'group:inboxStore');
-  expect(inboxPayload['pushBody'], 'Alice sent a voice message');
+  expect(inboxPayload.containsKey('pushTitle'), isFalse);
+  expect(inboxPayload.containsKey('pushBody'), isFalse);
   final inboxEnvelope = _decodedGroupReplayPayload(
     inboxPayload['message'] as String,
   );
@@ -2378,7 +2379,7 @@ void main() {
     );
 
     testWidgets(
-      '10-C acceptance uses real GroupConversationWired sender path for voice + exact push body',
+      '10-C acceptance uses real GroupConversationWired sender path for voice + no plaintext push body',
       (tester) async {
         await _section10WidgetVoiceLifecycleProof(tester, network);
       },

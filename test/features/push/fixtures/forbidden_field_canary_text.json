@@ -1,0 +1,21 @@
+{
+  "fixtureVersion": 1,
+  "kind": "forbidden_field_canary_text",
+  "messageId": "fixture-chat-canary-1",
+  "routeData": {
+    "type": "new_message",
+    "sender_id": "peer-alice",
+    "message_id": "fixture-chat-canary-1",
+    "envelope_version": "2",
+    "kem": "fixture-kem-chat-canary-1",
+    "ciphertext": "fixture-ciphertext-chat-canary-1",
+    "nonce": "fixture-nonce-chat-canary-1"
+  },
+  "plaintext": {
+    "id": "fixture-chat-canary-1",
+    "text": "UltraSecretCanary",
+    "senderPeerId": "peer-alice",
+    "senderUsername": "Canary Sender",
+    "timestamp": "2026-04-24T12:05:00.000Z"
+  }
+}

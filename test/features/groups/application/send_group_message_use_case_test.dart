@@ -529,7 +529,7 @@ void main() {
   );
 
   test(
-    'strips dangerous bidi controls and preserves safe markers across publish, inbox, save, and push body',
+    'strips dangerous bidi controls and preserves safe markers across publish, inbox, save, and encrypted inbox payload',
     () async {
       const rawText = 'Hello\u202E\u200E group\u200F!';
       const sanitizedText = 'Hello\u200E group\u200F!';
@@ -563,8 +563,8 @@ void main() {
       expect(publishPayload['text'], isNot(contains('\u202E')));
 
       final inboxPayload = _lastGroupInboxStorePayload(bridge);
-      expect(inboxPayload['pushBody'], equals('Alice: $sanitizedText'));
-      expect(inboxPayload['pushBody'], isNot(contains('\u202E')));
+      expect(inboxPayload.containsKey('pushTitle'), isFalse);
+      expect(inboxPayload.containsKey('pushBody'), isFalse);
 
       final innerPayload = _decodedGroupInboxReplayPayload(bridge);
       expect(innerPayload['text'], sanitizedText);
@@ -638,12 +638,12 @@ void main() {
         inboxPayload['recipientPeerIds'],
         unorderedEquals(['peer-2', 'peer-3']),
       );
-      expect(inboxPayload['pushTitle'], equals('Test Group'));
-      expect(inboxPayload['pushBody'], equals('Alice: Hello group!'));
+      expect(inboxPayload.containsKey('pushTitle'), isFalse);
+      expect(inboxPayload.containsKey('pushBody'), isFalse);
     },
   );
 
-  test('text group message builds preview body like Sender: hello', () async {
+  test('text group message does not send plaintext preview fields', () async {
     await groupRepo.saveMember(
       GroupMember(
         groupId: 'group-1',
@@ -667,11 +667,12 @@ void main() {
     );
 
     final inboxPayload = _lastGroupInboxStorePayload(bridge);
-    expect(inboxPayload['pushBody'], equals('Sender: hello'));
+    expect(inboxPayload.containsKey('pushTitle'), isFalse);
+    expect(inboxPayload.containsKey('pushBody'), isFalse);
   });
 
   test(
-    'media-only group message builds a non-empty fallback preview body',
+    'media-only group message does not send plaintext media preview fields',
     () async {
       await groupRepo.saveMember(
         GroupMember(
@@ -710,8 +711,8 @@ void main() {
       );
 
       final inboxPayload = _lastGroupInboxStorePayload(bridge);
-      expect((inboxPayload['pushBody'] as String), isNotEmpty);
-      expect(inboxPayload['pushBody'], contains('Alice'));
+      expect(inboxPayload.containsKey('pushTitle'), isFalse);
+      expect(inboxPayload.containsKey('pushBody'), isFalse);
     },
   );
 
@@ -1288,7 +1289,8 @@ void main() {
         expect(message.status, 'sent');
 
         final inboxPayload = _lastGroupInboxStorePayload(bridge);
-        expect(inboxPayload['pushBody'], equals('Alice sent a voice message'));
+        expect(inboxPayload.containsKey('pushTitle'), isFalse);
+        expect(inboxPayload.containsKey('pushBody'), isFalse);
         final inboxEnvelope =
             jsonDecode(inboxPayload['message'] as String)
                 as Map<String, dynamic>;

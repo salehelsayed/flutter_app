@@ -43,6 +43,7 @@ class CountingSecureKeyStore implements SecureKeyStore {
 
 void main() {
   late FakeSecureKeyStore backingSecureKeyStore;
+  late FakeSecureKeyStore sharedPushKeyStore;
   late CountingSecureKeyStore secureKeyStore;
   late Map<String, Object?>? storedRow;
   late Map<String, Object?>? lastUpsertedRow;
@@ -54,7 +55,8 @@ void main() {
   const testPeerId = '12D3KooWTestPeerIdABCDEF';
   const testPublicKey = 'pubkey-base64';
   const testPrivateKey = 'privkey-base64';
-  const testMnemonic = 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
+  const testMnemonic =
+      'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12';
   const testMlKemPk = 'mlkem-pk-base64';
   const testMlKemSk = 'mlkem-sk-base64';
   const testCreatedAt = '2026-01-01T00:00:00.000Z';
@@ -91,12 +93,16 @@ void main() {
     await backingSecureKeyStore.write('identity_private_key', privateKey);
     await backingSecureKeyStore.write('identity_mnemonic12', mnemonic12);
     if (mlKemSecretKey != null) {
-      await backingSecureKeyStore.write('identity_ml_kem_secret_key', mlKemSecretKey);
+      await backingSecureKeyStore.write(
+        'identity_ml_kem_secret_key',
+        mlKemSecretKey,
+      );
     }
   }
 
   setUp(() {
     backingSecureKeyStore = FakeSecureKeyStore();
+    sharedPushKeyStore = FakeSecureKeyStore();
     secureKeyStore = CountingSecureKeyStore(backingSecureKeyStore);
     storedRow = null;
     lastUpsertedRow = null;
@@ -117,6 +123,7 @@ void main() {
         }
       },
       secureKeyStore: secureKeyStore,
+      pushSharedKeyStore: sharedPushKeyStore,
     );
   });
 
@@ -154,19 +161,35 @@ void main() {
       expect(result.mlKemPublicKey, testMlKemPk);
     });
 
-    test('returns cached identity on repeat load without re-reading storage', () async {
+    test('mirrors loaded mlKem secret to shared push storage', () async {
       storedRow = makeDbRow();
       await seedIdentitySecrets();
 
-      final first = await repo.loadIdentity();
-      final second = await repo.loadIdentity();
+      final result = await repo.loadIdentity();
 
-      expect(first, equals(second));
-      expect(first, isNotNull);
-      expect(second, isNotNull);
-      expect(loadCallCount, 1);
-      expect(secureKeyStore.readCount, 3);
+      expect(result, isNotNull);
+      expect(
+        await sharedPushKeyStore.read('identity_ml_kem_secret_key'),
+        testMlKemSk,
+      );
     });
+
+    test(
+      'returns cached identity on repeat load without re-reading storage',
+      () async {
+        storedRow = makeDbRow();
+        await seedIdentitySecrets();
+
+        final first = await repo.loadIdentity();
+        final second = await repo.loadIdentity();
+
+        expect(first, equals(second));
+        expect(first, isNotNull);
+        expect(second, isNotNull);
+        expect(loadCallCount, 1);
+        expect(secureKeyStore.readCount, 3);
+      },
+    );
 
     test('falls back to DB columns for pre-migration data', () async {
       storedRow = makeDbRow(
@@ -247,9 +270,22 @@ void main() {
 
       await repo.saveIdentity(identity);
 
-      expect(await backingSecureKeyStore.read('identity_private_key'), testPrivateKey);
-      expect(await backingSecureKeyStore.read('identity_mnemonic12'), testMnemonic);
-      expect(await backingSecureKeyStore.read('identity_ml_kem_secret_key'), testMlKemSk);
+      expect(
+        await backingSecureKeyStore.read('identity_private_key'),
+        testPrivateKey,
+      );
+      expect(
+        await backingSecureKeyStore.read('identity_mnemonic12'),
+        testMnemonic,
+      );
+      expect(
+        await backingSecureKeyStore.read('identity_ml_kem_secret_key'),
+        testMlKemSk,
+      );
+      expect(
+        await sharedPushKeyStore.read('identity_ml_kem_secret_key'),
+        testMlKemSk,
+      );
     });
 
     test('DB row has null secret columns', () async {
@@ -284,7 +320,14 @@ void main() {
 
       await repo.saveIdentity(identity);
 
-      expect(await backingSecureKeyStore.containsKey('identity_ml_kem_secret_key'), isFalse);
+      expect(
+        await backingSecureKeyStore.containsKey('identity_ml_kem_secret_key'),
+        isFalse,
+      );
+      expect(
+        await sharedPushKeyStore.containsKey('identity_ml_kem_secret_key'),
+        isFalse,
+      );
     });
 
     test('calls dbUpsertIdentityRow with correct non-secret fields', () async {
@@ -377,7 +420,8 @@ void main() {
         peerId: '12D3KooWNewPeerIdABCDEF',
         publicKey: 'new-pubkey-base64',
         privateKey: 'new-privkey-base64',
-        mnemonic12: 'new word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11',
+        mnemonic12:
+            'new word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11',
         mlKemPublicKey: 'new-mlkem-pk-base64',
         mlKemSecretKey: 'new-mlkem-sk-base64',
         createdAt: '2026-02-03T00:00:00.000Z',

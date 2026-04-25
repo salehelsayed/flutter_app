@@ -98,18 +98,11 @@ String? _payloadFromMessage(RemoteMessage message) {
 
 String _resolvedTitle(RemoteMessage message) {
   return _trimToNull(message.data['title']?.toString()) ??
-      _trimToNull(message.data['pushTitle']?.toString()) ??
-      _trimToNull(message.data['sender_username']?.toString()) ??
-      _trimToNull(message.data['senderUsername']?.toString()) ??
-      _trimToNull(message.data['username']?.toString()) ??
       backgroundPushDefaultTitle;
 }
 
 String _resolvedBody(RemoteMessage message) {
   return _trimToNull(message.data['body']?.toString()) ??
-      _trimToNull(message.data['pushBody']?.toString()) ??
-      _trimToNull(message.data['message']?.toString()) ??
-      _trimToNull(message.data['text']?.toString()) ??
       backgroundPushDefaultBody;
 }
 

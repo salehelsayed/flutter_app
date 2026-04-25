@@ -1,0 +1,30 @@
+{
+  "fixtureVersion": 1,
+  "kind": "group_media_image",
+  "messageId": "fixture-group-image-1",
+  "routeData": {
+    "type": "group_message",
+    "groupId": "group-team",
+    "message_id": "fixture-group-image-1",
+    "kind": "group_offline_replay",
+    "envelope_version": "1",
+    "payloadType": "group_message",
+    "keyEpoch": "7",
+    "ciphertext": "fixture-ciphertext-group-image-1",
+    "nonce": "fixture-nonce-group-image-1"
+  },
+  "plaintext": {
+    "groupId": "group-team",
+    "senderId": "peer-alice",
+    "senderUsername": "Alice",
+    "keyEpoch": 7,
+    "text": "",
+    "timestamp": "2026-04-24T12:02:00.000Z",
+    "messageId": "fixture-group-image-1",
+    "media": [
+      {
+        "mediaType": "image"
+      }
+    ]
+  }
+}

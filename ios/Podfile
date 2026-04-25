@@ -62,6 +62,17 @@ SCRIPT
   end
 end
 
+target 'NotificationService' do
+  use_frameworks!
+  use_modular_headers!
+
+  # The notification service decrypts message previews with the same gomobile
+  # bridge as Runner, but without linking the full Flutter plugin graph.
+  if File.exist?(File.join(__dir__, 'Runner', 'GoMknoon.xcframework'))
+    pod 'GoMknoon', :path => '.'
+  end
+end
+
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)

@@ -52,6 +52,46 @@ void main() {
     );
 
     test(
+      'fromRemoteMessageData ignores ciphertext fields while routing chat pushes',
+      () {
+        final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'new_message',
+          'sender_id': 'peer-cipher',
+          'message_id': 'msg-cipher-1',
+          'envelope_version': '2',
+          'kem': 'kem',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        });
+
+        expect(routeTarget, isNotNull);
+        expect(routeTarget!.kind, NotificationRouteTargetKind.conversation);
+        expect(routeTarget.peerId, 'peer-cipher');
+      },
+    );
+
+    test(
+      'fromRemoteMessageData ignores ciphertext fields while routing group pushes',
+      () {
+        final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+          'type': 'group_message',
+          'groupId': 'group-cipher',
+          'message_id': 'msg-group-cipher-1',
+          'kind': 'group_offline_replay',
+          'payloadType': 'group_message',
+          'keyEpoch': '7',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        });
+
+        expect(routeTarget, isNotNull);
+        expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+        expect(routeTarget.groupId, 'group-cipher');
+        expect(routeTarget.messageId, 'msg-group-cipher-1');
+      },
+    );
+
+    test(
       'fromRemoteMessageData maps contact_request to contact-request route',
       () {
         final routeTarget = NotificationRouteTarget.fromRemoteMessageData({

@@ -1,0 +1,10 @@
+{
+  "rolloutState": "pre_phase1_legacy_group_preview",
+  "routeData": {
+    "type": "group_message",
+    "groupId": "group-team",
+    "message_id": "fixture-group-legacy-1",
+    "title": "Team Chat",
+    "body": "Alice: hello"
+  }
+}
