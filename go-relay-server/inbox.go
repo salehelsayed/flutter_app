@@ -32,6 +32,7 @@ const (
 	pushNotificationTitle      = "New Message"
 	pushNotificationBody       = "You have a new message"
 	pushNotificationChannelID  = "mknoon_messages"
+	pushNotificationSound      = "default"
 	contactRequestPushTitle    = "New Contact Request"
 	contactRequestPushBody     = "Open Mknoon to respond"
 	groupInvitePushTitle       = "Group Invite"
@@ -136,9 +137,8 @@ func (ps *PushService) SendGroupNotification(
 	ctx context.Context,
 	toPeerId string,
 	groupId string,
-	title string,
-	body string,
 	messageID string,
+	message string,
 ) {
 	entry := ps.tokenBackend.LookupToken(toPeerId)
 	if entry == nil {
@@ -149,7 +149,7 @@ func (ps *PushService) SendGroupNotification(
 		return
 	}
 
-	msg := buildGroupPushMessage(entry.Token, groupId, title, body, messageID)
+	msg := buildGroupPushMessage(entry.Token, groupId, messageID, message)
 	ps.sendWithRetry(ctx, toPeerId, msg, "group", groupId)
 }
 
@@ -271,6 +271,18 @@ func waitForRetryDelay(ctx context.Context, delay time.Duration) bool {
 
 func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 	metadata := extractChatPushMetadata(message)
+	if metadata.RouteType == "new_message" {
+		data := map[string]string{
+			"type":      "new_message",
+			"sender_id": fromPeerId,
+		}
+		if metadata.MessageID != "" {
+			data["message_id"] = metadata.MessageID
+		}
+		addChatEncryptedPushData(data, message)
+		return buildCiphertextOnlyPushMessage(token, data, fromPeerId)
+	}
+
 	resolvedTitle := metadata.SenderUsername
 	switch metadata.RouteType {
 	case "intros":
@@ -346,6 +358,7 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			Payload: &messaging.APNSPayload{
 				Aps: &messaging.Aps{
 					ContentAvailable: true,
+					Sound:            pushNotificationSound,
 					Alert: &messaging.ApsAlert{
 						Title: resolvedTitle,
 						Body:  resolvedBody,
@@ -356,16 +369,7 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 	}
 }
 
-func buildGroupPushMessage(token, groupId, title, body, messageID string) *messaging.Message {
-	resolvedTitle := title
-	if resolvedTitle == "" {
-		resolvedTitle = pushNotificationTitle
-	}
-	resolvedBody := body
-	if resolvedBody == "" {
-		resolvedBody = pushNotificationBody
-	}
-
+func buildGroupPushMessage(token, groupId, messageID, message string) *messaging.Message {
 	data := map[string]string{
 		"type":    "group_message",
 		"groupId": groupId,
@@ -373,27 +377,30 @@ func buildGroupPushMessage(token, groupId, title, body, messageID string) *messa
 	if messageID != "" {
 		data["message_id"] = messageID
 	}
-	if title != "" {
-		data["title"] = title
+	addGroupEncryptedPushData(data, message)
+
+	return buildCiphertextOnlyPushMessage(token, data, groupId)
+}
+
+func buildCiphertextOnlyPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
+	aps := &messaging.Aps{
+		ContentAvailable: true,
+		MutableContent:   true,
+		Sound:            pushNotificationSound,
+		Alert: &messaging.ApsAlert{
+			Title: pushNotificationTitle,
+			Body:  pushNotificationBody,
+		},
 	}
-	if body != "" {
-		data["body"] = body
+	if threadID != "" {
+		aps.ThreadID = threadID
 	}
 
 	return &messaging.Message{
 		Token: token,
-		Notification: &messaging.Notification{
-			Title: resolvedTitle,
-			Body:  resolvedBody,
-		},
-		Data: data,
+		Data:  data,
 		Android: &messaging.AndroidConfig{
 			Priority: "high",
-			Notification: &messaging.AndroidNotification{
-				Title:     resolvedTitle,
-				Body:      resolvedBody,
-				ChannelID: pushNotificationChannelID,
-			},
 		},
 		APNS: &messaging.APNSConfig{
 			Headers: map[string]string{
@@ -401,15 +408,76 @@ func buildGroupPushMessage(token, groupId, title, body, messageID string) *messa
 				"apns-push-type": "alert",
 			},
 			Payload: &messaging.APNSPayload{
-				Aps: &messaging.Aps{
-					ContentAvailable: true,
-					Alert: &messaging.ApsAlert{
-						Title: resolvedTitle,
-						Body:  resolvedBody,
-					},
-				},
+				Aps: aps,
 			},
 		},
+	}
+}
+
+func addChatEncryptedPushData(data map[string]string, message string) bool {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
+		return false
+	}
+
+	if version := trimmedString(envelope["version"]); version != "" {
+		data["envelope_version"] = version
+	}
+	encrypted, ok := envelope["encrypted"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	addTrimmedData(data, "kem", encrypted["kem"])
+	addTrimmedData(data, "ciphertext", encrypted["ciphertext"])
+	addTrimmedData(data, "nonce", encrypted["nonce"])
+	return data["kem"] != "" && data["ciphertext"] != "" && data["nonce"] != ""
+}
+
+func addGroupEncryptedPushData(data map[string]string, message string) bool {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
+		return false
+	}
+
+	addTrimmedData(data, "kind", envelope["kind"])
+	addJSONScalarData(data, "envelope_version", envelope["version"])
+	addTrimmedData(data, "payloadType", envelope["payloadType"])
+	addJSONScalarData(data, "keyEpoch", envelope["keyEpoch"])
+	addTrimmedData(data, "ciphertext", envelope["ciphertext"])
+	addTrimmedData(data, "nonce", envelope["nonce"])
+	if data["message_id"] == "" {
+		addTrimmedData(data, "message_id", envelope["messageId"])
+	}
+	return data["kind"] != "" &&
+		data["ciphertext"] != "" &&
+		data["nonce"] != ""
+}
+
+func addTrimmedData(data map[string]string, key string, raw interface{}) {
+	if value := trimmedString(raw); value != "" {
+		data[key] = value
+	}
+}
+
+func addJSONScalarData(data map[string]string, key string, raw interface{}) {
+	switch value := raw.(type) {
+	case string:
+		if strings.TrimSpace(value) != "" {
+			data[key] = strings.TrimSpace(value)
+		}
+	case float64:
+		if value == float64(int64(value)) {
+			data[key] = fmt.Sprintf("%d", int64(value))
+		} else {
+			data[key] = fmt.Sprintf("%g", value)
+		}
+	case int:
+		data[key] = fmt.Sprintf("%d", value)
+	case int64:
+		data[key] = fmt.Sprintf("%d", value)
+	case json.Number:
+		data[key] = value.String()
 	}
 }
 
@@ -438,24 +506,11 @@ func extractChatPushMetadata(message string) chatPushMetadata {
 			Body:         introPushNotificationBody,
 		}
 	case "chat_message":
-		metadata := chatPushMetadata{
-			ShouldNotify:   true,
-			RouteType:      "new_message",
-			MessageID:      extractMessageId(message),
-			SenderUsername: trimmedString(envelope["senderUsername"]),
-			Body:           trimmedString(envelope["text"]),
+		return chatPushMetadata{
+			ShouldNotify: true,
+			RouteType:    "new_message",
+			MessageID:    extractMessageId(message),
 		}
-
-		if payload, ok := envelope["payload"].(map[string]interface{}); ok {
-			if metadata.SenderUsername == "" {
-				metadata.SenderUsername = trimmedString(payload["senderUsername"])
-			}
-			if metadata.Body == "" {
-				metadata.Body = trimmedString(payload["text"])
-			}
-		}
-
-		return metadata
 	case "contact_request":
 		intent := trimmedString(envelope["intent"])
 		metadata := chatPushMetadata{
@@ -756,13 +811,11 @@ func (s *GroupInboxStore) Store(groupId, from, message string) error {
 	return err
 }
 
-func (s *GroupInboxStore) StoreWithPushMetadata(
+func (s *GroupInboxStore) StoreWithPushRecipients(
 	groupId string,
 	from string,
 	message string,
 	recipientPeerIds []string,
-	pushTitle string,
-	pushBody string,
 ) error {
 	if err := s.Store(groupId, from, message); err != nil {
 		return err
@@ -772,7 +825,7 @@ func (s *GroupInboxStore) StoreWithPushMetadata(
 		return nil
 	}
 
-	s.fanOutPush(groupId, from, recipientPeerIds, pushTitle, pushBody, message)
+	s.fanOutPush(groupId, from, recipientPeerIds, message)
 	return nil
 }
 
@@ -805,8 +858,6 @@ func (s *GroupInboxStore) fanOutPush(
 	groupId string,
 	from string,
 	recipientPeerIds []string,
-	pushTitle string,
-	pushBody string,
 	message string,
 ) {
 	if s.push == nil || len(recipientPeerIds) == 0 {
@@ -827,9 +878,8 @@ func (s *GroupInboxStore) fanOutPush(
 			context.Background(),
 			peerID,
 			groupId,
-			pushTitle,
-			pushBody,
 			messageID,
+			message,
 		)
 	}
 }
@@ -907,8 +957,6 @@ type inboxRequest struct {
 	// Group inbox fields.
 	GroupId          string   `json:"groupId,omitempty"`
 	RecipientPeerIds []string `json:"recipientPeerIds,omitempty"`
-	PushTitle        string   `json:"pushTitle,omitempty"`
-	PushBody         string   `json:"pushBody,omitempty"`
 	SinceTimestamp   int64    `json:"sinceTimestamp,omitempty"`
 	Cursor           string   `json:"cursor,omitempty"`
 }
@@ -1072,13 +1120,11 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			if from == "" {
 				from = remotePeer
 			}
-			if err := groupInbox.StoreWithPushMetadata(
+			if err := groupInbox.StoreWithPushRecipients(
 				req.GroupId,
 				from,
 				req.Message,
 				req.RecipientPeerIds,
-				req.PushTitle,
-				req.PushBody,
 			); err != nil {
 				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
 			} else {
