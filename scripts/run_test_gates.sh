@@ -72,6 +72,10 @@ readonly TRANSPORT_TESTS=(
   "integration_test/media_stable_id_smoke_test.dart"
 )
 
+readonly RUNTIME_TELEMETRY_TESTS=(
+  "test/features/push/application/push_preview_telemetry_gate_test.dart"
+)
+
 readonly NIGHTLY_ONLY_TESTS=(
   "integration_test/smoke_test.dart"
   "integration_test/conversation_bridge_test.dart"
@@ -99,6 +103,8 @@ readonly OPTIONAL_MANUAL_TESTS=(
   "test/integration/notification_deeplink_integration_test.dart"
   "test/integration/rapid_lock_unlock_integration_test.dart"
   "test/integration/relay_down_degradation_integration_test.dart"
+  "integration_test/cold_start_sendable_no_user_action_test.dart"
+  "integration_test/foreground_group_push_drain_test.dart"
   "integration_test/media_message_journey_e2e_test.dart"
   "integration_test/notification_open_ui_smoke_test.dart"
   "test/performance/conversation_wired_performance_test.dart"
@@ -123,6 +129,7 @@ Usage:
   ./scripts/run_test_gates.sh groups
   ./scripts/run_test_gates.sh posts
   ./scripts/run_test_gates.sh transport
+  ./scripts/run_test_gates.sh runtime-telemetry
   ./scripts/run_test_gates.sh all
   ./scripts/run_test_gates.sh benchmark
   ./scripts/run_test_gates.sh benchmark-sim
@@ -247,6 +254,11 @@ classify_path() {
     return 0
   fi
 
+  if array_contains "$path" "${RUNTIME_TELEMETRY_TESTS[@]}"; then
+    printf 'runtime telemetry gate'
+    return 0
+  fi
+
   if array_contains "$path" "${NIGHTLY_ONLY_TESTS[@]}"; then
     printf 'nightly / release pool'
     return 0
@@ -284,6 +296,11 @@ classify_path() {
 
   if [[ "$path" =~ ^test/core/(bridge|constants|database|device|inbox|local_discovery|media|secure_storage|theme|utils)/.*_test\.dart$ ]]; then
     printf 'core component direct suite'
+    return 0
+  fi
+
+  if [[ "$path" =~ ^test/security/.*_test\.dart$ ]]; then
+    printf 'security invariant direct suite'
     return 0
   fi
 
@@ -375,6 +392,9 @@ main() {
     transport)
       run_transport_gate
       ;;
+    runtime-telemetry)
+      run_gate_command "Runtime Telemetry Gate" "${RUNTIME_TELEMETRY_TESTS[@]}"
+      ;;
     all)
       run_gate_command "Baseline Gate" "${BASELINE_TESTS[@]}"
       run_gate_command "1:1 Reliability Gate" "${ONE_TO_ONE_TESTS[@]}"
@@ -383,6 +403,7 @@ main() {
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
       run_transport_gate
+      run_gate_command "Runtime Telemetry Gate" "${RUNTIME_TELEMETRY_TESTS[@]}"
       ;;
     benchmark)
       echo "=== Benchmark Tests ==="

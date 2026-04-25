@@ -115,7 +115,8 @@ class MessagePayload {
   /// Builds a v2 encrypted envelope JSON string.
   ///
   /// The envelope contains the KEM ciphertext, AES ciphertext, and nonce
-  /// alongside the sender's peer ID (cleartext for routing).
+  /// alongside the sender's peer ID (cleartext for routing). The sender
+  /// username stays inside the encrypted inner payload.
   static String buildEncryptedEnvelope({
     required String id,
     required String senderPeerId,
@@ -129,7 +130,6 @@ class MessagePayload {
       'version': '2',
       'id': id,
       'senderPeerId': senderPeerId,
-      'senderUsername': senderUsername,
       'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     };
     return jsonEncode(envelope);

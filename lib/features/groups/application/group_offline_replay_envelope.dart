@@ -60,8 +60,6 @@ Future<void> storeGroupOfflineReplayEnvelope({
   GroupKeyInfo? keyInfo,
   String? messageId,
   List<String>? recipientPeerIds,
-  String? pushTitle,
-  String? pushBody,
 }) async {
   final replayEnvelope = await buildGroupOfflineReplayEnvelope(
     bridge: bridge,
@@ -78,8 +76,6 @@ Future<void> storeGroupOfflineReplayEnvelope({
     groupId,
     replayEnvelope,
     recipientPeerIds: recipientPeerIds,
-    pushTitle: pushTitle,
-    pushBody: pushBody,
   );
 }
 
@@ -87,16 +83,12 @@ String encodeGroupOfflineReplayInboxRetryPayload({
   required String groupId,
   required String message,
   List<String>? recipientPeerIds,
-  String? pushTitle,
-  String? pushBody,
 }) {
   return jsonEncode({
     'groupId': groupId,
     'message': message,
     if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
       'recipientPeerIds': recipientPeerIds,
-    if (pushTitle != null && pushTitle.isNotEmpty) 'pushTitle': pushTitle,
-    if (pushBody != null && pushBody.isNotEmpty) 'pushBody': pushBody,
   });
 }
 
@@ -109,8 +101,6 @@ Future<String> buildGroupOfflineReplayInboxRetryPayload({
   GroupKeyInfo? keyInfo,
   String? messageId,
   List<String>? recipientPeerIds,
-  String? pushTitle,
-  String? pushBody,
 }) async {
   final replayEnvelope = await buildGroupOfflineReplayEnvelope(
     bridge: bridge,
@@ -126,8 +116,6 @@ Future<String> buildGroupOfflineReplayInboxRetryPayload({
     groupId: groupId,
     message: replayEnvelope,
     recipientPeerIds: recipientPeerIds,
-    pushTitle: pushTitle,
-    pushBody: pushBody,
   );
 }
 
@@ -138,18 +126,13 @@ Future<void> storeGroupOfflineReplayFromRetryPayload({
   final payload = jsonDecode(inboxRetryPayload) as Map<String, dynamic>;
   final groupId = payload['groupId'] as String;
   final message = payload['message'] as String;
-  final recipientPeerIds =
-      (payload['recipientPeerIds'] as List<dynamic>?)?.cast<String>();
-  final pushTitle = payload['pushTitle'] as String?;
-  final pushBody = payload['pushBody'] as String?;
-
+  final recipientPeerIds = (payload['recipientPeerIds'] as List<dynamic>?)
+      ?.cast<String>();
   await callGroupInboxStore(
     bridge,
     groupId,
     message,
     recipientPeerIds: recipientPeerIds,
-    pushTitle: pushTitle,
-    pushBody: pushBody,
   );
 }
 

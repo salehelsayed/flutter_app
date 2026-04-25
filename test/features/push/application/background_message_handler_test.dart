@@ -43,6 +43,7 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
     debugResetRecentBackgroundNotificationGate();
     debugResetRecentRemoteNotificationGate();
+    debugResetBackgroundPushNotificationResolver();
   });
 
   group('firebaseMessagingBackgroundHandler', () {
@@ -98,6 +99,59 @@ void main() {
         expect(showArgs['title'], backgroundPushDefaultTitle);
         expect(showArgs['body'], backgroundPushDefaultBody);
         expect(showArgs['payload'], '12D3KooWTestPeer');
+        final platformSpecifics = showArgs['platformSpecifics'] as Map;
+        expect(platformSpecifics['channelId'], mknoonMessagesChannelId);
+        expect(platformSpecifics['channelName'], mknoonMessagesChannelName);
+        expect(
+          platformSpecifics['channelDescription'],
+          mknoonMessagesChannelDescription,
+        );
+        expect(platformSpecifics['playSound'], isTrue);
+      },
+    );
+
+    test(
+      'uses injected preview resolver before showing notification',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') {
+                return true;
+              }
+              return null;
+            });
+
+        debugSetBackgroundPushNotificationResolver((message) async {
+          return const BackgroundPushNotificationFallback(
+            title: 'Alice',
+            body: 'Hello secret',
+            payload: 'peer-alice',
+          );
+        });
+
+        const message = RemoteMessage(
+          messageId: 'msg-decrypt-1',
+          data: {
+            'type': 'new_message',
+            'sender_id': 'peer-alice',
+            'message_id': 'msg-decrypt-1',
+            'kem': 'kem',
+            'ciphertext': 'ciphertext',
+            'nonce': 'nonce',
+          },
+        );
+
+        await firebaseMessagingBackgroundHandler(message);
+
+        final showCall = log.firstWhere((call) => call.method == 'show');
+        final showArgs = showCall.arguments as Map;
+        expect(showArgs['title'], 'Alice');
+        expect(showArgs['body'], 'Hello secret');
+        expect(showArgs['payload'], 'peer-alice');
       },
     );
 
@@ -198,6 +252,12 @@ void main() {
         await firebaseMessagingBackgroundHandler(message);
 
         expect(log.where((call) => call.method == 'show'), hasLength(1));
+        final showCall = log.firstWhere((call) => call.method == 'show');
+        final showArgs = showCall.arguments as Map;
+        final platformSpecifics = showArgs['platformSpecifics'] as Map;
+        expect(platformSpecifics['presentSound'], isTrue);
+        expect(platformSpecifics['presentAlert'], isTrue);
+        expect(platformSpecifics['presentBadge'], isTrue);
       },
     );
   });

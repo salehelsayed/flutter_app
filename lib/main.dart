@@ -271,6 +271,9 @@ void main() async {
 
   // 1. Create secure key store
   final secureKeyStore = FlutterSecureKeyStore();
+  final SecureKeyStore? sharedPushKeyStore = !kIsWeb && Platform.isIOS
+      ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
+      : null;
   final pushTokenStore = PushTokenStoreImpl(secureKeyStore: secureKeyStore);
 
   // 2. Open encrypted database (handles plaintext→encrypted migration)
@@ -510,6 +513,7 @@ void main() async {
     dbLoadIdentityRow: () => dbLoadIdentityRow(db),
     dbUpsertIdentityRow: (row) => dbUpsertIdentityRow(db, row),
     secureKeyStore: secureKeyStore,
+    pushSharedKeyStore: sharedPushKeyStore,
   );
 
   // Create contact repository
@@ -834,7 +838,10 @@ void main() async {
     dbLoadGroupKeyByGeneration: (groupId, generation) =>
         dbLoadGroupKeyByGeneration(db, groupId, generation),
     dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
+    dbLoadAllGroupKeys: (groupId) => dbLoadAllGroupKeys(db, groupId),
+    pushSharedKeyStore: sharedPushKeyStore,
   );
+  await groupRepository.mirrorAllKeysToSecureStore();
 
   final pendingGroupInviteRepository = PendingGroupInviteRepositoryImpl(
     dbUpsertPendingGroupInvite: (row) => dbUpsertPendingGroupInvite(db, row),

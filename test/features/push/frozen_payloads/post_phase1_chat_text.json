@@ -1,0 +1,12 @@
+{
+  "rolloutState": "post_phase1_ciphertext_only_chat",
+  "routeData": {
+    "type": "new_message",
+    "sender_id": "peer-alice",
+    "message_id": "fixture-chat-1",
+    "envelope_version": "2",
+    "kem": "fixture-kem-chat-1",
+    "ciphertext": "fixture-ciphertext-chat-1",
+    "nonce": "fixture-nonce-chat-1"
+  }
+}

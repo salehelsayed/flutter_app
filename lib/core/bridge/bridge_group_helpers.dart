@@ -638,8 +638,6 @@ Future<void> callGroupInboxStore(
   String groupId,
   String message, {
   List<String>? recipientPeerIds,
-  String? pushTitle,
-  String? pushBody,
   Duration timeout = const Duration(seconds: 10),
 }) async {
   emitFlowEvent(
@@ -657,8 +655,6 @@ Future<void> callGroupInboxStore(
       'message': message,
       if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
         'recipientPeerIds': recipientPeerIds,
-      if (pushTitle != null && pushTitle.isNotEmpty) 'pushTitle': pushTitle,
-      if (pushBody != null && pushBody.isNotEmpty) 'pushBody': pushBody,
     },
   };
 
@@ -961,11 +957,7 @@ Future<String> callGroupDecrypt(
 
   final request = {
     'cmd': 'group.decrypt',
-    'payload': {
-      'groupKey': groupKey,
-      'ciphertext': ciphertext,
-      'nonce': nonce,
-    },
+    'payload': {'groupKey': groupKey, 'ciphertext': ciphertext, 'nonce': nonce},
   };
 
   try {

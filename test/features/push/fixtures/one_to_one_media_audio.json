@@ -1,0 +1,26 @@
+{
+  "fixtureVersion": 1,
+  "kind": "one_to_one_media_audio",
+  "messageId": "fixture-chat-audio-1",
+  "routeData": {
+    "type": "new_message",
+    "sender_id": "peer-alice",
+    "message_id": "fixture-chat-audio-1",
+    "envelope_version": "2",
+    "kem": "fixture-kem-chat-audio-1",
+    "ciphertext": "fixture-ciphertext-chat-audio-1",
+    "nonce": "fixture-nonce-chat-audio-1"
+  },
+  "plaintext": {
+    "id": "fixture-chat-audio-1",
+    "text": "",
+    "senderPeerId": "peer-alice",
+    "senderUsername": "Alice",
+    "timestamp": "2026-04-24T12:01:00.000Z",
+    "media": [
+      {
+        "mediaType": "audio"
+      }
+    ]
+  }
+}

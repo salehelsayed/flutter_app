@@ -1,0 +1,25 @@
+{
+  "fixtureVersion": 1,
+  "kind": "group_dissolve",
+  "messageId": "fixture-group-dissolve-1",
+  "routeData": {
+    "type": "group_message",
+    "groupId": "group-team",
+    "message_id": "fixture-group-dissolve-1",
+    "kind": "group_dissolve",
+    "envelope_version": "1",
+    "payloadType": "group_dissolve",
+    "keyEpoch": "7",
+    "ciphertext": "fixture-ciphertext-group-dissolve-1",
+    "nonce": "fixture-nonce-group-dissolve-1"
+  },
+  "plaintext": {
+    "groupId": "group-team",
+    "senderId": "peer-alice",
+    "senderUsername": "Alice",
+    "keyEpoch": 7,
+    "text": "Group dissolved by Alice",
+    "timestamp": "2026-04-24T12:03:00.000Z",
+    "messageId": "fixture-group-dissolve-1"
+  }
+}

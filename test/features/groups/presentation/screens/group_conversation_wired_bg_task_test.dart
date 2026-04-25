@@ -725,7 +725,7 @@ void main() {
     });
 
     testWidgets(
-      'announcement voice-only send uses durable path, exact push body, and sent status when no peers are live',
+      'announcement voice-only send uses durable path, omits plaintext push body, and sent status when no peers are live',
       (tester) async {
         final operationLog = <String>[];
         final bridge = _OrderRecordingBridge(
@@ -824,7 +824,8 @@ void main() {
         final inboxPayload =
             (jsonDecode(inboxMessage) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
-        expect(inboxPayload['pushBody'], equals('Alice sent a voice message'));
+        expect(inboxPayload.containsKey('pushTitle'), isFalse);
+        expect(inboxPayload.containsKey('pushBody'), isFalse);
         final innerEnvelope = _decodeReplayPayload(inboxPayload);
         expect(innerEnvelope['text'], isEmpty);
 

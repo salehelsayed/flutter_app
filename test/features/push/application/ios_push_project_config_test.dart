@@ -51,18 +51,12 @@ void main() {
 
       expect(appDelegate, contains('import FirebaseMessaging'));
       expect(appDelegate, contains('[PUSH_DIAG] didFinishLaunching'));
-      expect(
-        appDelegate,
-        contains('didBecomeActiveNotification'),
-      );
+      expect(appDelegate, contains('didBecomeActiveNotification'));
       expect(
         appDelegate,
         contains('native_registerForRemoteNotifications_begin'),
       );
-      expect(
-        appDelegate,
-        contains('native_notification_settings'),
-      );
+      expect(appDelegate, contains('native_notification_settings'));
       expect(
         appDelegate,
         contains('didRegisterForRemoteNotificationsWithDeviceToken'),
@@ -80,6 +74,23 @@ void main() {
       expect(
         appDelegate,
         contains('didFailToRegisterForRemoteNotificationsWithError'),
+      );
+    });
+
+    test('main.dart keeps foreground remote presentation quiet', () async {
+      final mainDart = await File('lib/main.dart').readAsString();
+
+      expect(
+        mainDart,
+        matches(
+          RegExp(
+            r'setForegroundNotificationPresentationOptions\(\s*'
+            r'alert:\s*false,\s*'
+            r'badge:\s*false,\s*'
+            r'sound:\s*false,',
+            multiLine: true,
+          ),
+        ),
       );
     });
   });

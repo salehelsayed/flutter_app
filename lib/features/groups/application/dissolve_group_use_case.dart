@@ -130,8 +130,6 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
         plaintext: inboxPayload,
         messageId: timelineMessage.id,
         recipientPeerIds: recipientPeerIds,
-        pushTitle: group.name,
-        pushBody: buildGroupDissolvedTimelineText(actorUsername),
       );
     } catch (e) {
       hadBridgeRecoveryGap = true;

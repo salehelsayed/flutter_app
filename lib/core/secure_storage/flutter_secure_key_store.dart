@@ -2,6 +2,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'secure_key_store.dart';
 
+const mknoonSharedAppleAccessGroup = 'group.com.mknoon.app.share';
+
 /// Production [SecureKeyStore] backed by flutter_secure_storage.
 ///
 /// Uses iOS Keychain on iOS and EncryptedSharedPreferences on Android.
@@ -10,14 +12,16 @@ import 'secure_key_store.dart';
 /// - Android: EncryptedSharedPreferences backed by Android Keystore.
 class FlutterSecureKeyStore implements SecureKeyStore {
   final FlutterSecureStorage _storage;
+  final String? appleAccessGroup;
 
-  FlutterSecureKeyStore()
-      : _storage = const FlutterSecureStorage(
-          aOptions: AndroidOptions(encryptedSharedPreferences: true),
-          iOptions: IOSOptions(
-            accessibility: KeychainAccessibility.first_unlock_this_device,
-          ),
-        );
+  FlutterSecureKeyStore({this.appleAccessGroup})
+    : _storage = FlutterSecureStorage(
+        aOptions: AndroidOptions(encryptedSharedPreferences: true),
+        iOptions: IOSOptions(
+          accessibility: KeychainAccessibility.first_unlock_this_device,
+          groupId: appleAccessGroup,
+        ),
+      );
 
   @override
   Future<String?> read(String key) => _storage.read(key: key);

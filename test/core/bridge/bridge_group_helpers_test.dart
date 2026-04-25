@@ -865,7 +865,7 @@ void main() {
     });
 
     test(
-      'includes recipientPeerIds, pushTitle, and pushBody when provided',
+      'includes recipientPeerIds and omits plaintext preview fields',
       () async {
         bridge.responses['group:inboxStore'] = {'ok': true};
 
@@ -874,20 +874,18 @@ void main() {
           'grp-inbox-push',
           'encrypted-msg-data',
           recipientPeerIds: const ['peer-b', 'peer-c'],
-          pushTitle: 'Test Group',
-          pushBody: 'Alice: hello',
         );
 
         final sent =
             jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
         final payload = sent['payload'] as Map<String, dynamic>;
         expect(payload['recipientPeerIds'], equals(['peer-b', 'peer-c']));
-        expect(payload['pushTitle'], equals('Test Group'));
-        expect(payload['pushBody'], equals('Alice: hello'));
+        expect(payload.containsKey('pushTitle'), isFalse);
+        expect(payload.containsKey('pushBody'), isFalse);
       },
     );
 
-    test('omits empty optional push fields', () async {
+    test('omits optional fields when recipient list is empty', () async {
       bridge.responses['group:inboxStore'] = {'ok': true};
 
       await callGroupInboxStore(
@@ -895,8 +893,6 @@ void main() {
         'grp-inbox-empty',
         'encrypted-msg-data',
         recipientPeerIds: const [],
-        pushTitle: '',
-        pushBody: '',
       );
 
       final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;

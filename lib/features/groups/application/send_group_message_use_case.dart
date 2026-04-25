@@ -31,31 +31,6 @@ enum SendGroupMessageResult {
   successNoPeers,
 }
 
-String _buildGroupPushTitle(GroupModel group) => group.name;
-
-String _buildGroupPushBody({
-  required String senderUsername,
-  required String text,
-  List<MediaAttachment>? mediaAttachments,
-}) {
-  final trimmedText = text.trim();
-  if (trimmedText.isNotEmpty) {
-    return '$senderUsername: $trimmedText';
-  }
-
-  final primaryType = mediaAttachments != null && mediaAttachments.isNotEmpty
-      ? mediaAttachments.first.mediaType
-      : null;
-  final descriptor = switch (primaryType) {
-    'audio' => 'a voice message',
-    'image' => 'a photo',
-    'video' => 'a video',
-    'file' => 'an attachment',
-    _ => 'an attachment',
-  };
-  return '$senderUsername sent $descriptor';
-}
-
 Future<List<String>> _loadGroupPushRecipients({
   required GroupRepository groupRepo,
   required String groupId,
@@ -77,8 +52,6 @@ Future<bool> _tryInboxStore({
   required String groupId,
   required String inboxPayload,
   List<String>? recipientPeerIds,
-  String? pushTitle,
-  String? pushBody,
 }) async {
   try {
     await callGroupInboxStore(
@@ -86,8 +59,6 @@ Future<bool> _tryInboxStore({
       groupId,
       inboxPayload,
       recipientPeerIds: recipientPeerIds,
-      pushTitle: pushTitle,
-      pushBody: pushBody,
     );
     return true;
   } catch (e) {
@@ -335,13 +306,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   final mediaJson = mediaAttachments?.map((a) => a.toJson()).toList();
   final recipientPeerIds = await recipientPeerIdsFuture;
-  final pushTitle = _buildGroupPushTitle(group);
-  final pushBody = _buildGroupPushBody(
-    senderUsername: senderUsername,
-    text: sanitizedText,
-    mediaAttachments: mediaAttachments,
-  );
-
   // 3b. Build wireEnvelope (plaintext publish params for retry — NO senderPrivateKey)
   final wireEnvelope = jsonEncode({
     'groupId': groupId,
@@ -385,8 +349,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'groupId': groupId,
         'message': replayEnvelope,
         if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
-        if (pushTitle.isNotEmpty) 'pushTitle': pushTitle,
-        if (pushBody.isNotEmpty) 'pushBody': pushBody,
       });
     } catch (e) {
       emitFlowEvent(
@@ -456,8 +418,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
                   recipientPeerIds: recipientPeerIds.isNotEmpty
                       ? recipientPeerIds
                       : null,
-                  pushTitle: pushTitle,
-                  pushBody: pushBody,
                 ))
           .then((value) {
             inboxStopwatch.stop();

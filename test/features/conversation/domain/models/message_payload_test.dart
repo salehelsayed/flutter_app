@@ -187,7 +187,7 @@ void main() {
         expect(parsed['version'], '2');
         expect(parsed['id'], messageId);
         expect(parsed['senderPeerId'], senderPeerId);
-        expect(parsed['senderUsername'], senderUsername);
+        expect(parsed.containsKey('senderUsername'), isFalse);
         expect(parsed['encrypted']['kem'], kem);
         expect(parsed['encrypted']['ciphertext'], ciphertext);
         expect(parsed['encrypted']['nonce'], nonce);

@@ -1,0 +1,14 @@
+{
+  "rolloutState": "post_phase1_ciphertext_only_group",
+  "routeData": {
+    "type": "group_message",
+    "groupId": "group-team",
+    "message_id": "fixture-group-1",
+    "kind": "group_offline_replay",
+    "envelope_version": "1",
+    "payloadType": "group_message",
+    "keyEpoch": "7",
+    "ciphertext": "fixture-ciphertext-group-1",
+    "nonce": "fixture-nonce-group-1"
+  }
+}

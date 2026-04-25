@@ -39,7 +39,7 @@ void main() {
       expect(fallback.payload, '12D3KooWPeer');
     });
 
-    test('uses pushTitle/pushBody when title/body are absent', () {
+    test('ignores retired pushTitle/pushBody preview fields', () {
       const message = RemoteMessage(
         data: {
           'type': 'group_message',
@@ -50,12 +50,12 @@ void main() {
       );
 
       final fallback = buildBackgroundPushFallbackNotification(message);
-      expect(fallback.title, 'Team Chat');
-      expect(fallback.body, 'Alice: Hello');
+      expect(fallback.title, backgroundPushDefaultTitle);
+      expect(fallback.body, backgroundPushDefaultBody);
       expect(fallback.payload, 'group:group-abc-123');
     });
 
-    test('uses senderUsername as the fallback title when title is absent', () {
+    test('ignores retired senderUsername preview fallback', () {
       const message = RemoteMessage(
         data: {
           'type': 'new_message',
@@ -65,7 +65,7 @@ void main() {
       );
 
       final fallback = buildBackgroundPushFallbackNotification(message);
-      expect(fallback.title, 'Alice');
+      expect(fallback.title, backgroundPushDefaultTitle);
       expect(fallback.body, backgroundPushDefaultBody);
       expect(fallback.payload, '12D3KooWPeer');
     });
@@ -239,23 +239,24 @@ void main() {
     test(
       'preserves provided role-correct copy for an introducer mutual-accept intros fallback',
       () {
-      const message = RemoteMessage(
-        data: {
-          'type': 'intros',
-          'title': 'New Connection',
-          'body':
-              'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
-        },
-      );
+        const message = RemoteMessage(
+          data: {
+            'type': 'intros',
+            'title': 'New Connection',
+            'body':
+                'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
+          },
+        );
 
-      final fallback = buildBackgroundPushFallbackNotification(message);
-      expect(fallback.title, 'New Connection');
-      expect(
-        fallback.body,
-        'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
-      );
-      expect(fallback.payload, 'intros');
-    });
+        final fallback = buildBackgroundPushFallbackNotification(message);
+        expect(fallback.title, 'New Connection');
+        expect(
+          fallback.body,
+          'Sarah accepted your intro to Lina. Lina and Sarah are now connected',
+        );
+        expect(fallback.payload, 'intros');
+      },
+    );
 
     test('shows fallback for contact_request type', () {
       const message = RemoteMessage(

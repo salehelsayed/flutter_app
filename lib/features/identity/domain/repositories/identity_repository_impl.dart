@@ -14,16 +14,20 @@ class IdentityRepositoryImpl implements IdentityRepository {
   final Future<Map<String, Object?>?> Function() _dbLoadIdentityRow;
   final Future<void> Function(Map<String, Object?> row) _dbUpsertIdentityRow;
   final SecureKeyStore _secureKeyStore;
+  final SecureKeyStore? _pushSharedKeyStore;
   IdentityModel? _cachedIdentity;
   bool _hasCachedIdentity = false;
 
   IdentityRepositoryImpl({
     required Future<Map<String, Object?>?> Function() dbLoadIdentityRow,
-    required Future<void> Function(Map<String, Object?> row) dbUpsertIdentityRow,
+    required Future<void> Function(Map<String, Object?> row)
+    dbUpsertIdentityRow,
     required SecureKeyStore secureKeyStore,
-  })  : _dbLoadIdentityRow = dbLoadIdentityRow,
-        _dbUpsertIdentityRow = dbUpsertIdentityRow,
-        _secureKeyStore = secureKeyStore;
+    SecureKeyStore? pushSharedKeyStore,
+  }) : _dbLoadIdentityRow = dbLoadIdentityRow,
+       _dbUpsertIdentityRow = dbUpsertIdentityRow,
+       _secureKeyStore = secureKeyStore,
+       _pushSharedKeyStore = pushSharedKeyStore;
 
   @override
   Future<IdentityModel?> loadIdentity() async {
@@ -40,7 +44,9 @@ class IdentityRepositoryImpl implements IdentityRepository {
         event: cachedIdentity == null
             ? 'ID_REPO_LOAD_IDENTITY_NOT_FOUND'
             : 'ID_REPO_LOAD_IDENTITY_FOUND',
-        details: cachedIdentity == null ? {} : {'peerId': cachedIdentity.peerId},
+        details: cachedIdentity == null
+            ? {}
+            : {'peerId': cachedIdentity.peerId},
       );
       return cachedIdentity;
     }
@@ -70,7 +76,8 @@ class IdentityRepositoryImpl implements IdentityRepository {
 
     final privateKey = ssPrivateKey ?? row['private_key'] as String?;
     final mnemonic12 = ssMnemonic12 ?? row['mnemonic12'] as String?;
-    final mlKemSecretKey = ssMlKemSecretKey ?? row['ml_kem_secret_key'] as String?;
+    final mlKemSecretKey =
+        ssMlKemSecretKey ?? row['ml_kem_secret_key'] as String?;
 
     if (privateKey == null || mnemonic12 == null) {
       _cachedIdentity = null;
@@ -96,6 +103,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
       createdAt: row['created_at'] as String,
       updatedAt: row['updated_at'] as String,
     );
+    await _mirrorMlKemSecretForPush(identity.mlKemSecretKey);
     _cachedIdentity = identity;
     _hasCachedIdentity = true;
 
@@ -122,6 +130,7 @@ class IdentityRepositoryImpl implements IdentityRepository {
     if (identity.mlKemSecretKey != null) {
       await _secureKeyStore.write(_kMlKemSecretKey, identity.mlKemSecretKey!);
     }
+    await _mirrorMlKemSecretForPush(identity.mlKemSecretKey);
 
     // Write DB row with secret columns set to null
     final row = <String, Object?>{
@@ -148,5 +157,25 @@ class IdentityRepositoryImpl implements IdentityRepository {
       event: 'ID_REPO_SAVE_IDENTITY_SUCCESS',
       details: {},
     );
+  }
+
+  Future<void> _mirrorMlKemSecretForPush(String? mlKemSecretKey) async {
+    final pushSharedKeyStore = _pushSharedKeyStore;
+    if (pushSharedKeyStore == null) {
+      return;
+    }
+    try {
+      if (mlKemSecretKey == null) {
+        await pushSharedKeyStore.delete(_kMlKemSecretKey);
+      } else {
+        await pushSharedKeyStore.write(_kMlKemSecretKey, mlKemSecretKey);
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ID_REPO_PUSH_SECRET_MIRROR_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 }

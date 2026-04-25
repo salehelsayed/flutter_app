@@ -15,10 +15,12 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
+import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
   late Database db;
   late GroupRepositoryImpl repo;
+  late FakeSecureKeyStore sharedPushKeyStore;
 
   setUpAll(() {
     sqfliteFfiInit();
@@ -35,6 +37,7 @@ void main() {
     await runGroupsMuteColumnMigration(db);
     await runGroupsDissolveColumnsMigration(db);
     await runGroupsBacklogRetentionColumnsMigration(db);
+    sharedPushKeyStore = FakeSecureKeyStore();
 
     repo = GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),
@@ -60,6 +63,8 @@ void main() {
       dbLoadGroupKeyByGeneration: (groupId, gen) =>
           dbLoadGroupKeyByGeneration(db, groupId, gen),
       dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
+      dbLoadAllGroupKeys: (groupId) => dbLoadAllGroupKeys(db, groupId),
+      pushSharedKeyStore: sharedPushKeyStore,
     );
   });
 
@@ -348,6 +353,15 @@ void main() {
       expect(latest!.keyGeneration, 3);
     });
 
+    test('saveKey mirrors group key to shared push storage', () async {
+      await repo.saveKey(makeKey(keyGeneration: 7));
+
+      expect(
+        await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 7)),
+        'base64-key-7',
+      );
+    });
+
     test('getKeyByGeneration returns correct key', () async {
       await repo.saveKey(makeKey(keyGeneration: 1));
       await repo.saveKey(makeKey(keyGeneration: 2));
@@ -366,6 +380,38 @@ void main() {
 
       final latest = await repo.getLatestKey('group-1');
       expect(latest, isNull);
+      expect(
+        await sharedPushKeyStore.containsKey(
+          sharedGroupPushKeyName('group-1', 1),
+        ),
+        isFalse,
+      );
+      expect(
+        await sharedPushKeyStore.containsKey(
+          sharedGroupPushKeyName('group-1', 2),
+        ),
+        isFalse,
+      );
     });
+
+    test(
+      'mirrorAllKeysToSecureStore mirrors existing persisted keys',
+      () async {
+        await repo.saveGroup(makeGroup());
+        await dbInsertGroupKey(db, makeKey(keyGeneration: 4).toMap());
+        await dbInsertGroupKey(db, makeKey(keyGeneration: 5).toMap());
+
+        await repo.mirrorAllKeysToSecureStore();
+
+        expect(
+          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 4)),
+          'base64-key-4',
+        );
+        expect(
+          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 5)),
+          'base64-key-5',
+        );
+      },
+    );
   });
 }
