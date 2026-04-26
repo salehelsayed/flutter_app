@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 /// Retries outgoing messages stuck in 'sent' status by storing them
@@ -84,6 +85,19 @@ Future<int> retryUnackedMessages({
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_UNACKED_MESSAGE_ALREADY_INBOX',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      continue;
+    }
+    if (isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!)) {
+      await messageRepo.saveMessage(
+        normalizeOutgoingDeleteTombstoneVisibility(
+          msg.copyWith(status: 'failed'),
+        ),
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE',
         details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
       );
       continue;

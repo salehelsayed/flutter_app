@@ -112,6 +112,24 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.nodeNotRunning, null);
   }
 
+  final recipientKey = recipientMlKemPublicKey?.trim();
+  if (bridge == null || recipientKey == null || recipientKey.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPTION_REQUIRED',
+      details: {
+        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
+      },
+    );
+    emitDeleteTiming(
+      outcome: 'encryption_required',
+      details: {
+        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
+      },
+    );
+    return (SendChatMessageResult.encryptionRequired, null);
+  }
+
   final deletedAt = DateTime.now().toUtc().toIso8601String();
   final payload = MessageDeletionPayload(
     messageId: originalMessage.id,
@@ -120,43 +138,39 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   );
 
   String jsonString;
-  if (bridge != null && recipientMlKemPublicKey != null) {
-    try {
-      final innerJson = payload.toInnerJson();
-      final encryptResult = await callEncryptMessage(
-        bridge: bridge,
-        recipientMlKemPublicKey: recipientMlKemPublicKey,
-        plaintext: innerJson,
-      );
-      if (encryptResult['ok'] != true) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPT_FAILED',
-          details: {'errorCode': encryptResult['errorCode']},
-        );
-        emitDeleteTiming(
-          outcome: 'encrypt_failed',
-          details: {'errorCode': encryptResult['errorCode']},
-        );
-        return (SendChatMessageResult.sendFailed, null);
-      }
-      jsonString = MessageDeletionPayload.buildEncryptedEnvelope(
-        senderPeerId: originalMessage.senderPeerId,
-        kem: encryptResult['kem'] as String,
-        ciphertext: encryptResult['ciphertext'] as String,
-        nonce: encryptResult['nonce'] as String,
-      );
-    } catch (e) {
+  try {
+    final innerJson = payload.toInnerJson();
+    final encryptResult = await callEncryptMessage(
+      bridge: bridge,
+      recipientMlKemPublicKey: recipientKey,
+      plaintext: innerJson,
+    );
+    if (encryptResult['ok'] != true) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPT_ERROR',
-        details: {'error': e.toString()},
+        event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPT_FAILED',
+        details: {'errorCode': encryptResult['errorCode']},
       );
-      emitDeleteTiming(outcome: 'encrypt_error');
+      emitDeleteTiming(
+        outcome: 'encrypt_failed',
+        details: {'errorCode': encryptResult['errorCode']},
+      );
       return (SendChatMessageResult.sendFailed, null);
     }
-  } else {
-    jsonString = payload.toJson();
+    jsonString = MessageDeletionPayload.buildEncryptedEnvelope(
+      senderPeerId: originalMessage.senderPeerId,
+      kem: encryptResult['kem'] as String,
+      ciphertext: encryptResult['ciphertext'] as String,
+      nonce: encryptResult['nonce'] as String,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPT_ERROR',
+      details: {'error': e.toString()},
+    );
+    emitDeleteTiming(outcome: 'encrypt_error');
+    return (SendChatMessageResult.sendFailed, null);
   }
 
   final pendingTombstone = buildDeletedMessageTombstone(

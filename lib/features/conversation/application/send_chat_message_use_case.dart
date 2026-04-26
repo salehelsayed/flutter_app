@@ -77,7 +77,7 @@ const _uuid = Uuid();
 /// 1. Validates text is non-empty
 /// 2. Checks P2P node is running
 /// 3. Builds MessagePayload with UUID
-/// 4. Serializes to JSON envelope (v2 encrypted if ML-KEM key available)
+/// 4. Serializes to a v2 encrypted JSON envelope
 /// 5. Persists wireEnvelope to DB row (Section 4: crash-safe retryability)
 /// 6. Reuses an existing connection, races local WiFi with direct relay send,
 ///    and probes the relay only when discoverability is stale
@@ -182,6 +182,24 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.nodeNotRunning, null);
   }
 
+  final recipientKey = recipientMlKemPublicKey?.trim();
+  if (bridge == null || recipientKey == null || recipientKey.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_ENCRYPTION_REQUIRED',
+      details: {
+        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
+      },
+    );
+    emitSendTiming(
+      outcome: 'encryption_required',
+      details: {
+        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
+      },
+    );
+    return (SendChatMessageResult.encryptionRequired, null);
+  }
+
   // 3. Build payload
   final resolvedMessageId = messageId ?? _uuid.v4();
   final resolvedTimestamp =
@@ -220,53 +238,49 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     text: sanitizedText,
   );
 
-  // 4. Serialize (v2 encrypted envelope if ML-KEM key available, v1 plaintext otherwise)
+  // 4. Serialize as v2 encrypted envelope.
   String jsonString;
-  if (bridge != null && recipientMlKemPublicKey != null) {
-    try {
-      final innerJson = payload.toInnerJson();
-      final encryptStopwatch = Stopwatch()..start();
-      final encryptResult = await callEncryptMessage(
-        bridge: bridge,
-        recipientMlKemPublicKey: recipientMlKemPublicKey,
-        plaintext: innerJson,
-      );
-      encryptStopwatch.stop();
-      stepTimings['encryptMs'] = encryptStopwatch.elapsedMilliseconds;
-      if (encryptResult['ok'] != true) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CHAT_MSG_SEND_ENCRYPT_FAILED',
-          details: {
-            'errorCode': encryptResult['errorCode'],
-            'errorMessage': encryptResult['errorMessage'],
-          },
-        );
-        emitSendTiming(
-          outcome: 'encrypt_failed',
-          details: {'errorCode': encryptResult['errorCode']},
-        );
-        return (SendChatMessageResult.sendFailed, null);
-      }
-      jsonString = MessagePayload.buildEncryptedEnvelope(
-        id: resolvedMessageId,
-        senderPeerId: senderPeerId,
-        senderUsername: senderUsername,
-        kem: encryptResult['kem'] as String,
-        ciphertext: encryptResult['ciphertext'] as String,
-        nonce: encryptResult['nonce'] as String,
-      );
-    } catch (e) {
+  try {
+    final innerJson = payload.toInnerJson();
+    final encryptStopwatch = Stopwatch()..start();
+    final encryptResult = await callEncryptMessage(
+      bridge: bridge,
+      recipientMlKemPublicKey: recipientKey,
+      plaintext: innerJson,
+    );
+    encryptStopwatch.stop();
+    stepTimings['encryptMs'] = encryptStopwatch.elapsedMilliseconds;
+    if (encryptResult['ok'] != true) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
-        details: {'error': e.toString()},
+        event: 'CHAT_MSG_SEND_ENCRYPT_FAILED',
+        details: {
+          'errorCode': encryptResult['errorCode'],
+          'errorMessage': encryptResult['errorMessage'],
+        },
       );
-      emitSendTiming(outcome: 'encrypt_error');
+      emitSendTiming(
+        outcome: 'encrypt_failed',
+        details: {'errorCode': encryptResult['errorCode']},
+      );
       return (SendChatMessageResult.sendFailed, null);
     }
-  } else {
-    jsonString = payload.toJson();
+    jsonString = MessagePayload.buildEncryptedEnvelope(
+      id: resolvedMessageId,
+      senderPeerId: senderPeerId,
+      senderUsername: senderUsername,
+      kem: encryptResult['kem'] as String,
+      ciphertext: encryptResult['ciphertext'] as String,
+      nonce: encryptResult['nonce'] as String,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
+      details: {'error': e.toString()},
+    );
+    emitSendTiming(outcome: 'encrypt_error');
+    return (SendChatMessageResult.sendFailed, null);
   }
 
   logChatWireEnvelope(

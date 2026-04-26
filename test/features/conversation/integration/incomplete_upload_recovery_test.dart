@@ -52,18 +52,19 @@ void main() {
         );
 
         final messageRepo = FakeMessageRepository()..seed([stuckMsg]);
-        final mediaRepo = FakeMediaAttachmentRepository()
-          ..seed([pendingAtt]);
+        final mediaRepo = FakeMediaAttachmentRepository()..seed([pendingAtt]);
 
         final identityRepo = FakeIdentityRepository()
-          ..seed(IdentityModel(
-            peerId: 'peer-alice',
-            publicKey: 'pk-alice',
-            privateKey: 'sk-alice',
-            mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
-            createdAt: msgTs,
-            updatedAt: msgTs,
-          ));
+          ..seed(
+            IdentityModel(
+              peerId: 'peer-alice',
+              publicKey: 'pk-alice',
+              privateKey: 'sk-alice',
+              mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
+              createdAt: msgTs,
+              updatedAt: msgTs,
+            ),
+          );
 
         final contactRepo = FakeContactRepository()
           ..seed([
@@ -74,7 +75,7 @@ void main() {
               username: 'Bob',
               signature: 'sig',
               scannedAt: msgTs,
-              mlKemPublicKey: null,
+              mlKemPublicKey: 'mlkem-peer-bob',
             ),
           ]);
 
@@ -87,7 +88,7 @@ void main() {
           storeInInboxResult: true,
         );
 
-        final bridge = FakeBridge();
+        final bridge = PassthroughCryptoBridge();
         bridge.uploadMediaResult = MediaAttachment(
           id: 'relay-blob-id-abc',
           messageId: 'msg-voice-001',
@@ -119,19 +120,20 @@ void main() {
           p2pService: p2pService,
           identityRepo: identityRepo,
           contactRepo: contactRepo,
-          uploadMediaFn: ({
-            required Bridge bridge,
-            required String localFilePath,
-            required String mime,
-            required String recipientPeerId,
-            mediaFileManager,
-            int? width,
-            int? height,
-            int? durationMs,
-            waveform,
-            allowedPeers,
-            String? blobId,
-          }) async => outerBridge.consumeUploadMediaResult(),
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                waveform,
+                allowedPeers,
+                String? blobId,
+              }) async => outerBridge.consumeUploadMediaResult(),
         );
 
         // ---- Assert ----
@@ -176,17 +178,18 @@ void main() {
         );
 
         final messageRepo = FakeMessageRepository()..seed([stuckMsg]);
-        final mediaRepo = FakeMediaAttachmentRepository()
-          ..seed([pendingAtt]);
+        final mediaRepo = FakeMediaAttachmentRepository()..seed([pendingAtt]);
         final identityRepo = FakeIdentityRepository()
-          ..seed(IdentityModel(
-            peerId: 'peer-alice',
-            publicKey: 'pk-alice',
-            privateKey: 'sk-alice',
-            mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
-            createdAt: msgTs,
-            updatedAt: msgTs,
-          ));
+          ..seed(
+            IdentityModel(
+              peerId: 'peer-alice',
+              publicKey: 'pk-alice',
+              privateKey: 'sk-alice',
+              mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
+              createdAt: msgTs,
+              updatedAt: msgTs,
+            ),
+          );
         final contactRepo = FakeContactRepository();
         final p2pService = FakeP2PService(
           initialState: const NodeState(
@@ -199,9 +202,7 @@ void main() {
         bridge.uploadMediaResult = null;
 
         // Seed with retryCount at max-1 so this failure transitions to terminal
-        mediaRepo.seed([
-          pendingAtt.copyWith(uploadRetryCount: 2),
-        ]);
+        mediaRepo.seed([pendingAtt.copyWith(uploadRetryCount: 2)]);
 
         final outerBridge2 = bridge;
         await retryIncompleteUploads(
@@ -211,19 +212,20 @@ void main() {
           p2pService: p2pService,
           identityRepo: identityRepo,
           contactRepo: contactRepo,
-          uploadMediaFn: ({
-            required Bridge bridge,
-            required String localFilePath,
-            required String mime,
-            required String recipientPeerId,
-            mediaFileManager,
-            int? width,
-            int? height,
-            int? durationMs,
-            waveform,
-            allowedPeers,
-            String? blobId,
-          }) async => outerBridge2.consumeUploadMediaResult(),
+          uploadMediaFn:
+              ({
+                required Bridge bridge,
+                required String localFilePath,
+                required String mime,
+                required String recipientPeerId,
+                mediaFileManager,
+                int? width,
+                int? height,
+                int? durationMs,
+                waveform,
+                allowedPeers,
+                String? blobId,
+              }) async => outerBridge2.consumeUploadMediaResult(),
         );
 
         final lastSaved = mediaRepo.lastSavedAttachment;
@@ -239,14 +241,14 @@ void main() {
         final mediaRepo = FakeMediaAttachmentRepository();
         final identityRepo = FakeIdentityRepository();
         final p2pService = FakeP2PService(
-          initialState: const NodeState(
-              isStarted: true, peerId: 'peer-alice'),
+          initialState: const NodeState(isStarted: true, peerId: 'peer-alice'),
         );
         final bridge = FakeBridge();
         final contactRepo = FakeContactRepository();
 
-        final recovered =
-            await recoverStuckSendingMessages(messageRepo: messageRepo);
+        final recovered = await recoverStuckSendingMessages(
+          messageRepo: messageRepo,
+        );
         expect(recovered, 0);
 
         final reuploaded = await retryIncompleteUploads(

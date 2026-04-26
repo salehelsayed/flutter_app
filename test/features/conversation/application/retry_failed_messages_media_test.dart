@@ -200,7 +200,7 @@ void main() {
           username: 'Bob',
           signature: 'sig',
           scannedAt: _testTs,
-          mlKemPublicKey: null, // no ML-KEM -> v1 plaintext path
+          mlKemPublicKey: 'mlkem-peer-bob',
         ),
       ]);
     p2pService = FakeP2PService(
@@ -211,7 +211,7 @@ void main() {
       ),
       storeInInboxResult: true,
     );
-    bridge = FakeBridge();
+    bridge = PassthroughCryptoBridge();
   });
 
   tearDown(() {

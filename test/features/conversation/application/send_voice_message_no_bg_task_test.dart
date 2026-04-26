@@ -121,7 +121,11 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async => true;
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
@@ -258,6 +262,7 @@ void main() {
           senderUsername: 'alice',
           recording: recording,
           bridge: bridge,
+          recipientMlKemPublicKey: 'mlkem-public-key',
         );
       } catch (_) {
         // We don't care about the result — only about which commands were called

@@ -829,6 +829,8 @@ void main() {
             },
           },
         );
+        final aliceChatBridge = PassthroughCryptoBridge();
+        final carolChatBridge = PassthroughCryptoBridge();
         final carolRouter = IncomingMessageRouter(p2pService: carolP2p);
         final carolListener = ContactRequestListener(
           contactRequestStream: carolRouter.contactRequestStream,
@@ -841,6 +843,8 @@ void main() {
           chatMessageStream: carolRouter.chatMessageStream,
           messageRepo: carolMessageRepo,
           contactRepo: carolContactRepo,
+          bridge: carolChatBridge,
+          getOwnMlKemSecretKey: () async => 'carol-mlkem-secret',
         );
 
         carolP2p.setOnline(false);
@@ -883,6 +887,8 @@ void main() {
           text: 'Queued after pending request',
           senderPeerId: ownPeerId,
           senderUsername: ownIdentity!.username,
+          bridge: aliceChatBridge,
+          recipientMlKemPublicKey: 'mlkem-$carolPeerId',
         );
 
         expect(sendResult, SendChatMessageResult.success);

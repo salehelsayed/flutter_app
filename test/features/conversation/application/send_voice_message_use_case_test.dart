@@ -192,6 +192,31 @@ void main() {
           expect(result, SendVoiceMessageResult.invalidRecording);
         },
       );
+
+      test(
+        'returns sendFailed before upload when recipient ML-KEM key is missing',
+        () async {
+          final recording = createRecording();
+
+          final (result, message) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+          );
+
+          expect(result, SendVoiceMessageResult.sendFailed);
+          expect(message, isNull);
+          expect(bridge.commandLog, isNot(contains('media:upload')));
+          expect(p2pService.sendCallCount, 0);
+          expect(p2pService.localSendCallCount, 0);
+          expect(p2pService.storeInInboxCallCount, 0);
+          expect(messageRepo.saved, isEmpty);
+        },
+      );
     });
 
     group('upload and send', () {

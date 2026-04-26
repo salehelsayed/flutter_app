@@ -4,7 +4,8 @@ import 'package:flutter_app/features/conversation/application/retry_failed_messa
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
-import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart' as p2p;
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
+    as p2p;
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 
@@ -21,7 +22,8 @@ void main() {
       () async {
         // --- Arrange ---
         // Simulate what was persisted when the user sent and backgrounded
-        final stuckTs = DateTime.now().toUtc()
+        final stuckTs = DateTime.now()
+            .toUtc()
             .subtract(const Duration(minutes: 2))
             .toIso8601String();
 
@@ -31,22 +33,25 @@ void main() {
           senderPeerId: 'peer-alice',
           text: 'Hello Bob!',
           timestamp: stuckTs,
-          status: 'sending',   // <-- stuck here after kill
+          status: 'sending', // <-- stuck here after kill
           isIncoming: false,
           createdAt: stuckTs,
-          wireEnvelope: null,  // realistic: envelope not yet serialized
+          wireEnvelope: null, // realistic: envelope not yet serialized
         );
 
         final messageRepo = FakeMessageRepository()..seed([stuckMessage]);
         final identityRepo = FakeIdentityRepository()
-          ..seed(IdentityModel(
-            peerId: 'peer-alice',
-            publicKey: 'pk-alice',
-            privateKey: 'sk-alice',
-            mnemonic12: 'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
-            createdAt: stuckTs,
-            updatedAt: stuckTs,
-          ));
+          ..seed(
+            IdentityModel(
+              peerId: 'peer-alice',
+              publicKey: 'pk-alice',
+              privateKey: 'sk-alice',
+              mnemonic12:
+                  'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+              createdAt: stuckTs,
+              updatedAt: stuckTs,
+            ),
+          );
         final contactRepo = FakeContactRepository()
           ..seed([
             ContactModel(
@@ -56,7 +61,7 @@ void main() {
               username: 'Bob',
               signature: 'sig',
               scannedAt: stuckTs,
-              mlKemPublicKey: null,
+              mlKemPublicKey: 'mlkem-peer-bob',
             ),
           ]);
         final p2pService = FakeP2PService(
@@ -71,8 +76,10 @@ void main() {
             addresses: ['/ip4/127.0.0.1/tcp/4001'],
           ),
           dialPeerResult: true,
-          sendMessageWithReplyResult:
-              const p2p.SendMessageResult(sent: true, reply: 'ack'),
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
         );
         final bridge = FakeBridge(
           initialResponses: {
@@ -95,10 +102,12 @@ void main() {
         expect(recovered, 1);
 
         // Verify same row was transitioned -- NOT manually re-seeded
-        final afterRecovery =
-            await messageRepo.getMessagesForContact('peer-bob');
-        final recoveredMsg =
-            afterRecovery.firstWhere((m) => m.id == 'msg-stuck-smoke');
+        final afterRecovery = await messageRepo.getMessagesForContact(
+          'peer-bob',
+        );
+        final recoveredMsg = afterRecovery.firstWhere(
+          (m) => m.id == 'msg-stuck-smoke',
+        );
         expect(recoveredMsg.status, 'failed');
 
         // Step 2: retry failed messages (picks up the recovered message)
@@ -125,7 +134,8 @@ void main() {
     test(
       'message younger than threshold remains sending and is not retried',
       () async {
-        final recentTs = DateTime.now().toUtc()
+        final recentTs = DateTime.now()
+            .toUtc()
             .subtract(const Duration(seconds: 5))
             .toIso8601String();
 
@@ -149,38 +159,34 @@ void main() {
 
         expect(count, 0);
         // The seeded message must still be 'sending'
-        final messages =
-            await messageRepo.getMessagesForContact('peer-bob');
+        final messages = await messageRepo.getMessagesForContact('peer-bob');
         expect(messages.first.status, 'sending');
       },
     );
 
-    test(
-      'no stuck messages — both recovery and retry are no-ops',
-      () async {
-        final messageRepo = FakeMessageRepository(); // empty
-        final identityRepo = FakeIdentityRepository();
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(isStarted: true, peerId: 'peer-alice'),
-        );
-        final bridge = FakeBridge();
-        final contactRepo = FakeContactRepository();
+    test('no stuck messages — both recovery and retry are no-ops', () async {
+      final messageRepo = FakeMessageRepository(); // empty
+      final identityRepo = FakeIdentityRepository();
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'peer-alice'),
+      );
+      final bridge = FakeBridge();
+      final contactRepo = FakeContactRepository();
 
-        final recovered = await recoverStuckSendingMessages(
-          messageRepo: messageRepo,
-        );
-        expect(recovered, 0);
+      final recovered = await recoverStuckSendingMessages(
+        messageRepo: messageRepo,
+      );
+      expect(recovered, 0);
 
-        // retryFailedMessages returns 0 — no identity, so early exit
-        final retried = await retryFailedMessages(
-          messageRepo: messageRepo,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          p2pService: p2pService,
-          bridge: bridge,
-        );
-        expect(retried, 0);
-      },
-    );
+      // retryFailedMessages returns 0 — no identity, so early exit
+      final retried = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+      expect(retried, 0);
+    });
   });
 }

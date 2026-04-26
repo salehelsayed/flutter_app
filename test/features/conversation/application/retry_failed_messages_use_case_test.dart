@@ -90,7 +90,45 @@ ConversationMessage makeFailedDeletedMessage({
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: '2026-01-01T00:01:00.000Z',
     deletedByPeerId: 'my-peer-id',
-    wireEnvelope: '{"type":"message_deletion","version":"1"}',
+    wireEnvelope: '{"type":"message_deletion","version":"2","encrypted":{}}',
+  );
+}
+
+ConversationMessage makeFailedLegacyChatMessage({
+  String id = 'msg-legacy-chat-001',
+  String contactPeerId = 'peer-target',
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: 'my-peer-id',
+    text: 'Legacy leak sentinel',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    status: 'failed',
+    isIncoming: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    wireEnvelope:
+        '{"type":"chat_message","version":"1","payload":{"id":"$id","text":"Legacy leak sentinel"}}',
+  );
+}
+
+ConversationMessage makeFailedLegacyDeletedMessage({
+  String id = 'msg-legacy-delete-001',
+  String contactPeerId = 'peer-target',
+}) {
+  return ConversationMessage(
+    id: id,
+    contactPeerId: contactPeerId,
+    senderPeerId: 'my-peer-id',
+    text: '',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    status: 'failed',
+    isIncoming: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    deletedAt: '2026-01-01T00:01:00.000Z',
+    deletedByPeerId: 'my-peer-id',
+    wireEnvelope:
+        '{"type":"message_deletion","version":"1","payload":{"messageId":"$id","senderPeerId":"my-peer-id"}}',
   );
 }
 
@@ -515,7 +553,7 @@ void main() {
     );
 
     test(
-      'retries message without ML-KEM key using plaintext fallback',
+      'does not retry message without ML-KEM key using plaintext fallback',
       () async {
         identityRepo.seed(makeIdentity());
         messageRepo.seed([makeFailedMessage()]);
@@ -546,16 +584,14 @@ void main() {
           bridge: bridge,
         );
 
-        expect(count, 1);
-        expect(
-          p2pService.sendMessageWithReplyCallCount,
-          greaterThanOrEqualTo(1),
-        );
+        expect(count, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
       },
     );
 
     test(
-      'retries message when contact is missing using plaintext fallback',
+      'does not retry message when contact is missing using plaintext fallback',
       () async {
         identityRepo.seed(makeIdentity());
         messageRepo.seed([makeFailedMessage()]);
@@ -583,11 +619,64 @@ void main() {
           bridge: bridge,
         );
 
-        expect(count, 1);
-        expect(
-          p2pService.sendMessageWithReplyCallCount,
-          greaterThanOrEqualTo(1),
+        expect(count, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'does not replay persisted v1 chat wireEnvelope to inbox after restart',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedLegacyChatMessage()]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
         );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        expect(count, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(
+          p2pService.lastStoreInInboxMessage,
+          isNot(contains('Legacy leak sentinel')),
+        );
+        expect(p2pService.lastStoreInInboxMessage, contains('"version":"2"'));
+      },
+    );
+
+    test(
+      'does not replay persisted v1 deletion wireEnvelope to inbox after restart',
+      () async {
+        identityRepo.seed(makeIdentity());
+        messageRepo.seed([makeFailedLegacyDeletedMessage()]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.lastSavedMessage, isNull);
       },
     );
 
@@ -631,59 +720,65 @@ void main() {
       expect(saved.wireEnvelope, isNull);
     });
 
-    test('wire_envelope inbox path preserves GIF metadata for GIF retries', () async {
-      identityRepo.seed(makeIdentity());
-      final msgWithEnvelope = ConversationMessage(
-        id: 'msg-gif-env-001',
-        contactPeerId: 'peer-target',
-        senderPeerId: 'my-peer-id',
-        text: '',
-        timestamp: '2026-01-01T00:00:00.000Z',
-        status: 'failed',
-        isIncoming: false,
-        createdAt: '2026-01-01T00:00:00.000Z',
-        wireEnvelope: jsonEncode({
-          'type': 'chat_message',
-          'version': '2',
-          'payload': {
-            'id': 'msg-gif-env-001',
-            'text': '',
-            'media': [
-              {
-                'id': 'gif-1',
-                'mime': 'image/gif',
-                'size': 4096,
-                'mediaType': 'image',
-              },
-            ],
-          },
-        }),
-      );
-      messageRepo.seed([msgWithEnvelope]);
+    test(
+      'wire_envelope inbox path preserves GIF metadata for GIF retries',
+      () async {
+        identityRepo.seed(makeIdentity());
+        final msgWithEnvelope = ConversationMessage(
+          id: 'msg-gif-env-001',
+          contactPeerId: 'peer-target',
+          senderPeerId: 'my-peer-id',
+          text: '',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          wireEnvelope: jsonEncode({
+            'type': 'chat_message',
+            'version': '2',
+            'payload': {
+              'id': 'msg-gif-env-001',
+              'text': '',
+              'media': [
+                {
+                  'id': 'gif-1',
+                  'mime': 'image/gif',
+                  'size': 4096,
+                  'mediaType': 'image',
+                },
+              ],
+            },
+          }),
+        );
+        messageRepo.seed([msgWithEnvelope]);
 
-      final p2pService = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        storeInInboxResult: true,
-      );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
 
-      final count = await retryFailedMessages(
-        messageRepo: messageRepo,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        p2pService: p2pService,
-        bridge: bridge,
-      );
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
 
-      expect(count, 1);
-      expect(p2pService.storeInInboxCallCount, 1);
-      expect(p2pService.lastStoreInInboxMessage, contains('"mime":"image/gif"'));
+        expect(count, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(
+          p2pService.lastStoreInInboxMessage,
+          contains('"mime":"image/gif"'),
+        );
 
-      final saved = messageRepo.lastSavedMessage;
-      expect(saved, isNotNull);
-      expect(saved!.status, 'delivered');
-      expect(saved.transport, 'inbox');
-      expect(saved.wireEnvelope, isNull);
-    });
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'delivered');
+        expect(saved.transport, 'inbox');
+        expect(saved.wireEnvelope, isNull);
+      },
+    );
 
     test('retryFailedMessages skips storeInInbox when message transport '
         'is already inbox', () async {

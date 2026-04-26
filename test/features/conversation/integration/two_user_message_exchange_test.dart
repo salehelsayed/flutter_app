@@ -28,6 +28,8 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
+
 // ─── Fake P2P Network ───────────────────────────────────────────────
 // Routes messages between two FakeP2PService instances.
 class FakeP2PNetwork {
@@ -187,7 +189,11 @@ class FakeP2PService implements P2PService {
   }) async => network.hasPeer(peerId);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     return network.storeInInbox(peerId, toPeerId, message);
   }
 
@@ -451,6 +457,7 @@ class TestUser {
   final InMemoryMessageRepository messageRepo;
   final InMemoryContactRepository contactRepo;
   final ChatMessageListener chatListener;
+  final PassthroughCryptoBridge bridge;
 
   TestUser._({
     required this.peerId,
@@ -459,6 +466,7 @@ class TestUser {
     required this.messageRepo,
     required this.contactRepo,
     required this.chatListener,
+    required this.bridge,
   });
 
   factory TestUser.create({
@@ -471,10 +479,13 @@ class TestUser {
     final p2p = FakeP2PService(peerId: peerId, network: network);
     final msgRepo = messageRepo ?? InMemoryMessageRepository();
     final contactsRepo = contactRepo ?? InMemoryContactRepository();
+    final bridge = PassthroughCryptoBridge();
     final listener = ChatMessageListener(
       chatMessageStream: p2p.messageStream,
       messageRepo: msgRepo,
       contactRepo: contactsRepo,
+      bridge: bridge,
+      getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
     );
 
     return TestUser._(
@@ -484,6 +495,7 @@ class TestUser {
       messageRepo: msgRepo,
       contactRepo: contactsRepo,
       chatListener: listener,
+      bridge: bridge,
     );
   }
 
@@ -497,6 +509,7 @@ class TestUser {
         username: other.username,
         signature: 'sig-${other.peerId}',
         scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: 'test-mlkem-pk-${other.peerId}',
       ),
     );
   }
@@ -505,7 +518,8 @@ class TestUser {
   Future<(SendChatMessageResult, ConversationMessage?)> sendMessage(
     String targetPeerId,
     String text,
-  ) {
+  ) async {
+    final contact = await contactRepo.getContact(targetPeerId);
     return sendChatMessage(
       p2pService: p2pService,
       messageRepo: messageRepo,
@@ -513,6 +527,8 @@ class TestUser {
       text: text,
       senderPeerId: peerId,
       senderUsername: username,
+      bridge: bridge,
+      recipientMlKemPublicKey: contact?.mlKemPublicKey,
     );
   }
 
@@ -949,6 +965,7 @@ void main() {
         username: 'Stranger',
         network: network,
       );
+      stranger.addContact(bob);
       stranger.start();
 
       // Stranger sends to Bob

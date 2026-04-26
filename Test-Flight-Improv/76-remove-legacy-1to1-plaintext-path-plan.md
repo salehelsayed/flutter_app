@@ -1,5 +1,11 @@
 # 76 - Remove Legacy 1:1 Plaintext Path Plan
 
+## Rollout Status
+
+Accepted as closed by
+`76-remove-legacy-1to1-plaintext-path-plan-session-breakdown.md` and
+`76-remove-legacy-1to1-plaintext-path-plan-session-1-plan.md`.
+
 ## Final Verdict
 
 Session classification: implementation-ready.

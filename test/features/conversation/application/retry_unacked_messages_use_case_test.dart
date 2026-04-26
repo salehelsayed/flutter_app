@@ -27,6 +27,8 @@ ConversationMessage _makeSentMessage({
 ConversationMessage _makeSentDeletedMessage({
   String id = 'msg-delete-sent-001',
   String contactPeerId = 'peer-target',
+  String wireEnvelope =
+      '{"type":"message_deletion","version":"2","encrypted":{}}',
 }) {
   return ConversationMessage(
     id: id,
@@ -39,7 +41,7 @@ ConversationMessage _makeSentDeletedMessage({
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: '2026-01-01T00:01:00.000Z',
     deletedByPeerId: 'my-peer-id',
-    wireEnvelope: '{"type":"message_deletion","version":"1"}',
+    wireEnvelope: wireEnvelope,
   );
 }
 
@@ -131,6 +133,66 @@ void main() {
         expect(saved.isDeleted, isTrue);
         expect(saved.isHidden, isTrue);
         expect(saved.hiddenAt, saved.deletedAt);
+      },
+    );
+
+    test(
+      'does not replay persisted v1 chat wireEnvelope when coming online',
+      () async {
+        final msg = _makeSentMessage(
+          wireEnvelope:
+              '{"type":"chat_message","version":"1","payload":{"text":"Legacy leak sentinel"}}',
+        );
+        messageRepo.seed([msg]);
+        messageRepo.unackedOutgoingOverride = [msg];
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'failed');
+        expect(saved.wireEnvelope, msg.wireEnvelope);
+      },
+    );
+
+    test(
+      'does not replay persisted v1 deletion wireEnvelope when coming online',
+      () async {
+        final msg = _makeSentDeletedMessage(
+          wireEnvelope:
+              '{"type":"message_deletion","version":"1","payload":{"messageId":"msg-delete-sent-001"}}',
+        );
+        messageRepo.seed([msg]);
+        messageRepo.unackedOutgoingOverride = [msg];
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        final saved = messageRepo.lastSavedMessage;
+        expect(saved, isNotNull);
+        expect(saved!.status, 'failed');
+        expect(saved.isDeleted, isTrue);
+        expect(saved.isHidden, isFalse);
+        expect(saved.wireEnvelope, msg.wireEnvelope);
       },
     );
 
@@ -269,7 +331,11 @@ class _ThrowingInboxP2PService extends FakeP2PService {
   });
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     storeInInboxCallCount++;
     final idx = _storeCallIndex++;
     if (throwOnIndices.contains(idx)) {
