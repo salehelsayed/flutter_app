@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -9,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
+import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
@@ -37,6 +40,7 @@ void main() {
   late FakeReactionRepository reactionRepo;
   late FakeMediaAttachmentRepository mediaAttachmentRepo;
   late FakeMediaFileManager mediaFileManager;
+  const recipientMlKemPublicKey = 'recipient-mlkem-public-key';
 
   ConversationMessage makeMessage({
     String id = 'msg-1',
@@ -154,6 +158,8 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
         );
 
         expect(result, SendChatMessageResult.peerNotFound);
@@ -165,6 +171,8 @@ void main() {
         expect(tombstone.isHidden, isFalse);
         expect(tombstone.deletedByPeerId, 'peer-alice');
         expect(tombstone.wireEnvelope, contains('"type":"message_deletion"'));
+        expect(tombstone.wireEnvelope, contains('"version":"2"'));
+        expect(tombstone.wireEnvelope, isNot(contains('"payload"')));
 
         final stored = await messageRepo.getMessage(original.id);
         expect(stored, isNotNull);
@@ -176,6 +184,68 @@ void main() {
         );
 
         p2pService.dispose();
+      },
+    );
+
+    test(
+      'deleteMessageForEveryone returns encryptionRequired when recipient ML-KEM key is missing',
+      () async {
+        final original = makeMessage();
+        messageRepo.seed([original]);
+
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final p2pService = _UnackedDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        expect(result, SendChatMessageResult.encryptionRequired);
+        expect(tombstone, isNull);
+        expect(await messageRepo.getMessage(original.id), original);
+
+        p2pService.dispose();
+      },
+    );
+
+    test(
+      'deleteMessageForEveryone sends encrypted v2 deletion when key is present',
+      () async {
+        final original = makeMessage();
+        messageRepo.seed([original]);
+
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final p2pService = _UnackedDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone, isNotNull);
+        final envelope =
+            jsonDecode(tombstone!.wireEnvelope ?? '{}') as Map<String, dynamic>;
+        expect(envelope['type'], 'message_deletion');
+        expect(envelope['version'], '2');
+        expect(envelope.containsKey('payload'), isFalse);
+        expect(envelope['encrypted'], isA<Map<String, dynamic>>());
+
+        p2pService.dispose();
+        recipient.dispose();
       },
     );
 
@@ -197,6 +267,8 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
         );
 
         expect(result, SendChatMessageResult.success);
@@ -209,6 +281,7 @@ void main() {
         expect(tombstone.hiddenAt, isNull);
         expect(tombstone.transport, 'direct');
         expect(tombstone.wireEnvelope, contains('"type":"message_deletion"'));
+        expect(tombstone.wireEnvelope, contains('"version":"2"'));
 
         final stored = await messageRepo.getMessage(original.id);
         expect(stored, isNotNull);

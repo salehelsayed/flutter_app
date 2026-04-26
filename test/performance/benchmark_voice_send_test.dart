@@ -67,6 +67,7 @@ void main() {
           senderUsername: 'Test',
           recording: recording,
           bridge: bridge,
+          recipientMlKemPublicKey: 'target-mlkem-pk',
         );
       });
 
@@ -81,12 +82,9 @@ void main() {
       expect(details['sizeBytes'], 48000);
     });
 
-    test('K2: Upload-dominated voice send reports uploadMs > sendMs',
-        () async {
+    test('K2: Upload-dominated voice send reports uploadMs > sendMs', () async {
       final bridge = TimingTestBridge(
-        commandDelays: {
-          'media:upload': const Duration(milliseconds: 200),
-        },
+        commandDelays: {'media:upload': const Duration(milliseconds: 200)},
         responseTimingFields: {
           'media:upload': {'ok': true},
         },
@@ -106,6 +104,7 @@ void main() {
           senderUsername: 'Test',
           recording: recording,
           bridge: bridge,
+          recipientMlKemPublicKey: 'target-mlkem-pk',
         );
       });
 
@@ -123,36 +122,39 @@ void main() {
       }
     });
 
-    test('K3: Invalid recording emits VOICE_SEND_TIMING with outcome',
-        () async {
-      final bridge = FakeBridge();
-      final p2pService = FakeP2PService();
-      final messageRepo = FakeMessageRepository();
+    test(
+      'K3: Invalid recording emits VOICE_SEND_TIMING with outcome',
+      () async {
+        final bridge = FakeBridge();
+        final p2pService = FakeP2PService();
+        final messageRepo = FakeMessageRepository();
 
-      // Zero-size recording = invalid
-      final recording = AudioRecording(
-        filePath: '/nonexistent/voice.m4a',
-        durationMs: 3000,
-        sizeBytes: 48000,
-      );
-
-      final events = await harness.captureFlowEvents(() async {
-        await sendVoiceMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Test',
-          recording: recording,
-          bridge: bridge,
+        // Zero-size recording = invalid
+        final recording = AudioRecording(
+          filePath: '/nonexistent/voice.m4a',
+          durationMs: 3000,
+          sizeBytes: 48000,
         );
-      });
 
-      final timings = harness.filterEvents(events, 'VOICE_SEND_TIMING');
-      expect(timings, isNotEmpty);
+        final events = await harness.captureFlowEvents(() async {
+          await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Test',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: 'target-mlkem-pk',
+          );
+        });
 
-      final details = timings.first['details'] as Map<String, dynamic>;
-      expect(details['outcome'], isNot('success'));
-    });
+        final timings = harness.filterEvents(events, 'VOICE_SEND_TIMING');
+        expect(timings, isNotEmpty);
+
+        final details = timings.first['details'] as Map<String, dynamic>;
+        expect(details['outcome'], isNot('success'));
+      },
+    );
   });
 }

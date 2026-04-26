@@ -25,7 +25,11 @@ The current 1:1 system should be treated as **reliably closed for core messaging
 7. direct incoming Go/libp2p 1:1 chat ACKs are emitted only after Flutter
    reaches a receiver-side terminal disposition for that message nonce, while
    no-confirm or retryable receive outcomes stay unacked so sender-side inbox
-   fallback or retry can remain truthful.
+   fallback or retry can remain truthful,
+8. ordinary outbound 1:1 chat, edit, media, voice, and delete transport is
+   encrypted v2 or fail-closed before send, inbox store, new outbound
+   `wireEnvelope` persistence, or voice upload; persisted legacy v1 chat and
+   deletion `wireEnvelope` rows are not replayed by retry shortcuts.
 
 This is the closure bar for correctness and trust. It is **not** a promise that every product feature a modern chat app could have is implemented.
 
@@ -64,6 +68,19 @@ Together these give 1:1 a real auto-heal path on resume, online transition, and 
 - Direct send failure can fall back to relay inbox persistence.
 - Inbox-backed delivery is treated as a real success path, not just a best-effort hint.
 - This is one of the main reasons 1:1 currently deserves the "trustworthy" label.
+- Ordinary outbound chat, edit, media, voice, and delete flows now require
+  recipient ML-KEM key material and a bridge before transport work that could
+  expose message content. Missing key material fails closed before direct send,
+  local send, relay inbox store, new outbound `wireEnvelope` persistence, or
+  voice media upload.
+- Failed and unacked retry shortcuts keep encrypted v2 `wireEnvelope` replay
+  support, but they no longer replay legacy v1 or versionless `chat_message`
+  and `message_deletion` envelopes. Failed retry can re-enter the normal
+  encrypted resend path when contact key material exists; unacked legacy rows
+  move to a non-replaying failure path.
+- Inbound legacy v1 chat and deletion parsing remains intentionally supported
+  for old rows and mixed-version peers. Removing inbound v1 compatibility is a
+  separate migration/sunset decision, not part of current reliability closure.
 - Relay-backed inbox recovery now uses staged `retrieve_pending` plus explicit
   `ack`, with a durable local staging table so fetched inbox rows survive
   restart/resume until they are committed or exactly rejected.

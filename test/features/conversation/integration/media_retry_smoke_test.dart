@@ -134,6 +134,17 @@ void main() {
           senderUsername: 'Alice',
           messageId: 'msg-smoke-stable-001',
           timestamp: _testTs,
+          bridge: FakeBridge(
+            initialResponses: {
+              'message.encrypt': {
+                'ok': true,
+                'kem': 'fake-kem',
+                'ciphertext': 'fake-ct',
+                'nonce': 'fake-nonce',
+              },
+            },
+          ),
+          recipientMlKemPublicKey: 'bob-mlkem-pk',
           mediaAttachments: const [
             MediaAttachment(
               id: 'uploaded-final-id',
@@ -230,7 +241,7 @@ void main() {
               username: 'Bob',
               signature: 'sig',
               scannedAt: _testTs,
-              mlKemPublicKey: null,
+              mlKemPublicKey: 'bob-mlkem-pk',
             ),
           ]);
         final p2pService = FakeP2PService(
@@ -241,7 +252,7 @@ void main() {
           ),
           storeInInboxResult: true,
         );
-        final bridge = FakeBridge();
+        final bridge = PassthroughCryptoBridge();
 
         // --- Act: simulate app resume recovery sequence ---
 
@@ -343,7 +354,7 @@ void main() {
               username: 'Bob',
               signature: 'sig',
               scannedAt: _testTs,
-              mlKemPublicKey: null,
+              mlKemPublicKey: 'bob-mlkem-pk',
             ),
           ]);
         final p2pService = FakeP2PService(
@@ -354,7 +365,7 @@ void main() {
           ),
           storeInInboxResult: true,
         );
-        final bridge = FakeBridge();
+        final bridge = PassthroughCryptoBridge();
 
         // Step 1: recover
         await recoverStuckSendingMessages(
@@ -442,7 +453,7 @@ void main() {
               username: 'Bob',
               signature: 'sig',
               scannedAt: _testTs,
-              mlKemPublicKey: null,
+              mlKemPublicKey: 'bob-mlkem-pk',
             ),
           ]);
         final p2pService = FakeP2PService(
@@ -453,7 +464,7 @@ void main() {
           ),
           storeInInboxResult: true,
         );
-        final bridge = FakeBridge();
+        final bridge = PassthroughCryptoBridge();
 
         await recoverStuckSendingMessages(
           messageRepo: messageRepo,

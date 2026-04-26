@@ -92,6 +92,17 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     return (SendVoiceMessageResult.invalidRecording, null);
   }
 
+  if (recipientMlKemPublicKey == null ||
+      recipientMlKemPublicKey.trim().isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'VOICE_SEND_ENCRYPTION_REQUIRED',
+      details: {},
+    );
+    emitVoiceTiming(outcome: 'encryption_required');
+    return (SendVoiceMessageResult.sendFailed, null);
+  }
+
   // 2. Upload
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_START', details: {});
 
@@ -111,10 +122,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
 
   if (uploaded == null) {
     emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_FAILED', details: {});
-    emitVoiceTiming(
-      outcome: 'upload_failed',
-      details: {'uploadMs': uploadMs},
-    );
+    emitVoiceTiming(outcome: 'upload_failed', details: {'uploadMs': uploadMs});
     return (SendVoiceMessageResult.uploadFailed, null);
   }
 
@@ -158,7 +166,11 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   );
   emitVoiceTiming(
     outcome: 'send_failed',
-    details: {'result': result.name, 'uploadMs': uploadMs, 'sendMs': voiceSendMs},
+    details: {
+      'result': result.name,
+      'uploadMs': uploadMs,
+      'sendMs': voiceSendMs,
+    },
   );
   return (SendVoiceMessageResult.sendFailed, null);
 }

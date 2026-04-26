@@ -4,12 +4,18 @@ import 'dart:ui' show VoidCallback;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
-import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
+    hide sendChatMessage, editChatMessage;
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
+    as chat_use_case
+    show sendChatMessage, editChatMessage;
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
@@ -18,6 +24,7 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
 
 // -- Fake P2P Service --
@@ -346,14 +353,24 @@ class FakeMessageRepository implements MessageRepository {
 
 Future<List<String>> capturePrintedLines(Future<void> Function() action) async {
   final printed = <String>[];
-  await runZoned(
-    action,
-    zoneSpecification: ZoneSpecification(
-      print: (_, parent, zone, line) {
-        printed.add(line);
-      },
-    ),
-  );
+  final originalDebugPrint = debugPrint;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      printed.add(message);
+    }
+  };
+  try {
+    await runZoned(
+      action,
+      zoneSpecification: ZoneSpecification(
+        print: (_, parent, zone, line) {
+          printed.add(line);
+        },
+      ),
+    );
+  } finally {
+    debugPrint = originalDebugPrint;
+  }
   return printed;
 }
 
@@ -384,6 +401,84 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
                 as Map<String, dynamic>,
       )
       .toList();
+}
+
+const testRecipientMlKemPublicKey = 'recipient-mlkem-public-key';
+
+Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required String targetPeerId,
+  required String text,
+  required String senderPeerId,
+  required String senderUsername,
+  String action = MessagePayload.actionSend,
+  String? editedAt,
+  String? messageId,
+  String? timestamp,
+  String? createdAt,
+  Bridge? bridge,
+  String? recipientMlKemPublicKey,
+  String? quotedMessageId,
+  List<MediaAttachment>? mediaAttachments,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  bool emitTimingEvent = true,
+}) {
+  return chat_use_case.sendChatMessage(
+    p2pService: p2pService,
+    messageRepo: messageRepo,
+    targetPeerId: targetPeerId,
+    text: text,
+    senderPeerId: senderPeerId,
+    senderUsername: senderUsername,
+    action: action,
+    editedAt: editedAt,
+    messageId: messageId,
+    timestamp: timestamp,
+    createdAt: createdAt,
+    bridge: bridge ?? PassthroughCryptoBridge(),
+    recipientMlKemPublicKey:
+        recipientMlKemPublicKey ?? testRecipientMlKemPublicKey,
+    quotedMessageId: quotedMessageId,
+    mediaAttachments: mediaAttachments,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    emitTimingEvent: emitTimingEvent,
+  );
+}
+
+Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required ConversationMessage originalMessage,
+  required String updatedText,
+  required String senderUsername,
+  Bridge? bridge,
+  String? recipientMlKemPublicKey,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  bool emitTimingEvent = true,
+}) {
+  return chat_use_case.editChatMessage(
+    p2pService: p2pService,
+    messageRepo: messageRepo,
+    originalMessage: originalMessage,
+    updatedText: updatedText,
+    senderUsername: senderUsername,
+    bridge: bridge ?? PassthroughCryptoBridge(),
+    recipientMlKemPublicKey:
+        recipientMlKemPublicKey ?? testRecipientMlKemPublicKey,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    emitTimingEvent: emitTimingEvent,
+  );
+}
+
+Map<String, dynamic> decodeWirePayload(String wireJson) {
+  final envelope = jsonDecode(wireJson) as Map<String, dynamic>;
+  final payload = envelope['payload'];
+  if (payload is Map<String, dynamic>) {
+    return payload;
+  }
+  final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+  return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
 }
 
 void main() {
@@ -417,9 +512,7 @@ void main() {
         expect(messageRepo.saved, hasLength(1));
         expect(messageRepo.saved.single.text, sanitizedText);
 
-        final envelope =
-            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-        final payload = envelope['payload'] as Map<String, dynamic>;
+        final payload = decodeWirePayload(p2pService.lastSentMessage!);
         expect(payload['text'], sanitizedText);
         expect(payload['text'], isNot(contains('\u202E')));
       },
@@ -466,9 +559,7 @@ void main() {
         expect(attachmentMessage!.text, isEmpty);
         expect(attachmentMessage.media, hasLength(1));
 
-        final envelope =
-            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-        final payload = envelope['payload'] as Map<String, dynamic>;
+        final payload = decodeWirePayload(p2pService.lastSentMessage!);
         expect(payload['text'], isEmpty);
         expect(payload['media'], isNotEmpty);
       },
@@ -519,6 +610,82 @@ void main() {
 
       expect(result, SendChatMessageResult.nodeNotRunning);
       expect(message, isNull);
+    });
+
+    test('returns encryptionRequired when bridge is missing', () async {
+      final (result, message) = await chat_use_case.sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Hello',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.encryptionRequired);
+      expect(message, isNull);
+      expect(p2pService.sendCallCount, 0);
+      expect(p2pService.localSendCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(messageRepo.saved, isEmpty);
+      expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+    });
+
+    test(
+      'returns encryptionRequired when recipient ML-KEM key is missing',
+      () async {
+        final (result, message) = await chat_use_case.sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: FakeBridge(),
+        );
+
+        expect(result, SendChatMessageResult.encryptionRequired);
+        expect(message, isNull);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.localSendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.saved, isEmpty);
+        expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+      },
+    );
+
+    test('sends v2 encrypted envelope without plaintext payload', () async {
+      final bridge = FakeBridge(
+        initialResponses: {
+          'message.encrypt': {
+            'ok': true,
+            'kem': 'opaque-kem',
+            'ciphertext': 'opaque-chat-ciphertext',
+            'nonce': 'opaque-nonce',
+          },
+        },
+      );
+
+      final (result, _) = await chat_use_case.sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Secret relay text',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Private Me',
+        bridge: bridge,
+        recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+      );
+
+      expect(result, SendChatMessageResult.success);
+      final envelope =
+          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+      expect(envelope['type'], 'chat_message');
+      expect(envelope['version'], '2');
+      expect(envelope.containsKey('payload'), isFalse);
+      expect(envelope['encrypted'], isA<Map<String, dynamic>>());
+      expect(p2pService.lastSentMessage, isNot(contains('Secret relay text')));
+      expect(p2pService.lastSentMessage, isNot(contains('Private Me')));
     });
 
     test('returns success and persists message on successful send', () async {
@@ -631,9 +798,7 @@ void main() {
         expect(message.media.single.mime, 'image/gif');
         expect(message.media.single.isAnimated, isTrue);
 
-        final envelope =
-            jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-        final payload = envelope['payload'] as Map<String, dynamic>;
+        final payload = decodeWirePayload(p2pService.lastSentMessage!);
         final media = payload['media'] as List<dynamic>;
         expect(media, hasLength(1));
         expect((media.single as Map<String, dynamic>)['mime'], 'image/gif');
@@ -652,8 +817,13 @@ void main() {
 
       expect(p2pService.lastSentPeerId, 'target-peer');
       expect(p2pService.lastSentMessage, isNotNull);
-      expect(p2pService.lastSentMessage, contains('"type":"chat_message"'));
-      expect(p2pService.lastSentMessage, contains('"text":"Hello!"'));
+      final envelope =
+          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
+      final payload = decodeWirePayload(p2pService.lastSentMessage!);
+      expect(envelope['type'], 'chat_message');
+      expect(envelope['version'], '2');
+      expect(envelope.containsKey('payload'), isFalse);
+      expect(payload['text'], 'Hello!');
     });
 
     test('uses provided messageId and timestamp when passed', () async {
@@ -677,11 +847,9 @@ void main() {
       expect(message.timestamp, fixedTimestamp);
       expect(messageRepo.saved.first.id, fixedMessageId);
       expect(messageRepo.saved.first.timestamp, fixedTimestamp);
-      expect(p2pService.lastSentMessage, contains('"id":"$fixedMessageId"'));
-      expect(
-        p2pService.lastSentMessage,
-        contains('"timestamp":"$fixedTimestamp"'),
-      );
+      final payload = decodeWirePayload(p2pService.lastSentMessage!);
+      expect(payload['id'], fixedMessageId);
+      expect(payload['timestamp'], fixedTimestamp);
     });
 
     test('editChatMessage preserves the original row contract', () async {
@@ -705,9 +873,7 @@ void main() {
         senderUsername: 'Me',
       );
 
-      final wireJson =
-          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
-      final payload = wireJson['payload'] as Map<String, dynamic>;
+      final payload = decodeWirePayload(p2pService.lastSentMessage!);
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);

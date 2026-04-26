@@ -6,6 +6,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -199,33 +200,45 @@ Future<bool> _retryFailedMessageCandidate({
         );
         return true;
       }
-      try {
-        final stored = await p2pService.storeInInbox(
-          msg.contactPeerId,
-          msg.wireEnvelope!,
-        );
-        if (stored) {
-          await messageRepo.saveMessage(
-            normalizeOutgoingDeleteTombstoneVisibility(
-              msg.copyWith(
-                status: 'delivered',
-                transport: 'inbox',
-                wireEnvelope: null,
+
+      final unsafeLegacyEnvelope = isUnsafeLegacyOutboundEnvelope(
+        msg.wireEnvelope!,
+      );
+      if (!unsafeLegacyEnvelope) {
+        try {
+          final stored = await p2pService.storeInInbox(
+            msg.contactPeerId,
+            msg.wireEnvelope!,
+          );
+          if (stored) {
+            await messageRepo.saveMessage(
+              normalizeOutgoingDeleteTombstoneVisibility(
+                msg.copyWith(
+                  status: 'delivered',
+                  transport: 'inbox',
+                  wireEnvelope: null,
+                ),
               ),
-            ),
-          );
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_FAILED_MESSAGE_SUCCESS',
-            details: {
-              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-              'via': 'wire_envelope',
-            },
-          );
-          return true;
+            );
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_FAILED_MESSAGE_SUCCESS',
+              details: {
+                'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+                'via': 'wire_envelope',
+              },
+            );
+            return true;
+          }
+        } catch (_) {
+          // Wire envelope inbox failed -- fall through to full send
         }
-      } catch (_) {
-        // Wire envelope inbox failed -- fall through to full send
+      } else {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE',
+          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        );
       }
     }
 
