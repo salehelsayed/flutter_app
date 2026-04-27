@@ -291,6 +291,7 @@ Future<bool> _retryFailedMessageCandidate({
       timestamp: msg.timestamp,
       bridge: bridge,
       recipientMlKemPublicKey: mlKemPk,
+      quotedMessageId: msg.quotedMessageId,
       mediaAttachments: attachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
       emitTimingEvent: false,

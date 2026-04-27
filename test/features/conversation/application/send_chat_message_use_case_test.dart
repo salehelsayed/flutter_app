@@ -891,6 +891,34 @@ void main() {
       expect(payload['editedAt'], isNotNull);
     });
 
+    test('editChatMessage rejects failed outgoing messages', () async {
+      const failed = ConversationMessage(
+        id: 'msg-failed-edit-001',
+        contactPeerId: 'target-peer',
+        senderPeerId: 'my-peer',
+        text: 'Recover me',
+        timestamp: '2026-02-11T10:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-02-11T10:00:01.000Z',
+      );
+
+      final (result, message) = await editChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        originalMessage: failed,
+        updatedText: 'Recover me again',
+        senderUsername: 'Me',
+      );
+
+      expect(result, SendChatMessageResult.invalidMessage);
+      expect(message, isNull);
+      expect(p2pService.sendCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(messageRepo.saved, isEmpty);
+      expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+    });
+
     test('logs CHAT_OUT with delivered status and text preview', () async {
       final lines = await capturePrintedLines(() async {
         await sendChatMessage(

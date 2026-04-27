@@ -121,7 +121,13 @@ void main() {
     username: 'Bob',
     signature: 'sig',
     scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: 'mlkem-contact-peer-id',
   );
+
+  String freshPendingIntroductionCreatedAt() => DateTime.now()
+      .toUtc()
+      .subtract(const Duration(days: 1))
+      .toIso8601String();
 
   setUp(() {
     identityRepo = FakeIdentityRepository();
@@ -593,7 +599,7 @@ void main() {
           pendingIntroduction(
             ownPeerId: testIdentity.peerId,
             otherPeerId: 'intro-peer-id',
-            createdAt: '2026-03-25T12:00:00.000Z',
+            createdAt: freshPendingIntroductionCreatedAt(),
           ),
         );
 
@@ -1573,7 +1579,7 @@ void main() {
           recipientStatus: IntroductionStatus.accepted,
           introducedStatus: IntroductionStatus.accepted,
           status: IntroductionOverallStatus.pending,
-          createdAt: '2026-03-25T12:00:00.000Z',
+          createdAt: freshPendingIntroductionCreatedAt(),
         ),
       );
 
@@ -1618,7 +1624,7 @@ void main() {
           pendingIntroduction(
             ownPeerId: testIdentity.peerId,
             otherPeerId: 'intro-peer-id',
-            createdAt: '2026-03-25T12:00:00.000Z',
+            createdAt: freshPendingIntroductionCreatedAt(),
           ),
         );
         introRepo.acceptGate = Completer<void>();
@@ -1672,7 +1678,7 @@ void main() {
           pendingIntroduction(
             ownPeerId: testIdentity.peerId,
             otherPeerId: 'intro-peer-id',
-            createdAt: '2026-03-25T12:00:00.000Z',
+            createdAt: freshPendingIntroductionCreatedAt(),
           ),
         );
         introRepo.passGate = Completer<void>();
@@ -1724,7 +1730,7 @@ void main() {
           pendingIntroduction(
             ownPeerId: testIdentity.peerId,
             otherPeerId: 'intro-peer-id',
-            createdAt: '2026-03-25T12:00:00.000Z',
+            createdAt: freshPendingIntroductionCreatedAt(),
           ),
         );
 
@@ -1792,7 +1798,7 @@ void main() {
         pendingIntroduction(
           ownPeerId: testIdentity.peerId,
           otherPeerId: 'intro-peer-id',
-          createdAt: '2026-03-25T12:00:00.000Z',
+          createdAt: freshPendingIntroductionCreatedAt(),
         ),
       );
 

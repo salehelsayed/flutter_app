@@ -29,7 +29,12 @@ The current 1:1 system should be treated as **reliably closed for core messaging
 8. ordinary outbound 1:1 chat, edit, media, voice, and delete transport is
    encrypted v2 or fail-closed before send, inbox store, new outbound
    `wireEnvelope` persistence, or voice upload; persisted legacy v1 chat and
-   deletion `wireEnvelope` rows are not replayed by retry shortcuts.
+   deletion `wireEnvelope` rows are not replayed by retry shortcuts,
+9. failed outgoing text recovery is a same-attempt recovery path: the visible
+   failed row remains the canonical target, normal Edit is not used as resend,
+   restored-composer sends retry or clear that same row instead of creating a
+   second outgoing copy, and already-settled rows stay out of failed/unacked
+   retry replay windows.
 
 This is the closure bar for correctness and trust. It is **not** a promise that every product feature a modern chat app could have is implemented.
 
@@ -58,6 +63,17 @@ Together these give 1:1 a real auto-heal path on resume, online transition, and 
   exactly once after online transition while the app stays open.
 - The repo also explicitly proves the adjacent seam where that failed row
   survives pause/lock and heals exactly once on resume.
+- Failed outgoing text rows now have a direct visible recovery affordance using
+  targeted same-row retry. Failed rows are excluded from normal Edit so a
+  never-delivered message is recovered as first delivery, not as an
+  `actionEdit` payload.
+- The restored-composer duplicate seam is closed for unchanged failed drafts:
+  tapping Send retries the original failed row, and if automatic retry has
+  already settled that row, the composer state clears without creating a new
+  message ID.
+- Manual recovery, automatic failed-row retry, unacked retry, and later
+  periodic sweeps now have direct proof that already-settled rows remain
+  no-op from the user-visible history perspective.
 - Those proofs mean foreground retry-after-network-return and
   lock-after-failure resume recovery are part of current closure, while
   indefinite retry during full OS suspension is still not a promise this repo

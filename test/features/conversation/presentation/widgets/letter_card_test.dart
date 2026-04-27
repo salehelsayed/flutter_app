@@ -24,8 +24,10 @@ void main() {
     String? ownPeerId,
     VoidCallback? onLongPress,
     void Function(String emoji)? onReactionTap,
+    VoidCallback? onRetryFailedMessage,
     VoidCallback? onRetryFailedMedia,
     VoidCallback? onDeleteFailedMedia,
+    String? failedMessageActionKeySuffix,
     String? failedMediaActionKeySuffix,
   }) {
     return MaterialApp(
@@ -51,8 +53,10 @@ void main() {
             ownPeerId: ownPeerId,
             onLongPress: onLongPress,
             onReactionTap: onReactionTap,
+            onRetryFailedMessage: onRetryFailedMessage,
             onRetryFailedMedia: onRetryFailedMedia,
             onDeleteFailedMedia: onDeleteFailedMedia,
+            failedMessageActionKeySuffix: failedMessageActionKeySuffix,
             failedMediaActionKeySuffix: failedMediaActionKeySuffix,
           ),
         ),
@@ -72,7 +76,9 @@ void main() {
         expect(find.text('Hello, this is a test message.'), findsOneWidget);
       });
 
-      testWidgets('renders a long message body without throwing', (tester) async {
+      testWidgets('renders a long message body without throwing', (
+        tester,
+      ) async {
         final longText = List<String>.filled(
           24,
           'Long message content 0123456789',
@@ -763,6 +769,34 @@ void main() {
           find.byKey(const ValueKey('failed-media-delete-failed-message')),
           findsNothing,
         );
+      });
+    });
+
+    group('failed text actions', () {
+      testWidgets('shows retry control when callback is wired', (tester) async {
+        var retried = false;
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            isIncoming: false,
+            status: 'failed',
+            text: 'Retry this text',
+            onRetryFailedMessage: () => retried = true,
+            failedMessageActionKeySuffix: 'failed-text',
+          ),
+        );
+
+        final retryFinder = find.byKey(
+          const ValueKey('failed-message-retry-failed-text'),
+        );
+        expect(retryFinder, findsOneWidget);
+        expect(find.bySemanticsLabel('Retry failed message'), findsOneWidget);
+
+        await tester.ensureVisible(retryFinder);
+        await tester.tap(retryFinder);
+        await tester.pump();
+
+        expect(retried, isTrue);
       });
     });
   });

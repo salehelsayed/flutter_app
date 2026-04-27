@@ -10,6 +10,19 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - `test/features/loading_states_smoke_test.dart` stays out of the Baseline Gate. It is a lighter widget/render smoke, not the startup-wiring smoke.
 - The 1:1 Reliability Gate stays at 9 tests.
 - `test/features/conversation/integration/quote_reply_thread_test.dart` stays in the 1:1 gate because quoted-message persistence rides the same shared send/persist path that Session 2 and Session 3 will touch.
+- Report 78 added encrypted v2 retry-envelope duplicate proof inside
+  `test/features/conversation/integration/two_user_message_exchange_test.dart`,
+  so the 1:1 Reliability Gate still covers receiver same-ID dedupe without
+  adding a tenth gate file.
+- Report 78's failed text retry UX and race proof lives in direct suites:
+  `test/features/conversation/presentation/screens/conversation_wired_test.dart`,
+  `test/features/conversation/presentation/screens/conversation_screen_test.dart`,
+  `test/features/conversation/presentation/widgets/letter_card_test.dart`,
+  `test/features/conversation/application/retry_failed_messages_use_case_test.dart`,
+  `test/features/conversation/application/retry_unacked_messages_use_case_test.dart`,
+  and `test/core/services/pending_message_retrier_test.dart`. These stay
+  classified by the existing feature-local and core-services rules rather than
+  widening frozen named gates.
 - `test/features/conversation/integration/emoji_reaction_exchange_test.dart` stays out of the 1:1 gate because it validates the reaction pipeline, not the shared durable send / retry / media / voice contract.
 - `test/features/feed/presentation/screens/feed_wired_test.dart` now carries the Session 2 feed inline 1:1 parity regression and the Session 35 delayed-mutual-acceptance / later-block follow-up regression; it stays outside the frozen named gate lists.
 - `test/features/orbit/presentation/screens/orbit_wired_test.dart` and `test/features/orbit/presentation/screens/orbit_intros_wiring_test.dart` now carry the Session 35 stale-intro-reload and intro follow-up wiring regressions; they stay outside the frozen named gate lists and should be run directly with the Intro / Reintroduction Gate when intro-to-Orbit or intro-to-Feed follow-up wiring changes.

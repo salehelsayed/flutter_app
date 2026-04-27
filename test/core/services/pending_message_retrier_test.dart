@@ -1,6 +1,7 @@
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'fake_p2p_service.dart';
@@ -637,5 +638,57 @@ void main() {
         expect(callOrder, isNot(contains('acknowledgeRecovery')));
       });
     });
+
+    test(
+      'periodic sweep does not replay a row already settled by manual recovery',
+      () {
+        fakeAsync((async) {
+          identityRepo.seed(FakeIdentityRepository.makeIdentity());
+          messageRepo.seed([
+            ConversationMessage(
+              id: 'msg-periodic-settled-001',
+              contactPeerId: 'peer-target',
+              senderPeerId: 'my-peer-id',
+              text: 'Already settled',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              status: 'delivered',
+              isIncoming: false,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              transport: 'inbox',
+              wireEnvelope: null,
+            ),
+          ]);
+          p2pService = FakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer-id',
+              circuitAddresses: ['/p2p-circuit/addr1'],
+            ),
+            storeInInboxResult: true,
+          );
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+          );
+
+          retrier.start();
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+          async.elapse(PendingMessageRetrier.defaultPeriodicRetryInterval);
+          async.flushMicrotasks();
+
+          expect(
+            messageRepo.getFailedOutgoingCallCount,
+            greaterThanOrEqualTo(2),
+          );
+          expect(p2pService.storeInInboxCallCount, 0);
+          expect(p2pService.sendMessageWithReplyCallCount, 0);
+          expect(messageRepo.saveMessageCallCount, 0);
+        });
+      },
+    );
   });
 }

@@ -242,7 +242,11 @@ class _FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     operationLog.add('p2p:storeInInbox');
     return storeInInboxResult;
   }
@@ -308,6 +312,7 @@ final _testContact = ContactModel(
   username: 'Bob',
   signature: 'sig',
   scannedAt: DateTime.now().toUtc().toIso8601String(),
+  mlKemPublicKey: 'mlkem-contact-peer-id',
 );
 
 int _logIndex(List<String> operationLog, String entry) {

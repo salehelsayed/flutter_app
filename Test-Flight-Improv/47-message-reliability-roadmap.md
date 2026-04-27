@@ -60,6 +60,14 @@ These are not roadmap gaps anymore:
     optimistic row before `sendChatMessage(...)`
   - once a `messageId` exists, the send use case persists `wireEnvelope` before
     the risky transport race
+- **Manual failed text-message recovery**
+  - failed outgoing text rows expose a direct retry affordance that targets the
+    original message ID instead of requiring normal Edit as resend
+  - unchanged restored failed drafts retry or clear the canonical row rather
+    than creating a second optimistic message after automatic recovery
+  - failed-row retry, unacked retry, encrypted v2 receiver dedupe, and the
+    5-minute periodic sweep have direct no-duplicate evidence for the recovered
+    attempt
 - **Durable staging-based inbox recovery exists**
   - relay-backed inbox recovery already has the right architecture:
     `retrieve_pending` -> local stage -> `ack`
@@ -71,6 +79,7 @@ These are not roadmap gaps anymore:
 | Direct chat ACK semantics | Deferred nonce-based ACK after receiver-side terminal outcome | Landed foundation |
 | Store-and-forward | Relay inbox with staging + ack | Correct architecture, but one fallback seam remains |
 | Retry while online | State-change retry + periodic 5-minute sweep | Landed foundation |
+| Failed-message manual recovery | Same-row text retry with failed-row Edit exclusion and restored-draft duplicate prevention | Landed foundation |
 | Retry while OS-suspended | No guaranteed sweep while Dart isolate is suspended | Hardening, not current blocker |
 | End-to-end sender confirmation | No separate `confirmed` state beyond delivered/inbox semantics | Optional hardening |
 | Loss detection | No sequence-gap detection | Optional hardening |

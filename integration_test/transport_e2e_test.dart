@@ -167,6 +167,13 @@ Future<ContactModel> _generateUnreachableContact({
   final identity = parsed['identity'] as Map<String, dynamic>;
   final peerId = identity['peerId'] as String;
   final publicKey = identity['publicKey'] as String;
+  final mlKemResponse = await bridge.send(
+    jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+  );
+  final mlKemResult = jsonDecode(mlKemResponse) as Map<String, dynamic>;
+  if (mlKemResult['ok'] != true) {
+    throw StateError('mlkem.keygen for $username failed: $mlKemResult');
+  }
   return ContactModel(
     peerId: peerId,
     publicKey: publicKey,
@@ -174,6 +181,7 @@ Future<ContactModel> _generateUnreachableContact({
     username: username,
     signature: 'sig-$username',
     scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: mlKemResult['publicKey'] as String,
   );
 }
 
@@ -764,9 +772,9 @@ void main() {
       final results = <_ScenarioResult>[];
 
       try {
-        // ==== A1: Send v1 plaintext to CLI peer ====
+        // ==== A1: Plaintext fallback is now fail-closed ====
         if (hasCli) {
-          print('\n--- A1: Send v1 plaintext ---');
+          print('\n--- A1: Plaintext fallback is fail-closed ---');
           try {
             final (r1, m1) = await sendChatMessage(
               p2pService: stack.p2pService,
@@ -779,16 +787,15 @@ void main() {
             final stored = await stack.messageRepo.getMessagesForContact(
               stack.cliPeerId!,
             );
-            final outgoing = stored.where((m) => !m.isIncoming).toList();
-            final status = outgoing.last.status;
-            final transport = outgoing.last.transport;
-            final detail = 'status=$status transport=$transport';
+            final outgoing = stored
+                .where((m) => !m.isIncoming && m.text.contains('A1:'))
+                .toList();
+            final detail =
+                'result=${r1.name} persisted=${outgoing.length} msg=${m1 != null}';
             final pass =
-                m1 != null &&
-                status == 'delivered' &&
-                (transport == 'direct' ||
-                    transport == 'relay' ||
-                    transport == 'inbox');
+                r1 == SendChatMessageResult.encryptionRequired &&
+                m1 == null &&
+                outgoing.isEmpty;
             results.add(_ScenarioResult('A1', pass, detail));
             print('[TEST] A1: $detail');
           } catch (e) {
@@ -960,6 +967,8 @@ void main() {
               text: 'A6: Fast path message',
               senderPeerId: stack.ownPeerId,
               senderUsername: 'FlutterE2E',
+              bridge: stack.bridge,
+              recipientMlKemPublicKey: stack.cliMlKemPublicKey,
             );
             final a6Stored = await stack.messageRepo.getMessagesForContact(
               stack.cliPeerId!,
@@ -1427,6 +1436,8 @@ void main() {
                 text: 'C1: Message while CLI is down',
                 senderPeerId: stack.ownPeerId,
                 senderUsername: 'FlutterE2E',
+                bridge: stack.bridge,
+                recipientMlKemPublicKey: stack.cliMlKemPublicKey,
               );
 
               // Signal orchestrator that we sent the C1 message.
@@ -1508,6 +1519,8 @@ void main() {
                       text: 'A8-reply: Got your reconnect message',
                       senderPeerId: stack.ownPeerId,
                       senderUsername: 'FlutterE2E',
+                      bridge: stack.bridge,
+                      recipientMlKemPublicKey: stack.cliMlKemPublicKey,
                     );
                     a8ReplySent = true;
                     print('[TEST] A8: reply sent');
@@ -1724,6 +1737,8 @@ void main() {
                 text: 'E8: Media attachment test',
                 senderPeerId: stack.ownPeerId,
                 senderUsername: 'FlutterE2E',
+                bridge: stack.bridge,
+                recipientMlKemPublicKey: stack.cliMlKemPublicKey,
                 mediaAttachments: [e8Attachment],
               );
 
@@ -1878,6 +1893,8 @@ void main() {
             text: 'B1: Hello inbox',
             senderPeerId: stack.ownPeerId,
             senderUsername: 'FlutterE2E',
+            bridge: stack.bridge,
+            recipientMlKemPublicKey: offlineContact.mlKemPublicKey,
           );
 
           final stored = await stack.messageRepo.getMessagesForContact(
@@ -1965,6 +1982,8 @@ void main() {
         text: 'Self-contained: Hello unreachable peer',
         senderPeerId: stack.ownPeerId,
         senderUsername: 'FlutterE2E',
+        bridge: stack.bridge,
+        recipientMlKemPublicKey: fakeContact.mlKemPublicKey,
       );
 
       expect(msg, isNotNull, reason: 'Message should be persisted');

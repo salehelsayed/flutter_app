@@ -273,6 +273,17 @@ void main() {
     );
     final targetIdentity = targetGenResult['identity'] as Map<String, dynamic>;
     final targetPeerId = targetIdentity['peerId'] as String;
+    final targetMlKemResponse = await bridge.send(
+      jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+    );
+    final targetMlKemResult =
+        jsonDecode(targetMlKemResponse) as Map<String, dynamic>;
+    expect(
+      targetMlKemResult['ok'],
+      true,
+      reason: 'target mlkem.keygen should succeed',
+    );
+    final targetMlKemPublicKey = targetMlKemResult['publicKey'] as String;
     await contactRepo.addContact(
       ContactModel(
         peerId: targetPeerId,
@@ -281,6 +292,7 @@ void main() {
         username: 'FakeTarget',
         signature: 'sig-fake-target',
         scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: targetMlKemPublicKey,
       ),
     );
     print(
@@ -322,6 +334,8 @@ void main() {
       text: 'Hello from bridge E2E!',
       senderPeerId: peerId,
       senderUsername: 'TestUser',
+      bridge: bridge,
+      recipientMlKemPublicKey: targetMlKemPublicKey,
     );
 
     print('[TEST] Send result: $result');

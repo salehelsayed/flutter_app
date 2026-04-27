@@ -49,6 +49,7 @@ void main() {
     bool allowEditAction = true,
     String? ownPeerId = '12D3KooWMyPeerId1234567890',
     Map<String, List<MessageReaction>> reactions = const {},
+    ValueChanged<String>? onRetryFailedMessage,
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
     ConversationMediaViewerBuilder? mediaViewerBuilder,
@@ -88,6 +89,7 @@ void main() {
           onCancelEdit: onCancelEdit,
           allowEditAction: allowEditAction,
           reactions: reactions,
+          onRetryFailedMessage: onRetryFailedMessage,
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
           mediaViewerBuilder: mediaViewerBuilder,
@@ -851,6 +853,33 @@ void main() {
       expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
     });
 
+    testWidgets('edit action stays hidden for failed outgoing rows', (
+      tester,
+    ) async {
+      String? editedId;
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(
+              id: 'failed-outgoing-edit',
+              isIncoming: false,
+              text: 'Failed outgoing text',
+              status: 'failed',
+            ),
+          ],
+          initialLoadDone: true,
+          onEditMessage: (messageId) => editedId = messageId,
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.longPress(find.text('Failed outgoing text'));
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(find.byKey(MessageContextOverlay.editActionKey), findsNothing);
+      expect(editedId, isNull);
+    });
+
     testWidgets(
       'edit action stays hidden when edit mode is disabled or the callback is not wired',
       (tester) async {
@@ -1611,6 +1640,7 @@ void main() {
     testWidgets(
       'incoming and failed text-only rows do not show failed-media controls',
       (tester) async {
+        String? retriedMessageId;
         await tester.pumpWidget(
           buildTestWidget(
             messages: [
@@ -1627,6 +1657,7 @@ void main() {
               ),
             ],
             initialLoadDone: true,
+            onRetryFailedMessage: (id) => retriedMessageId = id,
             onRetryFailedMedia: (_) {},
             onDeleteFailedMedia: (_) {},
           ),
@@ -1653,6 +1684,22 @@ void main() {
           find.byKey(const ValueKey('failed-media-delete-failed-text-only')),
           findsNothing,
         );
+
+        final textRetryKey = find.byKey(
+          const ValueKey('failed-message-retry-failed-text-only'),
+        );
+        expect(textRetryKey, findsOneWidget);
+        expect(
+          find.byKey(
+            const ValueKey('failed-message-retry-incoming-failed-media'),
+          ),
+          findsNothing,
+        );
+
+        await tester.tap(textRetryKey);
+        await tester.pump();
+
+        expect(retriedMessageId, 'failed-text-only');
       },
     );
 

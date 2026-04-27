@@ -254,6 +254,8 @@ class _JourneyChatUser {
       messageRepo: messageRepo,
       contactRepo: contactRepo,
       bridge: bridge,
+      getOwnMlKemSecretKey: () async =>
+          (await identityRepo.loadIdentity())?.mlKemSecretKey,
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
     );
@@ -675,6 +677,7 @@ ContactModel _makeContact({required String peerId, required String username}) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -689,6 +692,8 @@ IdentityModel _makeIdentity({
     privateKey: 'sk-$peerId',
     mnemonic12:
         'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+    mlKemPublicKey: 'mlkem-$peerId',
+    mlKemSecretKey: 'mlkem-secret-$peerId',
     username: username,
     createdAt: now,
     updatedAt: now,
