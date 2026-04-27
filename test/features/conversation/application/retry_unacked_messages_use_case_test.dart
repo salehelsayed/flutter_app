@@ -110,6 +110,34 @@ void main() {
     });
 
     test(
+      'manual recovery settlement removes the row from later unacked replay',
+      () async {
+        final settled = _makeSentMessage(
+          id: 'msg-manual-recovered-001',
+        ).copyWith(status: 'delivered', transport: 'inbox', wireEnvelope: null);
+        messageRepo.seed([settled]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(
+          (await messageRepo.getMessage('msg-manual-recovered-001'))?.status,
+          'delivered',
+        );
+      },
+    );
+
+    test(
       'hides delivered outgoing delete tombstones after inbox retry succeeds',
       () async {
         final msg = _makeSentDeletedMessage();

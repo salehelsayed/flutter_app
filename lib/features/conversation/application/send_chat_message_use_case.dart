@@ -643,6 +643,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
   if (originalMessage.isIncoming) {
     return Future.value((SendChatMessageResult.invalidMessage, null));
   }
+  if (originalMessage.status == 'failed') {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_EDIT_INVALID',
+      details: {'reason': 'failed_message_requires_retry'},
+    );
+    return Future.value((SendChatMessageResult.invalidMessage, null));
+  }
 
   return sendChatMessage(
     p2pService: p2pService,

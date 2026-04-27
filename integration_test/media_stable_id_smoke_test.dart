@@ -284,6 +284,7 @@ ContactModel _makeContact({required String peerId, required String username}) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -404,11 +405,7 @@ Future<GroupMessage> _latestOutgoingGroupMessage(
   String groupId, {
   required String text,
 }) async {
-  final match = await _tryLatestOutgoingGroupMessage(
-    user,
-    groupId,
-    text: text,
-  );
+  final match = await _tryLatestOutgoingGroupMessage(user, groupId, text: text);
   expect(match, isNotNull, reason: 'Missing outgoing group message');
   return match!;
 }

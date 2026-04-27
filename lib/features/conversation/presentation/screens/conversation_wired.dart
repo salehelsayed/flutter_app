@@ -277,6 +277,9 @@ class _ConversationWiredState extends State<ConversationWired> {
   String? _editingMessageId;
   String? _editingOriginalText;
   String _draftText = '';
+  String? _restoredFailedMessageId;
+  String? _restoredFailedDraftText;
+  String? _restoredFailedQuotedMessageId;
   bool _isTrackingRelayUpload = false;
   int _trackedUploadTotalBytes = 0;
   int _trackedUploadCompletedBytes = 0;
@@ -486,10 +489,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     final tappedAt = widget.notificationTappedAt;
     if (tappedAt == null || _notificationTimingEmitted) return;
     _notificationTimingEmitted = true;
-    emitNotificationTapTiming(
-      tappedAt: tappedAt,
-      routeKind: 'conversation',
-    );
+    emitNotificationTapTiming(tappedAt: tappedAt, routeKind: 'conversation');
   }
 
   void _handleMediaUploadProgress(Map<String, dynamic> event) {
@@ -1317,6 +1317,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     setState(() {
       _editingMessageId = null;
       _editingOriginalText = null;
+      _clearRestoredFailedDraftTracking();
       _activeQuoteMessageId = messageId;
     });
   }
@@ -1329,7 +1330,10 @@ class _ConversationWiredState extends State<ConversationWired> {
   void _onEditMessage(String messageId) {
     if (!mounted || !_canEnterEditMode) return;
     final message = _messages.where((m) => m.id == messageId).firstOrNull;
-    if (message == null || message.isIncoming || message.text.trim().isEmpty) {
+    if (message == null ||
+        message.isIncoming ||
+        message.status == 'failed' ||
+        message.text.trim().isEmpty) {
       return;
     }
 
@@ -1337,6 +1341,7 @@ class _ConversationWiredState extends State<ConversationWired> {
       _activeQuoteMessageId = null;
       _editingMessageId = message.id;
       _editingOriginalText = message.text;
+      _clearRestoredFailedDraftTracking();
       _draftText = message.text;
     });
   }
@@ -1346,6 +1351,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     setState(() {
       _editingMessageId = null;
       _editingOriginalText = null;
+      _clearRestoredFailedDraftTracking();
       _draftText = '';
     });
   }
@@ -1493,6 +1499,15 @@ class _ConversationWiredState extends State<ConversationWired> {
     if (sanitizedText.isEmpty && !hasAttachments) return;
     if (_isSending) return;
 
+    if (editingMessage == null &&
+        _shouldRetryRestoredFailedDraft(
+          sanitizedText: sanitizedText,
+          hasAttachments: hasAttachments,
+        )) {
+      await _retryRestoredFailedDraft();
+      return;
+    }
+
     if (editingMessage != null) {
       final originalText = _editingOriginalText ?? editingMessage.text;
       if (sanitizedText == originalText) {
@@ -1552,7 +1567,10 @@ class _ConversationWiredState extends State<ConversationWired> {
       return;
     }
 
-    setState(() => _isSending = true);
+    setState(() {
+      _clearRestoredFailedDraftTracking();
+      _isSending = true;
+    });
 
     try {
       emitFlowEvent(
@@ -1984,10 +2002,89 @@ class _ConversationWiredState extends State<ConversationWired> {
 
   void _onDraftChanged(String text) {
     if (_draftText == text) return;
-    setState(() => _draftText = text);
+    setState(() {
+      _draftText = text;
+      final restoredDraft = _restoredFailedDraftText;
+      if (restoredDraft != null && sanitizeMessageText(text) != restoredDraft) {
+        _clearRestoredFailedDraftTracking();
+      }
+    });
+  }
+
+  bool _shouldRetryRestoredFailedDraft({
+    required String sanitizedText,
+    required bool hasAttachments,
+  }) {
+    final restoredMessageId = _restoredFailedMessageId;
+    final restoredDraftText = _restoredFailedDraftText;
+    if (restoredMessageId == null || restoredDraftText == null) return false;
+    if (hasAttachments || _pendingAttachments.isNotEmpty) return false;
+    if (sanitizedText != restoredDraftText) return false;
+    return _activeQuoteMessageId == _restoredFailedQuotedMessageId;
+  }
+
+  Future<void> _retryRestoredFailedDraft() async {
+    final restoredMessageId = _restoredFailedMessageId;
+    if (restoredMessageId == null) return;
+
+    final restoredMessage = await widget.messageRepo.getMessage(
+      restoredMessageId,
+    );
+    if (!mounted) return;
+
+    if (restoredMessage == null || restoredMessage.status != 'failed') {
+      setState(() {
+        if (restoredMessage != null) {
+          _upsertMessageById(restoredMessage);
+        }
+        _draftText = '';
+        _activeQuoteMessageId = null;
+        _clearRestoredFailedDraftTracking();
+      });
+      return;
+    }
+
+    setState(() => _isSending = true);
+    try {
+      final retried = await _retryFailedMessageById(
+        restoredMessageId,
+        failureSnackText: 'Could not retry message.',
+      );
+      if (!mounted) return;
+      if (retried > 0) {
+        setState(() {
+          _draftText = '';
+          _activeQuoteMessageId = null;
+          _clearRestoredFailedDraftTracking();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSending = false);
+      } else {
+        _isSending = false;
+      }
+    }
+  }
+
+  Future<void> _onRetryFailedMessage(String messageId) async {
+    await _retryFailedMessageById(
+      messageId,
+      failureSnackText: 'Could not retry message.',
+    );
   }
 
   Future<void> _onRetryFailedMedia(String messageId) async {
+    await _retryFailedMessageById(
+      messageId,
+      failureSnackText: 'Could not retry media message.',
+    );
+  }
+
+  Future<int> _retryFailedMessageById(
+    String messageId, {
+    required String failureSnackText,
+  }) async {
     final bridge = widget.bridge;
     final contactRepo = widget.contactRepo;
     if (bridge == null || contactRepo == null) {
@@ -1995,7 +2092,7 @@ class _ConversationWiredState extends State<ConversationWired> {
         'Retry unavailable right now.',
         backgroundColor: Colors.red[700],
       );
-      return;
+      return 0;
     }
 
     final fallbackMedia = _messages
@@ -2019,11 +2116,9 @@ class _ConversationWiredState extends State<ConversationWired> {
     );
 
     if (retried == 0) {
-      _showFloatingSnackBar(
-        'Could not retry media message.',
-        backgroundColor: Colors.red[700],
-      );
+      _showFloatingSnackBar(failureSnackText, backgroundColor: Colors.red[700]);
     }
+    return retried;
   }
 
   Future<void> _onDeleteFailedMedia(String messageId) async {
@@ -2066,6 +2161,13 @@ class _ConversationWiredState extends State<ConversationWired> {
     _updateLocalMessageStatus(optimisticMessageId, 'failed');
     await _persistMessageStatus(optimisticMessageId, 'failed');
     await _refreshMessageWithHydratedMedia(optimisticMessageId);
+    if (snapshot.pendingAttachments.isEmpty && snapshot.draftText.isNotEmpty) {
+      _restoredFailedMessageId = optimisticMessageId;
+      _restoredFailedDraftText = snapshot.draftText;
+      _restoredFailedQuotedMessageId = snapshot.quotedMessageId;
+    } else {
+      _clearRestoredFailedDraftTracking();
+    }
     if (mounted) {
       setState(() => _activeQuoteMessageId = snapshot.quotedMessageId);
     }
@@ -2078,6 +2180,12 @@ class _ConversationWiredState extends State<ConversationWired> {
         ),
       );
     }
+  }
+
+  void _clearRestoredFailedDraftTracking() {
+    _restoredFailedMessageId = null;
+    _restoredFailedDraftText = null;
+    _restoredFailedQuotedMessageId = null;
   }
 
   static String _mimeFromPath(String path) {
@@ -3338,6 +3446,7 @@ class _ConversationWiredState extends State<ConversationWired> {
           onReactionSelected: widget.reactionRepo != null
               ? _onReactionSelected
               : null,
+          onRetryFailedMessage: _onRetryFailedMessage,
           onRetryFailedMedia: _onRetryFailedMedia,
           onDeleteFailedMedia: _onDeleteFailedMedia,
           showIntroBanner: _showIntroBanner,

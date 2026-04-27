@@ -7,6 +7,7 @@ import 'package:flutter_app/features/conversation/application/retry_failed_messa
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
@@ -62,6 +63,7 @@ ConversationMessage makeFailedMessage({
   String id = 'msg-fail-001',
   String contactPeerId = 'peer-target',
   String text = 'Hello',
+  String? quotedMessageId,
 }) {
   return ConversationMessage(
     id: id,
@@ -72,6 +74,7 @@ ConversationMessage makeFailedMessage({
     status: 'failed',
     isIncoming: false,
     createdAt: '2026-01-01T00:00:00.000Z',
+    quotedMessageId: quotedMessageId,
   );
 }
 
@@ -145,6 +148,16 @@ ContactModel makeContact({
     scannedAt: '2026-01-01T00:00:00.000Z',
     mlKemPublicKey: mlKemPublicKey,
   );
+}
+
+Map<String, dynamic> decodeWirePayload(String wireJson) {
+  final envelope = jsonDecode(wireJson) as Map<String, dynamic>;
+  final payload = envelope['payload'];
+  if (payload is Map<String, dynamic>) {
+    return payload;
+  }
+  final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+  return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
 }
 
 /// FakeP2PService subclass that throws on sendMessageWithReply for specific
@@ -304,6 +317,103 @@ void main() {
         );
 
         expect(count, 1);
+      },
+    );
+
+    test(
+      'targeted failed text retry reuses the original row as first delivery',
+      () async {
+        identityRepo.seed(makeIdentity());
+        const failedMessageId = 'msg-failed-text-001';
+        const failedTimestamp = '2026-01-01T00:00:00.000Z';
+        messageRepo.seed([
+          makeFailedMessage(
+            id: failedMessageId,
+            contactPeerId: 'peer-target',
+            text: 'Recover this text',
+            quotedMessageId: 'quoted-parent-001',
+          ),
+        ]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: 'peer-target',
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+        );
+
+        final count = await retryFailedMessage(
+          messageId: failedMessageId,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        expect(count, 1);
+        expect(messageRepo.lastSavedMessage, isNotNull);
+        expect(messageRepo.lastSavedMessage!.id, failedMessageId);
+        expect(messageRepo.lastSavedMessage!.timestamp, failedTimestamp);
+        expect(messageRepo.wireEnvelopeUpdates, hasLength(1));
+        expect(messageRepo.wireEnvelopeUpdates.single.id, failedMessageId);
+
+        final payload = decodeWirePayload(p2pService.lastSendMessageContent!);
+        expect(payload['id'], failedMessageId);
+        expect(payload['timestamp'], failedTimestamp);
+        expect(payload['text'], 'Recover this text');
+        expect(payload['quotedMessageId'], 'quoted-parent-001');
+        expect(payload['action'], isNot(MessagePayload.actionEdit));
+        expect(payload['editedAt'], isNull);
+      },
+    );
+
+    test(
+      'targeted failed text retry is a no-op after the row already settled',
+      () async {
+        identityRepo.seed(makeIdentity());
+        const messageId = 'msg-recovered-text-001';
+        messageRepo.seed([
+          ConversationMessage(
+            id: messageId,
+            contactPeerId: 'peer-target',
+            senderPeerId: 'my-peer-id',
+            text: 'Already recovered',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            transport: 'inbox',
+            wireEnvelope: null,
+          ),
+        ]);
+        contactRepo.seed([makeContact(peerId: 'peer-target')]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessage(
+          messageId: messageId,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+        );
+
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect((await messageRepo.getMessage(messageId))?.status, 'delivered');
       },
     );
 

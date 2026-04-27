@@ -568,7 +568,11 @@ class FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     storeInInboxCallCount++;
     return false;
   }
@@ -662,7 +666,14 @@ class TrackingLocalMediaP2PService extends FakeP2PService {
 
 class InboxRetryP2PService extends FakeP2PService {
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    storeInInboxCallCount++;
+    return true;
+  }
 }
 
 void main() {
@@ -1144,6 +1155,210 @@ void main() {
       expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
       expect(messageRepo.store[sentMessageId!]!.status, 'failed');
     });
+
+    testWidgets(
+      'sending unchanged restored failed text retries the original row',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final contactRepo = FakeContactRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final p2pService = InboxRetryP2PService();
+        var sendCalls = 0;
+        String? failedMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> failFirstSend({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          sendCalls++;
+          if (sendCalls > 1) {
+            fail('restored failed draft should retry the failed row');
+          }
+          failedMessageId = messageId;
+          final failed = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: timestamp,
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}',
+          );
+          await messageRepo.saveMessage(failed);
+          return (SendChatMessageResult.sendFailed, failed);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: failFirstSend,
+          p2pService: p2pService,
+          bridge: FakeBridge(),
+          contactRepo: contactRepo,
+        );
+
+        await tester.enterText(find.byType(TextField), 'Retry this message');
+        await tester.pump(const Duration(milliseconds: 300));
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('Retry this message');
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(failedMessageId, isNotNull);
+        expect(messageRepo.store[failedMessageId]?.status, 'failed');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry this message',
+        );
+
+        ScaffoldMessenger.of(
+          tester.element(find.byType(ConversationWired)),
+        ).clearSnackBars();
+        await tester.pump(const Duration(milliseconds: 400));
+
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('Retry this message');
+        await tester.pump(const Duration(milliseconds: 50));
+        await pumpUntil(
+          tester,
+          () => messageRepo.store[failedMessageId]?.status == 'delivered',
+        );
+
+        expect(sendCalls, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(messageRepo.store.keys.toList(), [failedMessageId]);
+        expect(messageRepo.store[failedMessageId]?.text, 'Retry this message');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '',
+        );
+      },
+    );
+
+    testWidgets(
+      'automatic retry settling a restored failed draft prevents a second send',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final contactRepo = FakeContactRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        final p2pService = InboxRetryP2PService();
+        var sendCalls = 0;
+        String? failedMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> failFirstSend({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+        }) async {
+          sendCalls++;
+          if (sendCalls > 1) {
+            fail('settled restored failed draft should not send a new row');
+          }
+          failedMessageId = messageId;
+          final failed = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: timestamp,
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}',
+          );
+          await messageRepo.saveMessage(failed);
+          return (SendChatMessageResult.sendFailed, failed);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: failFirstSend,
+          p2pService: p2pService,
+          bridge: FakeBridge(),
+          contactRepo: contactRepo,
+        );
+
+        await tester.enterText(find.byType(TextField), 'Retry this message');
+        await tester.pump(const Duration(milliseconds: 300));
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('Retry this message');
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(failedMessageId, isNotNull);
+        expect(messageRepo.store[failedMessageId]?.status, 'failed');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry this message',
+        );
+
+        await messageRepo.saveMessage(
+          messageRepo.store[failedMessageId]!.copyWith(
+            status: 'delivered',
+            transport: 'inbox',
+            wireEnvelope: null,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('Retry this message');
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(sendCalls, 1);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.store.keys.toList(), [failedMessageId]);
+        expect(messageRepo.store[failedMessageId]?.status, 'delivered');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '',
+        );
+        expect(find.text('Could not retry message.'), findsNothing);
+      },
+    );
 
     testWidgets('shows delivered status when inbox fallback returns success', (
       tester,

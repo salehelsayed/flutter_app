@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -102,6 +103,19 @@ MediaAttachment _doneAttachment(
   );
 }
 
+ContactModel _contactWithMlKem(String peerId) {
+  final now = DateTime.now().toUtc().toIso8601String();
+  return ContactModel(
+    peerId: peerId,
+    publicKey: 'pk-$peerId',
+    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+    username: 'Contact-$peerId',
+    signature: 'sig-$peerId',
+    scannedAt: now,
+    mlKemPublicKey: 'mlkem-$peerId',
+  );
+}
+
 void main() {
   late FakeMediaAttachmentRepository mediaRepo;
   late FakeMessageRepository messageRepo;
@@ -125,6 +139,10 @@ void main() {
     );
     identityRepo = FakeIdentityRepository();
     contactRepo = FakeContactRepository();
+    contactRepo.seed([
+      _contactWithMlKem('peer-bob'),
+      _contactWithMlKem('peer-bob-001'),
+    ]);
     fakeUploadFn = FakeUploadMediaFn();
   });
 
@@ -926,7 +944,11 @@ void main() {
         identityRepo.seed(FakeIdentityRepository.makeIdentity());
 
         mediaRepo.seed([
-          _doneAttachment('att-jpeg-done', 'msg-gif-partial-001', mime: 'image/jpeg'),
+          _doneAttachment(
+            'att-jpeg-done',
+            'msg-gif-partial-001',
+            mime: 'image/jpeg',
+          ),
           _pendingAtt(
             id: 'att-gif-pending',
             messageId: 'msg-gif-partial-001',
@@ -962,7 +984,10 @@ void main() {
         final payload = p2pService.lastStoreInInboxMessage!;
         expect(payload, contains('att-jpeg-done'));
         expect(payload, contains('att-gif-pending'));
-        expect(payload, contains('"mime":"image/gif"'));
+        final envelope = jsonDecode(payload) as Map<String, dynamic>;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final ciphertext = encrypted['ciphertext'] as String;
+        expect(ciphertext, contains('"mime":"image/gif"'));
       },
     );
 

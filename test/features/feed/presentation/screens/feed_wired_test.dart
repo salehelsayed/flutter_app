@@ -112,7 +112,13 @@ void main() {
     username: 'Bob',
     signature: 'sig',
     scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: 'mlkem-contact-peer-id',
   );
+
+  String freshPendingIntroductionCreatedAt() => DateTime.now()
+      .toUtc()
+      .subtract(const Duration(days: 1))
+      .toIso8601String();
 
   setUp(() {
     identityRepo = FakeIdentityRepository();
@@ -833,7 +839,7 @@ void main() {
           id: 'intro-live',
           ownPeerId: testIdentity.peerId,
           otherPeerId: 'live-peer-id',
-          createdAt: '2026-03-25T12:00:00.000Z',
+          createdAt: freshPendingIntroductionCreatedAt(),
         );
         await introRepo.saveIntroduction(intro);
         fakeIntroListener.emitIntroReceived(intro);
@@ -901,7 +907,7 @@ void main() {
           id: 'intro-route-return',
           ownPeerId: testIdentity.peerId,
           otherPeerId: 'route-peer-id',
-          createdAt: '2026-03-25T12:00:00.000Z',
+          createdAt: freshPendingIntroductionCreatedAt(),
         );
         await introRepo.saveIntroduction(intro);
 

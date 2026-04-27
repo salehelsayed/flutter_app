@@ -8,8 +8,7 @@ import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 class FakeLocalP2PService implements LocalP2PService {
   final _localPeers = <String, LocalPeer>{};
   final _messageController = StreamController<LocalChatMessage>.broadcast();
-  final _peersController =
-      StreamController<Map<String, LocalPeer>>.broadcast();
+  final _peersController = StreamController<Map<String, LocalPeer>>.broadcast();
 
   bool sendWillSucceed = true;
   bool started = false;
@@ -18,7 +17,11 @@ class FakeLocalP2PService implements LocalP2PService {
   final sentMessages = <_SentMessage>[];
 
   /// Register a peer as locally available.
-  void addLocalPeer(String peerId, {String host = '192.168.1.100', int port = 9999}) {
+  void addLocalPeer(
+    String peerId, {
+    String host = '192.168.1.100',
+    int port = 9999,
+  }) {
     _localPeers[peerId] = LocalPeer(
       peerId: peerId,
       host: host,
@@ -55,8 +58,7 @@ class FakeLocalP2PService implements LocalP2PService {
       _peersController.stream;
 
   @override
-  Map<String, LocalPeer> get discoveredPeers =>
-      Map.unmodifiable(_localPeers);
+  Map<String, LocalPeer> get discoveredPeers => Map.unmodifiable(_localPeers);
 
   @override
   bool isLocalPeer(String peerId) => _localPeers.containsKey(peerId);
@@ -65,13 +67,12 @@ class FakeLocalP2PService implements LocalP2PService {
   Future<bool> sendMessage(
     String peerId,
     String content,
-    String fromPeerId,
-  ) async {
-    sentMessages.add(_SentMessage(
-      peerId: peerId,
-      content: content,
-      fromPeerId: fromPeerId,
-    ));
+    String fromPeerId, {
+    int? timeoutMs,
+  }) async {
+    sentMessages.add(
+      _SentMessage(peerId: peerId, content: content, fromPeerId: fromPeerId),
+    );
     return sendWillSucceed;
   }
 

@@ -32,8 +32,10 @@ class LetterCard extends StatelessWidget {
   final String? ownPeerId;
   final VoidCallback? onLongPress;
   final void Function(String emoji)? onReactionTap;
+  final VoidCallback? onRetryFailedMessage;
   final VoidCallback? onRetryFailedMedia;
   final VoidCallback? onDeleteFailedMedia;
+  final String? failedMessageActionKeySuffix;
   final String? failedMediaActionKeySuffix;
 
   const LetterCard({
@@ -55,8 +57,10 @@ class LetterCard extends StatelessWidget {
     this.ownPeerId,
     this.onLongPress,
     this.onReactionTap,
+    this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
+    this.failedMessageActionKeySuffix,
     this.failedMediaActionKeySuffix,
   });
 
@@ -283,7 +287,8 @@ class LetterCard extends StatelessWidget {
                       )
                     else if (media.isNotEmpty)
                       const SizedBox(height: 12),
-                    if (onRetryFailedMedia != null ||
+                    if (onRetryFailedMessage != null ||
+                        onRetryFailedMedia != null ||
                         onDeleteFailedMedia != null)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -291,23 +296,36 @@ class LetterCard extends StatelessWidget {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
+                            if (onRetryFailedMessage != null)
+                              _buildFailedMessageAction(
+                                key: ValueKey(
+                                  'failed-message-retry-${failedMessageActionKeySuffix ?? 'message'}',
+                                ),
+                                icon: Icons.refresh_rounded,
+                                label: 'Retry',
+                                semanticLabel: 'Retry failed message',
+                                color: const Color(0xFF4ECDC4),
+                                onTap: onRetryFailedMessage!,
+                              ),
                             if (onRetryFailedMedia != null)
-                              _buildFailedMediaAction(
+                              _buildFailedMessageAction(
                                 key: ValueKey(
                                   'failed-media-retry-${failedMediaActionKeySuffix ?? 'message'}',
                                 ),
                                 icon: Icons.refresh_rounded,
                                 label: 'Retry',
+                                semanticLabel: 'Retry failed media message',
                                 color: const Color(0xFF4ECDC4),
                                 onTap: onRetryFailedMedia!,
                               ),
                             if (onDeleteFailedMedia != null)
-                              _buildFailedMediaAction(
+                              _buildFailedMessageAction(
                                 key: ValueKey(
                                   'failed-media-delete-${failedMediaActionKeySuffix ?? 'message'}',
                                 ),
                                 icon: Icons.delete_outline_rounded,
                                 label: 'Delete',
+                                semanticLabel: 'Delete failed media message',
                                 color: const Color(0xFFFF8A80),
                                 onTap: onDeleteFailedMedia!,
                               ),
@@ -375,26 +393,33 @@ class LetterCard extends StatelessWidget {
     );
   }
 
-  Widget _buildFailedMediaAction({
+  Widget _buildFailedMessageAction({
     required Key key,
     required IconData icon,
     required String label,
+    required String semanticLabel,
     required Color color,
     required VoidCallback onTap,
   }) {
-    return OutlinedButton.icon(
-      key: key,
-      onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: color,
-        side: BorderSide(color: color.withAlpha(140)),
-        backgroundColor: color.withAlpha(20),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        visualDensity: VisualDensity.compact,
+    return Semantics(
+      label: semanticLabel,
+      button: true,
+      child: OutlinedButton.icon(
+        key: key,
+        onPressed: onTap,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: color,
+          side: BorderSide(color: color.withAlpha(140)),
+          backgroundColor: color.withAlpha(20),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          visualDensity: VisualDensity.compact,
+        ),
+        icon: Icon(icon, size: 16),
+        label: Text(label),
       ),
-      icon: Icon(icon, size: 16),
-      label: Text(label),
     );
   }
 

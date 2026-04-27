@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -52,8 +53,11 @@ ConversationMessage _makeMsg(
   );
 }
 
-MediaAttachment _doneAttachment(String id, String messageId,
-    {String mime = 'audio/mpeg'}) {
+MediaAttachment _doneAttachment(
+  String id,
+  String messageId, {
+  String mime = 'audio/mpeg',
+}) {
   return MediaAttachment(
     id: id,
     messageId: messageId,
@@ -63,6 +67,19 @@ MediaAttachment _doneAttachment(String id, String messageId,
     localPath: '/tmp/recording.m4a',
     downloadStatus: 'done',
     createdAt: DateTime.now().toUtc().toIso8601String(),
+  );
+}
+
+ContactModel _contactWithMlKem(String peerId) {
+  final now = DateTime.now().toUtc().toIso8601String();
+  return ContactModel(
+    peerId: peerId,
+    publicKey: 'pk-$peerId',
+    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+    username: 'Contact-$peerId',
+    signature: 'sig-$peerId',
+    scannedAt: now,
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -89,53 +106,53 @@ void main() {
     );
     identityRepo = FakeIdentityRepository();
     contactRepo = FakeContactRepository();
+    contactRepo.seed([_contactWithMlKem('peer-bob-001')]);
     fakeUploadFn = FakeUploadMediaFn();
   });
 
   group('Durable storage recovery (Gap 4)', () {
     // G.9.5.1
-    test('recovery succeeds from durable copy after temp file deletion',
-        () async {
-      messageRepo.seed([
-        _makeMsg('msg-durable', status: 'failed'),
-      ]);
-      identityRepo.seed(FakeIdentityRepository.makeIdentity());
-      mediaRepo.seed([
-        MediaAttachment(
-          id: 'att-001',
-          messageId: 'msg-durable',
-          mime: 'image/jpeg',
-          size: 0,
-          mediaType: 'image',
-          localPath: 'pending_uploads/msg-durable/att-001.jpg',
-          downloadStatus: 'upload_pending',
-          createdAt: DateTime.now().toUtc().toIso8601String(),
-        ),
-      ]);
-      final fm = FakeMediaFileManager()
-        ..resolveResult =
-            '/var/mobile/Documents/pending_uploads/msg-durable/att-001.jpg';
-      fakeUploadFn.willReturn(
-          _doneAttachment('att-001', 'msg-durable', mime: 'image/jpeg'));
+    test(
+      'recovery succeeds from durable copy after temp file deletion',
+      () async {
+        messageRepo.seed([_makeMsg('msg-durable', status: 'failed')]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        mediaRepo.seed([
+          MediaAttachment(
+            id: 'att-001',
+            messageId: 'msg-durable',
+            mime: 'image/jpeg',
+            size: 0,
+            mediaType: 'image',
+            localPath: 'pending_uploads/msg-durable/att-001.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        ]);
+        final fm = FakeMediaFileManager()
+          ..resolveResult =
+              '/var/mobile/Documents/pending_uploads/msg-durable/att-001.jpg';
+        fakeUploadFn.willReturn(
+          _doneAttachment('att-001', 'msg-durable', mime: 'image/jpeg'),
+        );
 
-      final count = await retryIncompleteUploads(
-        mediaAttachmentRepo: mediaRepo,
-        messageRepo: messageRepo,
-        bridge: bridge,
-        p2pService: p2pService,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        uploadMediaFn: fakeUploadFn.call,
-        mediaFileManager: fm,
-      );
-      expect(count, 1);
-    });
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          mediaFileManager: fm,
+        );
+        expect(count, 1);
+      },
+    );
 
     // G.9.5.2
     test('voice recording recovery succeeds from durable copy', () async {
-      messageRepo.seed([
-        _makeMsg('msg-voice-durable', status: 'failed'),
-      ]);
+      messageRepo.seed([_makeMsg('msg-voice-durable', status: 'failed')]);
       identityRepo.seed(FakeIdentityRepository.makeIdentity());
       mediaRepo.seed([
         MediaAttachment(
@@ -144,8 +161,7 @@ void main() {
           mime: 'audio/mp4',
           size: 8192,
           mediaType: 'audio',
-          localPath:
-              'pending_uploads/msg-voice-durable/voice-att-001.m4a',
+          localPath: 'pending_uploads/msg-voice-durable/voice-att-001.m4a',
           downloadStatus: 'upload_pending',
           createdAt: DateTime.now().toUtc().toIso8601String(),
           durationMs: 5000,
@@ -155,9 +171,13 @@ void main() {
       final fm = FakeMediaFileManager()
         ..resolveResult =
             '/var/mobile/Documents/pending_uploads/msg-voice-durable/voice-att-001.m4a';
-      fakeUploadFn.willReturn(_doneAttachment(
-          'voice-att-001', 'msg-voice-durable',
-          mime: 'audio/mp4'));
+      fakeUploadFn.willReturn(
+        _doneAttachment(
+          'voice-att-001',
+          'msg-voice-durable',
+          mime: 'audio/mp4',
+        ),
+      );
 
       final count = await retryIncompleteUploads(
         mediaAttachmentRepo: mediaRepo,
@@ -174,8 +194,7 @@ void main() {
     });
 
     // G.9.5.4
-    test('durable copy is deleted after successful upload and send',
-        () async {
+    test('durable copy is deleted after successful upload and send', () async {
       final fm = FakeMediaFileManager();
       final deletedDirs = <String>[];
       fm.onDeletePendingUploadDir = (msgId) {
@@ -187,45 +206,51 @@ void main() {
 
     // G.8.1.1
     test(
-        'resolves relative localPath via MediaFileManager before checking file existence',
-        () async {
-      final msg =
-          _makeMsg('msg-rel-0001', status: 'failed', contactPeerId: 'peer-bob-001');
-      messageRepo.seed([msg]);
-      identityRepo.seed(FakeIdentityRepository.makeIdentity());
+      'resolves relative localPath via MediaFileManager before checking file existence',
+      () async {
+        final msg = _makeMsg(
+          'msg-rel-0001',
+          status: 'failed',
+          contactPeerId: 'peer-bob-001',
+        );
+        messageRepo.seed([msg]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
 
-      mediaRepo.seed([
-        _pendingAtt(
-          id: 'att-rel-001',
-          messageId: 'msg-rel-0001',
-          localPath: 'pending_uploads/msg-rel/photo.jpg',
-          mime: 'image/jpeg',
-          mediaType: 'image',
-        ),
-      ]);
+        mediaRepo.seed([
+          _pendingAtt(
+            id: 'att-rel-001',
+            messageId: 'msg-rel-0001',
+            localPath: 'pending_uploads/msg-rel/photo.jpg',
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          ),
+        ]);
 
-      final fakeMediaFileManager = FakeMediaFileManager()
-        ..resolveResult =
-            '/var/mobile/Documents/pending_uploads/msg-rel/photo.jpg';
+        final fakeMediaFileManager = FakeMediaFileManager()
+          ..resolveResult =
+              '/var/mobile/Documents/pending_uploads/msg-rel/photo.jpg';
 
-      fakeUploadFn.willReturn(
-        _doneAttachment('att-rel-001', 'msg-rel-0001', mime: 'image/jpeg'),
-      );
+        fakeUploadFn.willReturn(
+          _doneAttachment('att-rel-001', 'msg-rel-0001', mime: 'image/jpeg'),
+        );
 
-      final count = await retryIncompleteUploads(
-        mediaAttachmentRepo: mediaRepo,
-        messageRepo: messageRepo,
-        bridge: bridge,
-        p2pService: p2pService,
-        identityRepo: identityRepo,
-        contactRepo: contactRepo,
-        uploadMediaFn: fakeUploadFn.call,
-        mediaFileManager: fakeMediaFileManager,
-      );
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          mediaFileManager: fakeMediaFileManager,
+        );
 
-      expect(count, 1);
-      expect(fakeUploadFn.lastLocalPath,
-          '/var/mobile/Documents/pending_uploads/msg-rel/photo.jpg');
-    });
+        expect(count, 1);
+        expect(
+          fakeUploadFn.lastLocalPath,
+          '/var/mobile/Documents/pending_uploads/msg-rel/photo.jpg',
+        );
+      },
+    );
   });
 }

@@ -22,6 +22,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -1040,6 +1041,59 @@ void main() {
 
       await sub.cancel();
     });
+
+    test(
+      'encrypted v2 retry envelope duplicates materialize once for the receiver',
+      () async {
+        final bobReceived = <ConversationMessage>[];
+        final sub = bob.chatListener.incomingMessageStream.listen(
+          bobReceived.add,
+        );
+
+        const messageId = 'retry-v2-duplicate-001';
+        const timestamp = '2026-02-09T15:30:00.000Z';
+        final innerPayload = MessagePayload(
+          id: messageId,
+          text: 'Recovered once',
+          senderPeerId: alice.peerId,
+          senderUsername: alice.username,
+          timestamp: timestamp,
+        ).toInnerJson();
+        final envelope = MessagePayload.buildEncryptedEnvelope(
+          id: messageId,
+          senderPeerId: alice.peerId,
+          senderUsername: alice.username,
+          kem: 'fake-kem',
+          ciphertext: innerPayload,
+          nonce: 'fake-nonce',
+        );
+        final incoming = ChatMessage(
+          from: alice.peerId,
+          to: bob.peerId,
+          content: envelope,
+          timestamp: timestamp,
+          isIncoming: true,
+          transport: 'inbox',
+        );
+
+        final first = await bob.chatListener.processIncomingMessage(incoming);
+        final second = await bob.chatListener.processIncomingMessage(incoming);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(first.state, ChatMessageProcessState.stored);
+        expect(second.state, ChatMessageProcessState.duplicate);
+
+        final bobMessages = await bob.messageRepo.getMessagesForContact(
+          alice.peerId,
+        );
+        expect(bobMessages, hasLength(1));
+        expect(bobMessages.single.id, messageId);
+        expect(bobMessages.single.text, 'Recovered once');
+        expect(bobReceived, hasLength(1));
+
+        await sub.cancel();
+      },
+    );
 
     test('Contact name propagates when sender changes username', () async {
       // Bob's contact for Alice currently has username "Alice"

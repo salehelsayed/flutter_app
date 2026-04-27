@@ -134,6 +134,7 @@ class ConversationScreen extends StatefulWidget {
   final String? initialText;
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<String>? onQuoteReply;
+  final ValueChanged<String>? onRetryFailedMessage;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
   final ValueChanged<String>? onDeleteMessage;
@@ -191,6 +192,7 @@ class ConversationScreen extends StatefulWidget {
     this.initialText,
     this.onDraftChanged,
     this.onQuoteReply,
+    this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
     this.onDeleteMessage,
@@ -461,6 +463,13 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 !message.isIncoming &&
                 message.status == 'failed' &&
                 hasRetryableFailedMedia;
+            final showFailedTextRetry =
+                !message.isDeleted &&
+                !message.isIncoming &&
+                message.status == 'failed' &&
+                message.media.isEmpty &&
+                message.text.trim().isNotEmpty &&
+                widget.onRetryFailedMessage != null;
             final canOpenContextOverlay = !message.isDeleted;
             final displayText = message.isDeleted
                 ? l10n.conversation_message_deleted
@@ -522,10 +531,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
                     !message.isDeleted && widget.onReactionSelected != null
                     ? (emoji) => widget.onReactionSelected!(message.id, emoji)
                     : null,
+                onRetryFailedMessage: showFailedTextRetry
+                    ? () => widget.onRetryFailedMessage!(message.id)
+                    : null,
                 onRetryFailedMedia:
                     showFailedMediaActions && widget.onRetryFailedMedia != null
                     ? () => widget.onRetryFailedMedia!(message.id)
                     : null,
+                failedMessageActionKeySuffix: message.id,
                 onDeleteFailedMedia:
                     showFailedMediaActions && widget.onDeleteFailedMedia != null
                     ? () => widget.onDeleteFailedMedia!(message.id)
@@ -712,6 +725,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   bool _canEditMessage(ConversationMessage message) {
     if (!widget.allowEditAction || widget.onEditMessage == null) return false;
     if (message.isDeleted) return false;
+    if (message.status == 'failed') return false;
     if (widget.ownPeerId == null || message.isIncoming) return false;
     if (message.senderPeerId != widget.ownPeerId) return false;
     if (message.text.trim().isEmpty) return false;
