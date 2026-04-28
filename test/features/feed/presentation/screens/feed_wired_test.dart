@@ -47,6 +47,8 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friend_row.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
@@ -55,6 +57,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_bo
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -461,6 +464,57 @@ void main() {
   }
 
   group('FeedWired', () {
+    testWidgets('loads stored cosmic background preference into Feed', (
+      tester,
+    ) async {
+      identityRepo.seed(testIdentity);
+      await secureKeyStore.write(
+        BackgroundPreference.storageKey,
+        BackgroundPreference.cosmic.toStorageString(),
+      );
+
+      await tester.pumpWidget(buildFeedWired());
+      await pumpFeedFrames(tester, count: 8);
+
+      expect(find.byType(FeedScreen), findsOneWidget);
+      expect(find.byType(CosmicBackground), findsOneWidget);
+    });
+
+    testWidgets(
+      'refreshes background preference after returning from Settings',
+      (tester) async {
+        identityRepo.seed(testIdentity);
+
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(find.byType(CosmicBackground), findsNothing);
+
+        await tester.tap(find.byType(UserAvatar).first);
+        await pumpFeedFrames(tester, count: 10);
+
+        expect(find.text('Settings'), findsOneWidget);
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('background-choice-cosmic')),
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('background-choice-cosmic')),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+
+        expect(
+          await secureKeyStore.read(BackgroundPreference.storageKey),
+          BackgroundPreference.cosmic.toStorageString(),
+        );
+
+        await tester.tap(find.byIcon(Icons.chevron_left));
+        await pumpFeedFrames(tester, count: 10);
+
+        expect(find.byType(FeedScreen), findsOneWidget);
+        expect(find.byType(CosmicBackground), findsOneWidget);
+      },
+    );
+
     testWidgets('loads and displays username from identity', (tester) async {
       identityRepo.seed(testIdentity);
 

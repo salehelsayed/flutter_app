@@ -17,6 +17,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.da
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/session_divider.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
@@ -75,6 +76,7 @@ class FeedScreen extends StatelessWidget {
   onGroupReactionTap;
   final void Function(String groupId, String messageId, String emoji)?
   onGroupReactionSelected;
+  final BackgroundPreference backgroundPreference;
 
   const FeedScreen({
     super.key,
@@ -122,6 +124,7 @@ class FeedScreen extends StatelessWidget {
     this.onGroupAttach,
     this.onGroupReactionTap,
     this.onGroupReactionSelected,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -133,6 +136,8 @@ class FeedScreen extends StatelessWidget {
       onTap: () => FocusScope.of(context).unfocus(),
       behavior: HitTestBehavior.translucent,
       child: AmbientBackground(
+        preference: backgroundPreference,
+        isFeedSurface: true,
         child: Stack(
           children: [
             // Main content with top-only SafeArea

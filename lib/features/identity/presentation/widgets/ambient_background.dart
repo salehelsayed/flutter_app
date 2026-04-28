@@ -1,17 +1,20 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Animated ambient background with floating glow orbs.
 class AmbientBackground extends StatefulWidget {
   final Widget child;
   final BackgroundPreference preference;
+  final bool isFeedSurface;
 
   const AmbientBackground({
     super.key,
     required this.child,
     this.preference = BackgroundPreference.defaultBackground,
+    this.isFeedSurface = false,
   });
 
   @override
@@ -28,7 +31,20 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 8),
-    )..repeat();
+    );
+    if (_usesDefaultBackground) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant AmbientBackground oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_usesDefaultBackground && !_controller.isAnimating) {
+      _controller.repeat();
+    } else if (!_usesDefaultBackground && _controller.isAnimating) {
+      _controller.stop();
+    }
   }
 
   @override
@@ -45,7 +61,20 @@ class _AmbientBackgroundState extends State<AmbientBackground>
           animation: _controller,
           child: widget.child,
         );
+      case BackgroundPreference.cosmic:
+        if (widget.isFeedSurface) {
+          return CosmicBackground(child: widget.child);
+        }
+        return _DefaultAmbientBackground(
+          animation: _controller,
+          child: widget.child,
+        );
     }
+  }
+
+  bool get _usesDefaultBackground {
+    return widget.preference != BackgroundPreference.cosmic ||
+        !widget.isFeedSurface;
   }
 }
 

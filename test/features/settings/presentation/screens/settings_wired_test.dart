@@ -479,6 +479,7 @@ void main() {
 
     expect(find.text('Background'), findsOneWidget);
     expect(find.text('Default'), findsOneWidget);
+    expect(find.text('Cosmic'), findsOneWidget);
     expect(await store.read('background_preference'), isNull);
 
     await tester.ensureVisible(
@@ -490,7 +491,37 @@ void main() {
     expect(await store.read('background_preference'), 'default');
   });
 
-  testWidgets('emits non-sensitive background success telemetry', (
+  testWidgets('loads and persists cosmic background selection', (tester) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    final store = FakeSecureKeyStore();
+    await store.write('background_preference', 'cosmic');
+
+    await pumpScreen(tester, identityRepo: identityRepo, secureKeyStore: store);
+
+    expect(
+      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('background-choice-default')),
+    );
+    await tester.tap(find.byKey(const ValueKey('background-choice-default')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(await store.read('background_preference'), 'default');
+
+    await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(await store.read('background_preference'), 'cosmic');
+    expect(
+      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('emits non-sensitive cosmic background success telemetry', (
     tester,
   ) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
@@ -502,9 +533,9 @@ void main() {
     await pumpScreen(tester, identityRepo: identityRepo, secureKeyStore: store);
 
     await tester.ensureVisible(
-      find.byKey(const ValueKey('background-choice-default')),
+      find.byKey(const ValueKey('background-choice-cosmic')),
     );
-    await tester.tap(find.byKey(const ValueKey('background-choice-default')));
+    await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(
@@ -519,7 +550,7 @@ void main() {
             .having(
               (event) => event['details'],
               'details',
-              containsPair('preference', 'default'),
+              containsPair('preference', 'cosmic'),
             ),
       ),
     );
@@ -536,7 +567,7 @@ void main() {
               (event) => event['details'],
               'details',
               allOf(
-                containsPair('preference', 'default'),
+                containsPair('preference', 'cosmic'),
                 containsPair('outcome', 'success'),
               ),
             ),
@@ -560,9 +591,9 @@ void main() {
       );
 
       await tester.ensureVisible(
-        find.byKey(const ValueKey('background-choice-default')),
+        find.byKey(const ValueKey('background-choice-cosmic')),
       );
-      await tester.tap(find.byKey(const ValueKey('background-choice-default')));
+      await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(await store.read('background_preference'), isNull);
@@ -580,7 +611,7 @@ void main() {
                 (event) => event['details'],
                 'details',
                 allOf(
-                  containsPair('preference', 'default'),
+                  containsPair('preference', 'cosmic'),
                   containsPair('outcome', 'failure'),
                 ),
               ),

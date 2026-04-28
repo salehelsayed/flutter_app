@@ -200,3 +200,39 @@ Accepted ambiguities for a later implementation pass:
 - No current localization keys exist for a cosmic background option.
 - No current telemetry assertion covers a non-default background selection.
 - No current simulator or emulator smoke covers selecting a non-default background and seeing it on Feed.
+
+# 7. Implementation Closure - April 28, 2026
+
+Final verdict: `closed`
+
+Implemented:
+
+- Added production `BackgroundPreference.cosmic` with canonical storage value `cosmic`; missing and unknown stored values still resolve to `Default`.
+- Added `Default` and `Cosmic` to the Settings background picker with selected-state semantics, English/German/Arabic copy, persistence, failed-save honesty, and flow telemetry coverage.
+- Kept the Settings route itself on the default full-screen background even when `Cosmic` is selected.
+- Added production `CosmicBackground` under `lib/features/identity/presentation/widgets/`.
+- Centralized the Feed-only rule in `AmbientBackground.isFeedSurface`: Feed plus `cosmic` renders `CosmicBackground`; non-Feed surfaces and Feed plus default render the existing default treatment.
+- Wired Feed to load the stored background preference on init and refresh it after returning from Settings, so `Cosmic` and `Default` changes appear without app restart.
+- Added reduced-motion/static cosmic rendering and direct tests proving the production source path, the Feed-only filter matrix, Feed rendering, Settings-return refresh, and localization/semantics behavior.
+
+Accepted evidence:
+
+- `flutter test test/features/settings/application/background_preference_use_cases_test.dart test/features/settings/presentation/widgets/background_choice_control_test.dart test/features/settings/presentation/screens/settings_screen_test.dart test/features/settings/presentation/screens/settings_wired_test.dart`
+  - Result: passed on April 28, 2026.
+- `flutter test test/features/identity/presentation/widgets/ambient_background_test.dart`
+  - Result: passed on April 28, 2026.
+- `flutter test test/features/feed/presentation/screens/feed_screen_test.dart test/features/feed/presentation/screens/feed_wired_test.dart --plain-name "background"`
+  - Result: passed on April 28, 2026.
+- `flutter test test/features/feed/presentation/screens/feed_screen_test.dart`
+  - Result: passed on April 28, 2026.
+- `flutter test integration_test/settings_background_choice_smoke_test.dart -d emulator-5554`
+  - Result: passed on April 28, 2026.
+- `flutter test integration_test/feed_performance_test.dart -d emulator-5554 --plain-name "Cosmic scroll performance"`
+  - Result: passed on April 28, 2026.
+  - Recorded timings: default baseline `Avg: 8.03ms`, `P99: 51.51ms`, `Worst: 65.44ms`; cosmic `Avg: 5.10ms`, `P99: 27.97ms`, `Worst: 32.04ms`.
+
+Known acceptance notes:
+
+- The Android emulator's existing default scroll performance scenario exceeded its original absolute P99 threshold in a separate check (`P99: 32.68ms` with a `24ms` limit), so the added cosmic performance scenario uses a same-run default baseline to measure feature-specific regression. In the accepted run, cosmic scroll was faster than the same-run default baseline on average, P99, and worst frame.
+- An iPhone 17 simulator performance attempt built successfully but did not complete the test body after several minutes. It is recorded as inconclusive infrastructure, not accepted evidence.
+- No new background options, locales, cross-device sync behavior, non-Feed cosmic surfaces, or star-position persistence guarantees were added.

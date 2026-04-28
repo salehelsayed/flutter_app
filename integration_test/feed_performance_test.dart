@@ -10,6 +10,8 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart'
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -98,8 +100,13 @@ List<FeedItem> _generateFeedItems() {
 class _FeedTestHarness extends StatefulWidget {
   final List<FeedItem> feedItems;
   final String? initialExpandedCardId;
+  final BackgroundPreference backgroundPreference;
 
-  const _FeedTestHarness({required this.feedItems, this.initialExpandedCardId});
+  const _FeedTestHarness({
+    required this.feedItems,
+    this.initialExpandedCardId,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
+  });
 
   @override
   State<_FeedTestHarness> createState() => _FeedTestHarnessState();
@@ -123,6 +130,7 @@ class _FeedTestHarnessState extends State<_FeedTestHarness> {
       body: FeedScreen(
         username: 'PerfTestUser',
         feedItems: widget.feedItems,
+        backgroundPreference: widget.backgroundPreference,
         onSwitchView: (_) {},
         activeTab: 'feed',
         expandedCardId: expandedCardId,
@@ -162,6 +170,8 @@ Future<void> _pumpFeedScreen(
   WidgetTester tester,
   List<FeedItem> items, {
   String? expandedCardId,
+  BackgroundPreference backgroundPreference =
+      BackgroundPreference.defaultBackground,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -171,6 +181,7 @@ Future<void> _pumpFeedScreen(
       home: _FeedTestHarness(
         feedItems: items,
         initialExpandedCardId: expandedCardId,
+        backgroundPreference: backgroundPreference,
       ),
     ),
   );
@@ -315,6 +326,56 @@ void _assertThresholds(
     lessThan(maxWorstMs),
     reason:
         '[$label] Worst build time ${stats.worst.toStringAsFixed(2)}ms > ${maxWorstMs}ms',
+  );
+}
+
+Future<_FrameStats> _collectScrollStats(WidgetTester tester) async {
+  final scrollable = find.byType(CustomScrollView);
+  expect(scrollable, findsOneWidget);
+
+  final collector = _FrameTimingCollector()..start();
+
+  await tester.fling(scrollable, const Offset(0, -1500), 3000);
+  await _pumpFrames(tester, count: 30);
+
+  await tester.fling(scrollable, const Offset(0, 1500), 3000);
+  await _pumpFrames(tester, count: 30);
+
+  await collector.stop();
+  return collector.stats;
+}
+
+void _assertCosmicScrollDoesNotRegress(
+  _FrameStats baselineStats,
+  _FrameStats cosmicStats,
+) {
+  baselineStats.printSummary('Default baseline for cosmic scroll');
+  cosmicStats.printSummary('Cosmic scroll');
+
+  if (!baselineStats.hasData || !cosmicStats.hasData) {
+    fail('[Cosmic scroll] Missing FrameTiming data for baseline comparison');
+  }
+
+  final baselineP99 = baselineStats.percentile(99);
+  final cosmicP99 = cosmicStats.percentile(99);
+
+  expect(
+    cosmicStats.average,
+    lessThan(max(8.0, baselineStats.average + 2.0)),
+    reason:
+        '[Cosmic scroll] Average build time ${cosmicStats.average.toStringAsFixed(2)}ms regressed from default ${baselineStats.average.toStringAsFixed(2)}ms',
+  );
+  expect(
+    cosmicP99,
+    lessThan(max(24.0, baselineP99 * 1.25)),
+    reason:
+        '[Cosmic scroll] P99 build time ${cosmicP99.toStringAsFixed(2)}ms regressed from default ${baselineP99.toStringAsFixed(2)}ms',
+  );
+  expect(
+    cosmicStats.worst,
+    lessThan(max(100.0, baselineStats.worst * 1.25)),
+    reason:
+        '[Cosmic scroll] Worst build time ${cosmicStats.worst.toStringAsFixed(2)}ms regressed from default ${baselineStats.worst.toStringAsFixed(2)}ms',
   );
 }
 
@@ -494,6 +555,25 @@ void main() {
         maxP99Ms: 64,
         maxWorstMs: 100,
       );
+    });
+
+    testWidgets('5. Cosmic scroll performance', (tester) async {
+      await _pumpFeedScreen(tester, items);
+      expect(find.byType(CosmicBackground), findsNothing);
+
+      final baselineStats = await _collectScrollStats(tester);
+
+      await _pumpFeedScreen(
+        tester,
+        items,
+        backgroundPreference: BackgroundPreference.cosmic,
+      );
+
+      expect(find.byType(CosmicBackground), findsOneWidget);
+
+      final cosmicStats = await _collectScrollStats(tester);
+
+      _assertCosmicScrollDoesNotRegress(baselineStats, cosmicStats);
     });
   });
 }
