@@ -988,6 +988,42 @@ abstract class AppLocalizations {
   /// **'Settings'**
   String get settings_title;
 
+  /// No description provided for @settings_background.
+  ///
+  /// In en, this message translates to:
+  /// **'Background'**
+  String get settings_background;
+
+  /// No description provided for @settings_background_default.
+  ///
+  /// In en, this message translates to:
+  /// **'Default'**
+  String get settings_background_default;
+
+  /// No description provided for @settings_background_default_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'The current ambient background.'**
+  String get settings_background_default_desc;
+
+  /// No description provided for @settings_background_save_fail.
+  ///
+  /// In en, this message translates to:
+  /// **'Background choice could not be saved'**
+  String get settings_background_save_fail;
+
+  /// No description provided for @settings_background_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'App background setting'**
+  String get settings_background_semantics;
+
+  /// No description provided for @settings_background_default_selected.
+  ///
+  /// In en, this message translates to:
+  /// **'Default selected'**
+  String get settings_background_default_selected;
+
   /// No description provided for @settings_video_quality.
   ///
   /// In en, this message translates to:

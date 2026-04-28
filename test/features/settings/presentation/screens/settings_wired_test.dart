@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -136,7 +138,11 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async => true;
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
@@ -177,6 +183,13 @@ class _FakeP2PService implements P2PService {
   void dispose() {}
 }
 
+class _FailingWriteSecureKeyStore extends FakeSecureKeyStore {
+  @override
+  Future<void> write(String key, String value) async {
+    throw StateError('write failed');
+  }
+}
+
 void main() {
   IdentityModel makeIdentity() {
     return IdentityModel(
@@ -197,6 +210,7 @@ void main() {
     Bridge? bridge,
     ContactRepository? contactRepo,
     P2PService? p2pService,
+    SecureKeyStore? secureKeyStore,
     InMemoryIntroductionRepository? introductionRepository,
     InMemoryPostsPrivacySettingsRepository? postsPrivacySettingsRepository,
   }) async {
@@ -210,7 +224,7 @@ void main() {
           bridge: bridge ?? _FakeBridge(),
           contactRepo: contactRepo ?? _FakeContactRepo(),
           p2pService: p2pService ?? _FakeP2PService(),
-          secureKeyStore: FakeSecureKeyStore(),
+          secureKeyStore: secureKeyStore ?? FakeSecureKeyStore(),
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
           appShellController: AppShellController(),
           introductionRepository: introductionRepository,
@@ -454,6 +468,126 @@ void main() {
     // Video quality toggle is second — its Original should be bold (w600)
     expect(originalTexts[1].style?.fontWeight, FontWeight.w600);
   });
+
+  testWidgets('shows background choice and persists default selection', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    final store = FakeSecureKeyStore();
+
+    await pumpScreen(tester, identityRepo: identityRepo, secureKeyStore: store);
+
+    expect(find.text('Background'), findsOneWidget);
+    expect(find.text('Default'), findsOneWidget);
+    expect(await store.read('background_preference'), isNull);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('background-choice-default')),
+    );
+    await tester.tap(find.byKey(const ValueKey('background-choice-default')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(await store.read('background_preference'), 'default');
+  });
+
+  testWidgets('emits non-sensitive background success telemetry', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    final store = FakeSecureKeyStore();
+    final events = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(events.add);
+    addTearDown(() => debugSetFlowEventSink(null));
+
+    await pumpScreen(tester, identityRepo: identityRepo, secureKeyStore: store);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('background-choice-default')),
+    );
+    await tester.tap(find.byKey(const ValueKey('background-choice-default')));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      events,
+      contains(
+        isA<Map<String, dynamic>>()
+            .having(
+              (event) => event['event'],
+              'event',
+              'SETTINGS_FL_BACKGROUND_PREFERENCE_ATTEMPT',
+            )
+            .having(
+              (event) => event['details'],
+              'details',
+              containsPair('preference', 'default'),
+            ),
+      ),
+    );
+    expect(
+      events,
+      contains(
+        isA<Map<String, dynamic>>()
+            .having(
+              (event) => event['event'],
+              'event',
+              'SETTINGS_FL_BACKGROUND_PREFERENCE_SAVED',
+            )
+            .having(
+              (event) => event['details'],
+              'details',
+              allOf(
+                containsPair('preference', 'default'),
+                containsPair('outcome', 'success'),
+              ),
+            ),
+      ),
+    );
+  });
+
+  testWidgets(
+    'failed background save stays honest and emits failure telemetry',
+    (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final store = _FailingWriteSecureKeyStore();
+      final events = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(events.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        secureKeyStore: store,
+      );
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('background-choice-default')),
+      );
+      await tester.tap(find.byKey(const ValueKey('background-choice-default')));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(await store.read('background_preference'), isNull);
+      expect(find.text('Background choice could not be saved'), findsWidgets);
+      expect(
+        events,
+        contains(
+          isA<Map<String, dynamic>>()
+              .having(
+                (event) => event['event'],
+                'event',
+                'SETTINGS_FL_BACKGROUND_PREFERENCE_SAVE_ERROR',
+              )
+              .having(
+                (event) => event['details'],
+                'details',
+                allOf(
+                  containsPair('preference', 'default'),
+                  containsPair('outcome', 'failure'),
+                ),
+              ),
+        ),
+      );
+    },
+  );
 
   testWidgets('back button pops navigation', (tester) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/brand_header.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -70,6 +71,16 @@ void main() {
       );
       final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
       expect(scaffold.backgroundColor, const Color(0xFF000000));
+    });
+
+    testWidgets('uses the shared default ambient background before Settings', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(IdentityChoiceScreen(onNewHere: () {}, onLoadMyKey: () {})),
+      );
+
+      expect(find.byType(AmbientBackground), findsOneWidget);
     });
 
     testWidgets('dims choice cards when callbacks are null', (tester) async {

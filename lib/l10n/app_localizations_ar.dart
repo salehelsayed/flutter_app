@@ -490,6 +490,24 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_title => 'الإعدادات';
 
   @override
+  String get settings_background => 'الخلفية';
+
+  @override
+  String get settings_background_default => 'الافتراضية';
+
+  @override
+  String get settings_background_default_desc => 'الخلفية المحيطة الحالية.';
+
+  @override
+  String get settings_background_save_fail => 'تعذر حفظ اختيار الخلفية';
+
+  @override
+  String get settings_background_semantics => 'إعداد خلفية التطبيق';
+
+  @override
+  String get settings_background_default_selected => 'تم اختيار الافتراضية';
+
+  @override
   String get settings_video_quality => 'جودة الفيديو';
 
   @override

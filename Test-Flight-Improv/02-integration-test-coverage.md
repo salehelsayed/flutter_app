@@ -41,6 +41,15 @@ Mature integration and E2E infrastructure with strong fake-based multi-user simu
 | **P2P** | 4 | 0 | 3+ | Good |
 | **Share** | 4 | 1 | 0 | Medium |
 
+### Settings Coverage Update - April 28, 2026
+
+Settings now has focused background-choice coverage in addition to the older profile-picture flow:
+
+- `test/features/settings/application/background_preference_use_cases_test.dart` covers missing, `default`, unknown, save, and overwrite behavior for the local background preference.
+- `test/features/settings/presentation/widgets/background_choice_control_test.dart` covers selected `Default` UI, tap behavior, accessibility semantics, failed-save copy, and English/German/Arabic localized labels.
+- `test/features/settings/presentation/screens/settings_screen_test.dart` and `test/features/settings/presentation/screens/settings_wired_test.dart` cover visible Settings integration, secure-storage save, failed-save honesty, and background-choice flow telemetry.
+- `integration_test/settings_background_choice_smoke_test.dart` covers the device-backed representative Feed -> Settings -> close -> reopen smoke for the default background choice.
+
 ---
 
 ## Conversation Integration Tests (11 — Excellent)
