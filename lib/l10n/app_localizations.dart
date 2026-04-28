@@ -1006,6 +1006,24 @@ abstract class AppLocalizations {
   /// **'The current ambient background.'**
   String get settings_background_default_desc;
 
+  /// No description provided for @settings_background_cosmic.
+  ///
+  /// In en, this message translates to:
+  /// **'Cosmic'**
+  String get settings_background_cosmic;
+
+  /// No description provided for @settings_background_cosmic_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'A deep starfield for Feed.'**
+  String get settings_background_cosmic_desc;
+
+  /// No description provided for @settings_background_cosmic_selected.
+  ///
+  /// In en, this message translates to:
+  /// **'Cosmic selected'**
+  String get settings_background_cosmic_selected;
+
   /// No description provided for @settings_background_save_fail.
   ///
   /// In en, this message translates to:

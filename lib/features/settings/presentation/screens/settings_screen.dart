@@ -84,7 +84,7 @@ class SettingsScreen extends StatelessWidget {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return AmbientBackground(
-      preference: currentBackgroundPreference,
+      preference: BackgroundPreference.defaultBackground,
       child: Stack(
         children: [
           // Main content with top-only SafeArea

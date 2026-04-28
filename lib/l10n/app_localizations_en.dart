@@ -504,6 +504,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'The current ambient background.';
 
   @override
+  String get settings_background_cosmic => 'Cosmic';
+
+  @override
+  String get settings_background_cosmic_desc => 'A deep starfield for Feed.';
+
+  @override
+  String get settings_background_cosmic_selected => 'Cosmic selected';
+
+  @override
   String get settings_background_save_fail =>
       'Background choice could not be saved';
 

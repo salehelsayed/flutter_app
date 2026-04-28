@@ -1,10 +1,8 @@
 /// User preference for the shared app background.
 ///
-/// Only the existing default background is user-facing today. Additional real
-/// background options can be added here when their artwork and readability
-/// acceptance are defined.
 enum BackgroundPreference {
-  defaultBackground;
+  defaultBackground,
+  cosmic;
 
   /// Key used in SecureKeyStore for the app background preference.
   static const storageKey = 'background_preference';
@@ -13,6 +11,8 @@ enum BackgroundPreference {
     switch (this) {
       case BackgroundPreference.defaultBackground:
         return 'default';
+      case BackgroundPreference.cosmic:
+        return 'cosmic';
     }
   }
 
@@ -20,6 +20,9 @@ enum BackgroundPreference {
   static BackgroundPreference fromStorageString(String? value) {
     if (value == 'default') {
       return BackgroundPreference.defaultBackground;
+    }
+    if (value == 'cosmic') {
+      return BackgroundPreference.cosmic;
     }
     return BackgroundPreference.defaultBackground;
   }

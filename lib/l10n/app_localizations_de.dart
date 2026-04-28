@@ -517,6 +517,16 @@ class AppLocalizationsDe extends AppLocalizations {
       'Der aktuelle Umgebungs-Hintergrund.';
 
   @override
+  String get settings_background_cosmic => 'Kosmisch';
+
+  @override
+  String get settings_background_cosmic_desc =>
+      'Ein tiefes Sternenfeld für den Feed.';
+
+  @override
+  String get settings_background_cosmic_selected => 'Kosmisch ausgewählt';
+
+  @override
   String get settings_background_save_fail =>
       'Hintergrundauswahl konnte nicht gespeichert werden';
 

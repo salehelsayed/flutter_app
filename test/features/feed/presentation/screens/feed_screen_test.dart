@@ -17,6 +17,8 @@ import 'package:flutter_app/features/feed/presentation/widgets/open_mode_card_bo
 import 'package:flutter_app/features/feed/presentation/widgets/scrollable_message_preview.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 void main() {
@@ -85,6 +87,8 @@ void main() {
     void Function(String contactPeerId, String messageId)? onQuoteReply,
     void Function(GroupThreadFeedItem)? onGroupAttach,
     String? userPeerId = 'alice-peer',
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -119,6 +123,7 @@ void main() {
               onGroupAttach: onGroupAttach,
               reactions: reactions,
               userPeerId: userPeerId,
+              backgroundPreference: backgroundPreference,
             ),
           ),
         ),
@@ -146,6 +151,39 @@ void main() {
     expect(find.text('Feed'), findsOneWidget);
     expect(find.text('Orbit'), findsOneWidget);
     expect(find.text('Remember'), findsNothing);
+  });
+
+  testWidgets('renders cosmic background when Feed preference is cosmic', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        feedItems: const [],
+        backgroundPreference: BackgroundPreference.cosmic,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(CosmicBackground), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('cosmic-background-root')),
+      findsOneWidget,
+    );
+    expect(find.text('Feed'), findsOneWidget);
+  });
+
+  testWidgets('keeps default background when Feed preference is default', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    await tester.pumpWidget(buildFeedScreen(feedItems: const []));
+    await tester.pump();
+
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.text('Feed'), findsOneWidget);
   });
 
   testWidgets('renders empty state once feed load completes with no items', (

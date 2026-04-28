@@ -499,6 +499,15 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_background_default_desc => 'الخلفية المحيطة الحالية.';
 
   @override
+  String get settings_background_cosmic => 'كونية';
+
+  @override
+  String get settings_background_cosmic_desc => 'حقل نجوم عميق للخلاصة.';
+
+  @override
+  String get settings_background_cosmic_selected => 'تم اختيار الكونية';
+
+  @override
   String get settings_background_save_fail => 'تعذر حفظ اختيار الخلفية';
 
   @override

@@ -10,7 +10,13 @@ import 'package:flutter_app/features/settings/presentation/widgets/settings_reco
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 
 void main() {
-  Widget wrap({String? peerId, String? mnemonic, VoidCallback? onBack}) {
+  Widget wrap({
+    String? peerId,
+    String? mnemonic,
+    VoidCallback? onBack,
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
+  }) {
     return MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -20,7 +26,7 @@ void main() {
         peerId: peerId,
         mnemonic: mnemonic,
         onBack: onBack,
-        currentBackgroundPreference: BackgroundPreference.defaultBackground,
+        currentBackgroundPreference: backgroundPreference,
         onBackgroundPreferenceChanged: (_) {},
         onSwitchView: (_) {},
         activeTab: 'feed',
@@ -102,8 +108,25 @@ void main() {
     expect(find.byType(BackgroundChoiceControl), findsOneWidget);
     expect(find.text('Background'), findsOneWidget);
     expect(find.text('Default'), findsOneWidget);
+    expect(find.text('Cosmic'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('background-choice-default-selected-icon')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('renders cosmic selected in picker', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        peerId: '12D3KooWTestPeer123',
+        backgroundPreference: BackgroundPreference.cosmic,
+      ),
+    );
+
+    expect(find.byType(BackgroundChoiceControl), findsOneWidget);
+    expect(find.text('Cosmic'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
       findsOneWidget,
     );
   });
