@@ -1032,6 +1032,59 @@ void main() {
       await subscription.cancel();
     });
 
+    test(
+      'member_joined replay preserves read state for durable timeline event',
+      () async {
+        listener.start(sourceController.stream);
+
+        final messages = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(messages.add);
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final eventAt = DateTime.utc(2026, 4, 5, 12, 5);
+        final sysText = jsonEncode({
+          '__sys': 'member_joined',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+        });
+        final event = <String, dynamic>{
+          'groupId': 'group-1',
+          'senderId': 'peer-charlie',
+          'senderUsername': 'Charlie',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': eventAt.toIso8601String(),
+        };
+
+        sourceController.add(event);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        await msgRepo.markAsRead('group-1');
+        final readMessage = await msgRepo.getLatestMessage('group-1');
+        expect(readMessage, isNotNull);
+        expect(readMessage!.readAt, isNotNull);
+
+        sourceController.add(event);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(msgRepo.count, 1);
+        final replayed = await msgRepo.getLatestMessage('group-1');
+        expect(replayed!.readAt, readMessage.readAt);
+        expect(messages, hasLength(2));
+        expect(messages.last.readAt, readMessage.readAt);
+
+        await subscription.cancel();
+      },
+    );
+
     test('unauthorized members_added is ignored', () async {
       listener.start(sourceController.stream);
 

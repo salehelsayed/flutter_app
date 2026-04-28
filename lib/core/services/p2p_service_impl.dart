@@ -801,10 +801,16 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
     }
   }
 
-  Future<({int replayed, int staged, bool hasMore})> _retrievePendingInboxPage({
-    required String toPeerId,
-    int? timeoutMs,
-  }) async {
+  Future<
+    ({
+      int replayed,
+      int staged,
+      bool hasMore,
+      bool retrieveSucceeded,
+      String? failureReason,
+    })
+  >
+  _retrievePendingInboxPage({required String toPeerId, int? timeoutMs}) async {
     final repo = _inboxStagingRepository;
 
     Map<String, dynamic> response;
@@ -822,10 +828,20 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
           'error': e.toString(),
         },
       );
-      return (replayed: 0, staged: 0, hasMore: false);
+      return (
+        replayed: 0,
+        staged: 0,
+        hasMore: false,
+        retrieveSucceeded: false,
+        failureReason: e.toString(),
+      );
     }
 
     if (response['ok'] != true) {
+      final failureReason =
+          response['errorMessage']?.toString() ??
+          response['errorCode']?.toString() ??
+          'retrieve_pending_failed';
       emitFlowEvent(
         layer: 'FL',
         event: 'P2P_SERVICE_INBOX_RETRIEVE_PENDING_ERROR',
@@ -834,7 +850,13 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
           'errorMessage': response['errorMessage']?.toString(),
         },
       );
-      return (replayed: 0, staged: 0, hasMore: false);
+      return (
+        replayed: 0,
+        staged: 0,
+        hasMore: false,
+        retrieveSucceeded: false,
+        failureReason: failureReason,
+      );
     }
 
     final rawMessages =
@@ -842,7 +864,13 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
             ?.cast<Map<String, dynamic>>() ??
         const <Map<String, dynamic>>[];
     if (rawMessages.isEmpty) {
-      return (replayed: 0, staged: 0, hasMore: false);
+      return (
+        replayed: 0,
+        staged: 0,
+        hasMore: false,
+        retrieveSucceeded: true,
+        failureReason: null,
+      );
     }
 
     final entries = <InboxStagingEntry>[];
@@ -867,7 +895,13 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       );
     }
     if (entries.isEmpty) {
-      return (replayed: 0, staged: 0, hasMore: response['hasMore'] == true);
+      return (
+        replayed: 0,
+        staged: 0,
+        hasMore: response['hasMore'] == true,
+        retrieveSucceeded: true,
+        failureReason: null,
+      );
     }
 
     final ackableEntryIds = await repo.stageEntries(entries);
@@ -906,6 +940,8 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
       replayed: replayed,
       staged: ackableEntryIds.length,
       hasMore: response['hasMore'] == true,
+      retrieveSucceeded: true,
+      failureReason: null,
     );
   }
 
@@ -929,6 +965,10 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
         final result = await _retrievePendingInboxPage(toPeerId: toPeerId);
         replayed += result.replayed;
         staged += result.staged;
+
+        if (!result.retrieveSucceeded) {
+          break;
+        }
 
         if (result.staged == 0) {
           break;
@@ -1002,10 +1042,19 @@ class P2PServiceImpl implements P2PService, ReadinessProofRecorder {
           },
         );
       }
-      _recordSuccessfulInboxProof(
-        source: 'drain_offline_inbox',
-        trigger: 'system_action',
-      );
+      if (firstPage.retrieveSucceeded) {
+        _recordSuccessfulInboxProof(
+          source: 'drain_offline_inbox',
+          trigger: 'system_action',
+        );
+      } else {
+        _recordCapabilityProofFailure(
+          capability: 'inbox',
+          source: 'drain_offline_inbox',
+          trigger: 'system_action',
+          failureReason: firstPage.failureReason,
+        );
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

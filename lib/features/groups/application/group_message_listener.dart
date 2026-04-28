@@ -670,8 +670,9 @@ class GroupMessageListener {
         senderUsername: senderUsername,
         eventAt: eventAt ?? DateTime.now().toUtc(),
       );
-      await _msgRepo.saveMessage(timelineMessage);
-      _messageController.add(timelineMessage);
+      final savedTimelineMessage =
+          await _saveTimelineMessagePreservingReadState(timelineMessage);
+      _messageController.add(savedTimelineMessage);
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt);
@@ -742,8 +743,9 @@ class GroupMessageListener {
         senderUsername: senderUsername,
         eventAt: eventAt ?? DateTime.now().toUtc(),
       );
-      await _msgRepo.saveMessage(timelineMessage);
-      _messageController.add(timelineMessage);
+      final savedTimelineMessage =
+          await _saveTimelineMessagePreservingReadState(timelineMessage);
+      _messageController.add(savedTimelineMessage);
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt);
@@ -774,8 +776,10 @@ class GroupMessageListener {
       joinedUsername: memberData?['username'] as String?,
       eventAt: eventAt ?? DateTime.now().toUtc(),
     );
-    await _msgRepo.saveMessage(timelineMessage);
-    _messageController.add(timelineMessage);
+    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
+      timelineMessage,
+    );
+    _messageController.add(savedTimelineMessage);
 
     emitFlowEvent(
       layer: 'FL',
@@ -881,8 +885,10 @@ class GroupMessageListener {
       senderUsername: senderUsername,
       eventAt: eventAt ?? DateTime.now().toUtc(),
     );
-    await _msgRepo.saveMessage(timelineMessage);
-    _messageController.add(timelineMessage);
+    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
+      timelineMessage,
+    );
+    _messageController.add(savedTimelineMessage);
 
     await _recordMembershipEventWatermark(groupId, eventAt);
 
@@ -980,8 +986,9 @@ class GroupMessageListener {
         senderUsername: senderUsername,
         eventAt: eventAt ?? DateTime.now().toUtc(),
       );
-      await _msgRepo.saveMessage(timelineMessage);
-      _messageController.add(timelineMessage);
+      final savedTimelineMessage =
+          await _saveTimelineMessagePreservingReadState(timelineMessage);
+      _messageController.add(savedTimelineMessage);
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt);
@@ -1038,8 +1045,10 @@ class GroupMessageListener {
       isIncoming: true,
       createdAt: eventAt ?? DateTime.now().toUtc(),
     );
-    await _msgRepo.saveMessage(timelineMessage);
-    _messageController.add(timelineMessage);
+    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
+      timelineMessage,
+    );
+    _messageController.add(savedTimelineMessage);
 
     emitFlowEvent(
       layer: 'FL',
@@ -1084,8 +1093,10 @@ class GroupMessageListener {
       senderUsername: senderUsername,
       eventAt: resolvedEventAt,
     );
-    await _msgRepo.saveMessage(timelineMessage);
-    _messageController.add(timelineMessage);
+    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
+      timelineMessage,
+    );
+    _messageController.add(savedTimelineMessage);
 
     await _recordMembershipEventWatermark(groupId, resolvedEventAt);
 
@@ -1165,6 +1176,18 @@ class GroupMessageListener {
       }
     });
     await _groupConfigWorkQueue[groupId];
+  }
+
+  Future<GroupMessage> _saveTimelineMessagePreservingReadState(
+    GroupMessage timelineMessage,
+  ) async {
+    final existing = await _msgRepo.getMessage(timelineMessage.id);
+    final existingReadAt = existing?.readAt;
+    final messageToSave = existingReadAt == null
+        ? timelineMessage
+        : timelineMessage.copyWith(readAt: existingReadAt);
+    await _msgRepo.saveMessage(messageToSave);
+    return messageToSave;
   }
 
   DateTime? _parseMembershipEventAt(String? timestamp) {
