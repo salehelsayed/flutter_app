@@ -10,8 +10,10 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -71,6 +73,9 @@ class _SettingsWiredState extends State<SettingsWired> {
   Uint8List? _pickedAvatarBytes;
   Timer? _peerIdCopyTimer;
   Timer? _mnemonicCopyTimer;
+  BackgroundPreference _currentBackgroundPreference =
+      BackgroundPreference.defaultBackground;
+  String? _backgroundPreferenceError;
   ImageQualityPreference _currentQuality = ImageQualityPreference.compressed;
   ImageQualityPreference _currentVideoQuality =
       ImageQualityPreference.compressed;
@@ -84,6 +89,7 @@ class _SettingsWiredState extends State<SettingsWired> {
     super.initState();
     emitFlowEvent(layer: 'FL', event: 'SETTINGS_FL_SCREEN_INIT', details: {});
     _loadIdentity();
+    _loadBackgroundPreference();
     _loadQualityPreference();
     _loadVideoQualityPreference();
     _loadPostsPrivacySettings();
@@ -165,6 +171,70 @@ class _SettingsWiredState extends State<SettingsWired> {
     );
     if (mounted) {
       setState(() => _currentQuality = pref);
+    }
+  }
+
+  Future<void> _loadBackgroundPreference() async {
+    final pref = await loadBackgroundPreference(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _currentBackgroundPreference = pref);
+    }
+  }
+
+  Future<void> _onBackgroundPreferenceChanged(
+    BackgroundPreference newPreference,
+  ) async {
+    final previousPreference = _currentBackgroundPreference;
+    final storageValue = newPreference.toStorageString();
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'SETTINGS_FL_BACKGROUND_PREFERENCE_ATTEMPT',
+      details: {'preference': storageValue},
+    );
+
+    setState(() {
+      _currentBackgroundPreference = newPreference;
+      _backgroundPreferenceError = null;
+    });
+
+    try {
+      await saveBackgroundPreference(
+        secureKeyStore: widget.secureKeyStore,
+        preference: newPreference,
+      );
+      if (!mounted) return;
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'SETTINGS_FL_BACKGROUND_PREFERENCE_SAVED',
+        details: {'preference': storageValue, 'outcome': 'success'},
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _currentBackgroundPreference = previousPreference;
+        _backgroundPreferenceError = AppLocalizations.of(
+          context,
+        )!.settings_background_save_fail;
+      });
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'SETTINGS_FL_BACKGROUND_PREFERENCE_SAVE_ERROR',
+        details: {
+          'preference': storageValue,
+          'outcome': 'failure',
+          'error': e.toString(),
+        },
+      );
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_backgroundPreferenceError!)));
     }
   }
 
@@ -431,6 +501,9 @@ class _SettingsWiredState extends State<SettingsWired> {
         onToggleMnemonic: _onToggleMnemonic,
         onCopyMnemonic: _onCopyMnemonic,
         onHideMnemonic: _onHideMnemonic,
+        currentBackgroundPreference: _currentBackgroundPreference,
+        onBackgroundPreferenceChanged: _onBackgroundPreferenceChanged,
+        backgroundPreferenceErrorText: _backgroundPreferenceError,
         currentQuality: _currentQuality,
         onQualityChanged: _onQualityChanged,
         currentVideoQuality: _currentVideoQuality,

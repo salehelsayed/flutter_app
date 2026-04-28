@@ -9,7 +9,9 @@ import 'package:flutter_app/features/settings/presentation/widgets/settings_peer
 import 'package:flutter_app/features/settings/presentation/widgets/posts_nearby_settings_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_profile_section.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 
 /// Pure UI Settings screen.
@@ -31,6 +33,9 @@ class SettingsScreen extends StatelessWidget {
   final VoidCallback? onToggleMnemonic;
   final VoidCallback? onCopyMnemonic;
   final VoidCallback? onHideMnemonic;
+  final BackgroundPreference currentBackgroundPreference;
+  final ValueChanged<BackgroundPreference>? onBackgroundPreferenceChanged;
+  final String? backgroundPreferenceErrorText;
   final ImageQualityPreference currentQuality;
   final ValueChanged<ImageQualityPreference>? onQualityChanged;
   final ImageQualityPreference currentVideoQuality;
@@ -58,6 +63,9 @@ class SettingsScreen extends StatelessWidget {
     this.onToggleMnemonic,
     this.onCopyMnemonic,
     this.onHideMnemonic,
+    this.currentBackgroundPreference = BackgroundPreference.defaultBackground,
+    this.onBackgroundPreferenceChanged,
+    this.backgroundPreferenceErrorText,
     this.currentQuality = ImageQualityPreference.compressed,
     this.onQualityChanged,
     this.currentVideoQuality = ImageQualityPreference.compressed,
@@ -76,6 +84,7 @@ class SettingsScreen extends StatelessWidget {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
 
     return AmbientBackground(
+      preference: currentBackgroundPreference,
       child: Stack(
         children: [
           // Main content with top-only SafeArea
@@ -173,6 +182,14 @@ class SettingsScreen extends StatelessWidget {
                             peerId: peerId!,
                             isCopied: isPeerIdCopied,
                             onCopy: onCopyPeerId,
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                        if (onBackgroundPreferenceChanged != null) ...[
+                          BackgroundChoiceControl(
+                            value: currentBackgroundPreference,
+                            onChanged: onBackgroundPreferenceChanged!,
+                            errorText: backgroundPreferenceErrorText,
                           ),
                           const SizedBox(height: 24),
                         ],

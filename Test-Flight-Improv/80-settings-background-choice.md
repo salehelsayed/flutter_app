@@ -163,6 +163,7 @@ Accepted ambiguities for a later implementation pass:
 - Widget or semantics test the selector exposes an accessible label and selected state.
 - Widget, smoke, visual, or golden-style test `AmbientBackground` still renders the default treatment unchanged.
 - Integration or widget test Settings can reopen with `Default` still selected.
+- At least one simulator or emulator smoke run confirms Settings shows `Background` with `Default` selected, closing and reopening Settings preserves `Default`, and a representative app surface still shows the default ambient background.
 - Unit or widget test failed `SecureKeyStore` write behavior so the UI does not report silent success.
 - Unit or integration test background-choice flow telemetry for success and failed-save outcomes, unless the implementation explicitly removes telemetry from this spec.
 - Static, unit, or widget coverage that Arabic, German, and English background-choice strings resolve to non-empty localized copy.
@@ -178,4 +179,29 @@ Accepted ambiguities for a later implementation pass:
 - No current test appears to assert flow-event telemetry for background-choice success or failed-save outcomes.
 - No current visual or golden-style test appears to lock the default `AmbientBackground` treatment against accidental visual drift.
 - No current semantics/accessibility test appears to assert that a Settings background chooser is labeled and exposes selected state for assistive technologies.
+- No current simulator or emulator smoke appears to cover a Settings background choice, because the choice does not exist yet.
 - No existing test or variant evidence defines contrast/readability expectations for future non-default background variants.
+
+# 7. Implementation Closure Status
+
+Status: `closed` on April 28, 2026.
+
+What landed:
+
+- Added `BackgroundPreference.defaultBackground` and secure-storage load/save use cases with missing, `default`, and unknown values resolving to `Default`.
+- Added a typed `AmbientBackground.preference` contract while preserving the existing black base with green and red glow treatment.
+- Added a Settings background choice card with `Default` selected, localized English/German/Arabic copy, accessible selected-state semantics, and a valid selectable default-only option.
+- Wired `SettingsWired` to load and save the background preference, emit non-sensitive attempt/success/failure flow events, and show/revert honest failed-save state instead of silent false success.
+- Added emulator smoke coverage for a representative Feed surface opening Settings, selecting `Default`, closing, reopening Settings, and preserving the selected state.
+
+Closure evidence:
+
+- `flutter test test/features/settings/application/background_preference_use_cases_test.dart test/features/identity/presentation/widgets/ambient_background_test.dart test/features/settings/presentation/widgets/background_choice_control_test.dart test/features/settings/presentation/screens/settings_screen_test.dart test/features/settings/presentation/screens/settings_wired_test.dart test/features/identity/presentation/screens/identity_choice_screen_test.dart test/features/home/presentation/screens/first_time_experience_screen_test.dart`
+  - Result: passed.
+- `flutter test integration_test/settings_background_choice_smoke_test.dart -d emulator-5554`
+  - Result: passed on Android emulator `emulator-5554`.
+
+Coverage notes:
+
+- The previous "Current Test Gaps" list is now historical for the default-only MVP. The default preference, Settings picker, failed-save behavior, localization, telemetry, semantics, shared default rendering, early onboarding default background, static call-site inventory, and emulator smoke are covered.
+- Future non-default background variants remain out of scope. Each future variant still needs its own artwork, naming/preview decision, live-update behavior, and contrast/readability acceptance before release.

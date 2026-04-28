@@ -507,6 +507,26 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_title => 'Einstellungen';
 
   @override
+  String get settings_background => 'Hintergrund';
+
+  @override
+  String get settings_background_default => 'Standard';
+
+  @override
+  String get settings_background_default_desc =>
+      'Der aktuelle Umgebungs-Hintergrund.';
+
+  @override
+  String get settings_background_save_fail =>
+      'Hintergrundauswahl konnte nicht gespeichert werden';
+
+  @override
+  String get settings_background_semantics => 'App-Hintergrundeinstellung';
+
+  @override
+  String get settings_background_default_selected => 'Standard ausgewählt';
+
+  @override
   String get settings_video_quality => 'Videoqualität';
 
   @override

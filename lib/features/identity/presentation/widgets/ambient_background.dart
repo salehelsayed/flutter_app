@@ -1,14 +1,17 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Animated ambient background with floating glow orbs.
 class AmbientBackground extends StatefulWidget {
   final Widget child;
+  final BackgroundPreference preference;
 
   const AmbientBackground({
     super.key,
     required this.child,
+    this.preference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -36,15 +39,36 @@ class _AmbientBackgroundState extends State<AmbientBackground>
 
   @override
   Widget build(BuildContext context) {
+    switch (widget.preference) {
+      case BackgroundPreference.defaultBackground:
+        return _DefaultAmbientBackground(
+          animation: _controller,
+          child: widget.child,
+        );
+    }
+  }
+}
+
+class _DefaultAmbientBackground extends StatelessWidget {
+  final Animation<double> animation;
+  final Widget child;
+
+  const _DefaultAmbientBackground({
+    required this.animation,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       color: AppColors.background,
       child: Stack(
         children: [
           // Green glow - top left
           AnimatedBuilder(
-            animation: _controller,
+            animation: animation,
             builder: (context, child) {
-              final value = _controller.value;
+              final value = animation.value;
               final xOffset = math.sin(value * 2 * math.pi) * 30;
               final yOffset = math.cos(value * 2 * math.pi) * 20;
               return Positioned(
@@ -68,9 +92,9 @@ class _AmbientBackgroundState extends State<AmbientBackground>
           ),
           // Red glow - bottom right
           AnimatedBuilder(
-            animation: _controller,
+            animation: animation,
             builder: (context, child) {
-              final value = _controller.value;
+              final value = animation.value;
               final xOffset = math.cos(value * 2 * math.pi) * 25;
               final yOffset = math.sin(value * 2 * math.pi) * 30;
               return Positioned(
@@ -93,7 +117,7 @@ class _AmbientBackgroundState extends State<AmbientBackground>
             },
           ),
           // Child content
-          widget.child,
+          child,
         ],
       ),
     );
