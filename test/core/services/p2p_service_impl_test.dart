@@ -2056,6 +2056,118 @@ void main() {
 
   group('Phase 6 readiness proof windows', () {
     test(
+      'retrieve_pending ok:false does not record inbox proof success',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'degraded',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': false, 'errorMessage': 'relay unavailable'}),
+        );
+        bridge.whenCommand('inbox:store', (_) => jsonEncode({'ok': true}));
+
+        final events = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+          await service.warmBackground();
+        });
+
+        expect(service.currentState.sendCapabilityReady, isTrue);
+        expect(service.currentState.inboxCapabilityReady, isFalse);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.connecting,
+        );
+
+        expect(
+          events.where((e) => e['event'] == 'FIRST_INBOX_SUCCESS_IN_WINDOW'),
+          isEmpty,
+        );
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_SENDABLE_BADGE'),
+          isEmpty,
+        );
+        expect(
+          events.where(
+            (e) => e['event'] == 'P2P_SERVICE_INBOX_RETRIEVE_PENDING_ERROR',
+          ),
+          hasLength(1),
+        );
+
+        final proofResults = events
+            .where((e) => e['event'] == 'READINESS_PROOF_RESULT')
+            .map((e) => e['details'] as Map<String, dynamic>)
+            .toList();
+        expect(
+          proofResults.any(
+            (details) =>
+                details['capability'] == 'inbox' &&
+                details['success'] == false &&
+                details['proofSource'] == 'drain_offline_inbox' &&
+                details['failureReason'] == 'relay unavailable',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'retrieve_pending ok:true empty inbox records inbox proof success',
+      () async {
+        bridge.whenCommand(
+          'node:start',
+          (_) => jsonEncode({
+            'ok': true,
+            'peerId': 'test-peer',
+            'isStarted': true,
+            'listenAddresses': [],
+            'circuitAddresses': [],
+            'connections': [],
+            'relayState': 'degraded',
+          }),
+        );
+        bridge.whenCommand(
+          'inbox:retrieve_pending',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        bridge.whenCommand('inbox:store', (_) => jsonEncode({'ok': true}));
+
+        final events = await _captureFlowEvents(() async {
+          await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'test-peer');
+          await service.warmBackground();
+        });
+
+        expect(service.currentState.sendCapabilityReady, isTrue);
+        expect(service.currentState.inboxCapabilityReady, isTrue);
+        expect(
+          service.currentState.badgeReadinessState,
+          BadgeReadinessState.online,
+        );
+
+        final firstInbox = events
+            .where((e) => e['event'] == 'FIRST_INBOX_SUCCESS_IN_WINDOW')
+            .map((e) => e['details'] as Map<String, dynamic>)
+            .toList();
+        expect(firstInbox, hasLength(1));
+        expect(firstInbox.single['source'], 'drain_offline_inbox');
+        expect(firstInbox.single['trigger'], 'system_action');
+        expect(
+          events.where((e) => e['event'] == 'TIME_TO_SENDABLE_BADGE'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
       'warmBackground reaches sendable state from proactive proofs before relay-ready',
       () async {
         bridge.whenCommand(
