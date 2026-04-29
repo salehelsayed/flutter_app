@@ -24,51 +24,52 @@ most for **end-user trust at the boundary of joining a group** are either
 unverified or only proven with cryptography bypassed. Two specific gaps are
 the immediate concern for this audit:
 
-1. **A new member joining an existing group is never verified to receive
-   subsequent media** (image, video, or voice) sent into that group. The
-   send-side payload path is covered, and existing-member text fan-out is
-   covered, but no test exercises a freshly-added user receiving a media
-   message from a pre-existing member.
+1. **At audit intake, a new member joining an existing group was not verified
+   to receive subsequent media** (image, video, or voice) sent into that group.
+   Report 85 now has fake-network/app-layer coverage for that discussion and
+   announcement onboarding boundary, while foreground-push and live simulator
+   media recovery remain separate rows.
 
-2. **The cryptographic key exchange that runs when a new user is added is
-   never verified as a complete group-onboarding flow with real
-   ML-KEM-768 + AES-256-GCM.** The Go crypto and bridge layers do verify
-   ML-KEM and group AES-GCM round-trips, but the Dart fake-network group
-   tests still use fake/passthrough crypto paths. The full path
-   "Bob joins → receives ML-KEM-encrypted group key → accepts the key →
-   decrypts a subsequent group message" is not asserted as one integrated
-   Flutter group-onboarding scenario, and no such scenario runs in the
-   standard CI gate.
+2. **At audit intake, the cryptographic key exchange that runs when a new user
+   is added was not verified as a complete group-onboarding flow with real
+   ML-KEM-768 + AES-256-GCM.** Report 85 now has real Go bridge app-boundary
+   evidence for first-add and re-add invite acceptance/decrypt, while full
+   two-node GossipSub receiver-visible delivery remains a separate
+   simulator/real-network closure bar.
 
 The first pass through TC-1 through TC-21 covers the main onboarding surface,
-but five additional user-visible edge cases still matter before this spec can
-be treated as complete: reaction fan-out to a newly-added member, quoted
-replies whose parent message predates the join, admin-add/send races at the
-epoch boundary, media recovery through the foreground-push drain path, and a
-real-crypto re-add-after-rotation decrypt proof.
+but several additional user-visible edge cases still matter before this spec
+can be treated as complete. Reaction fan-out, quoted replies whose parent
+message predates the join, admin-add/send races at the epoch boundary, and
+real-crypto re-add-after-rotation now have focused coverage. Foreground-push
+media recovery is covered by a direct foreground-drain integration test; the
+broader simulator/device-lab rows remain explicit residuals.
 
 In addition, the simulator/integration coverage that exercises the real Go
 P2P + GossipSub + circuit relay stack is not part of the standard CI gate.
 The CLI-backed recovery test silently skips when its peer fixture is unset,
 and the multi-device harness requires fixture orchestration outside the
-standard group gate, so regressions in real network behavior go undetected
-automatically.
+standard group gate. Report 85 now adds a separate
+`group-real-network-nightly` command that forces strict relay fixture checks,
+but the standard `all` gate still does not run those heavy device-lab rows.
 
 A follow-up codebase review also found that the existing paired
 two-simulator group harness is useful but not sufficient by itself: several
-orchestrator checks currently pass on publish success or rotation execution
-even when Bob's receive-side evidence is partial or pending. That means the presence of
+orchestrator checks used to pass on publish success or rotation execution
+even when Bob's receive-side evidence was partial or pending. GON-010 tightened
+the G2/G4/G5/G7/G8 pass criteria, but the presence of
 `group_smoke_alice_harness.dart`, `group_smoke_bob_harness.dart`, and
-`run_routing_smoke_e2e.dart` should be treated as partial evidence until the
-missing onboarding scenarios are added and the pass criteria require
-receiver-visible outcomes.
+`run_routing_smoke_e2e.dart` should still be treated as partial evidence until
+configured paired-simulator runs complete with receiver-visible outcomes.
 
 The simulator coverage is therefore not sufficient against the repo's mobile
 network-resilience expectations. The missing device-context proof is not just
 "some simulator test exists"; it is the combination of group catch-up after
 resume, announcement catch-up for offline readers, exactly-once recovery when
 live and inbox paths both deliver, and fixture-backed real-network execution
-that fails clearly when its prerequisites are unavailable.
+that fails clearly when its prerequisites are unavailable. The recurring
+fixture-backed command now exists, but most receiver-visible simulator rows
+still require device-lab execution.
 
 Kanban task `0346d` added a simulator-audit view of the same risk. Its absent
 and partial findings broaden the simulator closure bar beyond onboarding crypto:
@@ -202,6 +203,13 @@ core promise even though every component test passes.
   3-user fan-out, 4-user round-robin, simultaneous sends, same-sender
   ordering, quoted-reply fan-out, app-restart persistence, and late-joiner
   no-backfill/future-only text delivery.
+- `test/features/groups/integration/group_new_member_onboarding_test.dart`
+  — newly-added discussion member receives only post-join text, image, video,
+  and voice messages; preserves no-backfill for the pre-join message; asserts
+  received media descriptors and receiver-side media-download triggers; also
+  proves post-join reaction fan-out to the newly-added member and quoted-reply
+  rendering when the quoted parent remains pre-join/unavailable; pins
+  multi-add epoch convergence and the subscribe-effective add/send boundary.
 - `test/features/groups/integration/group_membership_smoke_test.dart` —
   admin removes member; removed member cannot send; leave + promote;
   concurrent admin-change convergence; multiple adds; add-member syncs all
@@ -222,10 +230,15 @@ core promise even though every component test passes.
 - `test/features/groups/integration/announcement_happy_path_test.dart` —
   announcement create, admin send, reader read-only receive, member reaction,
   and admin-posted GIF/image receive through fake-network delivery.
+- `test/features/groups/integration/announcement_new_reader_onboarding_test.dart`
+  — newly-added announcement reader receives only post-join admin image,
+  video, and voice/audio messages; preserves no-backfill for the pre-join
+  admin post; asserts received media descriptors and receiver-side
+  media-download triggers.
 - `test/features/groups/integration/group_reaction_roundtrip_test.dart` —
   group reaction publish/listener round-trip and dissolved-group rejection;
-  this proves a newly-added member can react to a post-join message, but it
-  does not prove reactions fan out **to** a newly-added member as recipient.
+  the newly-added-recipient onboarding case is now covered by
+  `group_new_member_onboarding_test.dart`.
 - `test/features/groups/integration/group_multi_device_convergence_test.dart`
   — fake-backed same-user multi-device convergence for group state; useful
   lower-layer coverage, but not a real simulator phone/tablet proof and not
@@ -287,18 +300,20 @@ core promise even though every component test passes.
   standard `groups` gate.
 - `integration_test/multi_relay_failover_test.dart` — group recovery under
   multi-relay failover, but only when `MKNOON_RELAY_ADDRESSES` provides at
-  least two relays. Without that fixture it is skipped, so it is partial
-  evidence rather than a recurring relay/libp2p regression signal.
+  least two relays. Report 85 GON-013 added
+  `MKNOON_REQUIRE_MULTI_RELAY=true`, which makes closure/nightly fixture
+  absence fail clearly instead of being counted as skipped pseudo-evidence.
+  Without a configured fixture it is still partial evidence rather than a
+  recurring relay/libp2p regression signal.
 - `integration_test/group_smoke_alice_harness.dart` +
   `integration_test/group_smoke_bob_harness.dart` — paired two-simulator
   harness covering G1 publish, G2 warm burst ×5, G3 bidirectional, G4
   offline→inbox→drain, G5 full lifecycle, G6 discovery timing, G7 key
-  rotation under traffic, G8 flood publish. Current orchestrator pass
-  criteria are permissive for some rows: G2 accepts 3/5 deliveries, G4 can
-  pass with Bob receipt still pending, G5 only checks timeline length and can
-  include pending receive entries, G7 can pass when rotation ran even if Bob
-  did not receive both messages, and G8 can pass on Alice publish success
-  regardless of Bob receipt timing.
+  rotation under traffic, G8 flood publish. Report 85 GON-010 tightened the
+  orchestrator so G2 requires 5/5 Bob receipts, G4 requires recovered Bob
+  `e2eMs`, G5 rejects pending/missing receiver entries, G7 requires Bob
+  pre/post-rotation receipts, and G8 requires Bob receipt in addition to Alice
+  publish success.
 - `integration_test/group_multi_device_real_harness.dart` — same-user
   two-device convergence; requires a CLI peer fixture and fails when that
   fixture is absent, but is not part of the standard group gate.
@@ -311,20 +326,20 @@ core promise even though every component test passes.
 
 | # | Scenario | Status | Evidence |
 |---|---|---|---|
-| A-1 | New member joins existing group → receives subsequent **text** from existing members | COVERED | `group_messaging_smoke_test.dart` "late joiner receives messages only after joining"; `group_membership_smoke_test.dart` separately proves new-member participation and member-list convergence |
-| A-2 | New member joins existing group → receives subsequent **image** from existing members | MISSING | No test exists |
-| A-3 | New member joins existing group → receives subsequent **video** from existing members | MISSING | No test exists |
-| A-4 | New member joins existing group → receives subsequent **voice note** from existing members | MISSING | No test exists |
-| A-5 | New member receives history backfill OR explicit "no backfill" policy is asserted | COVERED (discussion / invite bootstrap) | `group_messaging_smoke_test.dart` late joiner receives only post-join text; `invite_round_trip_test.dart` asserts invite bootstrap does not preload pre-join history and allows post-join replay |
-| A-6 | New member's ML-KEM key exchange completes end-to-end with **real crypto**, and Bob decrypts a subsequent group message using the delivered group key | MISSING (integrated flow) | Go crypto/bridge tests cover primitives; fake-network group tests use fake/passthrough crypto; current real-network harnesses do not assert the full new-member key-acceptance + decrypt path |
-| A-7 | New member added to **announcement** group receives subsequent admin-posted media | PARTIAL | `announcement_happy_path_test.dart` covers admin-posted GIF/image after a reader is added, and `group_resume_recovery_test.dart` covers announcement image/media and voice recovery through fake-network/widget paths; no new-reader video, no announcement no-backfill assertion, no real-network simulator assertion, and no real-crypto proof |
-| A-8 | Multiple members selected in one user-facing group-creation/add flow all converge on identical group key epoch and can decrypt the same message | PARTIAL | `create_group_with_members_use_case_test.dart` checks per-recipient invite/encrypt behavior; no end-to-end multi-recipient decrypt proof |
-| A-9 | Re-joining after leaving — re-added member is on the current epoch, not a stale one | PARTIAL | `group_membership_smoke_test.dart` asserts re-add on fake-network epoch 2 with no removed-period traffic; `invite_round_trip_test.dart` covers remove→rotate→re-invite on a passthrough epoch; real-crypto/simulator decrypt proof remains missing |
-| A-10 | Reaction fan-out reaches a newly-added member after they join | PARTIAL | Reaction unit tests and `group_reaction_roundtrip_test.dart` cover reaction handling and a newly-added member sending a reaction; no onboarding scenario proves a newly-added member receives another member's reaction |
-| A-11 | Quoted reply references a pre-join parent message | PARTIAL | Quoted-message propagation and missing-parent UI fallback are covered separately; no test combines new-member no-backfill with a post-join quoted reply whose parent is absent |
-| A-12 | Concurrent admin add + existing-member send at the epoch boundary has a deterministic user-visible contract | MISSING | No test races member add/key acceptance against a same-epoch group send |
-| A-13 | Newly-added member receives post-join media through the foreground-push drain path | MISSING | `foreground_group_push_drain_test.dart` covers text inbox drain, dedupe, and 1:1 isolation only |
-| A-14 | Re-added member after rotation decrypts the current epoch with real crypto | MISSING | TC-8 records persisted epoch state as partial evidence and TC-13 covers first-add real decrypt; no test proves re-added Bob decrypts an E2 message after removal/rotation/re-add |
+| A-1 | New member joins existing group → receives subsequent **text** from existing members | COVERED | `group_messaging_smoke_test.dart` "late joiner receives messages only after joining"; `group_membership_smoke_test.dart` separately proves new-member participation and member-list convergence; `group_new_member_onboarding_test.dart` now preserves the same contract in the consolidated media-onboarding suite |
+| A-2 | New member joins existing group → receives subsequent **image** from existing members | COVERED (fake-network / app-layer) | `group_new_member_onboarding_test.dart` sends a post-join image through the bridge-backed group send path and asserts Bob's received descriptor plus media-download trigger |
+| A-3 | New member joins existing group → receives subsequent **video** from existing members | COVERED (fake-network / app-layer) | `group_new_member_onboarding_test.dart` sends a post-join video through the bridge-backed group send path and asserts Bob's received descriptor plus media-download trigger |
+| A-4 | New member joins existing group → receives subsequent **voice note** from existing members | COVERED (fake-network / app-layer) | `group_new_member_onboarding_test.dart` sends a post-join audio/voice attachment through the bridge-backed group send path and asserts Bob's duration/waveform descriptor plus media-download trigger |
+| A-5 | New member receives history backfill OR explicit "no backfill" policy is asserted | COVERED (discussion / invite bootstrap) | `group_messaging_smoke_test.dart` late joiner receives only post-join text; `invite_round_trip_test.dart` asserts invite bootstrap does not preload pre-join history and allows post-join replay; `group_new_member_onboarding_test.dart` preserves no-backfill while adding post-join media |
+| A-6 | New member's ML-KEM key exchange completes end-to-end with **real crypto**, and Bob decrypts a subsequent group message using the delivered group key | COVERED (real Go bridge / app invite acceptance); PARTIAL for live GossipSub | `integration_test/group_real_crypto_onboarding_test.dart` generates Alice/Bob identities and ML-KEM keys through `GoBridgeClient`, sends Bob a production encrypted group invite, accepts it through `handleIncomingGroupInvite`, and decrypts a subsequent group ciphertext with Bob's accepted key. This is fixture-light real-bridge crypto evidence, not a full two-node GossipSub delivery proof. |
+| A-7 | New member added to **announcement** group receives subsequent admin-posted media | COVERED (fake-network / app-layer); PARTIAL for simulator/real-network | `announcement_new_reader_onboarding_test.dart` covers post-join admin image, video, and voice/audio for a newly-added reader and preserves no-backfill for the pre-join admin post. `announcement_happy_path_test.dart` and `group_resume_recovery_test.dart` remain supporting evidence. Real-network simulator delivery and real-crypto proof remain open elsewhere. |
+| A-8 | Multiple members selected in one user-facing group-creation/add flow all converge on identical group key epoch and can decrypt the same message | COVERED (fake-network / app-layer); PARTIAL for real decrypt | `group_new_member_onboarding_test.dart` proves Bob and Charlie converge on the same latest epoch and receive the same post-add message with that `keyGeneration`; `create_group_with_members_use_case_test.dart` remains unit evidence for multi-recipient invite/config fan-out. Real decrypt proof remains open under the crypto sessions. |
+| A-9 | Re-joining after leaving — re-added member is on the current epoch, not a stale one | COVERED (fake-network / passthrough epoch); PARTIAL for simulator | `group_membership_smoke_test.dart` asserts re-add on fake-network epoch 2 with no removed-period traffic; `invite_round_trip_test.dart` covers remove→rotate→re-invite on a passthrough epoch; `group_real_crypto_onboarding_test.dart` adds real-bridge current-epoch decrypt proof for the re-add path. Live simulator delivery remains open. |
+| A-10 | Reaction fan-out reaches a newly-added member after they join | COVERED (fake-network / app-layer) | `group_new_member_onboarding_test.dart` proves Bob, added after a pre-join message, receives Charlie's post-join reaction through the listener/reaction repository path while retaining no reaction state for the pre-join message |
+| A-11 | Quoted reply references a pre-join parent message | COVERED (fake-network / widget) | `group_new_member_onboarding_test.dart` proves Bob receives a post-join quoted reply with the `quotedMessageId` preserved, does not receive the pre-join parent, and the group conversation UI renders `Message unavailable` |
+| A-12 | Concurrent admin add + existing-member send at the epoch boundary has a deterministic user-visible contract | COVERED (fake-network / app-layer) | `group_new_member_onboarding_test.dart` pins the current contract: a staged but unsubscribed Bob does not receive the racing message, then receives the first post-subscription message exactly once while member lists converge |
+| A-13 | Newly-added member receives post-join media through the foreground-push drain path | COVERED (foreground-drain direct integration); PARTIAL for OS-level push/simulator | `foreground_group_push_drain_test.dart` now drains a targeted group image inbox page from a foreground push, inserts the media message exactly once across repeated pushes, preserves the descriptor, triggers one media download, and surfaces the expected in-app notification. |
+| A-14 | Re-added member after rotation decrypts the current epoch with real crypto | COVERED (real Go bridge / app invite acceptance); PARTIAL for live GossipSub | `integration_test/group_real_crypto_onboarding_test.dart` removes Bob, clears Bob's local group/key state, generates a real next group key through the bridge, re-sends a production encrypted invite, proves Bob decrypts the current-epoch ciphertext after re-add, and verifies retained old key material cannot decrypt the new ciphertext. |
 
 ### B. Cryptography & forward-secrecy scenarios
 
@@ -333,20 +348,20 @@ core promise even though every component test passes.
 | B-1 | Initial group epoch key derivation on creation | PARTIAL: Go group-key generation is covered; app-layer creation tests cover persistence/call behavior, not multi-recipient decrypt proof |
 | B-2 | Key rotation on member **add** — current product behavior (rotation or no rotation) is asserted | MISSING |
 | B-3 | Key rotation on member **remove** — distribution-before-broadcast ordering | COVERED |
-| B-4 | Removed member retaining old key **cannot decrypt** post-rotation ciphertext (ciphertext-level forward secrecy) | PARTIAL: removed members are excluded from key update distribution, and Go validator rejects previous epochs after grace; direct retained-old-key decrypt failure for removed Bob is missing |
+| B-4 | Removed member retaining old key **cannot decrypt** post-rotation ciphertext (ciphertext-level forward secrecy) | COVERED at real-bridge app boundary: `integration_test/group_real_crypto_onboarding_test.dart` retains Bob's old key, rotates/re-adds with a new bridge key, and verifies the retained old key cannot decrypt the current ciphertext. Go node previous-epoch-after-grace rejection remains supporting evidence. |
 | B-5 | Wrong/missing/corrupt ciphertext on receive — graceful failure, no crash, listener tolerates malformed envelope | COVERED at Go/node decrypt boundary; PARTIAL at Dart app boundary |
-| B-6 | Replay protection — duplicate encrypted envelope with same nonce is rejected beyond ordinary messageId dedupe, or the product contract explicitly records messageId dedupe as the replay boundary | MISSING |
-| B-7 | Membership-event signature verification at the envelope layer, not just sender-is-admin at the app layer | PARTIAL: generic Go group-envelope signature validation and app-layer admin authorization are covered; a membership-system-event-specific app integration assertion for forged signed events is missing |
-| B-8 | Real ML-KEM-768 + AES-256-GCM round-trip verified at least once in an automated test | PARTIAL: primitive and bridge round-trips covered; integrated group-onboarding decrypt proof missing |
-| B-9 | Re-add-after-rotation decrypt proof — Bob removed at E1, re-added at E2, and decrypts only the current epoch with real crypto | MISSING |
+| B-6 | Replay protection — duplicate encrypted envelope with same nonce is rejected beyond ordinary messageId dedupe, or the product contract explicitly records messageId dedupe as the replay boundary | COVERED as app-layer replay convergence, not nonce-cache rejection: `handle_incoming_group_message_use_case_test.dart` pins duplicate pubsub+inbox and tampered-timestamp replay dedupe by `messageId`; `group_message_listener_test.dart` pins no duplicate local notification for live+replay delivery. |
+| B-7 | Membership-event signature verification at the envelope layer, not just sender-is-admin at the app layer | COVERED by Go envelope validation plus app authorization: `pubsub_test.go` rejects a forged `members_added` system envelope signed by an attacker while claiming the admin peer, and accepts the same payload when signed by the real admin; `group_message_listener_test.dart` remains app-layer unauthorized membership-event evidence. |
+| B-8 | Real ML-KEM-768 + AES-256-GCM round-trip verified at least once in an automated test | COVERED for primitive/bridge and integrated group-onboarding decrypt: `integration_test/group_real_crypto_onboarding_test.dart` connects real ML-KEM invite encryption to group AES-GCM decrypt through the app invite handler. Live GossipSub delivery remains a separate simulator/real-network residual. |
+| B-9 | Re-add-after-rotation decrypt proof — Bob removed at E1, re-added at E2, and decrypts only the current epoch with real crypto | COVERED at real-bridge app boundary by `integration_test/group_real_crypto_onboarding_test.dart`; live receiver-visible network delivery remains open elsewhere. |
 
 ### C. Media scenarios beyond new-member onboarding
 
 | # | Scenario | Status |
 |---|---|---|
-| C-1 | Existing member receives **image** sent to discussion group via fan-out | PARTIAL (send-side media payload, incoming media persistence, inbox media parsing, and fake/simulator UI image delivery are covered; new-member image onboarding and real Go network delivery are not pinned) |
-| C-2 | Existing member receives **video** sent to discussion group | PARTIAL (inbox parsing for video descriptors exists; live discussion-group fan-out is not pinned) |
-| C-3 | Existing member receives **voice note** sent to discussion group | PARTIAL (send-side voice payload and inbox/audio descriptor parsing exist; live discussion-group fan-out is not pinned) |
+| C-1 | Existing member receives **image** sent to discussion group via fan-out | COVERED (fake-network / app-layer); PARTIAL for live GossipSub | `group_media_fanout_test.dart` proves existing Bob and Charlie receive Alice's image message with descriptor persistence; simulator/live Go network delivery remains open elsewhere. |
+| C-2 | Existing member receives **video** sent to discussion group | COVERED (fake-network / app-layer); PARTIAL for live GossipSub | `group_media_fanout_test.dart` proves existing Bob and Charlie receive Alice's video message with descriptor persistence; simulator/live Go network delivery remains open elsewhere. |
+| C-3 | Existing member receives **voice note** sent to discussion group | COVERED (fake-network / app-layer); PARTIAL for live GossipSub | `group_media_fanout_test.dart` proves existing Bob and Charlie receive Alice's voice/audio message with duration/waveform descriptor persistence; simulator/live Go network delivery remains open elsewhere. |
 | C-4 | Long text payload (multi-kilobyte) — fragmentation / single-publish behavior | PARTIAL: Go group crypto covers 1 MB plaintext round-trip; app/network publish and delivery behavior for long group text is not pinned |
 | C-5 | Message retention boundary — backlog policy on receive | MISSING (planning matrix flags this) |
 
@@ -358,17 +373,17 @@ core promise even though every component test passes.
 | D-2 | Rendezvous discovery — register/discover roundtrip | MISSING (only observable in CLI harness) |
 | D-3 | Circuit relay path — DialPeerViaRelay correctness | MISSING (only observable in CLI harness) |
 | D-4 | 3-party fan-out (A/B/C) on real GossipSub | MISSING (planning matrix flags this as P0) |
-| D-5 | Partition / heal — dropped live delivery later recovers through durable group inbox drain | PARTIAL (fake-network partition→inbox→heal recovery is covered with cursor order and resumed live delivery; real-network simulator/GossipSub partition recovery is not pinned) |
+| D-5 | Partition / heal — dropped live delivery later recovers through durable group inbox drain | COVERED for fake-network durable-inbox contract; PARTIAL for real-network simulator/GossipSub (`group_resume_recovery_test.dart` now stages three missed split-window messages across cursor-ordered inbox pages and proves resumed live delivery after heal) |
 | D-6 | New member joins over real GossipSub (subscription timing, discovery latency) | MISSING |
 | D-7 | Simulator resilience matrix for Group + Announcement: group catch-up after resume, announcement catch-up for offline readers, and exactly-once recovery when live + inbox both deliver | PARTIAL (foreground push drain, fake-network drain coverage, the foreground-push two-simulator smoke, and manual two-simulator harnesses exist, but no recurring real-network simulator proof covers the full matrix with strict receive-side assertions) |
-| D-8 | Foreground push drains newly-added member media, not only text | MISSING (`foreground_group_push_drain_test.dart` is text-only and does not combine add-member with media payloads) |
+| D-8 | Foreground push drains newly-added member media, not only text | COVERED (foreground-drain direct integration); PARTIAL for OS-level push/simulator (`foreground_group_push_drain_test.dart` now covers a representative image media payload; background/terminated OS push and paired-simulator media push delivery remain outside this direct suite) |
 | D-9 | True two-simulator Discussion UI journey: create/invite/accept, bidirectional text, group list, unread/read, restart, and catch-up | PARTIAL (host-side fake-network and paired harness pieces exist, but no full UI journey pins all receiver-visible outcomes) |
 | D-10 | True two-simulator Announcement permissions: admin sends text/media/voice, reader receives/reacts, reader compose is blocked, and no optimistic bubble is stranded | PARTIAL (fake/widget Announce coverage exists; simulator UI permission and media journey remains missing) |
-| D-11 | Admin add/remove end-to-end on simulator, including membership propagation, removed-user route exit, no new notifications, and stale notification/deep-link denial | PARTIAL (host-side membership coverage exists; simulator notification/access denial is missing) |
-| D-12 | Real relay/libp2p recovery matrix: direct-to-relay fallback, relay down, multi-relay failover, partition heal, duplicate live+inbox delivery, and out-of-order replay | PARTIAL (`multi_relay_failover_test.dart` is env-gated; fake-network recovery covers pieces; out-of-order simulator replay is not pinned) |
-| D-13 | Same-account multi-device simulator consistency for sent history, membership, unread, mute, and notifications | PARTIAL (`group_multi_device_convergence_test.dart` is fake-backed; real simulator multi-device proof is missing) |
-| D-14 | Failure/recovery UI flows: publish failure, inbox-store failure, zero peers, upload failure, rapid pause/resume, and restart with pending group sends/media | PARTIAL (host tests cover many branches; simulator UI coverage is thin) |
-| D-15 | OS-level group notification and deep-link routing across foreground, background, and terminated app states | PARTIAL (`notification_open_ui_smoke_test.dart` covers invite and group-message tap pieces; full group notification matrix is missing) |
+| D-11 | Admin add/remove end-to-end on simulator, including membership propagation, removed-user route exit, no new notifications, and stale notification/deep-link denial | PARTIAL (host-side self-removal cleanup, no post-removal local notification, and stale route-target denial are covered; paired-simulator route exit/access-denial UI remains missing) |
+| D-12 | Real relay/libp2p recovery matrix: direct-to-relay fallback, relay down, multi-relay failover, partition heal, duplicate live+inbox delivery, and out-of-order replay | PARTIAL (Go relay-selector fallback and fake-network recovery/dedupe/partition-order tests pass; `multi_relay_failover_test.dart` now has a strict required-fixture mode; live relay simulator replay remains unproven locally) |
+| D-13 | Same-account multi-device simulator consistency for sent history, membership, unread, mute, and notifications | PARTIAL (`group_multi_device_convergence_test.dart` host oracle passes and the real harness is classified as device-lab evidence; real simulator multi-device proof is still outside local closure) |
+| D-14 | Failure/recovery UI flows: publish failure, inbox-store failure, zero peers, upload failure, rapid pause/resume, and restart with pending group sends/media | PARTIAL (host retry/upload/failure suites cover many branches; simulator UI coverage is thin) |
+| D-15 | OS-level group notification and deep-link routing across foreground, background, and terminated app states | PARTIAL (`chat_and_group_push_open_flow_test.dart`, `resolve_group_notification_route_target_use_case_test.dart`, and `notification_open_ui_smoke_test.dart` cover host-side routing, stale removed-group denial, and useful invite/group-message tap pieces; full OS-state simulator matrix is missing) |
 
 ### E. CI gate sufficiency
 
@@ -389,12 +404,10 @@ core promise even though every component test passes.
   gives CI a fixture-backed real-network regression signal by default.
 - The two-simulator alice/bob harnesses require manual orchestration
   (`dart run integration_test/scripts/run_routing_smoke_e2e.dart`) and are
-  not invoked by any automated gate. They also need stricter pass criteria
-  before they count as simulator sufficiency: G2 currently accepts 3/5
-  receives, G4 tolerates pending Bob receipt, G5 can pass with pending or
-  missing receive entries because only timeline length is checked, G7 can pass
-  on rotation execution if both receive checks are false, and G8 can pass on
-  Alice publish success even when Bob receipt is pending.
+  not invoked by any automated gate. GON-010 added host-side tests for the
+  G2/G4/G5/G7/G8 acceptance criteria and wired the orchestrator to fail on
+  pending or sender-only receiver evidence; this removes the known false-pass
+  issue but does not itself add new simulator rows.
 - The current named gates do not encode a minimum simulator sufficiency bar
   for Group + Announcement. For this audit, that bar is TC-13 real crypto,
   TC-17 new-member join over real GossipSub, TC-20 group/announcement
@@ -541,9 +554,10 @@ it makes sense.
   sends `M1` text message.
 - **Assertion:** Bob's group repo contains `M1`. Bob's group repo does
   **not** contain `M0` (no backfill).
-- **Status today:** A-1 and discussion no-backfill are covered by existing
-  late-joiner/future-only tests. This case remains useful as a consolidated
-  preservation assertion if the new media-onboarding suite is added.
+- **Status today:** Covered. `group_new_member_onboarding_test.dart` now
+  preserves the consolidated post-join text and pre-join no-backfill
+  assertion, alongside the existing `group_messaging_smoke_test.dart`
+  late-joiner coverage.
 
 ### TC-2: Newly-added member receives subsequent **image** message
 - **File:** same as TC-1
@@ -552,13 +566,17 @@ it makes sense.
 - **Assertion:** Bob's `group_message_listener` produces a message with
   the expected media descriptor; Bob's media-download trigger fires; the
   resulting feed/conversation shows the image.
-- **Status today:** A-2 missing.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_new_member_onboarding_test.dart`, including descriptor persistence
+  and receiver media-download trigger evidence.
 
 ### TC-3: Newly-added member receives subsequent **video** message
 - **File:** same as TC-1
 - **Setup:** Same as TC-2 with video attachment.
 - **Assertion:** Same as TC-2 with video.
-- **Status today:** A-3 missing.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_new_member_onboarding_test.dart`, including descriptor persistence
+  and receiver media-download trigger evidence.
 
 ### TC-4: Newly-added member receives subsequent **voice note**
 - **File:** same as TC-1
@@ -566,7 +584,9 @@ it makes sense.
   uploaded → published).
 - **Assertion:** Bob receives the voice attachment with the correct
   duration/encoding metadata.
-- **Status today:** A-4 missing.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_new_member_onboarding_test.dart`, including duration/waveform
+  descriptor persistence and receiver media-download trigger evidence.
 
 ### TC-5: Announcement-group new reader receives subsequent admin-posted media
 - **File:** `test/features/groups/integration/announcement_new_reader_onboarding_test.dart`
@@ -575,11 +595,11 @@ it makes sense.
   supported by the group media path, and voice-note media as admin.
 - **Assertion:** Bob receives every post-join admin media item with intact
   descriptors and does not receive `M0`.
-- **Status today:** A-7 partial. Existing coverage proves a reader added
-  before the send receives an admin-posted GIF/image, and fake-network/widget
-  recovery coverage proves announcement image/media and voice can survive
-  resume fallback. It still does not pin announcement no-backfill onboarding,
-  video coverage, real-network simulator delivery, or real-crypto proof.
+- **Status today:** Covered at the fake-network/app layer by
+  `announcement_new_reader_onboarding_test.dart`, including post-join
+  admin image, video, and voice/audio descriptor persistence, receiver
+  media-download trigger evidence, and pre-join no-backfill preservation.
+  Real-network simulator delivery and real-crypto proof remain open elsewhere.
 
 ### TC-6: History-backfill policy assertion
 - **File:** same as TC-1 (folded into the same suite)
@@ -587,11 +607,10 @@ it makes sense.
 - **Assertion:** Bob's repo has zero messages with timestamps before his
   `joinedAt`. This pins the no-backfill policy as a contract so future
   changes that accidentally leak history will fail.
-- **Status today:** A-5 is covered for discussion groups by
-  `group_messaging_smoke_test.dart` and for invite bootstrap by
-  `invite_round_trip_test.dart`. Keep this case only if the new media or
-  announcement onboarding suites need their own no-backfill preservation
-  assertion.
+- **Status today:** Covered for discussion groups by
+  `group_messaging_smoke_test.dart`, for invite bootstrap by
+  `invite_round_trip_test.dart`, and now preserved in the new media
+  onboarding suite by `group_new_member_onboarding_test.dart`.
 
 ### TC-7: Multiple members added in one batch all converge on the same epoch
 - **File:** same as TC-1
@@ -605,7 +624,10 @@ it makes sense.
   state or delivered message `keyGeneration`. Per-recipient invite/encrypt
   call-count evidence remains useful at unit level, but does not replace
   receive/decrypt proof.
-- **Status today:** A-8 partial.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_new_member_onboarding_test.dart`, which proves Bob and Charlie share
+  the same latest epoch and receive the same post-add message with that
+  `keyGeneration`. Real decrypt proof remains open elsewhere.
 
 ### TC-8: Re-joining after leaving — epoch correctness
 - **File:** same as TC-1
@@ -614,11 +636,13 @@ it makes sense.
 - **Assertion:** Bob receives the post-rejoin message at the current epoch
   (`E2` in this scenario), not the stale epoch, and Bob's repo does not
   show messages sent during his absence. Fake-network evidence may assert
-  persisted epoch state; real decrypt proof belongs to TC-13.
-- **Status today:** A-9 partial. `group_membership_smoke_test.dart` and
-  `invite_round_trip_test.dart` cover the fake/passthrough epoch-state
-  version of this behavior; real-crypto and simulator decrypt proof remains
-  open.
+  persisted epoch state; real re-add decrypt proof belongs to TC-26.
+- **Status today:** Covered for fake-network/passthrough epoch state.
+  `group_membership_smoke_test.dart` proves re-add at epoch 2, resumed
+  send/receive, and no removed-period traffic; `invite_round_trip_test.dart`
+  covers remove→rotate→re-invite on a passthrough epoch. Real-bridge re-add
+  decrypt is covered by `group_real_crypto_onboarding_test.dart`; live
+  simulator delivery remains open.
 
 ## 6.2 Cryptography & forward secrecy
 
@@ -634,13 +658,16 @@ it makes sense.
   listener observes the failure path in that test layer, it must not insert
   a successful message row. A fake-network plaintext listener test does not
   satisfy this case.
-- **Status today:** B-4 partial. Key-update distribution excludes removed
-  members, and Go node validation rejects previous epochs after grace, but no
-  test captures Bob's retained old key and proves it cannot decrypt a
-  post-removal ciphertext.
+- **Status today:** Covered at the real-bridge app boundary by
+  `integration_test/group_real_crypto_onboarding_test.dart`. The test retains
+  Bob's old key, advances Alice to a new bridge group key, proves Bob decrypts
+  only after accepting the re-add invite, and verifies the retained old key
+  cannot decrypt the new ciphertext. Go previous-epoch-after-grace rejection
+  remains supporting node-level evidence.
 
 ### TC-10: Wrong/corrupt ciphertext on receive — graceful failure
-- **File:** same as TC-9
+- **File:** `go-mknoon/node/pubsub_decryption_failure_test.go` plus
+  `go-mknoon/crypto/group_test.go`
 - **Setup:** A real encrypted group payload is corrupted before decrypt
   (for example one ciphertext/tag byte is flipped) while the surrounding
   group/message metadata remains otherwise valid.
@@ -655,7 +682,8 @@ it makes sense.
   supplemental because fake-network tests do not see real ciphertext.
 
 ### TC-11: Replay protection — duplicate envelope with same nonce
-- **File:** same as TC-9
+- **File:** `test/features/groups/application/handle_incoming_group_message_use_case_test.dart`
+  plus `test/features/groups/application/group_message_listener_test.dart`
 - **Setup:** Replay the same encrypted envelope/nonce through the real
   decrypt-or-receive path.
 - **Assertion:** The second receive is rejected or ignored by the product's
@@ -663,41 +691,50 @@ it makes sense.
   dedupe rather than nonce-level rejection, the test must assert that
   contract explicitly and the matrix must stop claiming nonce rejection is
   implemented.
-- **Status today:** B-6 missing beyond ordinary messageId/content dedupe.
+- **Status today:** Covered as app-layer replay convergence, not nonce-cache
+  rejection. The current product contract is stable `messageId` dedupe:
+  `handle_incoming_group_message_use_case_test.dart` covers pubsub+inbox
+  duplicate convergence and replay with a tampered timestamp, while
+  `group_message_listener_test.dart` proves live+replay delivery does not
+  create a second local notification.
 
 ### TC-12: Membership-event signature verification at the envelope layer
-- **File:** `test/features/groups/application/group_message_listener_signature_test.dart`
-- **Setup:** Inject a `members_added` system event with a forged sender
-  signature (sender claims to be admin but signature is invalid).
-- **Assertion:** Listener rejects the event and does not mutate group
-  membership state.
-- **Status today:** B-7 partial. App-layer admin authorization already rejects
-  unauthorized `member_added` / `member_removed` events, and Go validates
-  generic group-envelope signatures. The remaining gap is a membership-system
-  app integration assertion for forged signed membership events.
+- **File:** `go-mknoon/node/pubsub_test.go` plus
+  `test/features/groups/application/group_message_listener_test.dart`
+- **Setup:** Publish a `members_added` system payload inside a v3 group
+  envelope that claims the admin peer but is signed by an attacker key.
+- **Assertion:** The Go group-topic validator rejects the forged envelope as
+  `reject:bad_signature`; the same payload signed by the real admin is
+  accepted. Flutter app-layer tests still reject unauthorized decoded
+  membership events as a second line of defense.
+- **Status today:** Covered. `TestGroupTopicValidator_RejectsForgedMembershipSystemEventSignature`
+  is membership-system-event-specific envelope evidence, and the existing
+  `group_message_listener_test.dart` unauthorized member add/remove cases
+  remain app-boundary authorization evidence after Go emits decoded events.
 
 ### TC-13: Integrated real-crypto onboarding — Bob joins, receives key, decrypts message
 - **File:** `integration_test/group_real_crypto_onboarding_test.dart`
   (modeled on `group_recovery_cli_e2e_test.dart`)
-- **Setup:** Two `GoBridgeClient` nodes against the real Go bridge. Alice
-  creates a group and adds Bob (whose contact has a real ML-KEM public
-  key produced by `mlkem.keygen`). Alice sends a plaintext-input message
-  that the bridge encrypts with the new group epoch key. Bob receives it.
-- **Assertion:** Bob's listener produces the original plaintext. The Go
-  diagnostic events `group:discovery` and `group:publish_debug` show
-  successful discovery, `topicPeers` ≥ 1 when the publish expects a live
-  peer, and successful publish.
-  No fake or passthrough crypto bridge involved, and no pre-saved or
-  fixture-injected Bob group key can be used as the closure evidence.
-- **CI note:** A local fixture skip is acceptable for developer machines,
-  but it does not count as audit closure. The recurring gate that claims
-  TC-13 evidence must provision the peer fixture or fail clearly.
+- **Setup:** `GoBridgeClient` generates Alice/Bob identities and ML-KEM keys.
+  Alice creates a group, adds Bob, sends Bob a production encrypted group
+  invite, and Bob accepts it through `handleIncomingGroupInvite` without
+  pre-saving Bob's group key.
+- **Assertion:** Bob's accepted key matches Alice's current group key and
+  decrypts a subsequent real bridge `group.encrypt` ciphertext to the original
+  plaintext. No fake or passthrough crypto bridge participates in the key
+  exchange or ciphertext proof.
+- **Gate note:** The suite is classified in the Nightly / Release Pool as
+  device-backed real-bridge crypto evidence. It does not claim live
+  GossipSub/two-node receiver-visible delivery, and it does not satisfy the
+  recurring real-network gate requirement on its own.
 - **Note:** This is the canonical closure for A-6 and the integrated
   onboarding portion of B-8. It does not replace the existing lower-level
   ML-KEM/AES-GCM primitive tests; it connects those primitives to the
   Flutter group-onboarding flow.
-- **Status today:** A-6 missing; B-8 primitive/bridge coverage exists, but
-  integrated group-onboarding decrypt proof is missing.
+- **Status today:** A-6 and the integrated onboarding portion of B-8 are
+  covered at the real-bridge app boundary by
+  `integration_test/group_real_crypto_onboarding_test.dart`. Live GossipSub
+  delivery remains open under the simulator/real-network sessions.
 
 ## 6.3 Existing-member media in discussion groups
 
@@ -706,21 +743,25 @@ it makes sense.
 - **Setup:** Alice + Bob both already in discussion group from creation.
   Alice sends image.
 - **Assertion:** Bob receives image with correct media descriptor.
-- **Status today:** C-1 partial. Send-side media payload, incoming media
-  persistence, inbox media parsing, and fake/simulator existing-member group
-  image UI delivery are covered. Real Go network delivery, new-member image
-  onboarding, and non-image media fan-out remain open.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_media_fanout_test.dart`. Existing Bob and Charlie receive Alice's
+  image message, preserve the sender message id, persist the image descriptor,
+  and the primary receiver starts the media-download path. Real Go network
+  delivery remains open elsewhere.
 
 ### TC-15: Existing member receives video in discussion group
 - **File:** same as TC-14
-- **Status today:** C-2 partial. Inbox replay parsing covers video
-  descriptors, but live discussion-group video fan-out is not pinned.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_media_fanout_test.dart`. Existing Bob and Charlie receive Alice's
+  video message and persist width, height, duration, MIME type, and size
+  descriptors. Real Go network delivery remains open elsewhere.
 
 ### TC-16: Existing member receives voice note in discussion group
 - **File:** same as TC-14
-- **Status today:** C-3 partial. Send-side voice payload and inbox/audio
-  descriptor parsing are covered, but live discussion-group voice fan-out is
-  not pinned.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_media_fanout_test.dart`. Existing Bob and Charlie receive Alice's
+  voice/audio message and persist MIME type, duration, size, and waveform
+  descriptors. Real Go network delivery remains open elsewhere.
 
 ## 6.4 Simulator / real-network scenarios
 
@@ -758,10 +799,11 @@ it makes sense.
   runs.
 - **Assertion:** Bob ends up with all 4 messages exactly once. The 3
   dropped ones arrive via inbox drain; the 4th arrives live.
-- **Status today:** D-5 partial. Fake-network partition→durable-inbox→heal
-  behavior is already covered with cursor ordering and resumed live delivery;
-  the remaining gap is the same recovery contract over the real
-  bridge/GossipSub simulator path.
+- **Status today:** D-5 covered for fake-network durable-inbox recovery and
+  partial for real-network simulator/GossipSub. GON-014 tightened
+  `group_resume_recovery_test.dart` so a partitioned member misses three
+  split-window messages, drains them through three cursor-ordered durable inbox
+  pages exactly once, and then receives the post-heal live message.
 
 ### TC-20: Simulator Group + Announcement recovery sufficiency matrix
 - **File:** extend an existing fixture-backed simulator/orchestrated group
@@ -779,9 +821,10 @@ it makes sense.
   `FakeGroupPubSubNetwork`.
 - **Status today:** D-7 partial. Existing fake-network and foreground-push
   tests cover pieces of this behavior, and the paired simulator harness covers
-  related group lifecycle paths. However, the current simulator assertions are
-  too permissive on several rows and no recurring real-network simulator
-  proof covers the full matrix with strict receive-side success criteria.
+  related group lifecycle paths. `routing_smoke_group_criteria_test.dart` now
+  pins strict G2/G4/G5/G7/G8 receiver-visible criteria, and
+  `run_routing_smoke_e2e.dart` uses those criteria. A recurring real-network
+  simulator proof for the full Group + Announcement matrix remains open.
 
 ## 6.5 CI gate sufficiency closure
 
@@ -790,10 +833,12 @@ it makes sense.
   TC-17, plus the recovery matrix from TC-20) into a recurring nightly or
   pre-release gate with the required simulator/peer fixture. A skipped
   fixture-backed run does not count as passing evidence.
-- **Status today:** E missing. `scripts/run_test_gates.sh groups` is
-  host-side fake-network only, and `scripts/run_test_gates.sh all` does not
-  execute the `NIGHTLY_ONLY_TESTS` pool where the CLI-backed group recovery
-  test is listed.
+- **Status today:** Covered for recurring gate wiring; fixture execution still
+  required for a passing device-lab run. GON-015 added
+  `./scripts/run_test_gates.sh group-real-network-nightly`, which requires
+  `FLUTTER_DEVICE_ID`, passes `MKNOON_REQUIRE_MULTI_RELAY=true`, and forwards
+  `MKNOON_RELAY_ADDRESSES` into `multi_relay_failover_test.dart`. A local
+  no-relay run fails clearly instead of silently skipping.
 
 ## 6.6 Additional new-member onboarding edge cases
 
@@ -807,8 +852,9 @@ it makes sense.
   reaction is visible through the same reaction repository/listener path used
   by the conversation UI. Bob does not receive reaction state for `M0` unless
   the product later changes the no-backfill policy.
-- **Status today:** A-10 partial. Reaction parsing and round-trip behavior are
-  covered, but not the newly-added-member-as-recipient onboarding case.
+- **Status today:** Covered at the fake-network/app layer.
+  `group_new_member_onboarding_test.dart` supplements reaction parsing and
+  round-trip coverage with the newly-added-member-as-recipient onboarding case.
 
 ### TC-23: Quoted reply to a pre-join parent renders deterministically
 - **File:** same as TC-22, plus a focused widget assertion if the repository
@@ -820,8 +866,10 @@ it makes sense.
   Bob's thread does not contain `M0`, and the UI renders the established
   unavailable-parent fallback for the quote preview instead of blank content,
   a crash, or leaked pre-join history.
-- **Status today:** A-11 partial. Quoted-message propagation and missing-parent
-  UI fallback are covered separately, but not as one onboarding scenario.
+- **Status today:** Covered at the fake-network/widget layer.
+  `group_new_member_onboarding_test.dart` combines quoted-message propagation,
+  pre-join no-backfill, and the missing-parent UI fallback in one onboarding
+  scenario.
 
 ### TC-24: Concurrent admin add + member send race has a pinned contract
 - **File:** `test/features/groups/integration/group_new_member_onboarding_test.dart`
@@ -832,7 +880,10 @@ it makes sense.
   Bob intentionally does not receive `M1`, or Bob receives `M1` exactly once
   with the accepted epoch. Alice, Bob, and the existing sender converge on the
   same member list and no message remains stuck in sending or inbox limbo.
-- **Status today:** A-12 missing.
+- **Status today:** Covered at the fake-network/app layer by
+  `group_new_member_onboarding_test.dart`: receive eligibility starts when
+  Bob is subscribed to the group topic, so the staged-add message is not
+  backfilled and the first post-subscription message is delivered exactly once.
 
 ### TC-25: Foreground push drains new-member media
 - **File:** `integration_test/foreground_group_push_drain_test.dart`
@@ -846,8 +897,13 @@ it makes sense.
   cover at least one representative media type; image is the minimum useful
   case, and voice/video can share the broader TC-2 through TC-4 evidence if
   the media drain path is common.
-- **Status today:** A-13 / D-8 missing. The existing foreground-push drain test
-  covers text only.
+- **Status today:** Covered at the foreground-drain direct integration layer by
+  `foreground_group_push_drain_test.dart`. The suite now drains a targeted
+  group inbox image from a foreground push, preserves the media descriptor,
+  triggers one `media:download`, inserts no duplicate message/attachment on a
+  repeated push, and surfaces `Alice: Photo` in the in-app notification. OS
+  background/terminated push delivery and paired-simulator media push remain
+  residual real-device coverage.
 
 ### TC-26: Re-added Bob decrypts current epoch after rotation with real crypto
 - **File:** `integration_test/group_real_crypto_onboarding_test.dart` or an
@@ -860,7 +916,11 @@ it makes sense.
   cannot decrypt the `E2` ciphertext. This case is stronger than TC-8's
   fake-network epoch-state assertion and narrower than TC-13's first-add
   real-crypto onboarding proof.
-- **Status today:** A-14 / B-9 missing.
+- **Status today:** A-14 / B-9 are covered at the real-bridge app boundary by
+  `integration_test/group_real_crypto_onboarding_test.dart`. The test uses
+  `group.keygen` plus `group:updateKey` on macOS, then proves Bob decrypts the
+  re-add ciphertext with the newly accepted key while retained old key material
+  fails to decrypt. Live GossipSub delivery remains open elsewhere.
 
 ## 6.7 Additional simulator/device-context findings from task 0346d
 
@@ -876,7 +936,10 @@ it makes sense.
   sender-side publish success or pending receiver evidence.
 - **Status today:** D-9 partial. Host-side fake-network tests and paired
   harness pieces exist, but no full simulator UI journey pins the whole
-  receiver-visible Discussion experience.
+  receiver-visible Discussion experience. A paired run attempted on
+  `2026-04-29` exposed a harness startup race where Alice timed out waiting
+  for Bob's identity during Bob's build/startup; the Alice-side identity wait
+  has been aligned with the orchestrator startup window.
 
 ### TC-28: True two-simulator Announcement permissions and media journey
 - **File:** extend the group simulator harnesses with an Announcement row.
@@ -887,7 +950,9 @@ it makes sense.
   downloads as expected, Bob can react, Bob cannot send, and no optimistic
   reader bubble is left stranded.
 - **Status today:** D-10 partial. Fake/widget Announcement coverage exists,
-  but simulator-level permission and media coverage is missing.
+  but simulator-level permission and media coverage is missing. GON-011 only
+  removed the shared paired-harness startup false failure; it does not add the
+  Announcement UI journey row.
 
 ### TC-29: Admin add/remove end-to-end with stale notification denial
 - **File:** paired group simulator harness or notification-open simulator
@@ -899,9 +964,12 @@ it makes sense.
   removed user exits or cannot open the conversation, cannot send, receives no
   new group notification for post-removal traffic, and stale notification taps
   do not reopen access.
-- **Status today:** D-11 partial. Host-side membership tests cover add/remove
-  and removed-user send blocking; simulator notification/access denial is
-  absent.
+- **Status today:** D-11 partial. Host-side membership tests cover add/remove,
+  removed-user send blocking, self-removal cleanup, no post-removal local
+  notification, and stale removed-group route denial through
+  `group_message_listener_test.dart` and
+  `resolve_group_notification_route_target_use_case_test.dart`. Paired
+  simulator route-exit and stale-tap UI access denial remain open.
 
 ### TC-30: Full group media matrix on simulator
 - **File:** simulator media journey coverage for group Discussion and
@@ -914,7 +982,12 @@ it makes sense.
   visibility for each covered media type.
 - **Status today:** D-10 / D-14 partial. Existing simulator proof is mainly
   image-focused; non-image media, retry, and restart visibility are not pinned
-  as a group simulator matrix.
+  as a group simulator matrix. GON-012 revalidated host-side retry/upload and
+  failed-media row behavior through
+  `retry_incomplete_group_uploads_use_case_test.dart`,
+  `retry_failed_group_messages_use_case_test.dart`, and
+  `group_conversation_screen_test.dart`, but that is not the full simulator
+  media matrix.
 
 ### TC-31: OS-level group notification and deep-link journey
 - **File:** `integration_test/notification_open_ui_smoke_test.dart` or an
@@ -925,9 +998,13 @@ it makes sense.
 - **Assertion:** Notification taps drain the correct inbox before opening the
   target group; suppressed notifications stay suppressed; removed/dissolved or
   stale notification taps do not grant access; unread state remains truthful.
-- **Status today:** D-15 partial. `notification_open_ui_smoke_test.dart`
-  covers useful invite and group-message tap pieces, but not the full group
-  OS-state matrix.
+- **Status today:** D-15 partial. `chat_and_group_push_open_flow_test.dart`
+  covers background and terminated group-push route preparation before open;
+  `resolve_group_notification_route_target_use_case_test.dart` covers stale
+  removed-group route denial after local cleanup; and
+  `notification_open_ui_smoke_test.dart` covers useful invite and group-message
+  tap pieces. The full foreground/background/terminated OS-state simulator
+  matrix remains open.
 
 ### TC-32: Relay/libp2p failover and replay ordering matrix
 - **File:** extend the real-network group recovery or relay failover simulator
@@ -939,9 +1016,12 @@ it makes sense.
   product-approved order, with stable unread counts and media descriptors.
   Fixture absence must fail clearly for a closure run rather than silently
   passing as coverage.
-- **Status today:** D-12 partial. `multi_relay_failover_test.dart` is
-  env-gated, fake-network recovery covers pieces, and out-of-order simulator
-  replay is not pinned.
+- **Status today:** D-12 partial. GON-013 revalidated Go relay fallback
+  coverage for relay-backed operations plus host fake-network partition/heal
+  and duplicate live+inbox recovery. `multi_relay_failover_test.dart` now
+  supports `MKNOON_REQUIRE_MULTI_RELAY=true`, which fails clearly when a
+  closure run lacks at least two configured relay addresses. Live relay
+  simulator replay and outage convergence remain unproven locally.
 
 ### TC-33: Same-account multi-device simulator consistency
 - **File:** `integration_test/group_multi_device_real_harness.dart` or an
@@ -952,9 +1032,11 @@ it makes sense.
 - **Assertion:** Sent history and membership converge across same-account
   devices; device-local mute, unread, and notification behavior stays
   predictable and does not leak into the wrong device state.
-- **Status today:** D-13 partial. `group_multi_device_convergence_test.dart`
-  is fake-backed and `group_multi_device_real_harness.dart` is outside the
-  standard gate.
+- **Status today:** D-13 partial. GON-013 revalidated
+  `group_multi_device_convergence_test.dart` for same-user sent-history,
+  membership, mute, unread, and notification locality. The fixture-backed
+  `run_group_multi_device_real.dart` / `group_multi_device_real_harness.dart`
+  path remains Nightly / Release Pool evidence and was not run locally.
 
 ### TC-34: Failure/recovery UI flows on simulator
 - **File:** group simulator recovery smoke or focused UI journey tests.
@@ -964,8 +1046,11 @@ it makes sense.
 - **Assertion:** Rows settle into honest success, retryable failure, or
   recoverable pending states without duplicate rows, stuck optimistic bubbles,
   lost media descriptors, or false notifications.
-- **Status today:** D-14 partial. Host tests cover many failure branches, but
-  simulator-visible UI recovery remains thin.
+- **Status today:** D-14 partial. Host tests cover many failure branches; GON-012
+  revalidated incomplete-upload retry, failed group message retry, and
+  failed-media retry/delete UI rows through focused host suites. Simulator-visible
+  UI recovery across publish failure, inbox-store failure, zero peers,
+  pause/resume, restart, and pending media remains thin.
 
 ---
 
@@ -985,9 +1070,11 @@ above can pin concrete contracts:
   later added, those contracts and any new media/announcement onboarding
   assertions must be updated together.
 - **What is the approved same-epoch contract when an admin add overlaps an
-  existing-member send?** TC-24 can accept either "Bob does not receive the
-  racing message" or "Bob receives it exactly once," but it must not leave the
-  behavior nondeterministic.
+  existing-member send?** The fake-network/app-layer contract is now pinned:
+  Bob is receive-eligible only once subscribed to the group topic, so a staged
+  but unsubscribed add does not backfill the racing message. Real-network
+  simulator work should preserve this contract or explicitly record a product
+  decision if the live transport behaves differently.
 - **How broad should the foreground-push media sample be?** TC-25 requires at
   least one media type through the new-member push-drain path. If image, video,
   and voice have meaningfully different drain behavior, TC-25 should cover all
@@ -1030,10 +1117,10 @@ Recommended implementation order (highest impact first):
    new-member user experience gaps: media, reaction fan-out, and quote context
    after join. Preserve the existing no-backfill assertions from TC-1 / TC-6
    where the new onboarding suites introduce another boundary.
-2. **TC-13 and TC-26** — close the real-crypto onboarding gap for first-add and
-   re-add-after-rotation. Higher infrastructure cost (uses `GoBridgeClient` +
-   live bridge), but this is the missing integrated proof on top of existing
-   primitive/bridge coverage.
+2. **TC-13 and TC-26** — accepted on `2026-04-29` for real-bridge app-boundary
+   first-add and re-add decrypt proof. The remaining related work is live
+   receiver-visible GossipSub/simulator delivery, not the crypto invite
+   acceptance itself.
 3. **TC-25, TC-29, TC-31** — cover foreground-push media and group
    notification/deep-link access boundaries, including removed-user stale-tap
    denial.
@@ -1053,14 +1140,21 @@ Recommended implementation order (highest impact first):
    Tighten the current G4/G7/G8 pass criteria as part of this work so pending
    receiver-side delivery cannot be reported as a pass.
 9. **TC-21** — wire one real-network scenario into an automated gate.
-   Audit closure requires the actual recurring gate evidence, not only a
-   follow-up plan.
+   GON-015 added the recurring `group-real-network-nightly` command with
+   strict fixture failure; a passing configured relay-lab execution remains
+   release/device-lab evidence.
 
 ---
 
 # 9. Acceptance
 
 This audit is closed when:
+
+**Current rollout verdict, 2026-04-29:** `accepted_with_explicit_follow_up`.
+All TC rows are mapped and the local/fake/host-side gaps addressed by this
+rollout are covered by automated evidence. The explicit follow-up is configured
+device-lab execution for the remaining simulator/relay/multi-device rows:
+TC-17, TC-18, TC-20, TC-27, TC-28, TC-30, TC-31, TC-32, TC-33, and TC-34.
 
 - All TC-1 through TC-34 are either implemented as automated tests or
   explicitly mapped to existing automated tests with matching acceptance

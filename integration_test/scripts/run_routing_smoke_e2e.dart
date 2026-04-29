@@ -16,6 +16,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'routing_smoke_group_criteria.dart';
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -116,7 +118,9 @@ Future<Process> _launchHarness({
       '--publish-port',
       '--no-pub',
     ] else ...[
-      'test', '--no-pub', harness,
+      'test',
+      '--no-pub',
+      harness,
     ],
     '--dart-define=E2E_SHARED_DIR=${_sharedDir.path}',
     '--dart-define=SMOKE_ROLE=$role',
@@ -173,10 +177,12 @@ Future<void> main(List<String> args) async {
   _runId = DateTime.now().millisecondsSinceEpoch.toString();
   _sharedDir = await Directory.systemTemp.createTemp('routing_smoke_');
 
-  final aliceLog = File('${_sharedDir.path}/alice.log')
-      .openWrite(mode: FileMode.writeOnlyAppend);
-  final bobLog = File('${_sharedDir.path}/bob.log')
-      .openWrite(mode: FileMode.writeOnlyAppend);
+  final aliceLog = File(
+    '${_sharedDir.path}/alice.log',
+  ).openWrite(mode: FileMode.writeOnlyAppend);
+  final bobLog = File(
+    '${_sharedDir.path}/bob.log',
+  ).openWrite(mode: FileMode.writeOnlyAppend);
 
   _log('ORCH', 'Shared dir: ${_sharedDir.path}');
   _log('ORCH', 'Alice=$aliceDevice  Bob=$bobDevice  runId=$_runId');
@@ -197,7 +203,7 @@ Future<void> main(List<String> args) async {
 
     // Wait for Alice to finish building + reach ready state before launching Bob
     _log('ORCH', 'Waiting for Alice to be ready (build + node online)...');
-    await _waitForSignal('alice_ready', timeout: const Duration(minutes: 5));
+    await _waitForSignal('alice_ready', timeout: const Duration(minutes: 15));
     _log('ORCH', 'Alice ready — launching Bob');
 
     // Now launch Bob (build won't conflict since Alice's build is done)
@@ -212,7 +218,7 @@ Future<void> main(List<String> args) async {
 
     // Wait for Bob ready
     _log('ORCH', 'Waiting for Bob to be ready...');
-    await _waitForSignal('bob_ready', timeout: const Duration(minutes: 5));
+    await _waitForSignal('bob_ready', timeout: const Duration(minutes: 15));
     _log('ORCH', 'Both harnesses ready');
 
     // ══════════ S1: Cold send ══════════
@@ -221,8 +227,11 @@ Future<void> main(List<String> args) async {
     final s1Alice = await _readJsonSignal('s1_alice_sent');
     final s1Bob = await _readJsonSignal('s1_bob_received');
     _writeSignal('s1_verified');
-    _check('S1', s1Alice['outcome'] == 'success' && (s1Bob['e2eMs'] as int?) != -1,
-        'send=${s1Alice['sendMs']}ms path=${s1Alice['sendPath']} e2e=${s1Bob['e2eMs']}ms');
+    _check(
+      'S1',
+      s1Alice['outcome'] == 'success' && (s1Bob['e2eMs'] as int?) != -1,
+      'send=${s1Alice['sendMs']}ms path=${s1Alice['sendPath']} e2e=${s1Bob['e2eMs']}ms',
+    );
 
     // ══════════ S2: Warm send x5 ══════════
     _log('ORCH', '─── S2: Warm send x5 ───');
@@ -249,12 +258,15 @@ Future<void> main(List<String> args) async {
     // The inbox store (Alice's side) always succeeds. Bob's inbox drain may not
     // deliver within the timeout if relay session was dropped — this is a known
     // infrastructure behavior, not a test failure. Pass if Alice stored successfully.
-    final s3AliceOk = s3Alice['outcome'] == 'success' &&
-        s3Alice['sendPath'] == 'inbox';
+    final s3AliceOk =
+        s3Alice['outcome'] == 'success' && s3Alice['sendPath'] == 'inbox';
     final s3BobE2e = s3Bob['e2eMs'] as int? ?? -1;
-    _check('S3', s3AliceOk,
-        'send=${s3Alice['sendMs']}ms path=${s3Alice['sendPath']} '
-        'e2e=${s3BobE2e == -1 ? 'pending (inbox drain)' : '${s3BobE2e}ms'}');
+    _check(
+      'S3',
+      s3AliceOk,
+      'send=${s3Alice['sendMs']}ms path=${s3Alice['sendPath']} '
+          'e2e=${s3BobE2e == -1 ? 'pending (inbox drain)' : '${s3BobE2e}ms'}',
+    );
 
     // ══════════ S4: Reconnect ══════════
     _log('ORCH', '─── S4: Reconnect ───');
@@ -264,8 +276,11 @@ Future<void> main(List<String> args) async {
     final s4Alice = await _readJsonSignal('s4_alice_sent');
     final s4Bob = await _readJsonSignal('s4_bob_received');
     _writeSignal('s4_verified');
-    _check('S4', s4Alice['outcome'] == 'success' && (s4Bob['e2eMs'] as int?) != -1,
-        'send=${s4Alice['sendMs']}ms path=${s4Alice['sendPath']} e2e=${s4Bob['e2eMs']}ms');
+    _check(
+      'S4',
+      s4Alice['outcome'] == 'success' && (s4Bob['e2eMs'] as int?) != -1,
+      'send=${s4Alice['sendMs']}ms path=${s4Alice['sendPath']} e2e=${s4Bob['e2eMs']}ms',
+    );
 
     // ══════════ S5: Bidirectional ══════════
     _log('ORCH', '─── S5: Bidirectional ───');
@@ -275,8 +290,11 @@ Future<void> main(List<String> args) async {
     final s5Bob = await _readJsonSignal('s5_bob_complete');
     final s5Received = s5Bob['received'] as List<dynamic>? ?? [];
     final s5Sent = s5Bob['sent'] as List<dynamic>? ?? [];
-    _check('S5', s5Received.length == 3 && s5Sent.length == 2,
-        'Bob received ${s5Received.length}/3, sent ${s5Sent.length}/2');
+    _check(
+      'S5',
+      s5Received.length == 3 && s5Sent.length == 2,
+      'Bob received ${s5Received.length}/3, sent ${s5Sent.length}/2',
+    );
 
     // ══════════ S6: Stale connection ══════════
     _log('ORCH', '─── S6: Stale connection ───');
@@ -288,8 +306,11 @@ Future<void> main(List<String> args) async {
     final s6Alice = await _readJsonSignal('s6_alice_sent');
     final s6Bob = await _readJsonSignal('s6_bob_received');
     _writeSignal('s6_verified');
-    _check('S6', s6Alice['outcome'] == 'success' && (s6Bob['e2eMs'] as int?) != -1,
-        'send=${s6Alice['sendMs']}ms path=${s6Alice['sendPath']} e2e=${s6Bob['e2eMs']}ms');
+    _check(
+      'S6',
+      s6Alice['outcome'] == 'success' && (s6Bob['e2eMs'] as int?) != -1,
+      'send=${s6Alice['sendMs']}ms path=${s6Alice['sendPath']} e2e=${s6Bob['e2eMs']}ms',
+    );
 
     // ══════════ S7: All-paths-fail ══════════
     _log('ORCH', '─── S7: All-paths-fail ───');
@@ -298,8 +319,11 @@ Future<void> main(List<String> args) async {
     // Inbox fallback succeeds for any peer when relay is up, so outcome may be
     // 'success' (stored in inbox) or 'failed' (relay also down). Both are valid.
     final s7Outcome = s7Alice['outcome'] as String? ?? '';
-    _check('S7', s7Outcome == 'failed' || s7Outcome == 'success',
-        'outcome=$s7Outcome (inbox fallback ${s7Outcome == 'success' ? 'stored' : 'failed'})');
+    _check(
+      'S7',
+      s7Outcome == 'failed' || s7Outcome == 'success',
+      'outcome=$s7Outcome (inbox fallback ${s7Outcome == 'success' ? 'stored' : 'failed'})',
+    );
 
     // ══════════ S8: Full lifecycle ══════════
     _log('ORCH', '─── S8: Full lifecycle ───');
@@ -331,8 +355,11 @@ Future<void> main(List<String> args) async {
     final s8Bob = await _readJsonSignal('s8_bob_complete');
     final s8AliceTimeline = s8Alice['timeline'] as List<dynamic>? ?? [];
     final s8BobTimeline = s8Bob['timeline'] as List<dynamic>? ?? [];
-    _check('S8', s8AliceTimeline.length >= 9 && s8BobTimeline.length >= 9,
-        'Alice timeline=${s8AliceTimeline.length} Bob timeline=${s8BobTimeline.length}');
+    _check(
+      'S8',
+      s8AliceTimeline.length >= 9 && s8BobTimeline.length >= 9,
+      'Alice timeline=${s8AliceTimeline.length} Bob timeline=${s8BobTimeline.length}',
+    );
 
     // ══════════ S9: Batch inbox drain (5 messages) ══════════
     _log('ORCH', '─── S9: Batch inbox drain ───');
@@ -346,8 +373,11 @@ Future<void> main(List<String> args) async {
     _log('ORCH', 'S9: Alice sent ${s9AliceTimings.length} msgs to inbox');
     _writeSignal('s9_bob_restart');
     // Bob's inbox drain is async — don't block on it. Pass if Alice stored all 5.
-    _check('S9', s9AliceTimings.length == 5,
-        'Alice stored ${s9AliceTimings.length}/5 to inbox (drain async)');
+    _check(
+      'S9',
+      s9AliceTimings.length == 5,
+      'Alice stored ${s9AliceTimings.length}/5 to inbox (drain async)',
+    );
     // Write verified so both harnesses can proceed to teardown
     _writeSignal('s9_verified');
 
@@ -358,8 +388,11 @@ Future<void> main(List<String> args) async {
     await _waitForSignal('s10_bob_received_msg');
     final s10Delete = await _readJsonSignal('s10_alice_delete_sent');
     _writeSignal('s10_verified');
-    _check('S10', true,
-        'delete sent in ${s10Delete['deleteMs']}ms outcome=${s10Delete['outcome']}');
+    _check(
+      'S10',
+      true,
+      'delete sent in ${s10Delete['deleteMs']}ms outcome=${s10Delete['outcome']}',
+    );
 
     // ══════════ S13: ACK under load ══════════
     _log('ORCH', '─── S13: ACK under load ───');
@@ -369,25 +402,34 @@ Future<void> main(List<String> args) async {
     _writeSignal('s13_verified');
     final s13AliceCount = (s13Alice['timings'] as List<dynamic>?)?.length ?? 0;
     final s13BobCount = s13Bob['count'] as int? ?? 0;
-    _check('S13', s13AliceCount == 10 && s13BobCount >= 5,
-        'Alice sent $s13AliceCount, Bob received $s13BobCount');
+    _check(
+      'S13',
+      s13AliceCount == 10 && s13BobCount >= 5,
+      'Alice sent $s13AliceCount, Bob received $s13BobCount',
+    );
 
     // ══════════ S11: Voice/media upload ══════════
     _log('ORCH', '─── S11: Voice/media upload ───');
     _writeSignal('s11_go');
     final s11Alice = await _readJsonSignal('s11_alice_sent');
     _writeSignal('s11_verified');
-    _check('S11', true,
-        'upload=${s11Alice['uploadMs']}ms ok=${s11Alice['ok']}');
+    _check(
+      'S11',
+      true,
+      'upload=${s11Alice['uploadMs']}ms ok=${s11Alice['ok']}',
+    );
 
     // ══════════ S12: Media transfer (1MB + 5MB) ══════════
     _log('ORCH', '─── S12: Media transfer (1MB + 5MB) ───');
     _writeSignal('s12_go');
     final s12Alice = await _readJsonSignal('s12_alice_sent');
     _writeSignal('s12_verified');
-    _check('S12', true,
-        '1MB=${s12Alice['uploadMs']}ms (${s12Alice['throughputKBps']}KB/s) '
-        '5MB=${s12Alice['upload5mbMs']}ms (${s12Alice['throughput5mbKBps']}KB/s)');
+    _check(
+      'S12',
+      true,
+      '1MB=${s12Alice['uploadMs']}ms (${s12Alice['throughputKBps']}KB/s) '
+          '5MB=${s12Alice['upload5mbMs']}ms (${s12Alice['throughput5mbKBps']}KB/s)',
+    );
 
     // ══════════ S14: Local WiFi ══════════
     _log('ORCH', '─── S14: Local WiFi ───');
@@ -395,8 +437,11 @@ Future<void> main(List<String> args) async {
     final s14Alice = await _readJsonSignal('s14_alice_sent');
     final s14Bob = await _readJsonSignal('s14_bob_received');
     _writeSignal('s14_verified');
-    _check('S14', true,
-        'isLocal=${s14Alice['isLocal']} send=${s14Alice['sendMs']}ms path=${s14Alice['sendPath']} e2e=${s14Bob['e2eMs']}ms');
+    _check(
+      'S14',
+      true,
+      'isLocal=${s14Alice['isLocal']} send=${s14Alice['sendMs']}ms path=${s14Alice['sendPath']} e2e=${s14Bob['e2eMs']}ms',
+    );
 
     // ══════════ S15: Relay probe ══════════
     _log('ORCH', '─── S15: Relay probe ───');
@@ -407,8 +452,11 @@ Future<void> main(List<String> args) async {
     final s15Alice = await _readJsonSignal('s15_alice_sent');
     final s15Bob = await _readJsonSignal('s15_bob_received');
     _writeSignal('s15_verified');
-    _check('S15', s15Alice['outcome'] == 'success',
-        'send=${s15Alice['sendMs']}ms path=${s15Alice['sendPath']} probe=${s15Alice['probeAttempted']} e2e=${s15Bob['e2eMs']}ms');
+    _check(
+      'S15',
+      s15Alice['outcome'] == 'success',
+      'send=${s15Alice['sendMs']}ms path=${s15Alice['sendPath']} probe=${s15Alice['probeAttempted']} e2e=${s15Bob['e2eMs']}ms',
+    );
 
     // ══════════ X1: Both-sides restart ══════════
     _log('ORCH', '─── X1: Both-sides restart ───');
@@ -419,12 +467,18 @@ Future<void> main(List<String> args) async {
     _writeSignal('x1_restart');
     final x1Alice = await _readJsonSignal('x1_alice_restarted');
     final x1Bob = await _readJsonSignal('x1_bob_restarted');
-    _log('ORCH', 'X1: Both restarted (Alice=${x1Alice['restartMs']}ms Bob=${x1Bob['restartMs']}ms)');
+    _log(
+      'ORCH',
+      'X1: Both restarted (Alice=${x1Alice['restartMs']}ms Bob=${x1Bob['restartMs']}ms)',
+    );
     final x1Send = await _readJsonSignal('x1_alice_sent');
     final x1Recv = await _readJsonSignal('x1_bob_received');
     _writeSignal('x1_verified');
-    _check('X1', x1Send['outcome'] == 'success',
-        'restart: Alice=${x1Alice['restartMs']}ms Bob=${x1Bob['restartMs']}ms send=${x1Send['sendMs']}ms e2e=${x1Recv['e2eMs']}ms');
+    _check(
+      'X1',
+      x1Send['outcome'] == 'success',
+      'restart: Alice=${x1Alice['restartMs']}ms Bob=${x1Bob['restartMs']}ms send=${x1Send['sendMs']}ms e2e=${x1Recv['e2eMs']}ms',
+    );
 
     // ══════════ X2: Background/foreground ══════════
     _log('ORCH', '─── X2: Background/foreground ───');
@@ -436,12 +490,18 @@ Future<void> main(List<String> args) async {
     _writeSignal('x2_resume');
     final x2Alice = await _readJsonSignal('x2_alice_resumed');
     final x2Bob = await _readJsonSignal('x2_bob_resumed');
-    _log('ORCH', 'X2: Both resumed (Alice=${x2Alice['resumeMs']}ms Bob=${x2Bob['resumeMs']}ms)');
+    _log(
+      'ORCH',
+      'X2: Both resumed (Alice=${x2Alice['resumeMs']}ms Bob=${x2Bob['resumeMs']}ms)',
+    );
     final x2Send = await _readJsonSignal('x2_alice_sent');
     final x2Recv = await _readJsonSignal('x2_bob_received');
     _writeSignal('x2_verified');
-    _check('X2', x2Send['outcome'] == 'success',
-        'resume: Alice=${x2Alice['resumeMs']}ms Bob=${x2Bob['resumeMs']}ms e2e=${x2Recv['e2eMs']}ms');
+    _check(
+      'X2',
+      x2Send['outcome'] == 'success',
+      'resume: Alice=${x2Alice['resumeMs']}ms Bob=${x2Bob['resumeMs']}ms e2e=${x2Recv['e2eMs']}ms',
+    );
 
     // ══════════ X3: Relay failover ══════════
     _log('ORCH', '─── X3: Relay failover ───');
@@ -449,8 +509,11 @@ Future<void> main(List<String> args) async {
     final x3Send = await _readJsonSignal('x3_alice_sent');
     final x3Recv = await _readJsonSignal('x3_bob_received');
     _writeSignal('x3_verified');
-    _check('X3', x3Send['outcome'] == 'success',
-        'healthCheck=${x3Send['healthCheckMs']}ms send=${x3Send['sendMs']}ms e2e=${x3Recv['e2eMs']}ms');
+    _check(
+      'X3',
+      x3Send['outcome'] == 'success',
+      'healthCheck=${x3Send['healthCheckMs']}ms send=${x3Send['sendMs']}ms e2e=${x3Recv['e2eMs']}ms',
+    );
 
     // ══════════ End Phase 1 ══════════
     _writeSignal('all_done');
@@ -469,7 +532,11 @@ Future<void> main(List<String> args) async {
     void _gWriteSignal(String name) {
       File(_gsig(name)).writeAsStringSync('ok');
     }
-    Future<void> _gWaitForSignal(String name, {Duration timeout = const Duration(minutes: 3)}) async {
+
+    Future<void> _gWaitForSignal(
+      String name, {
+      Duration timeout = const Duration(minutes: 3),
+    }) async {
       final path = _gsig(name);
       final deadline = DateTime.now().add(timeout);
       while (DateTime.now().isBefore(deadline)) {
@@ -478,13 +545,16 @@ Future<void> main(List<String> args) async {
       }
       throw TimeoutException('Orch: timed out waiting for group signal: $name');
     }
+
     Future<Map<String, dynamic>> _gReadJson(String name) async {
       final path = _gsig(name);
       final deadline = DateTime.now().add(const Duration(minutes: 3));
       while (DateTime.now().isBefore(deadline)) {
         final file = File(path);
         if (file.existsSync()) {
-          try { return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>; } catch (_) {}
+          try {
+            return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+          } catch (_) {}
         }
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
@@ -492,8 +562,8 @@ Future<void> main(List<String> args) async {
     }
 
     // Kill old 1:1 processes
-    alice?.kill();
-    bob?.kill();
+    alice.kill();
+    bob.kill();
     alice = null;
     bob = null;
 
@@ -505,11 +575,11 @@ Future<void> main(List<String> args) async {
       deviceId: aliceDevice,
       dbName: 'group_smoke_${_runId}_alice.db',
     );
-    _pipeOutput(alice!.stdout, 'ALICE-G', aliceLog);
-    _pipeOutput(alice!.stderr, 'ALICE-G-ERR', aliceLog);
+    _pipeOutput(alice.stdout, 'ALICE-G', aliceLog);
+    _pipeOutput(alice.stderr, 'ALICE-G-ERR', aliceLog);
 
     _log('ORCH', 'Waiting for group Alice ready...');
-    await _gWaitForSignal('alice_ready', timeout: const Duration(minutes: 5));
+    await _gWaitForSignal('alice_ready', timeout: const Duration(minutes: 15));
     _log('ORCH', 'Group Alice ready — launching group Bob');
 
     bob = await _launchHarness(
@@ -518,10 +588,13 @@ Future<void> main(List<String> args) async {
       deviceId: bobDevice,
       dbName: 'group_smoke_${_runId}_bob.db',
     );
-    _pipeOutput(bob!.stdout, 'BOB-G', bobLog);
-    _pipeOutput(bob!.stderr, 'BOB-G-ERR', bobLog);
+    _pipeOutput(bob.stdout, 'BOB-G', bobLog);
+    _pipeOutput(bob.stderr, 'BOB-G-ERR', bobLog);
 
-    await _gWaitForSignal('bob_group_joined', timeout: const Duration(minutes: 5));
+    await _gWaitForSignal(
+      'bob_group_joined',
+      timeout: const Duration(minutes: 15),
+    );
     _log('ORCH', 'Bob joined group — starting group scenarios');
 
     // Wait for GossipSub peer discovery
@@ -533,8 +606,11 @@ Future<void> main(List<String> args) async {
     final g1Alice = await _gReadJson('g1_alice_sent');
     final g1Bob = await _gReadJson('g1_bob_received');
     _gWriteSignal('g1_verified');
-    _check('G1', g1Alice['outcome'] == 'success' && (g1Bob['e2eMs'] as int? ?? -1) != -1,
-        'send=${g1Alice['sendMs']}ms e2e=${g1Bob['e2eMs']}ms');
+    _check(
+      'G1',
+      g1Alice['outcome'] == 'success' && (g1Bob['e2eMs'] as int? ?? -1) != -1,
+      'send=${g1Alice['sendMs']}ms e2e=${g1Bob['e2eMs']}ms',
+    );
 
     // ══════════ G2: Group warm x5 ══════════
     _log('ORCH', '─── G2: Group warm x5 ───');
@@ -542,8 +618,8 @@ Future<void> main(List<String> args) async {
     await _gReadJson('g2_alice_sent');
     final g2Bob = await _gReadJson('g2_bob_received');
     _gWriteSignal('g2_verified');
-    final g2Count = g2Bob['count'] as int? ?? 0;
-    _check('G2', g2Count >= 3, 'Bob received $g2Count/5');
+    final g2 = evaluateG2(g2Bob);
+    _check('G2', g2.ok, g2.detail);
 
     // ══════════ G3: Group bidirectional ══════════
     _log('ORCH', '─── G3: Group bidirectional ───');
@@ -552,8 +628,11 @@ Future<void> main(List<String> args) async {
     final g3Bob = await _gReadJson('g3_bob_complete');
     final g3Received = g3Bob['received'] as List<dynamic>? ?? [];
     final g3Sent = g3Bob['sent'] as List<dynamic>? ?? [];
-    _check('G3', g3Received.length >= 2 && g3Sent.isNotEmpty,
-        'Bob received ${g3Received.length}/2, sent ${g3Sent.length}/1');
+    _check(
+      'G3',
+      g3Received.length >= 2 && g3Sent.isNotEmpty,
+      'Bob received ${g3Received.length}/2, sent ${g3Sent.length}/1',
+    );
 
     // ══════════ G4: Group offline inbox ══════════
     _log('ORCH', '─── G4: Group offline inbox ───');
@@ -565,9 +644,8 @@ Future<void> main(List<String> args) async {
     _gWriteSignal('g4_bob_restart');
     final g4Bob = await _gReadJson('g4_bob_received');
     _gWriteSignal('g4_verified');
-    final g4AliceOk = true; // Alice always succeeds (publish or inbox)
-    _check('G4', g4AliceOk,
-        'publish OK, Bob e2e=${(g4Bob['e2eMs'] as int? ?? -1) == -1 ? 'pending' : '${g4Bob['e2eMs']}ms'}');
+    final g4 = evaluateG4(g4Bob);
+    _check('G4', g4.ok, g4.detail);
 
     // ══════════ G5: Group lifecycle ══════════
     _log('ORCH', '─── G5: Group lifecycle ───');
@@ -588,10 +666,8 @@ Future<void> main(List<String> args) async {
     await _gWaitForSignal('g5_bob_complete');
     final g5Alice = await _gReadJson('g5_alice_complete');
     final g5Bob = await _gReadJson('g5_bob_complete');
-    final g5ATimeline = g5Alice['timeline'] as List<dynamic>? ?? [];
-    final g5BTimeline = g5Bob['timeline'] as List<dynamic>? ?? [];
-    _check('G5', g5ATimeline.length >= 8 && g5BTimeline.length >= 8,
-        'Alice timeline=${g5ATimeline.length} Bob timeline=${g5BTimeline.length}');
+    final g5 = evaluateG5(g5Alice, g5Bob);
+    _check('G5', g5.ok, g5.detail);
 
     // ══════════ G6: Group peer discovery timing ══════════
     _log('ORCH', '─── G6: Peer discovery timing ───');
@@ -607,9 +683,8 @@ Future<void> main(List<String> args) async {
     final g7Alice = await _gReadJson('g7_alice_sent');
     final g7Bob = await _gReadJson('g7_bob_received');
     _gWriteSignal('g7_verified');
-    final g7BothReceived = g7Bob['bothReceived'] as bool? ?? false;
-    _check('G7', g7BothReceived || g7Alice['rotationMs'] != null,
-        'rotation=${g7Alice['rotationMs']}ms preRx=${g7Bob['preRotation'] != null} postRx=${g7Bob['postRotation'] != null}');
+    final g7 = evaluateG7(g7Alice, g7Bob);
+    _check('G7', g7.ok, g7.detail);
 
     // ══════════ G8: Multi-member publish ══════════
     _log('ORCH', '─── G8: Multi-member publish ───');
@@ -617,13 +692,8 @@ Future<void> main(List<String> args) async {
     final g8Alice = await _gReadJson('g8_alice_sent');
     final g8Bob = await _gReadJson('g8_bob_received');
     _gWriteSignal('g8_verified');
-    // After G7 key rotation, Bob may need time to accept the new key.
-    // Pass if Alice's publish succeeded, regardless of Bob's receipt timing.
-    final g8AliceOk = g8Alice['outcome'] == 'success' ||
-        g8Alice['outcome'] == 'successNoPeers';
-    _check('G8', g8AliceOk,
-        'send=${g8Alice['sendMs']}ms outcome=${g8Alice['outcome']} '
-        'e2e=${(g8Bob['e2eMs'] as int? ?? -1) == -1 ? 'pending' : '${g8Bob['e2eMs']}ms'}');
+    final g8 = evaluateG8(g8Alice, g8Bob);
+    _check('G8', g8.ok, g8.detail);
 
     _gWriteSignal('all_done');
     await _gWaitForSignal('alice_done', timeout: const Duration(seconds: 30));
@@ -660,7 +730,6 @@ Future<void> main(List<String> args) async {
       }
     }
     print('${'═' * 70}\n');
-
   } finally {
     _log('ORCH', 'Cleaning up...');
     alice?.kill();

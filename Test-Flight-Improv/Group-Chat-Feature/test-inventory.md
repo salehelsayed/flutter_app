@@ -1,7 +1,7 @@
 # Group Chat Feature -- Test Inventory
 
-**Date:** 2026-04-11
-**Scope:** All automated tests covering the Group Chat feature across unit, widget, integration, cross-feature, E2E, and Go-side categories.
+**Date:** 2026-04-29
+**Scope:** All automated tests covering the Group Chat feature across unit, widget, integration, cross-feature, E2E, Go-side categories, and the Report 85 group-onboarding/crypto coverage addendum.
 
 ---
 
@@ -49,11 +49,25 @@ flutter test --no-pub \
 flutter test --no-pub test/features/groups/integration
 ```
 
+**Report 85 focused host/app-layer suites:**
+
+```sh
+flutter test --no-pub \
+  test/features/groups/integration/group_new_member_onboarding_test.dart \
+  test/features/groups/integration/announcement_new_reader_onboarding_test.dart \
+  test/features/groups/integration/group_media_fanout_test.dart \
+  test/integration/routing_smoke_group_criteria_test.dart
+```
+
 **E2E device tests (requires running simulator):**
 
 ```sh
 flutter test integration_test/group_recovery_e2e_test.dart
 flutter test integration_test/group_recovery_cli_e2e_test.dart
+flutter test integration_test/group_real_crypto_onboarding_test.dart -d <device>
+flutter test integration_test/foreground_group_push_drain_test.dart -d <device>
+FLUTTER_DEVICE_ID=<device> MKNOON_RELAY_ADDRESSES=<relay1,relay2,...> \
+  ./scripts/run_test_gates.sh group-real-network-nightly
 ```
 
 **Go-side group tests:**
@@ -64,7 +78,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 
 ---
 
-## Summary
+## Summary (2026-04-11 Baseline)
 
 ### Dart Tests
 
@@ -105,7 +119,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |-|------:|------:|
 | **All (Dart + Go)** | **151** | **1392** |
 
-> **Note:** Dart file counts reflect distinct `_test.dart` files. Some inventory sections cover multiple files (e.g., 4.9 covers `archive_group_use_case_test.dart` + `unarchive_group_use_case_test.dart`; 4.30 covers three reaction test files). Dart test counts are `grep`-verified against `test()`/`testWidgets()` declarations in each file. Cross-feature test counts include only the group-relevant subset from shared test files. Go test counts reflect only group-related `func Test*` functions in files that may also contain non-group tests; counts are `grep`-verified against `func Test.*[Gg]roup` patterns and manual review for files with indirect group test names. Last verified: 2026-04-11.
+> **Note:** Dart file counts reflect distinct `_test.dart` files. Some inventory sections cover multiple files (e.g., 4.9 covers `archive_group_use_case_test.dart` + `unarchive_group_use_case_test.dart`; 4.30 covers three reaction test files). Dart test counts are `grep`-verified against `test()`/`testWidgets()` declarations in each file. Cross-feature test counts include only the group-relevant subset from shared test files. Go test counts reflect only group-related `func Test*` functions in files that may also contain non-group tests; counts are `grep`-verified against `func Test.*[Gg]roup` patterns and manual review for files with indirect group test names. Aggregate totals are the 2026-04-11 baseline; the Report 85 addendum and detailed sections below record the 2026-04-29 additions without a full inventory recount.
 
 ## 0. Row Closure Crosswalk (2026-04-11)
 
@@ -192,6 +206,28 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 - Full suites green: Flutter host-side `/private/tmp/flutter_full_suite_20260412/flutter_test_dir.log` (`02:53 +5492 ~5: All tests passed!`), `go-mknoon` `/tmp/go-mknoon-full-suite.log`, and relay `/tmp/go-relay-server-full-suite.log`.
 - Live-lane passes green: Android background reconnect after bounded local build-state reset `/private/tmp/acceptance_20260412/background_reconnect_android_rerun1.log`; transport E2E `/private/tmp/acceptance_20260412/lane2.log`; WiFi relay fallback smoke after the truthful direct-transport contract fix `/private/tmp/acceptance_20260412/lane3_rerun.log`; media stable-ID smoke `/private/tmp/acceptance_20260412/lane4.log`; group recovery E2E `/private/tmp/acceptance_20260412/lane5.log`; soak E2E `/private/tmp/acceptance_20260412/lane6.log`; notification-open UI smoke on the primary iOS pair `/private/tmp/acceptance_20260412/notification_open_ui_primary_ios.log`; real multi-device `MD-004` on the primary iOS pair `/private/tmp/acceptance_20260412/group_multi_device_real_primary_ios.log`.
 - Truthful multi-relay skips: `/private/tmp/acceptance_20260412/lane7.log` and `/private/tmp/acceptance_20260412/lane8.log` both ended `All tests skipped.` because no two-relay `MKNOON_RELAY_ADDRESSES` environment was configured. They are not counted as multi-relay proof.
+
+## 0B. Report 85 Group Onboarding And Crypto Coverage (2026-04-29)
+
+Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`) added or tightened the following group-chat test evidence. These rows are intentionally classified by evidence type so fake-network/app-boundary coverage is not confused with paired-simulator or relay-lab proof.
+
+| Area | Closure state | Concrete repo evidence |
+|------|---------------|------------------------|
+| New-member discussion media/no-backfill | Covered at fake-network/app layer | `group_new_member_onboarding_test.dart` proves Bob receives only post-join text/image/video/voice, preserves media descriptors, triggers downloads, and keeps pre-join history out. |
+| Multi-add epoch convergence | Covered at fake-network/app layer | `group_new_member_onboarding_test.dart` proves Bob and Charlie converge on the same key epoch and receive the same post-add message. |
+| Add/send boundary | Covered at fake-network/app layer | `group_new_member_onboarding_test.dart` pins the current contract: a staged but unsubscribed new member misses the racing message and receives the first post-subscription message exactly once. |
+| New-member reactions and quoted replies | Covered at fake-network/widget layer | `group_new_member_onboarding_test.dart` proves post-join reaction fan-out without pre-join reaction state and renders `Message unavailable` for a post-join quote whose parent predates the join. |
+| Announcement new-reader media/no-backfill | Covered at fake-network/app layer; simulator residual remains | `announcement_new_reader_onboarding_test.dart` proves post-join admin image/video/voice reaches a newly-added reader with descriptors and no pre-join admin post. |
+| Integrated real crypto first-add/re-add | Covered at real Go-bridge app boundary; live GossipSub residual remains | `group_real_crypto_onboarding_test.dart` generates real bridge identities/ML-KEM keys, accepts encrypted invites through the app handler, decrypts first-add and re-add group ciphertext, and proves retained old key material cannot decrypt the current epoch. |
+| Existing-member media fan-out | Covered at fake-network/app layer; live GossipSub residual remains | `group_media_fanout_test.dart` proves existing Bob and Charlie receive image/video/voice descriptors from Alice. |
+| Foreground push media drain | Covered by direct foreground-router/inbox integration; OS-state residual remains | `foreground_group_push_drain_test.dart` now covers targeted group media drain, descriptor preservation, one download trigger, and no duplicate row/notification. |
+| Stale removed-group notification denial | Covered host-side; paired simulator residual remains | `resolve_group_notification_route_target_use_case_test.dart` covers stale removed-group route denial after local cleanup, and `group_message_listener_test.dart` proves self-removal suppresses later group notifications. |
+| Paired group-smoke criteria | Covered by host criteria tests; configured paired run residual remains | `routing_smoke_group_criteria_test.dart` and `routing_smoke_group_criteria.dart` require receiver-visible G2/G4/G5/G7/G8 evidence instead of sender-only or pending results. |
+| Retry/media recovery host safety net | Revalidated host-side; simulator UI residual remains | `retry_incomplete_group_uploads_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `group_conversation_screen_test.dart` cover incomplete-upload retry, failed-message retry, and failed-media row retry/delete controls. |
+| Relay fixture closure guard | Gate wiring covered; configured relay run required for pass | `multi_relay_failover_test.dart` now supports `MKNOON_REQUIRE_MULTI_RELAY=true`; `./scripts/run_test_gates.sh group-real-network-nightly` requires `FLUTTER_DEVICE_ID` and at least two relay addresses. |
+| Partition/heal durable inbox recovery | Covered for fake-network durable-inbox contract; real network residual remains | `group_resume_recovery_test.dart` now stages three missed split-window messages across cursor-ordered durable inbox pages and proves post-heal live delivery resumes. |
+| Same-account host convergence | Covered at host fake-network layer; real device residual remains | `group_multi_device_convergence_test.dart` remains the same-account oracle for sent history, membership, mute, unread, and notification locality. |
+| Go membership-event signature guard | Covered at Go envelope-validator layer | `pubsub_test.go` adds forged `members_added` signature rejection while accepting the same payload when signed by the real admin. |
 
 ---
 
@@ -1705,6 +1741,37 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | announcement happy path: create, admin send, reader read-only receive, member react | Full announcement lifecycle |
 | announcement admin can send GIF media and reader receives image/gif read-only | GIF announcement |
 
+### 6.10 Group New-Member Onboarding
+**File:** `test/features/groups/integration/group_new_member_onboarding_test.dart`
+
+Added for Report 85.
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `Group new-member onboarding` | new member receives only post-join text and media with descriptors | Discussion post-join text/image/video/voice, no pre-join backfill, descriptor persistence, media-download trigger |
+| | multiple newly-added members converge on latest epoch and receive the same post-add message | Multi-add same-epoch convergence |
+| | add-send boundary delivers only after the new member is subscribed | Deterministic add/send boundary |
+| | new member receives post-join reactions without pre-join reaction state | Reaction fan-out to newly-added member |
+| | quoted reply to pre-join parent keeps missing-parent fallback for new member | Post-join quote with unavailable pre-join parent |
+
+### 6.11 Announcement New-Reader Onboarding
+**File:** `test/features/groups/integration/announcement_new_reader_onboarding_test.dart`
+
+Added for Report 85.
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `Announcement new-reader onboarding` | new reader receives only post-join admin media with descriptors | Announcement image/video/voice delivery to newly-added reader, no pre-join admin-post backfill, media-download trigger |
+
+### 6.12 Existing-Member Group Media Fan-Out
+**File:** `test/features/groups/integration/group_media_fanout_test.dart`
+
+Added for Report 85.
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `Existing-member group media fan-out` | discussion members receive image, video, and voice descriptors | Existing Bob/Charlie receive image/video/voice descriptors from Alice; one receiver also exercises media download |
+
 ---
 
 ## 7. Core Layer (Lifecycle & Bridge)
@@ -1942,6 +2009,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | | drains inbox and resolves a newly stored pending invite | Inbox drain + invite |
 | | drains inbox and resolves a newly materialized group | Inbox drain + group |
 | | returns missing when neither group nor invite can be recovered | Missing guard |
+| | returns missing for a stale removed-group notification after local cleanup | Removed-group stale notification denial |
 
 ### 8.9 Group Notification Dedup
 **File:** `test/integration/group_notification_dedupe_integration_test.dart`
@@ -2221,6 +2289,20 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | 2g: search filters both contacts and groups | Group search |
 | 2i: empty contacts/groups shows empty state | Empty group state |
 
+### 8.33 Routing Smoke Group Criteria
+**File:** `test/integration/routing_smoke_group_criteria_test.dart`
+
+Added for Report 85. These host-side criteria guard the paired simulator
+orchestrator from passing on sender-only or pending receiver evidence.
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `routing smoke group criteria` | G2 requires all five warm messages | Warm-burst receive count |
+| | G4 requires Bob receiver-visible inbox recovery | Offline inbox recovery evidence |
+| | G5 rejects pending or missing receiver timeline evidence | Full-lifecycle receiver timeline completeness |
+| | G7 requires rotation plus pre and post rotation receipts | Rotation traffic receive proof |
+| | G8 requires Bob receipt in addition to Alice publish success | Flood-publish receiver proof |
+
 ---
 
 ## 9. Test Helpers & Fakes
@@ -2254,13 +2336,16 @@ Areas of the group chat feature that have **no dedicated test coverage** or only
 - **GroupConversationWired background task skipped tests**: `group_conversation_wired_bg_task_test.dart` exists with 15 tests, but 5 are marked `skip: true` (bg:begin/bg:end lifecycle, announcement media metadata, order-recording bridge). These represent untested background-task coverage holes.
 
 ### 10.4 Integration / E2E
-- **True multi-device E2E**: Multi-device tests use in-memory fakes in the repo-owned suite. Earlier 2026-04-12 spare iOS proof remains in `/tmp/md004_group_multi_device_real_rerun8_20260412.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/group_multi_device_real_primary_ios.log`.
+- **True multi-device E2E**: Multi-device tests use in-memory fakes in the repo-owned suite. Earlier 2026-04-12 spare iOS proof remains in `/tmp/md004_group_multi_device_real_rerun8_20260412.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/group_multi_device_real_primary_ios.log`. Report 85 revalidated `group_multi_device_convergence_test.dart` as the host oracle, but a fresh same-account two-device run remains device-lab evidence.
 - **Push notification trigger path**: Group push routing is tested. Earlier 2026-04-12 spare iOS proof remains in `/tmp/ux009_notification_open_ui_smoke_20260412_rerun16e_drive.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/notification_open_ui_primary_ios.log`.
-- **Network partition healing**: Tested via `temporary partition replays missed backlog` in resume recovery, but no dedicated partition-heal scenario like the intro feature's multi-simulator proof.
+- **Network partition healing**: Report 85 tightened `temporary partition replays missed backlog` in `group_resume_recovery_test.dart` to three missed split-window messages across cursor-ordered durable inbox pages plus post-heal live delivery. A real bridge/GossipSub partition-heal simulator proof remains device-lab residual evidence.
+- **Full simulator media and recovery matrix**: Report 85 added host/app-layer media onboarding, media fan-out, retry, foreground-drain, and strict paired-run criteria coverage. Full Discussion/Announcement simulator media journeys, OS-state group notification matrix, relay outage replay, and failure/recovery UI breadth still require configured device-lab runs.
 
 ### 10.5 Security
 - **Replay attack on group messages**: Now covered by `handle_incoming_group_message_use_case_test.dart` and `group_resume_recovery_test.dart`, which pin timestamp-tampered replay dedup plus remove/dissolve cutoff enforcement on the Flutter-visible receive path.
 - **Tampered group message payload**: Now covered by `pubsub_decryption_failure_test.go`, which pins wrong-key, tampered-nonce, tampered-ciphertext, and malformed-payload rejection without any `group_message:received` event, and `go_bridge_client_test.dart`, which keeps the owned Flutter diagnostics route pinned.
+- **Real-crypto onboarding and re-add**: Now covered at the real Go-bridge app boundary by `integration_test/group_real_crypto_onboarding_test.dart`. Live GossipSub two-node delivery remains separate device-lab evidence.
+- **Membership-event signature forgery**: Now covered at the Go envelope-validator layer by `TestGroupTopicValidator_RejectsForgedMembershipSystemEventSignature` in `pubsub_test.go`; app-layer authorization remains covered by `group_message_listener_test.dart`.
 - **Key rotation race conditions**: Now covered at the repo-owned convergence seam by `group_key_update_listener_test.dart`, which collapses same-generation conflicts to one stored key and keeps higher-epoch convergence explicit, while `send_group_message_use_case_test.dart` and `group_resume_recovery_test.dart` keep the winning epoch sendable.
 - **Group observability contract drift**: Now covered by `send_group_message_use_case_test.dart`, `rejoin_group_topics_use_case_test.dart`, `drain_group_offline_inbox_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `retry_failed_group_inbox_stores_use_case_test.dart`, which pin stable begin/success/skip/error/timing flow-event names and required detail keys on the shipped Flutter-owned group send/recovery/retry paths.
 
@@ -2295,6 +2380,42 @@ Primary simulator / emulator targets for the remaining exploratory/device-proof 
 | Test | What it covers |
 |------|----------------|
 | real CLI peer drives live and inbox group recovery | CLI-driven recovery round-trip |
+
+### 11.3 Real-Crypto Group Onboarding
+**File:** `integration_test/group_real_crypto_onboarding_test.dart`
+
+Added for Report 85.
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `real-crypto group onboarding` | Bob accepts a real encrypted invite, decrypts first-add and re-add group ciphertext | Real Go-bridge ML-KEM invite acceptance, group AES-GCM decrypt, re-add current epoch decrypt, retained old-key decrypt failure |
+
+### 11.4 Foreground Group Push Drain
+**File:** `integration_test/foreground_group_push_drain_test.dart`
+
+Extended for Report 85.
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `foreground group push drain` | foreground group push drains the targeted group inbox and surfaces one in-app notification | Targeted group inbox drain and in-app notification |
+| | foreground group push drains media exactly once with descriptor and download trigger | Representative image media drain, descriptor preservation, one download trigger |
+| | foreground group push does not duplicate a message or notification already received live | Live-plus-push dedupe |
+| | foreground 1:1 push still drains the 1:1 inbox only | Cross-kind isolation |
+| | foreground post push does not trigger any drain | Unsupported-kind guard |
+
+### 11.5 Multi-Relay Failover
+**File:** `integration_test/multi_relay_failover_test.dart`
+
+Tightened for Report 85.
+
+| Mode | Test | What it covers |
+|------|------|----------------|
+| Strict fixture guard | multi-relay fixture is required for this closure run | Fails clearly when `MKNOON_REQUIRE_MULTI_RELAY=true` and fewer than two relay addresses are configured |
+| No fixture | two relay failover keeps 1:1 delivery working (requires `MKNOON_RELAY_ADDRESSES`) | Truthful skip placeholder, not closure evidence |
+| No fixture | two relay failover keeps group recovery working (requires `MKNOON_RELAY_ADDRESSES`) | Truthful skip placeholder, not closure evidence |
+| Configured fixture | imports `transport_e2e.main()` and `group_recovery_e2e.main()` | Real-stack 1:1 and group recovery under multi-relay configuration |
+
+**Recurring command:** `FLUTTER_DEVICE_ID=<device> MKNOON_RELAY_ADDRESSES=<relay1,relay2,...> ./scripts/run_test_gates.sh group-real-network-nightly`
 
 ---
 
@@ -2340,7 +2461,7 @@ Group-related tests in `go-mknoon/`. Counts reflect only `func Test*` functions 
 | TestGroupMessagePayloadWithQuotedMessageIdExtra | Quoted reply support |
 
 ### 12.3 PubSub Core
-**File:** `go-mknoon/node/pubsub_test.go` (72 tests)
+**File:** `go-mknoon/node/pubsub_test.go` (73 tests)
 
 Covers topic creation, validator logic, config updates, discovery, and publish operations:
 
@@ -2349,7 +2470,7 @@ Covers topic creation, validator logic, config updates, discovery, and publish o
 | Topic & Config | TestGroupTopicName, TestGroupConfig_Serialization, TestGroupKeyInfo_Serialization, TestGroupMember_Serialization, TestGroupMember_OmitEmpty |
 | Writer Authorization | TestIsAllowedWriter_ChatAnyMember, _AnnouncementAdminOnly, _AnnouncementMemberBlocked, _QAAnyMember, _NonMember |
 | Member Lookup | TestFindMember_Found, _NotFound, _DuplicatePeerId_ReturnsFirst |
-| Validator | TestGroupTopicValidator_ValidMessage, _InvalidJSON, _UnknownGroup, _UnauthorizedSender, _AnnouncementNonAdminRejected, _BadSignature, _SpoofedPublicKey, _NotV3Envelope, _WrongKeyEpoch, _EmptyMembersList, _ConcurrentValidation |
+| Validator | TestGroupTopicValidator_ValidMessage, _InvalidJSON, _UnknownGroup, _UnauthorizedSender, _AnnouncementNonAdminRejected, _BadSignature, _SpoofedPublicKey, _RejectsForgedMembershipSystemEventSignature, _NotV3Envelope, _WrongKeyEpoch, _EmptyMembersList, _ConcurrentValidation |
 | Join / Leave | TestJoinGroupTopic_WithMultiMemberConfig, _ValidatorAcceptsAllListedMembers, _FailsWithoutPubSub, _RejectsDoubleJoin, TestLeaveGroupTopic_CancelsDiscoveryContext |
 | Config Update | TestUpdateGroupConfig_ReplacesConfigAtomically, _NonExistentGroup, _PreservesDiscoveryLoop, _ConcurrentUpdates |
 | Invite Lifecycle | TestInviteLifecycle_AdminAddsNewMember_ValidatorAcceptsNewMember, _AnnouncementGroup_NewWriterCannotPublish |
@@ -2424,14 +2545,19 @@ key-rotation suites.
 | TestGroupInboxRetrieveCursor_RequiresStartedNode | Node startup guard |
 | TestGroupInboxRetrieveCursor_NegativeLimitDefaultsTo50 | Negative limit default |
 
-### 12.8 Multi-Relay (group-relevant subset)
-**File:** `go-mknoon/node/multi_relay_test.go` (3 of 22 tests)
+### 12.8 Multi-Relay (group and Report 85 relay-recovery subset)
+**File:** `go-mknoon/node/multi_relay_test.go` (8 of 22 tests)
 
 | Test | What it covers |
 |------|----------------|
 | TestNewRelaySelector_GroupsByPeerID | Relay grouping |
+| TestDialPeerViaRelay_TriesSecondRelayWhenFirstFails | Direct-to-relay fallback attempt |
+| TestRendezvousRegister_TriesSecondRelayWhenFirstFails | Rendezvous register relay fallback |
+| TestRendezvousDiscover_TriesSecondRelayWhenFirstFails | Rendezvous discover relay fallback |
+| TestInboxStore_TriesSecondRelayWhenFirstFails | 1:1 inbox relay fallback prerequisite |
 | TestGroupInboxRetrieve_TriesSecondRelayWhenFirstFails | Inbox relay failover |
 | TestGroupInboxRetrieveCursor_TriesSecondRelayWhenFirstFails | Cursor relay failover |
+| TestMediaUpload_TriesSecondRelayWhenFirstFails | Media relay fallback prerequisite |
 
 ### 12.9 Rendezvous
 **File:** `go-mknoon/node/rendezvous_test.go` (2 tests)

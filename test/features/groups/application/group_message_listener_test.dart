@@ -2890,6 +2890,9 @@ void main() {
       );
       notifListener.start(sourceController.stream);
 
+      final removedGroups = <String>[];
+      final sub = notifListener.groupRemovedStream.listen(removedGroups.add);
+
       final sysText = jsonEncode({
         '__sys': 'member_removed',
         'member': {'peerId': 'peer-self', 'username': 'Me'},
@@ -2916,7 +2919,11 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 50));
 
       expect(await groupRepo.getGroup('group-1'), isNull);
-      expect(bridge.commandLog, contains('group:leave'));
+      expect(removedGroups, <String>['group-1']);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:leave'),
+        hasLength(1),
+      );
 
       sourceController.add({
         'groupId': 'group-1',
@@ -2924,6 +2931,7 @@ void main() {
         'senderUsername': 'Sender',
         'keyEpoch': 0,
         'text': 'After removal',
+        'messageId': 'post-removal-message-1',
         'timestamp': DateTime.now().toUtc().toIso8601String(),
       });
 
@@ -2932,6 +2940,7 @@ void main() {
       expect(notifService.shown, isEmpty);
       expect(msgRepo.count, 0);
 
+      await sub.cancel();
       notifListener.dispose();
     });
 
@@ -3280,40 +3289,42 @@ void main() {
       expect(bridge.commandLog, isNot(contains('group:leave')));
     });
 
-    test('stored creator who is no longer admin cannot dissolve the group',
-        () async {
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: 'group-1',
-          peerId: 'peer-admin',
-          username: 'Admin',
-          role: MemberRole.writer,
-          joinedAt: initialMemberJoinedAt,
-        ),
-      );
+    test(
+      'stored creator who is no longer admin cannot dissolve the group',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.writer,
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
 
-      listener.start(sourceController.stream);
+        listener.start(sourceController.stream);
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-admin',
-        'senderUsername': 'Admin',
-        'keyEpoch': 0,
-        'text': jsonEncode({
-          '__sys': 'group_dissolved',
-          'dissolvedAt': '2026-04-05T12:00:00.000Z',
-          'dissolvedBy': 'peer-admin',
-        }),
-        'timestamp': '2026-04-05T12:00:00.000Z',
-      });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'group_dissolved',
+            'dissolvedAt': '2026-04-05T12:00:00.000Z',
+            'dissolvedBy': 'peer-admin',
+          }),
+          'timestamp': '2026-04-05T12:00:00.000Z',
+        });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 50));
 
-      final group = await groupRepo.getGroup('group-1');
-      expect(group, isNotNull);
-      expect(group!.isDissolved, isFalse);
-      expect(await msgRepo.getLatestMessage('group-1'), isNull);
-      expect(bridge.commandLog, isNot(contains('group:leave')));
-    });
+        final group = await groupRepo.getGroup('group-1');
+        expect(group, isNotNull);
+        expect(group!.isDissolved, isFalse);
+        expect(await msgRepo.getLatestMessage('group-1'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
   });
 }

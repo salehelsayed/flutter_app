@@ -81,6 +81,7 @@ readonly NIGHTLY_ONLY_TESTS=(
   "integration_test/conversation_bridge_test.dart"
   "integration_test/wifi_transport_test.dart"
   "integration_test/voice_message_e2e_test.dart"
+  "integration_test/group_real_crypto_onboarding_test.dart"
   "integration_test/group_recovery_e2e_test.dart"
   "integration_test/group_recovery_cli_e2e_test.dart"
   "integration_test/multi_relay_failover_test.dart"
@@ -91,6 +92,10 @@ readonly NIGHTLY_ONLY_TESTS=(
 
 readonly OPTIONAL_MANUAL_TESTS=(
   "test/features/groups/integration/announcement_happy_path_test.dart"
+  "test/features/groups/integration/announcement_new_reader_onboarding_test.dart"
+  "test/features/groups/integration/group_media_fanout_test.dart"
+  "test/features/groups/integration/group_multi_device_convergence_test.dart"
+  "test/features/groups/integration/group_new_member_onboarding_test.dart"
   "test/features/conversation/integration/emoji_reaction_exchange_test.dart"
   "test/features/contact_request/integration/contact_request_flow_test.dart"
   "test/features/contact_request/integration/key_exchange_retry_flow_test.dart"
@@ -103,10 +108,13 @@ readonly OPTIONAL_MANUAL_TESTS=(
   "test/integration/notification_deeplink_integration_test.dart"
   "test/integration/rapid_lock_unlock_integration_test.dart"
   "test/integration/relay_down_degradation_integration_test.dart"
+  "test/integration/routing_smoke_group_criteria_test.dart"
   "integration_test/cold_start_sendable_no_user_action_test.dart"
   "integration_test/foreground_group_push_drain_test.dart"
+  "integration_test/group_new_member_media_simulator_proof_test.dart"
   "integration_test/media_message_journey_e2e_test.dart"
   "integration_test/notification_open_ui_smoke_test.dart"
+  "integration_test/settings_background_choice_smoke_test.dart"
   "test/performance/conversation_wired_performance_test.dart"
   "test/performance/conversation_wired_subscription_performance_test.dart"
   "integration_test/feed_performance_test.dart"
@@ -130,6 +138,7 @@ Usage:
   ./scripts/run_test_gates.sh posts
   ./scripts/run_test_gates.sh transport
   ./scripts/run_test_gates.sh runtime-telemetry
+  ./scripts/run_test_gates.sh group-real-network-nightly
   ./scripts/run_test_gates.sh all
   ./scripts/run_test_gates.sh benchmark
   ./scripts/run_test_gates.sh benchmark-sim
@@ -200,6 +209,20 @@ run_transport_gate() {
   # invocation can fail later files with app-start/log-reader flake even when
   # the same suites pass in isolated runs.
   run_gate_command "Startup / Transport Gate" "${TRANSPORT_TESTS[@]}"
+}
+
+run_group_real_network_nightly_gate() {
+  if [[ -z "${FLUTTER_DEVICE_ID:-}" ]]; then
+    printf 'FLUTTER_DEVICE_ID is required for Group Real-Network Nightly Gate.\n' >&2
+    return 1
+  fi
+
+  printf 'Running Group Real-Network Nightly Gate\n'
+  flutter test \
+    -d "$FLUTTER_DEVICE_ID" \
+    --dart-define=MKNOON_REQUIRE_MULTI_RELAY=true \
+    --dart-define=MKNOON_RELAY_ADDRESSES="${MKNOON_RELAY_ADDRESSES:-}" \
+    integration_test/multi_relay_failover_test.dart
 }
 
 array_contains() {
@@ -394,6 +417,9 @@ main() {
       ;;
     runtime-telemetry)
       run_gate_command "Runtime Telemetry Gate" "${RUNTIME_TELEMETRY_TESTS[@]}"
+      ;;
+    group-real-network-nightly)
+      run_group_real_network_nightly_gate
       ;;
     all)
       run_gate_command "Baseline Gate" "${BASELINE_TESTS[@]}"

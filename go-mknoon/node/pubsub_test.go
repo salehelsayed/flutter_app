@@ -884,6 +884,77 @@ func TestGroupTopicValidator_SpoofedPublicKey(t *testing.T) {
 	}
 }
 
+func TestGroupTopicValidator_RejectsForgedMembershipSystemEventSignature(t *testing.T) {
+	adminPriv, adminPub := generateEd25519KeyPair(t)
+	attackerPriv, attackerPub := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-forged-members-added"
+
+	sysTextBytes, err := json.Marshal(map[string]interface{}{
+		"__sys": "members_added",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    "peer-new",
+				"username":  "New Member",
+				"role":      "writer",
+				"publicKey": "pk-new",
+			},
+		},
+		"groupConfig": map[string]interface{}{
+			"name":      "Test Group",
+			"groupType": "chat",
+			"members": []map[string]interface{}{
+				{"peerId": "peer-admin", "role": "admin", "publicKey": adminPub},
+				{"peerId": "peer-new", "role": "writer", "publicKey": "pk-new"},
+			},
+			"createdBy": "peer-admin",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal system payload: %v", err)
+	}
+
+	config := &GroupConfig{
+		Name:      "Test Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-admin", Role: GroupRoleAdmin, PublicKey: adminPub},
+		},
+		CreatedBy: "peer-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	forgedEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		"peer-admin",
+		attackerPriv,
+		attackerPub,
+		groupKey,
+		1,
+		string(sysTextBytes),
+	)
+
+	result := validateGroupEnvelope(forgedEnvelope, groupId, config, keyInfo)
+	if result != "reject:bad_signature" {
+		t.Fatalf("expected reject:bad_signature for forged members_added envelope, got %s", result)
+	}
+
+	validEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		"peer-admin",
+		adminPriv,
+		adminPub,
+		groupKey,
+		1,
+		string(sysTextBytes),
+	)
+	if result := validateGroupEnvelope(validEnvelope, groupId, config, keyInfo); result != "accept" {
+		t.Fatalf("expected valid admin-signed members_added envelope to be accepted, got %s", result)
+	}
+}
+
 // --- End-to-end encrypt/decrypt round-trip ---
 
 func TestGroupMessage_EncryptDecryptRoundTrip(t *testing.T) {

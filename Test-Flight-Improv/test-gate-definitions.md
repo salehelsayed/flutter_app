@@ -30,6 +30,17 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - `integration_test/group_recovery_e2e_test.dart` now carries the Session 72 device-backed dissolved local-cleanup recovery proof and stays in the Nightly / Release Pool because it remains simulator-bound and should not widen the frozen named gates.
 - `test/features/groups/integration/group_startup_rejoin_smoke_test.dart` stays in the Group Messaging Gate, not Startup / Transport. It validates group-topic rejoin behavior with fake infrastructure rather than the real transport gate.
 - `integration_test/multi_relay_failover_test.dart` stays nightly-only because it needs multi-relay runtime configuration and composes heavier real-stack coverage than the named transport gate.
+- `integration_test/multi_relay_failover_test.dart` now supports
+  `--dart-define=MKNOON_REQUIRE_MULTI_RELAY=true` for fixture-backed closure
+  jobs so missing relay addresses fail clearly instead of becoming skipped
+  pseudo-evidence.
+- `integration_test/scripts/run_group_multi_device_real.dart` remains a
+  Nightly / Release Pool orchestrator rather than a named gate member because
+  it launches two device processes plus a CLI peer fixture.
+- `./scripts/run_test_gates.sh group-real-network-nightly` is the recurring
+  fixture-backed group real-network command. It requires `FLUTTER_DEVICE_ID`
+  and passes `MKNOON_REQUIRE_MULTI_RELAY=true`, so missing relay config fails
+  clearly.
 
 ## Bulk-Classification Policy
 
@@ -331,6 +342,7 @@ These stay outside the named gates because they are heavier, device-bound, env-b
 - `integration_test/conversation_bridge_test.dart`
 - `integration_test/wifi_transport_test.dart`
 - `integration_test/voice_message_e2e_test.dart`
+- `integration_test/group_real_crypto_onboarding_test.dart`
 - `integration_test/group_recovery_e2e_test.dart`
 - `integration_test/group_recovery_cli_e2e_test.dart`
 - `integration_test/multi_relay_failover_test.dart`
@@ -347,6 +359,10 @@ These are intentionally classified, but not promoted into the frozen named gates
 | File | Classification | Reason |
 |------|----------------|--------|
 | `test/features/groups/integration/announcement_happy_path_test.dart` | Optional / manual direct suite | Session 6 focused announcement create/send/read-only/react regression without widening frozen named gates |
+| `test/features/groups/integration/announcement_new_reader_onboarding_test.dart` | Optional / manual direct suite | Report 85 focused announcement new-reader post-join image/video/voice plus no-backfill regression; Report 89 adds read-only text/image/video/voice send denial without widening frozen named gates |
+| `test/features/groups/integration/group_media_fanout_test.dart` | Optional / manual direct suite | Report 85 focused existing-member discussion image/video/voice fan-out regression; Report 89 adds newly-added-member image/video/voice send fan-out without widening frozen named gates |
+| `test/features/groups/integration/group_multi_device_convergence_test.dart` | Optional / manual direct suite | Report 85 same-account host oracle for sent-history, membership, mute, unread, and notification locality without widening frozen named gates |
+| `test/features/groups/integration/group_new_member_onboarding_test.dart` | Optional / manual direct suite | Report 85 and Report 89 focused discussion new-member post-join text/image/video/voice plus no-backfill regression without widening frozen named gates |
 | `test/features/conversation/integration/emoji_reaction_exchange_test.dart` | Optional / manual direct suite | Reaction pipeline coverage, not shared durable-send coverage |
 | `test/features/contact_request/integration/contact_request_flow_test.dart` | Optional / manual direct suite | Contact bootstrap and acceptance flow; run with invite or onboarding entry work |
 | `test/features/contact_request/integration/key_exchange_retry_flow_test.dart` | Optional / manual direct suite | Contact key-bootstrap retry logic, not a named gate member |
@@ -356,7 +372,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/features/push/application/ios_push_project_config_test.dart` | Optional / manual direct suite | iOS push project config, APNs diagnostics, and quiet foreground remote presentation contract for Report 75 without widening frozen named gates |
 | `test/features/push/application/show_notification_use_case_test.dart` | Optional / manual direct suite | Notification display and suppression boundary, including the route-payload remote-announcement dedupe regression for group pushes |
 | `test/features/push/application/chat_and_group_push_open_flow_test.dart` | Optional / manual direct suite | Notification open sequencing across chat, group, intros, and contact-request routes without widening named gates |
-| `test/features/push/application/resolve_group_notification_route_target_use_case_test.dart` | Optional / manual direct suite | Group push recovery regression for missing local group state, pending invite discovery, inbox-drain retry, and Orbit intro redirect fallback |
+| `test/features/push/application/resolve_group_notification_route_target_use_case_test.dart` | Optional / manual direct suite | Group push recovery regression for missing local group state, stale removed-group route denial, pending invite discovery, inbox-drain retry, and Orbit intro redirect fallback |
 | `test/features/settings/integration/profile_picture_flow_test.dart` | Optional / manual direct suite | Profile media / broadcast / download flow |
 | `test/features/share/integration/share_to_contact_smoke_test.dart` | Optional / manual direct suite | Share target routing and compose hydration |
 | `test/integration/group_notification_dedupe_integration_test.dart` | Optional / manual direct suite | Background group push announcement versus later local group notification dedupe regression without widening the frozen named gates |
@@ -364,16 +380,19 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/integration/notification_deeplink_integration_test.dart` | Optional / manual direct suite | Notification routing boundary; Session 4 work will harden this area |
 | `test/integration/rapid_lock_unlock_integration_test.dart` | Optional / manual direct suite | Lifecycle retry edge case, narrower than the named gates |
 | `test/integration/relay_down_degradation_integration_test.dart` | Optional / manual direct suite | 1:1 degradation edge-case coverage, including failed-send during transport loss -> foreground online-transition retry healing the same row exactly once |
+| `test/integration/routing_smoke_group_criteria_test.dart` | Optional / manual direct suite | Report 85 host-side guard that the two-simulator group smoke G2/G4/G5/G7/G8 rows cannot pass with pending or sender-only receiver evidence |
 | `integration_test/cold_start_sendable_no_user_action_test.dart` | Optional / manual direct suite | Cold-start sendability check without widening the startup or transport gates |
 | `integration_test/conversation_wired_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation screen wiring |
 | `integration_test/conversation_wired_subscription_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation subscription churn |
 | `integration_test/feed_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
-| `integration_test/foreground_group_push_drain_test.dart` | Optional / manual direct suite | Foreground group push targeted drain and no-duplicate regression for Report 71 without widening the frozen named gates. Companion simulator approximation: `dart run integration_test/scripts/run_foreground_group_push_simulator_smoke.dart -d <alice>,<bob>` for real-stack two-simulator gap + replay coverage. |
+| `integration_test/foreground_group_push_drain_test.dart` | Optional / manual direct suite | Foreground group push targeted drain, no-duplicate, and Report 85 representative media descriptor/download regression without widening the frozen named gates. Companion simulator approximation: `dart run integration_test/scripts/run_foreground_group_push_simulator_smoke.dart -d <alice>,<bob>` for real-stack two-simulator gap + replay coverage. |
 | `integration_test/feed_wired_init_performance_test.dart` | Optional / manual direct suite | Performance-only validation for feed initialization |
+| `integration_test/group_new_member_media_simulator_proof_test.dart` | Optional / manual direct suite | Report 89 simulator-backed new discussion member video and voice render/play/reopen proof without widening frozen named gates |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/media_message_journey_e2e_test.dart` | Optional / manual direct suite | End-to-end media delivery journey coverage that stays outside the frozen named gates |
 | `integration_test/notification_open_ui_smoke_test.dart` | Optional / manual direct suite | Notification-open UI routing smoke without widening the frozen named gates |
 | `integration_test/orbit_performance_test.dart` | Optional / manual direct suite | Performance-only validation for Orbit surface behavior |
+| `integration_test/settings_background_choice_smoke_test.dart` | Optional / manual direct suite | Device-backed Settings background-choice smoke from the background/theme rollout archive; classified here to keep the test inventory complete without widening named gates |
 
 ### Explicit Out-of-Gate File
 
@@ -425,12 +444,17 @@ Session 1 rule:
 Validation run dates:
 - 2026-03-25 initial gate validation
 - 2026-03-26 Session 27 revalidation for `baseline`, `groups`, and `transport`
+- 2026-04-29 Report 89 revalidation for `groups` and `completeness-check`
+- 2026-04-29 Report 89 Android emulator simulator proof for newly-added group member video/voice render, play, and reopen
+- 2026-04-29 Report 89 iPhone 17 simulator proof for newly-added group member video/voice render, play, and reopen
 
-- Completeness check: revalidated on 2026-03-29 via `./scripts/run_test_gates.sh completeness-check` and passed with `580/580` test files classified.
+- Completeness check: revalidated on 2026-04-29 via `./scripts/run_test_gates.sh completeness-check` and passed with `684/684` test files classified.
+- Report 89 simulator proof: passed on 2026-04-29 via `flutter test -d emulator-5554 integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d emulator-5554 integration_test/media_message_journey_e2e_test.dart`, `flutter test -d emulator-5554 integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d emulator-5554 integration_test/foreground_group_push_drain_test.dart`.
+- Report 89 iOS simulator proof: passed on 2026-04-29 via `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/group_new_member_media_simulator_proof_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_message_journey_e2e_test.dart`, `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/media_stable_id_smoke_test.dart`, and `flutter test -d 5BA69F1C-B112-47BE-B1FF-8C1003728C8F integration_test/foreground_group_push_drain_test.dart`.
 - Baseline Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` and passed.
 - 1:1 Reliability Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh 1to1` and passed.
 - Feed / Surface Gate: passed via `./scripts/run_test_gates.sh feed`.
-- Group Messaging Gate: revalidated on 2026-03-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` and passed.
+- Group Messaging Gate: revalidated on 2026-04-29 via `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` and passed.
 - Posts / Privacy Gate: `test/features/posts/phase3/post_presence_listener_test.dart` passed, and `integration_test/posts_phase1_fake_test.dart` ran successfully on macOS. `integration_test/posts_phase2_fake_test.dart` through `integration_test/posts_phase5_fake_test.dart` failed to start on macOS with `Error waiting for a debug connection` / `Unable to start the app on the device`.
 - Startup / Transport Gate: revalidated on 2026-03-26 via `FLUTTER_DEVICE_ID=5BA69F1C-B112-47BE-B1FF-8C1003728C8F ./scripts/run_test_gates.sh transport` and passed. During the first rerun, `integration_test/wifi_relay_fallback_smoke_test.dart` and `integration_test/transport_e2e_test.dart` exposed stale `MessageRepositoryImpl` constructor wiring; after those repo-local test harness fixes landed, the same simulator-backed gate reran green.
 - Top-level script validation: the current Session 41 reruns confirm `completeness-check`, `baseline`, `1to1`, and `groups` are green.

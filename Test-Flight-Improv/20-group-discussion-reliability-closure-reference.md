@@ -120,6 +120,113 @@ That is the correct level of honesty for a publish + inbox-backed, receipt-less 
 - This closure is still intentionally foreground-only. The repo does **not**
   promise true background upload execution or download-side wake-lock behavior.
 
+### 8. Discussion new-member onboarding proof
+
+- `test/features/groups/integration/group_new_member_onboarding_test.dart`
+  now proves a newly-added discussion member receives only post-join text,
+  image, video, and voice messages through the bridge-backed group send path.
+- The same test preserves the no-backfill contract for a pre-join message and
+  asserts the receiver persists image/video/audio descriptors and starts
+  media-download work for each incoming media attachment.
+- The suite also covers post-join side context for a newly-added member:
+  Charlie's reaction to a post-join message fans out to Bob through the
+  listener/reaction repository path, and a post-join quoted reply to a
+  pre-join parent keeps the parent absent while the group conversation UI
+  renders `Message unavailable`.
+- Multi-member onboarding now has host-side epoch evidence: Bob and Charlie
+  converge on the same latest fake-network epoch and receive the same post-add
+  message with that `keyGeneration`.
+- The add/send boundary is pinned for the fake network: a staged but
+  unsubscribed Bob does not receive the racing message, then receives the first
+  post-subscription message exactly once while member lists converge.
+- Re-add/current-state evidence remains covered by
+  `group_membership_smoke_test.dart`, which verifies the re-added member uses
+  the current fake epoch and does not receive removed-period traffic.
+- `integration_test/group_real_crypto_onboarding_test.dart` now adds the
+  real-bridge app-boundary crypto proof for first-add and re-add: Bob accepts
+  production encrypted group invites through `handleIncomingGroupInvite`,
+  decrypts current-epoch `group.encrypt` ciphertexts with the accepted keys,
+  and retained old key material fails against the re-add ciphertext.
+- The new crypto suite is device-backed Nightly / Release Pool evidence. It
+  does not replace the separate live GossipSub/two-node real-network simulator
+  closure bars tracked by Report 85.
+- The Report 85 crypto/security boundary is now explicit: replay convergence
+  is the Flutter `messageId`/content dedupe contract, not nonce-cache
+  rejection, and Go group-topic validation rejects forged signed
+  `members_added` envelopes before decoded membership events reach Flutter.
+- `test/features/groups/integration/group_media_fanout_test.dart` now proves
+  existing discussion members receive image, video, and voice messages through
+  the bridge-backed group send path with descriptors intact. This is
+  fake-network/app-layer media evidence; live GossipSub/simulator media
+  delivery remains owned by later Report 85 sessions.
+- Report 89 extends that same suite to the newly-added sender path: after
+  bootstrap and latest-key persistence, Bob sends image, video, and voice, his
+  outgoing rows retain the attachments, and Alice/Charlie each receive exactly
+  one row with Bob's sender message ids plus image/video/audio metadata intact.
+- Report 89 also adds a conversation-surface regression in
+  `group_conversation_screen_test.dart`: a visible group row can contain text
+  plus a video duration/play affordance, voice/audio affordance, and failed
+  media state instead of silently dropping media. This is host widget evidence;
+  process-kill restart persistence and broader real-stack/device-lab playback
+  remain explicit residuals.
+- Report 89 now adds Android emulator and iPhone 17 simulator proof in
+  `integration_test/group_new_member_media_simulator_proof_test.dart`: a
+  newly-added member's incoming and outgoing text-plus-video/voice rows render,
+  voice reaches play/pause, video opens in the full-screen viewer, and the same
+  rows survive a conversation-surface reopen on `emulator-5554` and iPhone 17
+  simulator `5BA69F1C-B112-47BE-B1FF-8C1003728C8F`. The companion Android
+  emulator and iPhone 17 simulator runs for `media_message_journey_e2e_test.dart`,
+  `media_stable_id_smoke_test.dart`, and `foreground_group_push_drain_test.dart`
+  also passed on `2026-04-29`. True process-kill restart persistence, broader
+  paired-simulator real-stack coverage, and real-device/TestFlight playback
+  remain explicit residuals.
+- `integration_test/foreground_group_push_drain_test.dart` now proves a
+  representative foreground group push drains a targeted image inbox item once,
+  preserves the media descriptor, triggers the media download path, and shows
+  the expected notification text. This is direct foreground-router/inbox
+  evidence, not OS background/terminated push or paired-simulator delivery.
+- `test/features/groups/application/group_message_listener_test.dart` and
+  `test/features/push/application/resolve_group_notification_route_target_use_case_test.dart`
+  now pin the host-side removed-user notification boundary: self-removal
+  deletes local group access, later group traffic creates no local
+  notification, and a stale removed-group notification route resolves missing.
+  Paired-simulator route-exit and OS stale-tap UI proof remain Report 85
+  residuals.
+- `integration_test/scripts/run_routing_smoke_e2e.dart` now consumes strict
+  G2/G4/G5/G7/G8 group-smoke criteria from
+  `integration_test/scripts/routing_smoke_group_criteria.dart`, with
+  `test/integration/routing_smoke_group_criteria_test.dart` covering
+  partial/pending failure cases. This prevents sender-only or pending receiver
+  evidence from closing simulator rows.
+- A paired simulator run attempted on `2026-04-29` reached Alice ready and
+  launched Bob, then failed before S1 because Alice's child harness timed out
+  waiting for `bob_identity.json` while Bob was still finishing startup. The
+  Alice-side identity wait in `routing_smoke_alice_harness.dart` and
+  `group_smoke_alice_harness.dart` now matches the orchestrator startup window.
+- Report 85 GON-012 revalidated the host-side retry/media recovery surface:
+  incomplete group uploads retry, failed group messages retry, and failed
+  outgoing media rows with retry/delete controls all passed their focused
+  suites on `2026-04-29`. The full simulator media matrix and simulator-visible
+  recovery journeys remain residual Report 85 rows.
+- Report 85 GON-013 revalidated local relay/recovery prerequisites: Go
+  multi-relay fallback paths, fake-network partition/heal cursor ordering,
+  duplicate live+inbox dedupe, and same-account host convergence all passed on
+  `2026-04-29`. `multi_relay_failover_test.dart` now has a strict
+  `MKNOON_REQUIRE_MULTI_RELAY=true` mode so fixture-backed closure runs fail
+  clearly when relay addresses are absent. Live relay outage replay and
+  same-account two-device simulator execution remain device-lab residuals.
+- Report 85 GON-014 tightened the fake-network partition/heal recovery proof:
+  `group_resume_recovery_test.dart` now stages three missed split-window
+  messages across cursor-ordered durable inbox pages, drains them exactly once,
+  and then proves post-heal live delivery resumes. Real bridge/GossipSub
+  partition recovery remains a simulator residual rather than a local closure
+  claim.
+- Report 85 GON-015 added the recurring fixture-backed command
+  `./scripts/run_test_gates.sh group-real-network-nightly`. It requires
+  `FLUTTER_DEVICE_ID`, forwards `MKNOON_RELAY_ADDRESSES`, and forces
+  `MKNOON_REQUIRE_MULTI_RELAY=true`, so missing relay config fails clearly
+  instead of becoming skipped evidence.
+
 ---
 
 ## Accepted Architectural Differences From 1:1

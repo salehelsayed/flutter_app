@@ -10,7 +10,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -27,9 +26,15 @@ import 'group_multi_device_real_harness.dart';
 // Config from dart-defines (same namespace as routing smoke)
 // ---------------------------------------------------------------------------
 
-const _sharedDir = String.fromEnvironment('E2E_SHARED_DIR', defaultValue: '/tmp');
+const _sharedDir = String.fromEnvironment(
+  'E2E_SHARED_DIR',
+  defaultValue: '/tmp',
+);
 const _runId = String.fromEnvironment('SMOKE_RUN_ID', defaultValue: 'adhoc');
-const _dbName = String.fromEnvironment('E2E_DB_NAME', defaultValue: 'group_smoke_alice.db');
+const _dbName = String.fromEnvironment(
+  'E2E_DB_NAME',
+  defaultValue: 'group_smoke_alice.db',
+);
 
 String _sig(String name) => '$_sharedDir/gsmoke_${_runId}_$name';
 
@@ -70,7 +75,10 @@ Future<Map<String, dynamic>> _waitForJson(
   throw TimeoutException('Alice(group): timed out waiting for json: $name');
 }
 
-Future<bool> _waitForOnline(dynamic service, {Duration timeout = const Duration(seconds: 60)}) async {
+Future<bool> _waitForOnline(
+  dynamic service, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
   final sw = Stopwatch()..start();
   while (sw.elapsed < timeout) {
     if (healthFromState(service.currentState) == ConnectionHealth.online) {
@@ -108,7 +116,10 @@ void main() {
     _writeSignal('alice_ready', 'ok');
     print('[ALICE-G] Ready, waiting for Bob...');
 
-    final bobFixture = await _waitForJson('bob_identity.json');
+    final bobFixture = await _waitForJson(
+      'bob_identity.json',
+      timeout: const Duration(minutes: 15),
+    );
     final bobPeerId = bobFixture['peerId'] as String;
 
     // Add Bob as contact (needed for group creation)
@@ -144,11 +155,10 @@ void main() {
     final members = await stack.groupRepo.getMembers(groupId);
 
     // Share group fixture with Bob
-    _writeJson('group_fixture.json', buildGroupFixture(
-      group: group!,
-      keyInfo: keyInfo!,
-      members: members,
-    ));
+    _writeJson(
+      'group_fixture.json',
+      buildGroupFixture(group: group!, keyInfo: keyInfo!, members: members),
+    );
     print('[ALICE-G] Group fixture written');
 
     // Wait for Bob to join — measure discovery timing
@@ -160,7 +170,9 @@ void main() {
     await Future<void>.delayed(const Duration(seconds: 5));
     discoveryStopwatch.stop();
     final peerDiscoveryMs = discoveryStopwatch.elapsedMilliseconds;
-    print('[ALICE-G] Peer discovery: ${peerDiscoveryMs}ms (includes 5s settle)');
+    print(
+      '[ALICE-G] Peer discovery: ${peerDiscoveryMs}ms (includes 5s settle)',
+    );
 
     // Helper: send group message + capture timing
     Future<Map<String, dynamic>> sendGroup(String text) async {
@@ -185,11 +197,18 @@ void main() {
     }
 
     // Helper: wait for incoming group message in Bob's repo (Alice checks her own)
-    Future<bool> waitForGroupMsg(String substring, {Duration timeout = const Duration(seconds: 30)}) async {
+    Future<bool> waitForGroupMsg(
+      String substring, {
+      Duration timeout = const Duration(seconds: 30),
+    }) async {
       final deadline = DateTime.now().add(timeout);
       while (DateTime.now().isBefore(deadline)) {
         final msgs = await stack.groupMsgRepo.getMessagesPage(groupId);
-        if (msgs.any((m) => m.text.contains(substring) && m.senderPeerId != stack.identity.peerId)) {
+        if (msgs.any(
+          (m) =>
+              m.text.contains(substring) &&
+              m.senderPeerId != stack.identity.peerId,
+        )) {
           return true;
         }
         await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -297,7 +316,8 @@ void main() {
     // Re-measure by checking topic peer count now vs at join.
     _writeJson('g6_alice_done', {
       'peerDiscoveryMs': peerDiscoveryMs,
-      'note': 'Time from Bob joined signal to GossipSub settle (includes 5s wait)',
+      'note':
+          'Time from Bob joined signal to GossipSub settle (includes 5s wait)',
     });
 
     // ════════════════════════════════════════════════════════════════
@@ -322,7 +342,9 @@ void main() {
       senderUsername: stack.identity.username,
     );
     g7RotSw.stop();
-    print('[ALICE-G] G7: key rotated in ${g7RotSw.elapsedMilliseconds}ms (new key: ${newKey != null})');
+    print(
+      '[ALICE-G] G7: key rotated in ${g7RotSw.elapsedMilliseconds}ms (new key: ${newKey != null})',
+    );
 
     // Send a post-rotation message (uses new key)
     final g7Post = await sendGroup('G7: post-rotation msg');

@@ -63,6 +63,49 @@ Current closure already includes all three enforcement seams:
 - `announcement_happy_path_test.dart` gives the repo a concise announcement create → send → read-only/reader → react proof without needing a separate announcement roadmap.
 - `group_conversation_wired_bg_task_test.dart` directly covers announcement-admin text send lock/unmount parity with live peers and with zero peers.
 
+### 5. New-reader media onboarding proof
+
+- `test/features/groups/integration/announcement_new_reader_onboarding_test.dart`
+  now proves a reader added after an initial admin post receives only post-join
+  admin image, video, and voice/audio messages through the shared group send
+  and listener path.
+- The same test preserves announcement no-backfill at the reader onboarding
+  boundary and asserts receiver-side media descriptors plus media-download
+  triggers.
+- Report 89 extends the same suite with reader-side send denial: the
+  newly-added reader attempts text, image, video, and voice sends, and each
+  attempt returns `SendGroupMessageResult.unauthorized` without `group:publish`
+  or an outgoing attempted row.
+- Current product code remains admin-only for announcement sends. Report 89
+  therefore makes no writer-role announcement media claim unless the product
+  policy changes later.
+- This is app-layer fake-network evidence. Real-network simulator delivery and
+  real-crypto proof remain governed by Report 85's separate closure bars.
+
+### 6. Notification route boundary
+
+- The shared group notification route resolver now has Report 85 host-side
+  stale removed-group denial coverage. This applies to announcement groups
+  through the same group route target path, but does not replace OS-state
+  announcement notification simulator proof.
+- Report 85 GON-010 also tightened shared two-simulator group-smoke acceptance
+  criteria so future Group + Announcement recovery-matrix work cannot pass on
+  pending receiver evidence. The announcement-specific simulator matrix itself
+  remains open.
+- Report 85 GON-011 removed a shared paired-harness startup false failure by
+  extending Alice-side waits for Bob identity. This helps future announcement
+  simulator rows reach execution, but does not close the announcement UI
+  journey.
+- Report 85 GON-012 revalidated shared host-side group retry/media recovery
+  coverage on `2026-04-29`, including incomplete uploads, failed group message
+  retry, and failed-media row controls. Announcement inherits that shared
+  machinery, but announcement-specific simulator media and permission journeys
+  remain open.
+- Report 85 GON-015 added a strict recurring group real-network nightly
+  command. It improves shared group transport gate hygiene, but announcement
+  offline-reader and permission/media simulator journeys remain explicit
+  device-lab residuals.
+
 ---
 
 ## Accepted Architectural Differences From 1:1 And Group Discussions
