@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
@@ -22,6 +23,7 @@ class FriendRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final relativeTime = friend.lastMessageTimestamp != null
         ? formatRelativeTime(friend.lastMessageTimestamp!)
         : '';
@@ -34,11 +36,9 @@ class FriendRow extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0x14FFFFFF), // rgba(255,255,255,0.08)
+          color: readableColors.surfaceSubtle,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: const Color(0x1FFFFFFF), // rgba(255,255,255,0.12)
-          ),
+          border: Border.all(color: readableColors.border),
         ),
         child: Row(
           children: [
@@ -56,10 +56,10 @@ class FriendRow extends StatelessWidget {
                       Flexible(
                         child: Text(
                           friend.username,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xF2FFFFFF), // rgba(255,255,255,0.95)
+                            color: readableColors.textPrimary,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -72,7 +72,9 @@ class FriendRow extends StatelessWidget {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0x261DB954), // rgba(29,185,84,0.15)
+                            color: readableColors.isLightSurface
+                                ? const Color(0xFFE5F4EA)
+                                : const Color(0x261DB954),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: const Text(
@@ -93,9 +95,9 @@ class FriendRow extends StatelessWidget {
                     Text(
                       friend.lastActivity!,
                       textDirection: lastActivityDirection,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Color(0x99FFFFFF), // rgba(255,255,255,0.6)
+                        color: readableColors.textMuted,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -112,19 +114,19 @@ class FriendRow extends StatelessWidget {
                 if (relativeTime.isNotEmpty)
                   Text(
                     relativeTime,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color: Color(0x66FFFFFF), // rgba(255,255,255,0.4)
+                      color: readableColors.textMuted,
                     ),
                   ),
                 const SizedBox(height: 4),
                 if (!hideUnreadBadge && friend.unreadCount > 0)
                   UnreadCountBadge(count: friend.unreadCount)
                 else
-                  const Icon(
+                  Icon(
                     Icons.chevron_right,
                     size: 16,
-                    color: Color(0x66FFFFFF),
+                    color: readableColors.iconMuted,
                   ),
               ],
             ),
@@ -169,12 +171,9 @@ class _AnimatedFriendRowState extends State<AnimatedFriendRow>
       end: Offset.zero,
     ).animate(_fadeAnimation);
 
-    Future.delayed(
-      Duration(milliseconds: widget.index * 20),
-      () {
-        if (mounted) _controller.forward();
-      },
-    );
+    Future.delayed(Duration(milliseconds: widget.index * 20), () {
+      if (mounted) _controller.forward();
+    });
   }
 
   @override
@@ -187,10 +186,7 @@ class _AnimatedFriendRowState extends State<AnimatedFriendRow>
   Widget build(BuildContext context) {
     return FadeTransition(
       opacity: _fadeAnimation,
-      child: SlideTransition(
-        position: _slideAnimation,
-        child: widget.child,
-      ),
+      child: SlideTransition(position: _slideAnimation, child: widget.child),
     );
   }
 }

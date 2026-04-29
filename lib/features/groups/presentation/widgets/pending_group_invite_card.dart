@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 
@@ -19,18 +20,30 @@ class PendingGroupInviteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final isExpired = invite.isExpiredAt(DateTime.now().toUtc());
     final acceptLabel = isExpired ? 'Expired' : 'Accept';
     final declineLabel = isExpired ? 'Dismiss' : 'Decline';
+    final actionBlue = readableColors.isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFF64B5F6);
+    final danger = readableColors.isLightSurface
+        ? const Color(0xFF9D1C12)
+        : const Color(0xFFFF8A80);
+    final onAction = readableColors.isLightSurface
+        ? Colors.white
+        : Colors.black;
 
     return Container(
       key: ValueKey('pending-group-invite-${invite.groupId}'),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0x16FFFFFF),
+        color: readableColors.surfaceRaised,
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: isExpired ? const Color(0x26FF8A80) : const Color(0x1FFFFFFF),
+          color: isExpired
+              ? danger.withOpacity(readableColors.isLightSurface ? 0.32 : 0.22)
+              : readableColors.divider,
         ),
       ),
       child: Column(
@@ -48,15 +61,14 @@ class PendingGroupInviteCard extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
+                      ).copyWith(color: readableColors.textPrimary),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       'Invited by ${invite.senderUsername}',
                       style: TextStyle(
                         fontSize: 13,
-                        color: Colors.white.withOpacity(0.6),
+                        color: readableColors.textSecondary,
                       ),
                     ),
                   ],
@@ -73,9 +85,7 @@ class PendingGroupInviteCard extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: isExpired
-                          ? const Color(0xFFFF8A80)
-                          : Colors.white.withOpacity(0.45),
+                      color: isExpired ? danger : readableColors.textMuted,
                     ),
                   ),
                 ],
@@ -89,7 +99,7 @@ class PendingGroupInviteCard extends StatelessWidget {
               invite.groupDescription!,
               style: TextStyle(
                 fontSize: 13,
-                color: Colors.white.withOpacity(0.58),
+                color: readableColors.textSecondary,
                 height: 1.35,
               ),
             ),
@@ -104,8 +114,9 @@ class PendingGroupInviteCard extends StatelessWidget {
                   ),
                   onPressed: isProcessing ? null : onDecline,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white70,
-                    side: BorderSide(color: Colors.white.withOpacity(0.16)),
+                    foregroundColor: readableColors.textSecondary,
+                    disabledForegroundColor: readableColors.disabledForeground,
+                    side: BorderSide(color: readableColors.inputBorder),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                   child: Text(declineLabel),
@@ -120,17 +131,22 @@ class PendingGroupInviteCard extends StatelessWidget {
                   onPressed: isProcessing || isExpired ? null : onAccept,
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 12),
+                    foregroundColor: isExpired
+                        ? readableColors.disabledForeground
+                        : onAction,
+                    disabledForegroundColor: readableColors.disabledForeground,
                     backgroundColor: isExpired
-                        ? Colors.white24
-                        : const Color(0xFF64B5F6),
+                        ? readableColors.disabledSurface
+                        : actionBlue,
+                    disabledBackgroundColor: readableColors.disabledSurface,
                   ),
                   child: isProcessing
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: onAction,
                           ),
                         )
                       : Text(acceptLabel),

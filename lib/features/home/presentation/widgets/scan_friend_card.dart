@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/glassmorphism.dart';
 
 /// Glassmorphic card for scanning a friend's QR code.
@@ -52,6 +53,7 @@ class _ScanFriendCardState extends State<ScanFriendCard>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final screenHeight = MediaQuery.of(context).size.height;
     final t = ((screenHeight - 650) / 250).clamp(0.0, 1.0);
     final padding = lerpDouble(10, 16, t)!;
@@ -97,7 +99,7 @@ class _ScanFriendCardState extends State<ScanFriendCard>
                     Text(
                       'Scan a friend\'s code',
                       style: TextStyle(
-                        color: AppColors.textPrimary,
+                        color: readableColors.textPrimary,
                         fontSize: titleFont,
                         fontWeight: FontWeight.w600,
                       ),
@@ -106,7 +108,7 @@ class _ScanFriendCardState extends State<ScanFriendCard>
                     Text(
                       'Add someone to your circle',
                       style: TextStyle(
-                        color: AppColors.textMuted,
+                        color: readableColors.textSecondary,
                         fontSize: subtitleFont,
                       ),
                     ),
@@ -114,9 +116,9 @@ class _ScanFriendCardState extends State<ScanFriendCard>
                 ),
               ),
               // Arrow
-              const Icon(
+              Icon(
                 Icons.arrow_forward_ios,
-                color: AppColors.textMuted,
+                color: readableColors.iconSecondary,
                 size: 16,
               ),
             ],

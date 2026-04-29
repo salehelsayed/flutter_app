@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+
+import '../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   final testGroup = GroupModel(
@@ -49,6 +53,8 @@ void main() {
     ValueChanged<GroupMember>? onToggleAdminRole,
     ValueChanged<GroupMember>? onRemoveMember,
     VoidCallback? onAddMember,
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
   }) {
     return MaterialApp(
       home: GroupInfoScreen(
@@ -66,6 +72,7 @@ void main() {
         onRemoveMember: onRemoveMember,
         onToggleAdminRole: onToggleAdminRole,
         onAddMember: onAddMember,
+        backgroundPreference: backgroundPreference,
       ),
     );
   }
@@ -311,5 +318,33 @@ void main() {
       find.byKey(const ValueKey('group-member-actions-peer-member')),
       findsNothing,
     );
+  });
+
+  testWidgets('daylight lagoon keeps group info content readable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        members: testMembers,
+        isMuted: true,
+        onAddMember: () {},
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+      ),
+    );
+
+    const colors = BackgroundReadableColors.representativeLight;
+    final groupName = tester.widget<Text>(find.text('Test Group'));
+    expectTextContrast(groupName.style!.color!, colors.surfaceBase);
+
+    final description = tester.widget<Text>(
+      find.text('A test group for testing'),
+    );
+    expectTextContrast(description.style!.color!, colors.surfaceBase);
+
+    final muteTitle = tester.widget<Text>(find.text('Mute Notifications'));
+    expectTextContrast(muteTitle.style!.color!, colors.surfaceRaised);
+
+    final memberName = tester.widget<Text>(find.text('Regular Member'));
+    expectTextContrast(memberName.style!.color!, colors.surfaceBase);
   });
 }

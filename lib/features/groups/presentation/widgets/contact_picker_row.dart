@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -20,6 +21,10 @@ class ContactPickerRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final selectedAccent = readableColors.isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFF64B5F6);
     final truncatedPeerId = contact.peerId.length > 12
         ? '${contact.peerId.substring(0, 12)}...'
         : contact.peerId;
@@ -39,10 +44,10 @@ class ContactPickerRow extends StatelessWidget {
                 children: [
                   Text(
                     contact.username,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: Colors.white,
+                      color: readableColors.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 2),
@@ -50,7 +55,7 @@ class ContactPickerRow extends StatelessWidget {
                     truncatedPeerId,
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.white.withOpacity(0.4),
+                      color: readableColors.textMuted,
                     ),
                   ),
                 ],
@@ -60,9 +65,7 @@ class ContactPickerRow extends StatelessWidget {
             Icon(
               isSelected ? Icons.check_circle : Icons.add_circle_outline,
               size: 20,
-              color: isSelected
-                  ? const Color(0xFF64B5F6)
-                  : Colors.white.withOpacity(0.4),
+              color: isSelected ? selectedAccent : readableColors.iconMuted,
             ),
           ],
         ),

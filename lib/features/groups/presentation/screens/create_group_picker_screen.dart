@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
-import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_name_panel.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Pure UI screen for the new group creation flow.
 ///
@@ -21,6 +23,7 @@ class CreateGroupPickerScreen extends StatefulWidget {
   final ValueChanged<String?> onStartGroup;
   final VoidCallback onBack;
   final bool isCreating;
+  final BackgroundPreference backgroundPreference;
 
   const CreateGroupPickerScreen({
     super.key,
@@ -30,6 +33,7 @@ class CreateGroupPickerScreen extends StatefulWidget {
     required this.onStartGroup,
     required this.onBack,
     this.isCreating = false,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -81,61 +85,68 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
   @override
   Widget build(BuildContext context) {
     return AmbientBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: Stack(
-            children: [
-              Column(
+      preference: widget.backgroundPreference,
+      child: Builder(
+        builder: (context) {
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: Stack(
                 children: [
-                  _buildHeader(),
-                  _buildSearchField(),
-                  Expanded(
-                    child: widget.contacts.isEmpty
-                        ? _buildEmptyState()
-                        : _buildContactList(),
+                  Column(
+                    children: [
+                      _buildHeader(context),
+                      _buildSearchField(context),
+                      Expanded(
+                        child: widget.contacts.isEmpty
+                            ? _buildEmptyState(context)
+                            : _buildContactList(),
+                      ),
+                    ],
                   ),
+                  if (_hasSelection)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: GroupNamePanel(
+                        selectedContacts: _selectedContacts,
+                        nameController: _nameController,
+                        onStartGroup: () {
+                          final name = _nameController.text.trim();
+                          widget.onStartGroup(name.isEmpty ? null : name);
+                        },
+                        isCreating: widget.isCreating,
+                      ),
+                    ),
                 ],
               ),
-              if (_hasSelection)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: GroupNamePanel(
-                    selectedContacts: _selectedContacts,
-                    nameController: _nameController,
-                    onStartGroup: () {
-                      final name = _nameController.text.trim();
-                      widget.onStartGroup(name.isEmpty ? null : name);
-                    },
-                    isCreating: widget.isCreating,
-                  ),
-                ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
       child: Row(
         children: [
           IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-            color: Colors.white,
+            color: readableColors.iconPrimary,
             onPressed: widget.onBack,
           ),
           const SizedBox(width: 4),
-          const Text(
+          Text(
             'New Group',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: readableColors.textPrimary,
             ),
           ),
         ],
@@ -143,25 +154,27 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
     );
   }
 
-  Widget _buildSearchField() {
+  Widget _buildSearchField(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: TextField(
         controller: _searchController,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: TextStyle(color: readableColors.textPrimary, fontSize: 14),
         decoration: InputDecoration(
           hintText: AppLocalizations.of(context)!.picker_search_contacts,
           hintStyle: TextStyle(
-            color: Colors.white.withOpacity(0.35),
+            color: readableColors.placeholderText,
             fontSize: 14,
           ),
           prefixIcon: Icon(
             Icons.search,
-            color: Colors.white.withOpacity(0.35),
+            color: readableColors.iconMuted,
             size: 20,
           ),
           filled: true,
-          fillColor: Colors.white.withOpacity(0.06),
+          fillColor: readableColors.inputFill,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
@@ -172,7 +185,9 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -180,15 +195,12 @@ class _CreateGroupPickerScreenState extends State<CreateGroupPickerScreen> {
           Icon(
             Icons.person_search_outlined,
             size: 64,
-            color: Colors.white.withOpacity(0.2),
+            color: readableColors.iconMuted,
           ),
           const SizedBox(height: 16),
           Text(
             'No contacts available',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.white.withOpacity(0.4),
-            ),
+            style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
         ],
       ),

@@ -176,3 +176,41 @@ Accepted ambiguities to leave open:
 - No current lifecycle stress coverage proves rapid navigation across several shared-background surfaces with `Cosmic` selected cleans up animated background activity without errors.
 - No current performance coverage proves a heavy non-Feed chat surface remains within expectations with `Cosmic` selected.
 - No current overlay coverage proves dialogs, sheets, or message context overlays remain readable over `Cosmic`.
+
+# 7. Implementation Closure
+
+Status as of April 28, 2026: `accepted_with_explicit_follow_up`.
+
+Implemented:
+
+- `AmbientBackground` now renders `CosmicBackground` for `BackgroundPreference.cosmic` on any shared-background surface, not only Feed.
+- `AppShellController` owns the in-process selected background preference and notifies mounted app-shell routes on real changes.
+- Settings loads the saved preference into the shared controller, uses the selected preference for its own full-screen background, updates that background after successful saves, and leaves failed saves honest.
+- The selected preference is threaded into the current shared-background surfaces named by this spec: Feed, Conversation, Posts, Settings, Orbit, Share Target Picker, QR Display, First Time Experience, Identity Choice, Create Group Picker, Contact Picker, Group List, Group Conversation, and Group Info.
+- Startup/pre-identity routing seeds the shared controller from secure storage before deciding whether to show Identity Choice, First Time Experience, share target picker, or Feed.
+
+Accepted evidence:
+
+- `flutter test test/features/identity/presentation/widgets/ambient_background_test.dart`
+- `flutter test test/features/settings/application/background_preference_use_cases_test.dart`
+- `flutter test test/features/posts/phase1/app_shell_controller_test.dart`
+- `flutter test test/features/settings/presentation/widgets/background_choice_control_test.dart`
+- `flutter test test/features/settings/presentation/screens/settings_screen_test.dart`
+- `flutter test test/features/settings/presentation/screens/settings_wired_test.dart`
+- `flutter test test/features/feed/presentation/screens/feed_wired_test.dart --plain-name "background preference"`
+- `flutter test test/features/conversation/presentation/screens/conversation_screen_test.dart`
+- `flutter test test/features/home/presentation/screens/first_time_experience_screen_test.dart`
+- `flutter test test/features/identity/presentation/screens/identity_choice_screen_test.dart`
+- `flutter test test/features/posts/phase1/posts_screen_test.dart`
+- `flutter test integration_test/settings_background_choice_smoke_test.dart -d macos`
+- `flutter test integration_test/feed_performance_test.dart -d macos`
+
+Analyzer status:
+
+- `flutter analyze` completed with existing repo-wide lint/warning debt and exited nonzero with `1706 issues found`.
+- A narrowed touched-file analyzer pass reported no implementation errors, but still exited nonzero because touched files already contain warnings/infos such as deprecated `withOpacity`, existing group nullability warnings, and unused imports in `main.dart`.
+
+Explicit follow-up:
+
+- Run device-backed mobile smoke/performance on a chosen iOS or Android target for the same Settings background journey.
+- Add or run heavy Conversation-specific performance evidence with `Cosmic` selected if release confidence requires a non-Feed chat performance number beyond the passing Conversation widget suite.

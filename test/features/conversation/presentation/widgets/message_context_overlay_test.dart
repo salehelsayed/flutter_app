@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   Widget buildTestWidget({
@@ -20,9 +23,11 @@ void main() {
     VoidCallback? onEditTap,
     VoidCallback? onCopyTap,
     VoidCallback? onDeleteTap,
+    ThemeData? theme,
   }) {
     return MaterialApp(
       locale: locale,
+      theme: theme,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: MediaQuery(
@@ -364,6 +369,33 @@ void main() {
       );
       expect(directionality.textDirection, TextDirection.rtl);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('uses readable light-background roles for overlay actions', (
+      tester,
+    ) async {
+      const colors = BackgroundReadableColors.representativeLight;
+      await tester.pumpWidget(
+        buildTestWidget(
+          showDeleteAction: true,
+          onCopyTap: () {},
+          onDeleteTap: () {},
+          theme: ThemeData(extensions: const <ThemeExtension<dynamic>>[colors]),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+
+      final menuBackground = Color.alphaBlend(
+        colors.glassSurface,
+        colors.surfaceBase,
+      );
+      final replyText = tester.widget<Text>(find.text('Reply'));
+      final copyText = tester.widget<Text>(find.text('Copy'));
+      final deleteText = tester.widget<Text>(find.text('Delete'));
+
+      expectTextContrast(replyText.style!.color!, menuBackground);
+      expectTextContrast(copyText.style!.color!, menuBackground);
+      expectTextContrast(deleteText.style!.color!, menuBackground);
     });
   });
 }

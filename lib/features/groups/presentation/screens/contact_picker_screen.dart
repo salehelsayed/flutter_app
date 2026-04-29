@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
-import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Pure UI screen for picking contacts to invite to a group.
 ///
@@ -16,6 +18,7 @@ class ContactPickerScreen extends StatefulWidget {
   final Set<String> selectedPeerIds;
   final VoidCallback? onConfirm;
   final VoidCallback onBack;
+  final BackgroundPreference backgroundPreference;
 
   const ContactPickerScreen({
     super.key,
@@ -25,6 +28,7 @@ class ContactPickerScreen extends StatefulWidget {
     this.selectedPeerIds = const {},
     this.onConfirm,
     required this.onBack,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -65,56 +69,66 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
   @override
   Widget build(BuildContext context) {
     return AmbientBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: Stack(
-            children: [
-              Column(
+      preference: widget.backgroundPreference,
+      child: Builder(
+        builder: (context) {
+          final readableColors = context.backgroundReadableColors;
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: Stack(
                 children: [
-                  _buildHeader(),
-                  _buildSearchField(),
-                  Expanded(
-                    child: widget.contacts.isEmpty
-                        ? _buildEmptyState()
-                        : _buildContactList(),
+                  Column(
+                    children: [
+                      _buildHeader(context),
+                      _buildSearchField(context),
+                      Expanded(
+                        child: widget.contacts.isEmpty
+                            ? _buildEmptyState(context)
+                            : _buildContactList(),
+                      ),
+                      if (widget.selectedPeerIds.isNotEmpty &&
+                          widget.onConfirm != null)
+                        _buildConfirmButton(context),
+                    ],
                   ),
-                  if (widget.selectedPeerIds.isNotEmpty &&
-                      widget.onConfirm != null)
-                    _buildConfirmButton(),
-                ],
-              ),
-              if (widget.isInviting)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    ignoring: false,
-                    child: AbsorbPointer(
-                      child: Container(
-                        color: Colors.black.withOpacity(0.3),
-                        child: const Center(
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
+                  if (widget.isInviting)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        ignoring: false,
+                        child: AbsorbPointer(
+                          child: Container(
+                            color: readableColors.overlayScrim.withOpacity(
+                              readableColors.isLightSurface ? 0.18 : 0.30,
+                            ),
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                color: readableColors.iconPrimary,
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-            ],
-          ),
-        ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
       child: Row(
         children: [
           IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-            color: Colors.white,
+            color: readableColors.iconPrimary,
             onPressed: widget.onBack,
           ),
           const SizedBox(width: 4),
@@ -122,10 +136,10 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
             widget.selectedPeerIds.isNotEmpty
                 ? 'Add Members (${widget.selectedPeerIds.length})'
                 : 'Add Member',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: readableColors.textPrimary,
             ),
           ),
         ],
@@ -133,25 +147,27 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
     );
   }
 
-  Widget _buildSearchField() {
+  Widget _buildSearchField(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: TextField(
         controller: _searchController,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: TextStyle(color: readableColors.textPrimary, fontSize: 14),
         decoration: InputDecoration(
           hintText: AppLocalizations.of(context)!.picker_search_contacts,
           hintStyle: TextStyle(
-            color: Colors.white.withOpacity(0.35),
+            color: readableColors.placeholderText,
             fontSize: 14,
           ),
           prefixIcon: Icon(
             Icons.search,
-            color: Colors.white.withOpacity(0.35),
+            color: readableColors.iconMuted,
             size: 20,
           ),
           filled: true,
-          fillColor: Colors.white.withOpacity(0.06),
+          fillColor: readableColors.inputFill,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
@@ -162,7 +178,9 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -170,15 +188,12 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
           Icon(
             Icons.person_search_outlined,
             size: 64,
-            color: Colors.white.withOpacity(0.2),
+            color: readableColors.iconMuted,
           ),
           const SizedBox(height: 16),
           Text(
             'No contacts available',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.white.withOpacity(0.4),
-            ),
+            style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
         ],
       ),
@@ -201,7 +216,15 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
     );
   }
 
-  Widget _buildConfirmButton() {
+  Widget _buildConfirmButton(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final start = readableColors.isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFF64B5F6);
+    final end = readableColors.isLightSurface
+        ? const Color(0xFF0B4D82)
+        : const Color(0xFF42A5F5);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: GestureDetector(
@@ -210,18 +233,18 @@ class _ContactPickerScreenState extends State<ContactPickerScreen> {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF64B5F6), Color(0xFF42A5F5)],
-            ),
+            gradient: LinearGradient(colors: [start, end]),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Text(
+          child: Text(
             'Send Invites',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: readableColors.isLightSurface
+                  ? Colors.white
+                  : Colors.black,
             ),
           ),
         ),

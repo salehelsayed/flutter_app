@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+
+import '../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   final testGroups = [
@@ -63,6 +67,8 @@ void main() {
     List<PendingGroupInvite> pendingInvites = const [],
     Map<String, GroupMessage?> latestMessages = const {},
     bool isLoading = false,
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
   }) {
     return MaterialApp(
       home: GroupListScreen(
@@ -74,6 +80,7 @@ void main() {
         onAcceptPendingInvite: (_) {},
         onDeclinePendingInvite: (_) {},
         onBack: () {},
+        backgroundPreference: backgroundPreference,
       ),
     );
   }
@@ -207,5 +214,42 @@ void main() {
     expect(find.text('Older backlog expired after 7 days'), findsOneWidget);
     expect(find.text('Alice'), findsOneWidget);
     expect(find.text('Recent backlog survived'), findsOneWidget);
+  });
+
+  testWidgets('daylight lagoon keeps list and invite content readable', (
+    tester,
+  ) async {
+    final latestMessage = GroupMessage(
+      id: 'msg-daylight',
+      groupId: testGroups.first.id,
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: 'Hello مرحبا from Daylight',
+      timestamp: DateTime.utc(2026, 4, 6, 12, 30),
+      createdAt: DateTime.utc(2026, 4, 6, 12, 30),
+      isIncoming: true,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        groups: [testGroups.first],
+        pendingInvites: [pendingInvite],
+        latestMessages: {testGroups.first.id: latestMessage},
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+      ),
+    );
+
+    const colors = BackgroundReadableColors.representativeLight;
+    final header = tester.widget<Text>(find.text('Groups'));
+    expectTextContrast(header.style!.color!, colors.surfaceBase);
+
+    final groupTitle = tester.widget<Text>(find.text('Alpha Group'));
+    expectTextContrast(groupTitle.style!.color!, colors.surfaceBase);
+
+    final inviteTitle = tester.widget<Text>(find.text('Book Club'));
+    expectTextContrast(inviteTitle.style!.color!, colors.surfaceRaised);
+
+    final inviteDescription = tester.widget<Text>(find.text('Read together'));
+    expectTextContrast(inviteDescription.style!.color!, colors.surfaceRaised);
   });
 }

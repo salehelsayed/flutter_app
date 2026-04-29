@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -48,6 +49,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
@@ -96,6 +98,7 @@ class GroupConversationWired extends StatefulWidget {
   final UploadMediaFn uploadMediaFn;
   final int maxAttachmentBudgetBytes;
   final DateTime? notificationTappedAt;
+  final BackgroundPreference backgroundPreference;
 
   const GroupConversationWired({
     super.key,
@@ -124,6 +127,7 @@ class GroupConversationWired extends StatefulWidget {
     this.uploadMediaFn = uploadMedia,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     this.notificationTappedAt,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -1690,63 +1694,71 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   void _onAttach() {
     if (!_canWrite) return;
+    final readableColors = context.backgroundReadableColors;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      backgroundColor: readableColors.surfaceBase,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        side: BorderSide(color: readableColors.divider),
       ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
+      builder: (ctx) {
+        final sheetColors = ctx.backgroundReadableColors;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: sheetColors.divider,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: const Text(
-                'Media Library',
-                style: TextStyle(color: Colors.white),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: Icon(
+                  Icons.photo_library,
+                  color: sheetColors.iconPrimary,
+                ),
+                title: Text(
+                  'Media Library',
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFromGallery();
+                },
               ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickFromGallery();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: const Text(
-                'Take Photo',
-                style: TextStyle(color: Colors.white),
+              ListTile(
+                leading: Icon(Icons.camera_alt, color: sheetColors.iconPrimary),
+                title: Text(
+                  'Take Photo',
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFromCamera();
+                },
               ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickFromCamera();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.videocam, color: Colors.white),
-              title: const Text(
-                'Record Video',
-                style: TextStyle(color: Colors.white),
+              ListTile(
+                leading: Icon(Icons.videocam, color: sheetColors.iconPrimary),
+                title: Text(
+                  'Record Video',
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickVideoFromCamera();
+                },
               ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickVideoFromCamera();
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -2504,6 +2516,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               imageProcessor: widget.imageProcessor,
               mediaPicker: widget.mediaPicker,
               uploadMediaFn: widget.uploadMediaFn,
+              backgroundPreference: widget.backgroundPreference,
             ),
           ),
         )
@@ -2769,7 +2782,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF141A24),
+      backgroundColor: context.backgroundReadableColors.surfaceBase,
       showDragHandle: false,
       builder: (_) =>
           GroupReactionDetailsSheet(emoji: emoji, participants: participants),
@@ -2870,6 +2883,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         isActiveQuoteUnavailable: isActiveQuoteUnavailable,
         onClearQuote: _canWrite ? _onClearQuote : null,
         backlogRetentionNotice: groupBacklogRetentionNoticeFor(_group),
+        backgroundPreference: widget.backgroundPreference,
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
@@ -121,6 +122,8 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
   Widget _buildCard() {
     final state = widget.thread.conversationState;
     final isBlocked = widget.thread.isBlocked;
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -129,8 +132,11 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
           Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: _borderColor(state)),
-              boxShadow: _boxShadow(state),
+              color: isLightSurface
+                  ? readableColors.surfaceRaised.withValues(alpha: 0.78)
+                  : Colors.transparent,
+              border: Border.all(color: _borderColor(state, readableColors)),
+              boxShadow: _boxShadow(state, readableColors),
             ),
             child: _showOpen ? _buildOpenBody() : _buildCollapsedBody(),
           ),
@@ -140,23 +146,49 @@ class _FeedCardState extends State<FeedCard> with TickerProviderStateMixin {
     );
   }
 
-  Color _borderColor(ConversationState state) {
-    if (widget.sessionReply != null) return FeedColors.tealBorderTint;
+  Color _borderColor(
+    ConversationState state,
+    BackgroundReadableColors readableColors,
+  ) {
+    final isLightSurface = readableColors.isLightSurface;
+    if (widget.sessionReply != null) {
+      return isLightSurface
+          ? const Color(0xFF0F8F87).withValues(alpha: 0.26)
+          : FeedColors.tealBorderTint;
+    }
     switch (state) {
       case ConversationState.unread:
       case ConversationState.active:
-        return FeedColors.purpleBorderTint;
+        return isLightSurface
+            ? const Color(0xFF6D45C9).withValues(alpha: 0.24)
+            : FeedColors.purpleBorderTint;
       case ConversationState.replied:
-        return FeedColors.tealBorderTint;
+        return isLightSurface
+            ? const Color(0xFF0F8F87).withValues(alpha: 0.24)
+            : FeedColors.tealBorderTint;
       case ConversationState.read:
-        return FeedColors.cardBorder;
+        return isLightSurface
+            ? readableColors.border.withValues(alpha: 0.16)
+            : FeedColors.cardBorder;
     }
   }
 
-  List<BoxShadow>? _boxShadow(ConversationState state) {
+  List<BoxShadow>? _boxShadow(
+    ConversationState state,
+    BackgroundReadableColors readableColors,
+  ) {
     if (widget.sessionReply != null) return null;
     if (state == ConversationState.unread ||
         state == ConversationState.active) {
+      if (readableColors.isLightSurface) {
+        return [
+          BoxShadow(
+            color: readableColors.textPrimary.withValues(alpha: 0.06),
+            blurRadius: 18,
+            offset: const Offset(0, 10),
+          ),
+        ];
+      }
       return [
         BoxShadow(color: FeedColors.cardBg, blurRadius: 12, spreadRadius: 0),
       ];

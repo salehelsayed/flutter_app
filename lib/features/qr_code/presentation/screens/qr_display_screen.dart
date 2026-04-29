@@ -1,11 +1,12 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/home/presentation/widgets/qr_code_section.dart';
 import 'package:flutter_app/features/home/presentation/widgets/scan_friend_card.dart';
 import 'package:flutter_app/features/home/presentation/widgets/empty_circle_state.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Screen that displays the user's QR code with FTE-style layout.
 ///
@@ -20,12 +21,14 @@ class QRDisplayScreen extends StatefulWidget {
 
   /// Called when the user taps "Scan a friend's code".
   final VoidCallback? onScanPressed;
+  final BackgroundPreference backgroundPreference;
 
   const QRDisplayScreen({
     super.key,
     required this.qrData,
     required this.onClose,
     this.onScanPressed,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -56,13 +59,13 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
         curve: const Interval(0.00, 0.42, curve: smoothCurve),
       ),
     );
-    _qrSlide =
-        Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.00, 0.42, curve: smoothCurve),
-      ),
-    );
+    _qrSlide = Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.00, 0.42, curve: smoothCurve),
+          ),
+        );
 
     // Scan card entrance (slight stagger)
     _scanOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
@@ -71,13 +74,13 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
         curve: const Interval(0.03, 0.45, curve: smoothCurve),
       ),
     );
-    _scanSlide =
-        Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const Interval(0.03, 0.45, curve: smoothCurve),
-      ),
-    );
+    _scanSlide = Tween<Offset>(begin: const Offset(0, 0.16), end: Offset.zero)
+        .animate(
+          CurvedAnimation(
+            parent: _controller,
+            curve: const Interval(0.03, 0.45, curve: smoothCurve),
+          ),
+        );
 
     _controller.forward();
   }
@@ -100,6 +103,7 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
 
     return Scaffold(
       body: AmbientBackground(
+        preference: widget.backgroundPreference,
         child: Stack(
           children: [
             // Main content
@@ -110,8 +114,9 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
                   builder: (context, constraints) {
                     return SingleChildScrollView(
                       child: ConstrainedBox(
-                        constraints:
-                            BoxConstraints(minHeight: constraints.maxHeight),
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
                         child: Column(
                           children: [
                             // Top gap for close button
@@ -150,7 +155,8 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
                               },
                               child: RepaintBoundary(
                                 child: ScanFriendCard(
-                                    onTap: widget.onScanPressed),
+                                  onTap: widget.onScanPressed,
+                                ),
                               ),
                             ),
                             SizedBox(height: lowerGap),
@@ -174,9 +180,16 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
               left: 8,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: AppColors.textPrimary),
-                onPressed: widget.onClose,
+              child: Builder(
+                builder: (context) {
+                  return IconButton(
+                    icon: Icon(
+                      Icons.close,
+                      color: context.backgroundReadableColors.iconPrimary,
+                    ),
+                    onPressed: widget.onClose,
+                  );
+                },
               ),
             ),
           ],

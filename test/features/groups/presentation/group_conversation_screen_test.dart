@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -17,6 +18,9 @@ import 'package:flutter_app/features/groups/presentation/group_backlog_retention
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+
+import '../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   final testGroup = GroupModel(
@@ -63,6 +67,8 @@ void main() {
     ValueChanged<String>? onSend,
     String? initialText,
     GroupBacklogRetentionNotice? backlogRetentionNotice,
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -92,6 +98,7 @@ void main() {
           onReactionSelected: onReactionSelected,
           initialText: initialText,
           backlogRetentionNotice: backlogRetentionNotice,
+          backgroundPreference: backgroundPreference,
         ),
       ),
     );
@@ -207,7 +214,8 @@ void main() {
     messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'Clipboard.setData') {
         clipboardCalls++;
-        copiedText = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+        copiedText =
+            (call.arguments as Map<Object?, Object?>)['text'] as String?;
       }
       return null;
     });
@@ -217,9 +225,7 @@ void main() {
 
     await tester.pumpWidget(
       buildTestWidget(
-        messages: [
-          testMessages.first.copyWith(text: copiedMessage),
-        ],
+        messages: [testMessages.first.copyWith(text: copiedMessage)],
       ),
     );
     await tester.pump(const Duration(milliseconds: 300));
@@ -356,19 +362,11 @@ void main() {
         timestamp: timestamp.add(const Duration(minutes: 2)),
         createdAt: timestamp.add(const Duration(minutes: 2)),
         isIncoming: true,
-        media: [
-          makeImageAttachment(
-            id: 'att-media',
-            messageId: 'msg-media',
-          ),
-        ],
+        media: [makeImageAttachment(id: 'att-media', messageId: 'msg-media')],
       );
 
       await tester.pumpWidget(
-        buildTestWidget(
-          messages: [parent],
-          onQuoteReply: (_) {},
-        ),
+        buildTestWidget(messages: [parent], onQuoteReply: (_) {}),
       );
       await tester.pump(const Duration(milliseconds: 300));
 
@@ -399,10 +397,7 @@ void main() {
       expect(rowBackdropFilter(quoted.id), findsOneWidget);
 
       await tester.pumpWidget(
-        buildTestWidget(
-          messages: [media],
-          onQuoteReply: (_) {},
-        ),
+        buildTestWidget(messages: [media], onQuoteReply: (_) {}),
       );
       await tester.pump(const Duration(milliseconds: 300));
 
@@ -1030,5 +1025,28 @@ void main() {
 
     expect(find.text('Photo'), findsOneWidget);
     expect(find.text('Message unavailable'), findsNothing);
+  });
+
+  testWidgets('daylight lagoon keeps group conversation chrome readable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: testMessages,
+        canWrite: false,
+        initialLoadDone: true,
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    const colors = BackgroundReadableColors.representativeLight;
+    final title = tester.widget<Text>(find.text('Test Group'));
+    expectTextContrast(title.style!.color!, colors.surfaceBase);
+
+    final readOnly = tester.widget<Text>(
+      find.text('Only admins can send messages in this group'),
+    );
+    expectTextContrast(readOnly.style!.color!, colors.surfaceBase);
   });
 }

@@ -27,6 +27,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -229,6 +230,11 @@ class _StartupRouterState extends State<StartupRouter> {
       _setStartupStage(startupStageCheckingIdentity);
 
       await widget.initialShareIntentCapture;
+      final backgroundPreference = await loadBackgroundPreference(
+        secureKeyStore: widget.secureKeyStore,
+      );
+      if (!mounted) return;
+      widget.appShellController.setBackgroundPreference(backgroundPreference);
 
       final decision = await decideStartupRoute(
         identityRepo: widget.repository,
@@ -317,6 +323,7 @@ class _StartupRouterState extends State<StartupRouter> {
                 groupMessageListener: widget.groupMessageListener,
                 groupConversationTracker: widget.groupConversationTracker,
                 introductionRepository: widget.introductionRepository,
+                appShellController: widget.appShellController,
                 preSendReady: widget.ensureRuntimeServicesReady,
                 onClose: (_) async {
                   await Navigator.of(routeContext).pushReplacement(
@@ -415,6 +422,8 @@ class _StartupRouterState extends State<StartupRouter> {
               callIdentityRestore: (mnemonic) =>
                   callIdentityRestore(bridge, mnemonic),
               callMlKemKeygen: () => callMlKemKeygen(bridge),
+              backgroundPreference:
+                  widget.appShellController.backgroundPreference,
               onNavigateToMain: (progressContext) async {
                 Navigator.of(progressContext).pushAndRemoveUntil(
                   buildStartupReplacementRoute<void>(
@@ -813,6 +822,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupMessageListener: widget.groupMessageListener,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
+      appShellController: widget.appShellController,
       preSendReady: widget.ensureRuntimeServicesReady,
     );
   }

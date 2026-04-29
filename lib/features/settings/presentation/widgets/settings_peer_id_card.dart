@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Glass card displaying the user's peer ID with a copy button.
 class SettingsPeerIdCard extends StatelessWidget {
@@ -17,21 +18,26 @@ class SettingsPeerIdCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final copiedColor = readableColors.isLightSurface
+        ? const Color(0xFF0F766E)
+        : const Color(0xFF14B8A6);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Section label
-          const Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 8),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(
               'PEER ID',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0.88,
-                color: Color.fromRGBO(255, 255, 255, 0.4),
+                color: readableColors.textMuted,
               ),
             ),
           ),
@@ -44,10 +50,8 @@ class SettingsPeerIdCard extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
-                  color: const Color.fromRGBO(255, 255, 255, 0.08),
-                  border: Border.all(
-                    color: const Color.fromRGBO(255, 255, 255, 0.12),
-                  ),
+                  color: readableColors.glassSurface,
+                  border: Border.all(color: readableColors.glassBorder),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -64,20 +68,20 @@ class SettingsPeerIdCard extends StatelessWidget {
                             ),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(10),
-                              color: const Color.fromRGBO(255, 255, 255, 0.03),
-                              border: Border.all(
-                                color:
-                                    const Color.fromRGBO(255, 255, 255, 0.05),
-                              ),
+                              color: readableColors.surfaceSubtle,
+                              border: Border.all(color: readableColors.border),
                             ),
                             child: Text(
                               peerId,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: 'SF Mono',
-                                fontFamilyFallback: ['Fira Code', 'monospace'],
+                                fontFamilyFallback: const [
+                                  'Fira Code',
+                                  'monospace',
+                                ],
                                 fontSize: 12,
                                 height: 1.5,
-                                color: Color.fromRGBO(255, 255, 255, 0.95),
+                                color: readableColors.textPrimary,
                               ),
                             ),
                           ),
@@ -91,10 +95,9 @@ class SettingsPeerIdCard extends StatelessWidget {
                             height: 36,
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(10),
-                              color: const Color.fromRGBO(255, 255, 255, 0.08),
+                              color: readableColors.surfaceSubtle,
                               border: Border.all(
-                                color:
-                                    const Color.fromRGBO(255, 255, 255, 0.12),
+                                color: readableColors.glassBorder,
                               ),
                             ),
                             child: AnimatedSwitcher(
@@ -104,8 +107,8 @@ class SettingsPeerIdCard extends StatelessWidget {
                                 key: ValueKey(isCopied),
                                 size: 16,
                                 color: isCopied
-                                    ? const Color(0xFF14B8A6)
-                                    : const Color.fromRGBO(255, 255, 255, 0.6),
+                                    ? copiedColor
+                                    : readableColors.iconSecondary,
                               ),
                             ),
                           ),
@@ -114,11 +117,11 @@ class SettingsPeerIdCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     // Helper text
-                    const Text(
+                    Text(
                       'Your unique identifier on the network',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Color.fromRGBO(255, 255, 255, 0.4),
+                        color: readableColors.textMuted,
                       ),
                     ),
                   ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
@@ -45,10 +46,13 @@ class PostCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final mutedActionColor = readableColors.iconMuted;
+    final disabledActionColor = readableColors.disabledForeground;
     final now = (nowProvider ?? DateTime.now).call();
     final borderColor = isFocused
-        ? Colors.white.withOpacity(0.12)
-        : Colors.white.withOpacity(0.08);
+        ? readableColors.border
+        : readableColors.border.withValues(alpha: 0.72);
     final authorColor = RingAvatarGenerator.glowColorForPeerId(
       post.authorPeerId,
     );
@@ -81,7 +85,7 @@ class PostCard extends StatelessWidget {
           duration: const Duration(milliseconds: 220),
           padding: _cardPadding,
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.03),
+            color: readableColors.surfaceRaised,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: borderColor, width: 1),
           ),
@@ -92,7 +96,7 @@ class PostCard extends StatelessWidget {
                 Text(
                   '${post.passedByUsername!} passed this along',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.48),
+                    color: readableColors.textMuted,
                     fontSize: 10,
                     fontWeight: FontWeight.w500,
                   ),
@@ -133,7 +137,7 @@ class PostCard extends StatelessWidget {
                             color: _onlineDotColor,
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color: const Color(0xFF0A0A0F),
+                              color: readableColors.surfaceRaised,
                               width: 2,
                             ),
                           ),
@@ -154,8 +158,8 @@ class PostCard extends StatelessWidget {
                                 post.authorUsername,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: readableColors.textPrimary,
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -167,7 +171,7 @@ class PostCard extends StatelessWidget {
                                 now,
                               ),
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.30),
+                                color: readableColors.textMuted,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w400,
                               ),
@@ -180,7 +184,12 @@ class PostCard extends StatelessWidget {
                           runSpacing: 4,
                           children: [
                             if (!isPassedAlong)
-                              _Badge(label: AppLocalizations.of(context)!.post_badge_friend, isPrimary: true),
+                              _Badge(
+                                label: AppLocalizations.of(
+                                  context,
+                                )!.post_badge_friend,
+                                isPrimary: true,
+                              ),
                             if (scopeLabel != null) _Badge(label: scopeLabel),
                           ],
                         ),
@@ -194,7 +203,7 @@ class PostCard extends StatelessWidget {
                 Text(
                   post.nearbyDistanceLabel!,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.46),
+                    color: readableColors.textMuted,
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
                   ),
@@ -205,7 +214,7 @@ class PostCard extends StatelessWidget {
                 LinkableText(
                   text: post.text,
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.94),
+                    color: readableColors.textPrimary,
                     fontSize: 15,
                     height: 1.55,
                   ),
@@ -223,7 +232,7 @@ class PostCard extends StatelessWidget {
                 padding: const EdgeInsets.only(top: 8),
                 decoration: BoxDecoration(
                   border: Border(
-                    top: BorderSide(color: Colors.white.withOpacity(0.05)),
+                    top: BorderSide(color: readableColors.divider),
                   ),
                 ),
                 child: Row(
@@ -240,9 +249,9 @@ class PostCard extends StatelessWidget {
                           _MetricAction(
                             icon: Icons.favorite_border,
                             onTap: resolvedToggleHeart,
-                            color: Colors.white.withOpacity(
-                              post.viewerHasHearted ? 0.48 : 0.35,
-                            ),
+                            color: post.viewerHasHearted
+                                ? _friendBadgeColor
+                                : mutedActionColor,
                             label: post.heartCount.toString(),
                             labelKey: const ValueKey<String>(
                               'post-heart-count',
@@ -252,7 +261,7 @@ class PostCard extends StatelessWidget {
                           _MetricAction(
                             icon: Icons.mode_comment_outlined,
                             onTap: resolvedOpenComments,
-                            color: Colors.white.withOpacity(0.35),
+                            color: mutedActionColor,
                             label: post.commentCount.toString(),
                             labelKey: const ValueKey<String>(
                               'post-comment-count',
@@ -266,7 +275,7 @@ class PostCard extends StatelessWidget {
                               onTap: resolvedPassAlong,
                               color: resolvedRepostVisualState.isActive
                                   ? _friendBadgeColor
-                                  : Colors.white.withOpacity(0.35),
+                                  : mutedActionColor,
                               label: resolvedRepostVisualState.count
                                   ?.toString(),
                               labelKey: const ValueKey<String>(
@@ -284,7 +293,7 @@ class PostCard extends StatelessWidget {
                       child: Text(
                         _expiryCopy(post.expiresAt, now).toLowerCase(),
                         style: TextStyle(
-                          color: Colors.white.withOpacity(0.25),
+                          color: readableColors.textMuted,
                           fontSize: 10,
                           fontWeight: FontWeight.w400,
                         ),
@@ -296,7 +305,7 @@ class PostCard extends StatelessWidget {
                       _MetricAction(
                         icon: Icons.bookmark_border,
                         onTap: resolvedPinPost,
-                        color: Colors.white.withOpacity(0.30),
+                        color: disabledActionColor,
                         iconSize: 14,
                       ),
                     ],
@@ -314,39 +323,74 @@ class PostCard extends StatelessWidget {
     return post.mediaKind != 'none' && post.media.isEmpty;
   }
 
-  static _PostDeliveryStateVisual? _deliveryStateFor(PostModel post, BuildContext context) {
+  static _PostDeliveryStateVisual? _deliveryStateFor(
+    PostModel post,
+    BuildContext context,
+  ) {
     final l10n = AppLocalizations.of(context)!;
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
     final isMediaSkeleton = _hasMediaSkeleton(post);
+    final sendingText = isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFFD8F4FF);
+    final partialText = isLightSurface
+        ? const Color(0xFF8A4A00)
+        : const Color(0xFFFFE3B3);
+    final failedText = isLightSurface
+        ? const Color(0xFF9B1C1C)
+        : const Color(0xFFFFC9C9);
+
     return switch (post.deliveryStatus) {
       'sending' when isMediaSkeleton => _PostDeliveryStateVisual(
         label: l10n.post_uploading,
-        textColor: const Color(0xFFD8F4FF),
-        backgroundColor: const Color.fromRGBO(58, 112, 138, 0.22),
-        borderColor: const Color.fromRGBO(120, 188, 220, 0.35),
+        textColor: sendingText,
+        backgroundColor: isLightSurface
+            ? const Color(0xFFE3F0F8)
+            : const Color.fromRGBO(58, 112, 138, 0.22),
+        borderColor: isLightSurface
+            ? const Color(0xFF8EB8D1)
+            : const Color.fromRGBO(120, 188, 220, 0.35),
       ),
       'sending' => _PostDeliveryStateVisual(
         label: l10n.post_sending,
-        textColor: const Color(0xFFD8F4FF),
-        backgroundColor: const Color.fromRGBO(58, 112, 138, 0.22),
-        borderColor: const Color.fromRGBO(120, 188, 220, 0.35),
+        textColor: sendingText,
+        backgroundColor: isLightSurface
+            ? const Color(0xFFE3F0F8)
+            : const Color.fromRGBO(58, 112, 138, 0.22),
+        borderColor: isLightSurface
+            ? const Color(0xFF8EB8D1)
+            : const Color.fromRGBO(120, 188, 220, 0.35),
       ),
       'partial' => _PostDeliveryStateVisual(
         label: l10n.post_partial,
-        textColor: const Color(0xFFFFE3B3),
-        backgroundColor: const Color.fromRGBO(125, 88, 26, 0.24),
-        borderColor: const Color.fromRGBO(230, 182, 84, 0.34),
+        textColor: partialText,
+        backgroundColor: isLightSurface
+            ? const Color(0xFFFFF0D5)
+            : const Color.fromRGBO(125, 88, 26, 0.24),
+        borderColor: isLightSurface
+            ? const Color(0xFFD39C3F)
+            : const Color.fromRGBO(230, 182, 84, 0.34),
       ),
       'failed' when isMediaSkeleton => _PostDeliveryStateVisual(
         label: l10n.post_upload_failed,
-        textColor: const Color(0xFFFFC9C9),
-        backgroundColor: const Color.fromRGBO(130, 42, 42, 0.24),
-        borderColor: const Color.fromRGBO(227, 110, 110, 0.34),
+        textColor: failedText,
+        backgroundColor: isLightSurface
+            ? const Color(0xFFFFE3E3)
+            : const Color.fromRGBO(130, 42, 42, 0.24),
+        borderColor: isLightSurface
+            ? const Color(0xFFD98080)
+            : const Color.fromRGBO(227, 110, 110, 0.34),
       ),
       'failed' => _PostDeliveryStateVisual(
         label: l10n.post_send_failed,
-        textColor: const Color(0xFFFFC9C9),
-        backgroundColor: const Color.fromRGBO(130, 42, 42, 0.24),
-        borderColor: const Color.fromRGBO(227, 110, 110, 0.34),
+        textColor: failedText,
+        backgroundColor: isLightSurface
+            ? const Color(0xFFFFE3E3)
+            : const Color.fromRGBO(130, 42, 42, 0.24),
+        borderColor: isLightSurface
+            ? const Color(0xFFD98080)
+            : const Color.fromRGBO(227, 110, 110, 0.34),
       ),
       _ => null,
     };
@@ -407,6 +451,7 @@ class _PostMediaSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final copy = _copyFor(post);
     return Container(
       key: const ValueKey<String>('post-media-skeleton-placeholder'),
@@ -417,30 +462,23 @@ class _PostMediaSkeleton extends StatelessWidget {
       ),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            Color.fromRGBO(255, 255, 255, 0.06),
-            Color.fromRGBO(255, 255, 255, 0.02),
-          ],
-        ),
+        border: Border.all(color: readableColors.border),
+        color: readableColors.surfaceSubtle,
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
             copy.icon,
-            color: Colors.white.withOpacity(0.68),
+            color: readableColors.iconSecondary,
             size: post.mediaKind == 'voice' ? 26 : 34,
           ),
           const SizedBox(height: 12),
           Text(
             copy.title,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: readableColors.textPrimary,
               fontSize: 15,
               fontWeight: FontWeight.w600,
             ),
@@ -450,7 +488,7 @@ class _PostMediaSkeleton extends StatelessWidget {
             copy.subtitle,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white.withOpacity(0.52),
+              color: readableColors.textMuted,
               fontSize: 12,
               height: 1.4,
             ),
@@ -506,6 +544,7 @@ class _PostMediaContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final attachments = post.media
         .map((attachment) => attachment.toSharedMediaAttachment())
         .toList(growable: false);
@@ -516,8 +555,9 @@ class _PostMediaContent extends StatelessWidget {
         return Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: const Color(0xFF11161D),
+            color: readableColors.surfaceSubtle,
             borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: readableColors.border),
           ),
           child: AudioPlayerWidget(attachment: attachments.single),
         );
@@ -619,15 +659,16 @@ class _Badge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final backgroundColor = isPrimary
         ? PostCard._friendBadgeColor.withOpacity(0.13)
-        : Colors.white.withOpacity(0.03);
+        : readableColors.surfaceSubtle;
     final borderColor = isPrimary
         ? PostCard._friendBadgeColor.withOpacity(0.20)
-        : Colors.white.withOpacity(0.06);
+        : readableColors.border.withValues(alpha: 0.72);
     final textColor = isPrimary
         ? PostCard._friendBadgeColor
-        : Colors.white.withOpacity(0.52);
+        : readableColors.textMuted;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -710,8 +751,9 @@ class _MetricAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final resolvedColor = onTap == null && !preserveColorWhenDisabled
-        ? const Color.fromRGBO(255, 255, 255, 0.28)
+        ? readableColors.disabledForeground
         : color;
 
     return Material(

@@ -11,10 +11,7 @@ class QRScannerScreen extends StatefulWidget {
   /// Callback when a QR code is successfully scanned.
   final void Function(String qrData) onScanned;
 
-  const QRScannerScreen({
-    super.key,
-    required this.onScanned,
-  });
+  const QRScannerScreen({super.key, required this.onScanned});
 
   @override
   State<QRScannerScreen> createState() => _QRScannerScreenState();
@@ -55,10 +52,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
       body: Stack(
         children: [
           // Camera preview
-          MobileScanner(
-            controller: _controller,
-            onDetect: _onDetect,
-          ),
+          MobileScanner(controller: _controller, onDetect: _onDetect),
 
           // Scan overlay with cutout
           const ScanOverlay(),
@@ -97,10 +91,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
                 Text(
                   AppLocalizations.of(context)!.qr_scan_instruction,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                  ),
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -124,7 +115,11 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               child: Center(
                 child: TextButton.icon(
                   onPressed: _showPasteDialog,
-                  icon: const Icon(Icons.paste, color: Colors.white70, size: 18),
+                  icon: const Icon(
+                    Icons.paste,
+                    color: Colors.white70,
+                    size: 18,
+                  ),
                   label: Text(
                     AppLocalizations.of(context)!.qr_paste_title,
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
@@ -161,8 +156,11 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               maxLines: 5,
               style: const TextStyle(color: Colors.white, fontSize: 12),
               decoration: InputDecoration(
-                hintText: '{"pk":"...","ns":"...","rv":"...","ts":"...","sig":"..."}',
-                hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.3)),
+                hintText:
+                    '{"pk":"...","ns":"...","rv":"...","ts":"...","sig":"..."}',
+                hintStyle: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.3),
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -194,7 +192,10 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text(AppLocalizations.of(context)!.btn_cancel, style: const TextStyle(color: Colors.white54)),
+            child: Text(
+              AppLocalizations.of(context)!.btn_cancel,
+              style: const TextStyle(color: Colors.white54),
+            ),
           ),
           ElevatedButton(
             onPressed: () {
@@ -210,6 +211,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primaryAccent,
+              foregroundColor: Colors.black,
             ),
             child: Text(AppLocalizations.of(context)!.btn_submit),
           ),
@@ -228,11 +230,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
           color: Colors.black.withValues(alpha: 0.5),
           shape: BoxShape.circle,
         ),
-        child: const Icon(
-          Icons.close,
-          color: Colors.white,
-          size: 24,
-        ),
+        child: const Icon(Icons.close, color: Colors.white, size: 24),
       ),
     );
   }
@@ -252,9 +250,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               shape: BoxShape.circle,
             ),
             child: Icon(
-              torchState == TorchState.on
-                  ? Icons.flash_on
-                  : Icons.flash_off,
+              torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
               color: torchState == TorchState.on
                   ? AppColors.primaryAccent
                   : Colors.white,

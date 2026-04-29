@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
@@ -70,6 +71,7 @@ class _Thumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final mediaType = isLikelyVideoPath(file.path) ? 'video' : 'image';
     final showsGifBadge =
         !isUploading &&
@@ -92,17 +94,17 @@ class _Thumbnail extends StatelessWidget {
               placeholder: Container(
                 width: 72,
                 height: 72,
-                color: const Color.fromRGBO(255, 255, 255, 0.06),
+                color: readableColors.surfaceSubtle,
               ),
               error: Container(
                 width: 72,
                 height: 72,
-                color: const Color.fromRGBO(255, 255, 255, 0.06),
-                child: const Center(
+                color: readableColors.surfaceSubtle,
+                child: Center(
                   child: Icon(
                     Icons.broken_image_outlined,
                     size: 18,
-                    color: Color.fromRGBO(255, 255, 255, 0.25),
+                    color: readableColors.iconMuted,
                   ),
                 ),
               ),
@@ -133,10 +135,7 @@ class _Thumbnail extends StatelessWidget {
               left: 6,
               bottom: 6,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 decoration: BoxDecoration(
                   color: const Color.fromRGBO(0, 0, 0, 0.7),
                   borderRadius: BorderRadius.circular(999),
@@ -196,6 +195,7 @@ class _ProcessingThumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final percent = (progress * 100).round();
     return SizedBox(
       width: 72,
@@ -203,7 +203,7 @@ class _ProcessingThumbnail extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: Container(
-          color: const Color.fromRGBO(255, 255, 255, 0.08),
+          color: readableColors.surfaceSubtle,
           child: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -215,8 +215,8 @@ class _ProcessingThumbnail extends StatelessWidget {
                     textAlign: TextAlign.center,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white70,
+                    style: TextStyle(
+                      color: readableColors.textSecondary,
                       fontSize: 9,
                       fontWeight: FontWeight.w500,
                       height: 1.1,
@@ -230,15 +230,15 @@ class _ProcessingThumbnail extends StatelessWidget {
                   child: CircularProgressIndicator(
                     value: progress,
                     strokeWidth: 2.5,
-                    color: Colors.white70,
-                    backgroundColor: const Color.fromRGBO(255, 255, 255, 0.15),
+                    color: const Color(0xFF4ECDC4),
+                    backgroundColor: readableColors.disabledSurface,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   '$percent%',
-                  style: const TextStyle(
-                    color: Colors.white70,
+                  style: TextStyle(
+                    color: readableColors.textSecondary,
                     fontSize: 10,
                     fontWeight: FontWeight.w500,
                   ),

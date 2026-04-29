@@ -2,9 +2,10 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
-import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Bottom panel showing overlapping avatars, names, group name input,
 /// and a "Start group chat" button.
@@ -32,20 +33,18 @@ class GroupNamePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.08),
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(20)),
+            color: readableColors.glassSurface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             border: Border(
-              top: BorderSide(
-                color: Colors.white.withOpacity(0.12),
-                width: 0.5,
-              ),
+              top: BorderSide(color: readableColors.glassBorder, width: 0.5),
             ),
           ),
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -57,7 +56,7 @@ class GroupNamePanel extends StatelessWidget {
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: readableColors.divider,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -70,33 +69,38 @@ class GroupNamePanel extends StatelessWidget {
                 _namesText,
                 style: TextStyle(
                   fontSize: 13,
-                  color: Colors.white.withOpacity(0.6),
+                  color: readableColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 12),
               // Group name input
               TextField(
                 controller: nameController,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
+                style: TextStyle(
+                  color: readableColors.textPrimary,
+                  fontSize: 14,
+                ),
                 decoration: InputDecoration(
                   hintText: AppLocalizations.of(context)!.group_name_optional,
                   hintStyle: TextStyle(
-                    color: Colors.white.withOpacity(0.35),
+                    color: readableColors.placeholderText,
                     fontSize: 14,
                   ),
                   filled: true,
-                  fillColor: Colors.white.withOpacity(0.06),
+                  fillColor: readableColors.inputFill,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
                   ),
                   contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
               // Start button
-              _buildStartButton(),
+              _buildStartButton(context),
             ],
           ),
         ),
@@ -108,8 +112,7 @@ class GroupNamePanel extends StatelessWidget {
     const double avatarSize = 36;
     const double overlap = 24;
     final count = selectedContacts.length;
-    final totalWidth =
-        count == 0 ? 0.0 : avatarSize + (count - 1) * overlap;
+    final totalWidth = count == 0 ? 0.0 : avatarSize + (count - 1) * overlap;
 
     return SizedBox(
       height: avatarSize,
@@ -129,12 +132,23 @@ class GroupNamePanel extends StatelessWidget {
     );
   }
 
-  Widget _buildStartButton() {
+  Widget _buildStartButton(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final start = readableColors.isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFF64B5F6);
+    final end = readableColors.isLightSurface
+        ? const Color(0xFF65348A)
+        : const Color(0xFFAB47BC);
+    final onAccent = readableColors.isLightSurface
+        ? Colors.white
+        : Colors.black;
+
     if (isCreating) {
-      return const SizedBox(
+      return SizedBox(
         height: 48,
         child: Center(
-          child: CircularProgressIndicator(color: Colors.white),
+          child: CircularProgressIndicator(color: readableColors.iconPrimary),
         ),
       );
     }
@@ -145,22 +159,20 @@ class GroupNamePanel extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF64B5F6), Color(0xFFAB47BC)],
-          ),
+          gradient: LinearGradient(colors: [start, end]),
           borderRadius: BorderRadius.circular(28),
         ),
-        child: const Row(
+        child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.people, color: Colors.white, size: 18),
-            SizedBox(width: 8),
+            Icon(Icons.people, color: onAccent, size: 18),
+            const SizedBox(width: 8),
             Text(
               'Start group chat',
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
+                color: onAccent,
               ),
             ),
           ],

@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/reaction_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -71,6 +72,7 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final mediaQuery = MediaQuery.of(context);
     final size = mediaQuery.size;
     final topPadding = mediaQuery.viewPadding.top + 8;
@@ -157,7 +159,9 @@ class _MessageContextOverlayState extends State<MessageContextOverlay> {
               child: ClipRect(
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                  child: Container(color: const Color.fromRGBO(6, 8, 12, 0.24)),
+                  child: Container(
+                    color: readableColors.overlayScrim.withValues(alpha: 0.24),
+                  ),
                 ),
               ),
             ),
@@ -274,6 +278,10 @@ class _ContextMenuCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final danger = readableColors.isLightSurface
+        ? const Color(0xFF9D1C12)
+        : const Color(0xFFFF8A80);
     final l10n = AppLocalizations.of(context)!;
     final actions = <Widget>[
       if (showReplyAction)
@@ -303,17 +311,17 @@ class _ContextMenuCard extends StatelessWidget {
           icon: Icons.delete_outline_rounded,
           label: l10n.conversation_context_delete,
           onTap: onDeleteTap,
-          color: const Color(0xFFFF8A80),
+          color: danger,
         ),
     ];
     final children = <Widget>[];
     for (var i = 0; i < actions.length; i++) {
       if (i > 0) {
         children.add(
-          const Divider(
+          Divider(
             height: 1,
             thickness: 1,
-            color: Color.fromRGBO(255, 255, 255, 0.08),
+            color: readableColors.divider,
           ),
         );
       }
@@ -326,11 +334,9 @@ class _ContextMenuCard extends StatelessWidget {
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(
           decoration: BoxDecoration(
-            color: const Color.fromRGBO(18, 20, 28, 0.95),
+            color: readableColors.glassSurface,
             borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: const Color.fromRGBO(255, 255, 255, 0.10),
-            ),
+            border: Border.all(color: readableColors.glassBorder),
           ),
           child: Column(mainAxisSize: MainAxisSize.min, children: children),
         ),
@@ -343,18 +349,20 @@ class _ContextMenuAction extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback? onTap;
-  final Color color;
+  final Color? color;
 
   const _ContextMenuAction({
     super.key,
     required this.icon,
     required this.label,
     this.onTap,
-    this.color = const Color.fromRGBO(255, 255, 255, 0.78),
+    this.color,
   });
 
   @override
   Widget build(BuildContext context) {
+    final actionColor = color ?? context.backgroundReadableColors.textSecondary;
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -364,7 +372,7 @@ class _ContextMenuAction extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 18, color: color),
+              Icon(icon, size: 18, color: actionColor),
               const SizedBox(width: 12),
               Flexible(
                 child: Text(
@@ -372,7 +380,7 @@ class _ContextMenuAction extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w500,
-                    color: color,
+                    color: actionColor,
                   ),
                 ),
               ),

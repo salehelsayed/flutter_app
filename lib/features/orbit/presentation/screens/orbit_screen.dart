@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/features/introduction/presentation/widgets/intro_gro
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
@@ -191,6 +193,8 @@ class OrbitScreen extends StatelessWidget {
   final VoidCallback? onIntroBannerTap;
   final VoidCallback? onHeaderBuild;
   final VoidCallback? onListBuild;
+  final BackgroundPreference backgroundPreference;
+  final BackgroundReadableTone? readableToneOverride;
 
   const OrbitScreen({
     super.key,
@@ -228,6 +232,8 @@ class OrbitScreen extends StatelessWidget {
     this.onIntroBannerTap,
     this.onHeaderBuild,
     this.onListBuild,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.readableToneOverride,
   });
 
   bool get _showsPersistentNav => activeTab != null && onSwitchView != null;
@@ -314,6 +320,8 @@ class OrbitScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AmbientBackground(
+      preference: backgroundPreference,
+      readableToneOverride: readableToneOverride,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: false,
@@ -362,9 +370,11 @@ class OrbitScreen extends StatelessWidget {
                                 AppLocalizations.of(
                                   context,
                                 )!.orbit_close_friends,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 14,
-                                  color: Color(0x99FFFFFF),
+                                  color: context
+                                      .backgroundReadableColors
+                                      .textMuted,
                                 ),
                               ),
                             ),
@@ -414,12 +424,12 @@ class OrbitScreen extends StatelessWidget {
                                     const SizedBox(height: 8),
                                     if (projection.reviewCount > 0 &&
                                         projection.filterTab != 'intros')
-                                      _buildIntroBanner(projection),
+                                      _buildIntroBanner(context, projection),
                                   ],
                                 ),
                               ),
                             ),
-                            _buildContentSliver(projection),
+                            _buildContentSliver(context, projection),
                             SliverToBoxAdapter(
                               child: SizedBox(
                                 height: _contentBottomSpacer(
@@ -534,24 +544,32 @@ class OrbitScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildIntroBanner(OrbitViewProjection projection) {
+  Widget _buildIntroBanner(
+    BuildContext context,
+    OrbitViewProjection projection,
+  ) {
+    final readableColors = context.backgroundReadableColors;
+    const accentColor = Color(0xFF157A39);
+
     return GestureDetector(
       onTap: onIntroBannerTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: const Color(0x141DB954),
+          color: readableColors.isLightSurface
+              ? const Color(0xFFE5F4EA)
+              : const Color(0x141DB954),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0x331DB954)),
+          border: Border.all(
+            color: readableColors.isLightSurface
+                ? const Color(0xFF78B58D)
+                : const Color(0x331DB954),
+          ),
         ),
         child: Row(
           children: [
-            const Icon(
-              Icons.people_outline,
-              size: 18,
-              color: Color(0xFF1DB954),
-            ),
+            const Icon(Icons.people_outline, size: 18, color: accentColor),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -559,20 +577,27 @@ class OrbitScreen extends StatelessWidget {
                 children: [
                   Text(
                     '${projection.reviewCount} item${projection.reviewCount == 1 ? '' : 's'} pending',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xF2FFFFFF),
+                      color: readableColors.textPrimary,
                     ),
                   ),
                   Text(
                     _buildIntroBannerSubtitle(projection),
-                    style: TextStyle(fontSize: 11, color: Color(0x66FFFFFF)),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: readableColors.textMuted,
+                    ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, size: 18, color: Color(0x66FFFFFF)),
+            Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: readableColors.iconMuted,
+            ),
           ],
         ),
       ),
@@ -591,7 +616,10 @@ class OrbitScreen extends StatelessWidget {
     return 'Review and accept introductions to start chatting';
   }
 
-  Widget _buildContentSliver(OrbitViewProjection projection) {
+  Widget _buildContentSliver(
+    BuildContext context,
+    OrbitViewProjection projection,
+  ) {
     if (projection.filterTab == 'intros') {
       if (projection.introsData != null) {
         return _buildIntroSliver(projection.introsData!);
@@ -607,7 +635,9 @@ class OrbitScreen extends StatelessWidget {
     if (projection.searchActive &&
         projection.searchQuery.isNotEmpty &&
         projection.displayedFriends.isEmpty) {
-      return SliverToBoxAdapter(child: _buildNoResults(projection.searchQuery));
+      return SliverToBoxAdapter(
+        child: _buildNoResults(context, projection.searchQuery),
+      );
     }
 
     if (projection.filterTab == 'archived' &&
@@ -659,7 +689,8 @@ class OrbitScreen extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16),
       sliver: SliverList(
         delegate: SliverChildBuilderDelegate(
-          (context, index) => _buildIntroEntry(data, introEntries[index]),
+          (context, index) =>
+              _buildIntroEntry(context, data, introEntries[index]),
           childCount: introEntries.length,
         ),
       ),
@@ -695,16 +726,22 @@ class OrbitScreen extends StatelessWidget {
     return entries;
   }
 
-  Widget _buildIntroEntry(OrbitIntrosViewData data, _OrbitIntroEntry entry) {
+  Widget _buildIntroEntry(
+    BuildContext context,
+    OrbitIntrosViewData data,
+    _OrbitIntroEntry entry,
+  ) {
+    final readableColors = context.backgroundReadableColors;
+
     switch (entry.type) {
       case _OrbitIntroEntryType.context:
         if (data.groupedIntros.isEmpty && data.pendingGroupInvites.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.all(32),
+          return Padding(
+            padding: const EdgeInsets.all(32),
             child: Center(
               child: Text(
                 'No introductions yet',
-                style: TextStyle(fontSize: 14, color: Color(0x66FFFFFF)),
+                style: TextStyle(fontSize: 14, color: readableColors.textMuted),
               ),
             ),
           );
@@ -715,10 +752,7 @@ class OrbitScreen extends StatelessWidget {
             data.pendingGroupInvites.isNotEmpty
                 ? 'Review pending group invites here, then check introductions below. Once you accept, the group appears in Orbit and catches up from offline inbox.'
                 : 'These are people your friends know well. Once you both accept, you can start chatting.',
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.white.withValues(alpha: 0.4),
-            ),
+            style: TextStyle(fontSize: 13, color: readableColors.textMuted),
             textAlign: TextAlign.center,
           ),
         );
@@ -730,7 +764,7 @@ class OrbitScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: Colors.white.withValues(alpha: 0.5),
+              color: readableColors.textSecondary,
               letterSpacing: 0.8,
             ),
           ),
@@ -868,24 +902,19 @@ class OrbitScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildNoResults(String searchQuery) {
+  Widget _buildNoResults(BuildContext context, String searchQuery) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.only(top: 60),
       child: Center(
         child: Column(
           children: [
-            Icon(
-              Icons.search,
-              size: 40,
-              color: Colors.white.withValues(alpha: 0.25),
-            ),
+            Icon(Icons.search, size: 40, color: readableColors.iconMuted),
             const SizedBox(height: 16),
             Text(
               'No friends matching "$searchQuery"',
-              style: TextStyle(
-                fontSize: 15,
-                color: Colors.white.withValues(alpha: 0.3),
-              ),
+              style: TextStyle(fontSize: 15, color: readableColors.textMuted),
             ),
           ],
         ),
@@ -901,13 +930,15 @@ class _OrbitLoadingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       key: ValueKey('orbit-loading-row-$index'),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: const Color(0x14FFFFFF),
+        color: readableColors.surfaceSubtle,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0x1FFFFFFF)),
+        border: Border.all(color: readableColors.border),
       ),
       child: Row(
         children: const [
@@ -927,11 +958,13 @@ class _OrbitLoadingAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       width: 48,
       height: 48,
       decoration: BoxDecoration(
-        color: const Color(0x12FFFFFF),
+        color: readableColors.disabledSurface,
         borderRadius: BorderRadius.circular(14),
       ),
     );
@@ -961,11 +994,13 @@ class _OrbitLoadingChevron extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       width: 18,
       height: 18,
       decoration: BoxDecoration(
-        color: const Color(0x14FFFFFF),
+        color: readableColors.disabledSurface,
         borderRadius: BorderRadius.circular(999),
       ),
     );
@@ -980,13 +1015,15 @@ class _OrbitLoadingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return FractionallySizedBox(
       widthFactor: widthFactor,
       alignment: Alignment.centerLeft,
       child: Container(
         height: height,
         decoration: BoxDecoration(
-          color: const Color(0x12FFFFFF),
+          color: readableColors.disabledSurface,
           borderRadius: BorderRadius.circular(height / 2),
         ),
       ),

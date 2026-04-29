@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -17,7 +18,11 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 
 void main() {
@@ -53,6 +58,8 @@ void main() {
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
     ConversationMediaViewerBuilder? mediaViewerBuilder,
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
   }) {
     return MaterialApp(
       locale: locale,
@@ -93,6 +100,7 @@ void main() {
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
           mediaViewerBuilder: mediaViewerBuilder,
+          backgroundPreference: backgroundPreference,
         ),
       ),
     );
@@ -176,6 +184,53 @@ void main() {
   }
 
   group('ConversationScreen', () {
+    testWidgets('renders the selected cosmic background', (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(backgroundPreference: BackgroundPreference.cosmic),
+      );
+      await tester.pump();
+
+      expect(find.byType(CosmicBackground), findsOneWidget);
+    });
+
+    testWidgets('renders the selected mirrored cosmic background', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          backgroundPreference: BackgroundPreference.cosmicMirrored,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byType(CosmicBackground), findsNothing);
+      expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('cosmic-background-mirrored-root')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'renders selected daylight lagoon with light readable header text',
+      (tester) async {
+        await tester.pumpWidget(
+          buildTestWidget(
+            backgroundPreference: BackgroundPreference.daylightLagoon,
+          ),
+        );
+        await tester.pump();
+
+        expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+
+        final headerName = tester.widget<Text>(find.text('Alice'));
+        expect(
+          headerName.style?.color,
+          BackgroundReadableColors.representativeLight.textPrimary,
+        );
+      },
+    );
+
     testWidgets('shows empty state when no messages', (tester) async {
       await tester.pumpWidget(
         buildTestWidget(messages: [], initialLoadDone: true),

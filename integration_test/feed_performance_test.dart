@@ -11,6 +11,8 @@ import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bu
 import 'package:flutter_app/features/feed/presentation/widgets/feed_card.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -345,37 +347,38 @@ Future<_FrameStats> _collectScrollStats(WidgetTester tester) async {
   return collector.stats;
 }
 
-void _assertCosmicScrollDoesNotRegress(
+void _assertBackgroundScrollDoesNotRegress(
   _FrameStats baselineStats,
-  _FrameStats cosmicStats,
+  _FrameStats backgroundStats,
+  String label,
 ) {
-  baselineStats.printSummary('Default baseline for cosmic scroll');
-  cosmicStats.printSummary('Cosmic scroll');
+  baselineStats.printSummary('Default baseline for $label scroll');
+  backgroundStats.printSummary('$label scroll');
 
-  if (!baselineStats.hasData || !cosmicStats.hasData) {
-    fail('[Cosmic scroll] Missing FrameTiming data for baseline comparison');
+  if (!baselineStats.hasData || !backgroundStats.hasData) {
+    fail('[$label scroll] Missing FrameTiming data for baseline comparison');
   }
 
   final baselineP99 = baselineStats.percentile(99);
-  final cosmicP99 = cosmicStats.percentile(99);
+  final backgroundP99 = backgroundStats.percentile(99);
 
   expect(
-    cosmicStats.average,
+    backgroundStats.average,
     lessThan(max(8.0, baselineStats.average + 2.0)),
     reason:
-        '[Cosmic scroll] Average build time ${cosmicStats.average.toStringAsFixed(2)}ms regressed from default ${baselineStats.average.toStringAsFixed(2)}ms',
+        '[$label scroll] Average build time ${backgroundStats.average.toStringAsFixed(2)}ms regressed from default ${baselineStats.average.toStringAsFixed(2)}ms',
   );
   expect(
-    cosmicP99,
+    backgroundP99,
     lessThan(max(24.0, baselineP99 * 1.25)),
     reason:
-        '[Cosmic scroll] P99 build time ${cosmicP99.toStringAsFixed(2)}ms regressed from default ${baselineP99.toStringAsFixed(2)}ms',
+        '[$label scroll] P99 build time ${backgroundP99.toStringAsFixed(2)}ms regressed from default ${baselineP99.toStringAsFixed(2)}ms',
   );
   expect(
-    cosmicStats.worst,
+    backgroundStats.worst,
     lessThan(max(100.0, baselineStats.worst * 1.25)),
     reason:
-        '[Cosmic scroll] Worst build time ${cosmicStats.worst.toStringAsFixed(2)}ms regressed from default ${baselineStats.worst.toStringAsFixed(2)}ms',
+        '[$label scroll] Worst build time ${backgroundStats.worst.toStringAsFixed(2)}ms regressed from default ${baselineStats.worst.toStringAsFixed(2)}ms',
   );
 }
 
@@ -573,7 +576,57 @@ void main() {
 
       final cosmicStats = await _collectScrollStats(tester);
 
-      _assertCosmicScrollDoesNotRegress(baselineStats, cosmicStats);
+      _assertBackgroundScrollDoesNotRegress(
+        baselineStats,
+        cosmicStats,
+        'Cosmic',
+      );
+    });
+
+    testWidgets('6. Mirrored cosmic scroll performance', (tester) async {
+      await _pumpFeedScreen(tester, items);
+      expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+
+      final baselineStats = await _collectScrollStats(tester);
+
+      await _pumpFeedScreen(
+        tester,
+        items,
+        backgroundPreference: BackgroundPreference.cosmicMirrored,
+      );
+
+      expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+
+      final mirroredStats = await _collectScrollStats(tester);
+
+      _assertBackgroundScrollDoesNotRegress(
+        baselineStats,
+        mirroredStats,
+        'Mirrored cosmic',
+      );
+    });
+
+    testWidgets('7. Daylight Lagoon scroll performance', (tester) async {
+      await _pumpFeedScreen(tester, items);
+      expect(find.byType(DaylightLagoonBackground), findsNothing);
+
+      final baselineStats = await _collectScrollStats(tester);
+
+      await _pumpFeedScreen(
+        tester,
+        items,
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+      );
+
+      expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+
+      final daylightStats = await _collectScrollStats(tester);
+
+      _assertBackgroundScrollDoesNotRegress(
+        baselineStats,
+        daylightStats,
+        'Daylight Lagoon',
+      );
     });
   });
 }

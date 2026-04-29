@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
@@ -46,6 +47,7 @@ class SettingsScreen extends StatelessWidget {
   final void Function(String) onSwitchView;
   final String activeTab;
   final bool showNavigationBar;
+  final BackgroundReadableTone? readableToneOverride;
 
   const SettingsScreen({
     super.key,
@@ -76,15 +78,21 @@ class SettingsScreen extends StatelessWidget {
     required this.onSwitchView,
     required this.activeTab,
     this.showNavigationBar = true,
+    this.readableToneOverride,
   });
 
   @override
   Widget build(BuildContext context) {
     final words = mnemonic?.split(' ') ?? [];
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+    final readableColors = BackgroundReadableColors.resolve(
+      currentBackgroundPreference,
+      representativeToneOverride: readableToneOverride,
+    );
 
     return AmbientBackground(
-      preference: BackgroundPreference.defaultBackground,
+      preference: currentBackgroundPreference,
+      readableToneOverride: readableToneOverride,
       child: Stack(
         children: [
           // Main content with top-only SafeArea
@@ -101,12 +109,10 @@ class SettingsScreen extends StatelessWidget {
                         horizontal: 20,
                         vertical: 16,
                       ),
-                      decoration: const BoxDecoration(
-                        color: Color.fromRGBO(10, 10, 15, 0.8),
+                      decoration: BoxDecoration(
+                        color: readableColors.glassSurface,
                         border: Border(
-                          bottom: BorderSide(
-                            color: Color.fromRGBO(255, 255, 255, 0.12),
-                          ),
+                          bottom: BorderSide(color: readableColors.glassBorder),
                         ),
                       ),
                       child: Row(
@@ -119,25 +125,15 @@ class SettingsScreen extends StatelessWidget {
                               height: 40,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: const Color.fromRGBO(
-                                  255,
-                                  255,
-                                  255,
-                                  0.08,
-                                ),
+                                color: readableColors.surfaceSubtle,
                                 border: Border.all(
-                                  color: const Color.fromRGBO(
-                                    255,
-                                    255,
-                                    255,
-                                    0.12,
-                                  ),
+                                  color: readableColors.border,
                                 ),
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.chevron_left,
                                 size: 20,
-                                color: Color.fromRGBO(255, 255, 255, 0.95),
+                                color: readableColors.iconPrimary,
                               ),
                             ),
                           ),
@@ -146,11 +142,10 @@ class SettingsScreen extends StatelessWidget {
                             child: Text(
                               AppLocalizations.of(context)!.settings_title,
                               textAlign: TextAlign.center,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.w600,
-                                color: Color.fromRGBO(255, 255, 255, 0.95),
-                                letterSpacing: -0.01,
+                                color: readableColors.textPrimary,
                               ),
                             ),
                           ),

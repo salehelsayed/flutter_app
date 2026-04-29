@@ -18,7 +18,6 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
-import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
@@ -260,8 +259,6 @@ class _FeedWiredState extends State<FeedWired>
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
-  BackgroundPreference _backgroundPreference =
-      BackgroundPreference.defaultBackground;
   bool _hasMountedOrbitHost = false;
   late final AnimationController _hostSwipeController;
   VoidCallback? _orbitEmbeddedExitAction;
@@ -558,7 +555,7 @@ class _FeedWiredState extends State<FeedWired>
       secureKeyStore: widget.secureKeyStore,
     );
     if (mounted) {
-      setState(() => _backgroundPreference = pref);
+      widget.appShellController.setBackgroundPreference(pref);
     }
   }
 
@@ -1397,6 +1394,7 @@ class _FeedWiredState extends State<FeedWired>
               reactionRepo: widget.reactionRepository,
               reactionListener: widget.reactionListener,
               introductionRepository: widget.introductionRepository,
+              appShellController: widget.appShellController,
             ),
           ),
         )
@@ -1432,6 +1430,7 @@ class _FeedWiredState extends State<FeedWired>
               reactionRepo: widget.reactionRepository,
               reactionListener: widget.reactionListener,
               introductionRepository: widget.introductionRepository,
+              appShellController: widget.appShellController,
             ),
           ),
         )
@@ -1842,6 +1841,7 @@ class _FeedWiredState extends State<FeedWired>
                 reactionRepo: widget.reactionRepository,
                 reactionListener: widget.reactionListener,
                 introductionRepository: widget.introductionRepository,
+                appShellController: widget.appShellController,
               ),
             ),
           )
@@ -2057,6 +2057,8 @@ class _FeedWiredState extends State<FeedWired>
                   widget.groupReactionReplayOutboxRepository,
               initialPendingMedia: initialPendingMedia,
               initialAttachments: initialAttachments,
+              backgroundPreference:
+                  widget.appShellController.backgroundPreference,
             ),
           ),
         )
@@ -3041,7 +3043,7 @@ class _FeedWiredState extends State<FeedWired>
       onGroupAttach: _onGroupAttach,
       onGroupReactionTap: _onGroupReactionTap,
       onGroupReactionSelected: _onGroupReactionSelected,
-      backgroundPreference: _backgroundPreference,
+      backgroundPreference: widget.appShellController.backgroundPreference,
     );
     final orbitBody = _hasMountedOrbitHost
         ? _buildOrbitHost()

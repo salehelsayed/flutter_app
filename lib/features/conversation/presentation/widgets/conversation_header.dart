@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -24,6 +25,8 @@ class ConversationHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return ClipRect(
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
@@ -34,14 +37,14 @@ class ConversationHeader extends StatelessWidget {
             right: 12,
             bottom: 12,
           ),
-          decoration: const BoxDecoration(
+          decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Color.fromRGBO(10, 10, 15, 0.98),
-                Color.fromRGBO(10, 10, 15, 0.85),
-                Color.fromRGBO(10, 10, 15, 0),
+                readableColors.glassSurface,
+                readableColors.glassSurface.withValues(alpha: 0.85),
+                readableColors.glassSurface.withValues(alpha: 0),
               ],
               stops: [0.0, 0.8, 1.0],
             ),
@@ -52,14 +55,14 @@ class ConversationHeader extends StatelessWidget {
               GestureDetector(
                 onTap: onBack,
                 behavior: HitTestBehavior.opaque,
-                child: const SizedBox(
+                child: SizedBox(
                   width: 44,
                   height: 44,
                   child: Center(
                     child: Icon(
                       Icons.chevron_left,
                       size: 24,
-                      color: Color.fromRGBO(255, 255, 255, 0.6),
+                      color: readableColors.iconSecondary,
                     ),
                   ),
                 ),
@@ -78,21 +81,23 @@ class ConversationHeader extends StatelessWidget {
                       contactUsername,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
-                        color: Color.fromRGBO(255, 255, 255, 0.95),
+                        color: readableColors.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 1),
                     Text(
-                      AppLocalizations.of(context)!.connected_date(connectionDate),
+                      AppLocalizations.of(
+                        context,
+                      )!.connected_date(connectionDate),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w400,
-                        color: Color.fromRGBO(255, 255, 255, 0.4),
+                        color: readableColors.textMuted,
                       ),
                     ),
                   ],
@@ -102,14 +107,14 @@ class ConversationHeader extends StatelessWidget {
               GestureDetector(
                 onTap: onOverflow,
                 behavior: HitTestBehavior.opaque,
-                child: const SizedBox(
+                child: SizedBox(
                   width: 44,
                   height: 44,
                   child: Center(
                     child: Icon(
                       Icons.more_vert,
                       size: 20,
-                      color: Color.fromRGBO(255, 255, 255, 0.4),
+                      color: readableColors.iconMuted,
                     ),
                   ),
                 ),

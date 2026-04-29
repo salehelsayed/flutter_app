@@ -1,9 +1,13 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -67,11 +71,58 @@ void main() {
     );
   });
 
-  testWidgets('renders cosmic only for Feed surface with cosmic preference', (
+  testWidgets('exposes dark readable colors for default descendants', (
+    tester,
+  ) async {
+    BackgroundReadableColors? observedColors;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AmbientBackground(
+          child: Builder(
+            builder: (context) {
+              observedColors = context.backgroundReadableColors;
+              return const Text('Content');
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(observedColors, BackgroundReadableColors.dark);
+    final annotatedRegion = tester
+        .widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+          find.byType(AnnotatedRegion<SystemUiOverlayStyle>),
+        );
+    expect(annotatedRegion.value.statusBarIconBrightness, Brightness.light);
+  });
+
+  testWidgets('exposes dark readable colors for cosmic descendants', (
+    tester,
+  ) async {
+    BackgroundReadableColors? observedColors;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AmbientBackground(
+          preference: BackgroundPreference.cosmic,
+          child: Builder(
+            builder: (context) {
+              observedColors = context.backgroundReadableColors;
+              return const Text('Content');
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(observedColors, BackgroundReadableColors.dark);
+    expect(find.byType(CosmicBackground), findsOneWidget);
+  });
+
+  testWidgets('renders cosmic for any surface with cosmic preference', (
     tester,
   ) async {
     await tester.pumpWidget(
-      wrapAmbient(preference: BackgroundPreference.cosmic, isFeedSurface: true),
+      wrapAmbient(preference: BackgroundPreference.cosmic),
     );
 
     expect(find.text('Content'), findsOneWidget);
@@ -94,7 +145,7 @@ void main() {
     expect(gradient.colors, contains(const Color(0xFF02030A)));
   });
 
-  testWidgets('filters cosmic to default for non-Feed surfaces', (
+  testWidgets('still renders cosmic when the legacy Feed flag is false', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -102,14 +153,85 @@ void main() {
     );
 
     expect(find.text('Content'), findsOneWidget);
-    expect(find.byType(CosmicBackground), findsNothing);
-    expect(find.byType(AnimatedBuilder), findsAtLeastNWidgets(2));
+    expect(find.byType(CosmicBackground), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('cosmic-background-root')),
+      findsOneWidget,
+    );
+  });
 
-    final backgroundContainers = tester
-        .widgetList<Container>(find.byType(Container))
-        .where((container) => container.color == AppColors.background)
-        .toList();
-    expect(backgroundContainers, isNotEmpty);
+  testWidgets('renders mirrored cosmic as a distinct shared background', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrapAmbient(preference: BackgroundPreference.cosmicMirrored),
+    );
+
+    expect(find.text('Content'), findsOneWidget);
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+    expect(find.byKey(const ValueKey('cosmic-background-root')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('cosmic-background-mirrored-root')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('cosmic-background-mirrored-painter')),
+      findsOneWidget,
+    );
+
+    final mirroredRoot = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('cosmic-background-mirrored-root')),
+    );
+    final decoration = mirroredRoot.decoration as BoxDecoration;
+    final gradient = decoration.gradient as RadialGradient;
+    expect(gradient.colors, contains(const Color(0xFF0A1124)));
+    expect(gradient.colors, contains(const Color(0xFF02030A)));
+  });
+
+  testWidgets('renders daylight lagoon as a distinct shared background', (
+    tester,
+  ) async {
+    BackgroundReadableColors? observedColors;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AmbientBackground(
+          preference: BackgroundPreference.daylightLagoon,
+          child: Builder(
+            builder: (context) {
+              observedColors = context.backgroundReadableColors;
+              return const Text('Content');
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Content'), findsOneWidget);
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+    expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('daylight-lagoon-background-root')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('daylight-lagoon-background-painter')),
+      findsOneWidget,
+    );
+    expect(observedColors, BackgroundReadableColors.representativeLight);
+
+    final annotatedRegion = tester
+        .widget<AnnotatedRegion<SystemUiOverlayStyle>>(
+          find.byType(AnnotatedRegion<SystemUiOverlayStyle>),
+        );
+    expect(annotatedRegion.value.statusBarIconBrightness, Brightness.dark);
+
+    final root = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('daylight-lagoon-background-root')),
+    );
+    final decoration = root.decoration as BoxDecoration;
+    expect(decoration.color, Colors.white);
   });
 
   testWidgets('Feed surface with default preference stays default', (
@@ -146,6 +268,54 @@ void main() {
     );
   });
 
+  testWidgets('mirrored cosmic honors disabled animations with static paint', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrapAmbient(
+        preference: BackgroundPreference.cosmicMirrored,
+        disableAnimations: true,
+      ),
+    );
+
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(CosmicBackgroundMirrored),
+        matching: find.byType(AnimatedBuilder),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('cosmic-background-mirrored-painter')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('daylight lagoon honors disabled animations with static paint', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrapAmbient(
+        preference: BackgroundPreference.daylightLagoon,
+        disableAnimations: true,
+      ),
+    );
+
+    expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(DaylightLagoonBackground),
+        matching: find.byType(AnimatedBuilder),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('daylight-lagoon-background-painter')),
+      findsOneWidget,
+    );
+  });
+
   test('production code does not import the Test-Flight cosmic artifact', () {
     final dartFiles = Directory('lib')
         .listSync(recursive: true)
@@ -158,6 +328,16 @@ void main() {
       expect(
         content,
         isNot(contains('Background-Feature/cosmic_background.dart')),
+        reason: file.path,
+      );
+      expect(
+        content,
+        isNot(contains('Background-Feature/cosmic_background_mirrored.dart')),
+        reason: file.path,
+      );
+      expect(
+        content,
+        isNot(contains('Background-Feature/daylight_lagoon_background.dart')),
         reason: file.path,
       );
     }
@@ -184,6 +364,7 @@ void main() {
     for (final path in expectedSurfaceFiles) {
       final content = File(path).readAsStringSync();
       expect(content, contains('AmbientBackground('), reason: path);
+      expect(content, contains('preference:'), reason: path);
     }
   });
 }

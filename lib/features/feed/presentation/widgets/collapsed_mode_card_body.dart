@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -93,7 +94,7 @@ class CollapsedModeCardBody extends StatelessWidget {
         GestureDetector(
           onTap: onTapExpand,
           behavior: HitTestBehavior.opaque,
-          child: _buildHeader(),
+          child: _buildHeader(context),
         ),
         // Content area: single-line preview or expanded messages
         AnimatedSize(
@@ -119,7 +120,8 @@ class CollapsedModeCardBody extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final displayNameDirection = detectTextDirection(thread.displayName);
     final groupThread = thread.isGroup ? thread as GroupThreadFeedItem : null;
 
@@ -150,10 +152,12 @@ class CollapsedModeCardBody extends StatelessWidget {
                   textDirection: displayNameDirection,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color.fromRGBO(255, 255, 255, 1.0),
+                    color: readableColors.isLightSurface
+                        ? readableColors.textPrimary
+                        : const Color.fromRGBO(255, 255, 255, 1.0),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -161,10 +165,12 @@ class CollapsedModeCardBody extends StatelessWidget {
                   children: [
                     Text(
                       thread.latestMessage.time,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w400,
-                        color: Color.fromRGBO(255, 255, 255, 0.55),
+                        color: readableColors.isLightSurface
+                            ? readableColors.textMuted
+                            : const Color.fromRGBO(255, 255, 255, 0.55),
                       ),
                     ),
                     if (_isReplied) ...[
@@ -179,29 +185,41 @@ class CollapsedModeCardBody extends StatelessWidget {
               ],
             ),
           ),
-          if (_isReplied) _buildRepliedCheckmark(),
+          if (_isReplied) _buildRepliedCheckmark(context),
         ],
       ),
     );
   }
 
-  Widget _buildRepliedCheckmark() {
+  Widget _buildRepliedCheckmark(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final accentColor = readableColors.isLightSurface
+        ? const Color(0xFF0F8F87)
+        : FeedColors.accentTeal;
+
     return Container(
       width: 22,
       height: 22,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: FeedColors.accentTeal.withValues(alpha: 0.15),
+        color: accentColor.withValues(alpha: 0.15),
       ),
       child: Icon(
         Icons.check_rounded,
         size: 14,
-        color: FeedColors.accentTeal.withValues(alpha: 0.70),
+        color: accentColor.withValues(
+          alpha: readableColors.isLightSurface ? 1 : 0.70,
+        ),
       ),
     );
   }
 
   Widget _buildPreviewContent(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final accentColor = isLightSurface
+        ? const Color(0xFF0F8F87)
+        : FeedColors.accentTeal;
     final ThreadMessage previewMsg;
     final String? displayText;
 
@@ -223,7 +241,9 @@ class CollapsedModeCardBody extends StatelessWidget {
     } else {
       label = thread.displayName;
     }
-    final labelColor = isSent ? FeedColors.accentTeal : Colors.white;
+    final labelColor = isSent
+        ? accentColor
+        : (isLightSurface ? readableColors.textPrimary : Colors.white);
     final previewTextDirection = detectTextDirection(displayText ?? '');
     final showEditedIndicator =
         sessionReply == null && previewMsg.isEdited && !previewMsg.isDeleted;
@@ -267,12 +287,16 @@ class CollapsedModeCardBody extends StatelessWidget {
                 placeholder: Container(
                   width: 20,
                   height: 20,
-                  color: const Color.fromRGBO(255, 255, 255, 0.08),
+                  color: isLightSurface
+                      ? readableColors.surfaceSubtle
+                      : const Color.fromRGBO(255, 255, 255, 0.08),
                 ),
                 error: Container(
                   width: 20,
                   height: 20,
-                  color: const Color.fromRGBO(255, 255, 255, 0.08),
+                  color: isLightSurface
+                      ? readableColors.surfaceSubtle
+                      : const Color.fromRGBO(255, 255, 255, 0.08),
                 ),
               ),
             ),
@@ -283,7 +307,9 @@ class CollapsedModeCardBody extends StatelessWidget {
               child: Icon(
                 mediaPreviewIcon(previewMsg.media),
                 size: 14,
-                color: const Color.fromRGBO(255, 255, 255, 0.55),
+                color: isLightSurface
+                    ? readableColors.iconMuted
+                    : const Color.fromRGBO(255, 255, 255, 0.55),
               ),
             ),
           ],
@@ -293,10 +319,12 @@ class CollapsedModeCardBody extends StatelessWidget {
               textDirection: previewTextDirection,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w400,
-                color: Colors.white,
+                color: isLightSurface
+                    ? readableColors.textSecondary
+                    : Colors.white,
               ),
             ),
           ),
@@ -304,10 +332,12 @@ class CollapsedModeCardBody extends StatelessWidget {
             const SizedBox(width: 6),
             Text(
               l10n.conversation_edited_indicator,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w400,
-                color: Color.fromRGBO(255, 255, 255, 0.45),
+                color: isLightSurface
+                    ? readableColors.textMuted
+                    : const Color.fromRGBO(255, 255, 255, 0.45),
               ),
             ),
           ],
@@ -335,24 +365,25 @@ class CollapsedModeCardBody extends StatelessWidget {
   }
 
   Widget _buildExpandHint(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final hintColor = readableColors.isLightSurface
+        ? readableColors.textMuted
+        : FeedColors.viewEarlierText;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.keyboard_arrow_down_rounded,
-              size: 16,
-              color: FeedColors.viewEarlierText,
-            ),
+            Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: hintColor),
             const SizedBox(width: 2),
             Text(
               AppLocalizations.of(context)!.feed_tap_expand,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: FeedColors.viewEarlierText,
+                color: hintColor,
               ),
             ),
           ],
@@ -380,13 +411,18 @@ class CollapsedModeCardBody extends StatelessWidget {
 
   Widget _buildFooter(BuildContext context) {
     if (!canWrite) {
-      return _buildReadOnlyBanner();
+      return _buildReadOnlyBanner(context);
     }
+    final readableColors = context.backgroundReadableColors;
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+          top: BorderSide(
+            color: readableColors.isLightSurface
+                ? readableColors.divider
+                : const Color.fromRGBO(255, 255, 255, 0.08),
+          ),
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
@@ -412,15 +448,20 @@ class CollapsedModeCardBody extends StatelessWidget {
     );
   }
 
-  Widget _buildReadOnlyBanner() {
+  Widget _buildReadOnlyBanner(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final groupThread = thread is GroupThreadFeedItem
         ? thread as GroupThreadFeedItem
         : null;
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+          top: BorderSide(
+            color: readableColors.isLightSurface
+                ? readableColors.divider
+                : const Color.fromRGBO(255, 255, 255, 0.08),
+          ),
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
@@ -428,9 +469,11 @@ class CollapsedModeCardBody extends StatelessWidget {
         groupThread?.readOnlyBannerText ??
             'Only admins can send messages in this group',
         textAlign: TextAlign.center,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
-          color: Color.fromRGBO(255, 255, 255, 0.45),
+          color: readableColors.isLightSurface
+              ? readableColors.textMuted
+              : const Color.fromRGBO(255, 255, 255, 0.45),
         ),
       ),
     );
@@ -445,6 +488,12 @@ class _FeedEditModeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final accentColor = isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color.fromRGBO(255, 255, 255, 0.86);
+
     return Container(
       key: const ValueKey('feed-edit-mode-banner'),
       width: double.infinity,
@@ -460,10 +509,10 @@ class _FeedEditModeBanner extends StatelessWidget {
           Expanded(
             child: Text(
               l10n.conversation_editing_message,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color.fromRGBO(255, 255, 255, 0.86),
+                color: accentColor,
               ),
             ),
           ),
@@ -471,7 +520,9 @@ class _FeedEditModeBanner extends StatelessWidget {
             key: const ValueKey('feed-cancel-edit-action'),
             onPressed: onCancel,
             style: TextButton.styleFrom(
-              foregroundColor: const Color.fromRGBO(255, 255, 255, 0.72),
+              foregroundColor: isLightSurface
+                  ? readableColors.textSecondary
+                  : const Color.fromRGBO(255, 255, 255, 0.72),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,

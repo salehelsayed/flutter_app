@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -20,10 +21,17 @@ class BackgroundChoiceControl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final readableColors = context.backgroundReadableColors;
     final isDefaultSelected = value == BackgroundPreference.defaultBackground;
-    final selectedLabel = isDefaultSelected
-        ? l10n.settings_background_default_selected
-        : l10n.settings_background_cosmic_selected;
+    final selectedLabel = switch (value) {
+      BackgroundPreference.defaultBackground =>
+        l10n.settings_background_default_selected,
+      BackgroundPreference.cosmic => l10n.settings_background_cosmic_selected,
+      BackgroundPreference.cosmicMirrored =>
+        l10n.settings_background_cosmic_mirrored_selected,
+      BackgroundPreference.daylightLagoon =>
+        l10n.settings_background_daylight_lagoon_selected,
+    };
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -39,30 +47,28 @@ class BackgroundChoiceControl extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color.fromRGBO(255, 255, 255, 0.06),
+                color: readableColors.glassSurface,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color.fromRGBO(255, 255, 255, 0.1),
-                ),
+                border: Border.all(color: readableColors.glassBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.wallpaper,
                         size: 16,
-                        color: Color.fromRGBO(255, 255, 255, 0.5),
+                        color: readableColors.iconMuted,
                       ),
                       const SizedBox(width: 8),
                       Text(
                         l10n.settings_background,
                         key: const ValueKey('background-choice-title'),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
-                          color: Color.fromRGBO(255, 255, 255, 0.5),
+                          color: readableColors.textMuted,
                           letterSpacing: 0.8,
                         ),
                       ),
@@ -98,6 +104,42 @@ class BackgroundChoiceControl extends StatelessWidget {
                     selectedLabel: l10n.settings_background_cosmic_selected,
                     isSelected: value == BackgroundPreference.cosmic,
                     onTap: () => onChanged(BackgroundPreference.cosmic),
+                  ),
+                  const SizedBox(height: 10),
+                  _BackgroundOption(
+                    optionKey: const ValueKey(
+                      'background-choice-cosmic-mirrored',
+                    ),
+                    semanticsKey: const ValueKey(
+                      'background-choice-cosmic-mirrored-semantics',
+                    ),
+                    selectedIconKey: const ValueKey(
+                      'background-choice-cosmic-mirrored-selected-icon',
+                    ),
+                    label: l10n.settings_background_cosmic_mirrored,
+                    description: l10n.settings_background_cosmic_mirrored_desc,
+                    selectedLabel:
+                        l10n.settings_background_cosmic_mirrored_selected,
+                    isSelected: value == BackgroundPreference.cosmicMirrored,
+                    onTap: () => onChanged(BackgroundPreference.cosmicMirrored),
+                  ),
+                  const SizedBox(height: 10),
+                  _BackgroundOption(
+                    optionKey: const ValueKey(
+                      'background-choice-daylight-lagoon',
+                    ),
+                    semanticsKey: const ValueKey(
+                      'background-choice-daylight-lagoon-semantics',
+                    ),
+                    selectedIconKey: const ValueKey(
+                      'background-choice-daylight-lagoon-selected-icon',
+                    ),
+                    label: l10n.settings_background_daylight_lagoon,
+                    description: l10n.settings_background_daylight_lagoon_desc,
+                    selectedLabel:
+                        l10n.settings_background_daylight_lagoon_selected,
+                    isSelected: value == BackgroundPreference.daylightLagoon,
+                    onTap: () => onChanged(BackgroundPreference.daylightLagoon),
                   ),
                   if (errorText != null) ...[
                     const SizedBox(height: 10),
@@ -143,6 +185,8 @@ class _BackgroundOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Semantics(
       key: semanticsKey,
       button: true,
@@ -158,13 +202,11 @@ class _BackgroundOption extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: isSelected
-                ? const Color.fromRGBO(255, 255, 255, 0.12)
-                : const Color.fromRGBO(0, 0, 0, 0.3),
+                ? readableColors.surfaceRaised
+                : readableColors.surfaceSubtle,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: isSelected
-                  ? const Color.fromRGBO(255, 255, 255, 0.2)
-                  : Colors.transparent,
+              color: isSelected ? readableColors.border : Colors.transparent,
             ),
           ),
           child: Row(
@@ -181,16 +223,16 @@ class _BackgroundOption extends StatelessWidget {
                             ? FontWeight.w600
                             : FontWeight.w400,
                         color: isSelected
-                            ? const Color.fromRGBO(255, 255, 255, 0.95)
-                            : const Color.fromRGBO(255, 255, 255, 0.55),
+                            ? readableColors.textPrimary
+                            : readableColors.textSecondary,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       description,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
-                        color: Color.fromRGBO(255, 255, 255, 0.4),
+                        color: readableColors.textMuted,
                       ),
                     ),
                   ],

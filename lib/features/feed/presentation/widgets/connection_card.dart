@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -81,17 +82,50 @@ class _ConnectionCardState extends State<ConnectionCard>
   Widget _buildCard() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final readableColors = context.backgroundReadableColors;
+        final isLightSurface = readableColors.isLightSurface;
         final width = constraints.hasBoundedWidth
             ? constraints.maxWidth
             : 360.0;
         final height = clampDouble(width / 1.14, 300, 345);
+        final titleColor = isLightSurface
+            ? const Color(0xFF167A3A)
+            : const Color(0xFF39D65F);
+        final titleShadows = isLightSurface
+            ? const <Shadow>[]
+            : const [
+                Shadow(
+                  color: Color(0xA0103A1E),
+                  offset: Offset(0, 2),
+                  blurRadius: 2,
+                ),
+                Shadow(color: Color(0x6B2BE658), blurRadius: 8),
+              ];
 
         return SizedBox(
           height: height,
           child: DecoratedBox(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(34),
-              border: Border.all(color: FeedColors.cardBorder),
+              color: isLightSurface
+                  ? readableColors.surfaceRaised.withValues(alpha: 0.62)
+                  : Colors.transparent,
+              border: Border.all(
+                color: isLightSurface
+                    ? readableColors.border.withValues(alpha: 0.18)
+                    : FeedColors.cardBorder,
+              ),
+              boxShadow: isLightSurface
+                  ? [
+                      BoxShadow(
+                        color: readableColors.textPrimary.withValues(
+                          alpha: 0.08,
+                        ),
+                        blurRadius: 18,
+                        offset: const Offset(0, 10),
+                      ),
+                    ]
+                  : null,
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(34),
@@ -99,92 +133,84 @@ class _ConnectionCardState extends State<ConnectionCard>
                 fit: StackFit.expand,
                 children: [
                   Padding(
-                      padding: const EdgeInsets.fromLTRB(22, 22, 22, 2),
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final compact = constraints.maxWidth < 340;
-                          final avatarSize = compact ? 88.0 : 98.0;
-                          final contactNameSize = compact ? 20.0 : 22.0;
+                    padding: const EdgeInsets.fromLTRB(22, 22, 22, 2),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 340;
+                        final avatarSize = compact ? 88.0 : 98.0;
+                        final contactNameSize = compact ? 20.0 : 22.0;
 
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Text(
+                              AppLocalizations.of(context)!.connected_title,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: titleColor,
+                                fontSize: compact ? 28 : 32,
+                                fontWeight: FontWeight.w400,
+                                letterSpacing: 0,
+                                shadows: titleShadows,
+                              ),
+                            ),
+                            SizedBox(height: compact ? 18 : 22),
+                            _buildAvatarSection(avatarSize),
+                            SizedBox(height: compact ? 10 : 14),
+                            _buildContactNameRow(
+                              compact: compact,
+                              contactNameSize: contactNameSize,
+                            ),
+                            if (widget.introducedBy != null) ...[
+                              const SizedBox(height: 4),
                               Text(
-                                AppLocalizations.of(context)!.connected_title,
-                                textAlign: TextAlign.center,
+                                'Introduced by ${widget.introducedBy}',
                                 style: TextStyle(
-                                  color: const Color(0xFF39D65F),
-                                  fontSize: compact ? 28 : 32,
-                                  fontWeight: FontWeight.w400,
-                                  letterSpacing: -0.3,
-                                  shadows: const [
-                                    Shadow(
-                                      color: Color(0xA0103A1E),
-                                      offset: Offset(0, 2),
-                                      blurRadius: 2,
-                                    ),
-                                    Shadow(
-                                      color: Color(0x6B2BE658),
-                                      blurRadius: 8,
-                                    ),
-                                  ],
+                                  fontSize: compact ? 12 : 13,
+                                  color: isLightSurface
+                                      ? readableColors.textSecondary
+                                      : const Color(0x99FFFFFF),
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
-                              SizedBox(height: compact ? 18 : 22),
-                              _buildAvatarSection(avatarSize),
-                              SizedBox(height: compact ? 10 : 14),
-                              _buildContactNameRow(
-                                compact: compact,
-                                contactNameSize: contactNameSize,
-                              ),
-                              if (widget.introducedBy != null) ...[
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Introduced by ${widget.introducedBy}',
-                                  style: TextStyle(
-                                    fontSize: compact ? 12 : 13,
-                                    color: const Color(0x99FFFFFF),
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                              SizedBox(height: compact ? 12 : 16),
-                              _buildSendMessageButton(compact),
                             ],
-                          );
-                        },
-                      ),
+                            SizedBox(height: compact ? 12 : 16),
+                            _buildSendMessageButton(compact),
+                          ],
+                        );
+                      },
                     ),
-                    if (widget.isBlocked)
-                      Positioned.fill(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(34),
-                            color: const Color.fromRGBO(0, 0, 0, 0.45),
-                          ),
-                          child: const Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.block,
-                                  size: 28,
+                  ),
+                  if (widget.isBlocked)
+                    Positioned.fill(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(34),
+                          color: const Color.fromRGBO(0, 0, 0, 0.45),
+                        ),
+                        child: const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.block,
+                                size: 28,
+                                color: Color.fromRGBO(255, 255, 255, 0.60),
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                'Blocked',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
                                   color: Color.fromRGBO(255, 255, 255, 0.60),
                                 ),
-                                SizedBox(height: 8),
-                                Text(
-                                  'Blocked',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color.fromRGBO(255, 255, 255, 0.60),
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
+                    ),
                 ],
               ),
             ),
@@ -196,8 +222,11 @@ class _ConnectionCardState extends State<ConnectionCard>
 
   Widget _buildAvatarSection(double avatarSize) {
     final outerSize = avatarSize + 32;
-    final glowColor =
-        RingAvatarGenerator.glowColorForPeerId(widget.contactPeerId);
+    final glowColor = RingAvatarGenerator.glowColorForPeerId(
+      widget.contactPeerId,
+    );
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
 
     return SizedBox(
       width: outerSize,
@@ -212,8 +241,8 @@ class _ConnectionCardState extends State<ConnectionCard>
               shape: BoxShape.circle,
               gradient: RadialGradient(
                 colors: [
-                  glowColor.withValues(alpha: 0.30),
-                  glowColor.withValues(alpha: 0.15),
+                  glowColor.withValues(alpha: isLightSurface ? 0.16 : 0.30),
+                  glowColor.withValues(alpha: isLightSurface ? 0.07 : 0.15),
                   Colors.transparent,
                 ],
                 stops: const [0.0, 0.50, 1.0],
@@ -224,16 +253,20 @@ class _ConnectionCardState extends State<ConnectionCard>
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: const Color.fromRGBO(11, 13, 17, 0.78),
+              color: isLightSurface
+                  ? readableColors.surfaceBase.withValues(alpha: 0.88)
+                  : const Color.fromRGBO(11, 13, 17, 0.78),
               border: Border.all(
-                color: glowColor.withValues(alpha: 0.7),
+                color: glowColor.withValues(alpha: isLightSurface ? 0.48 : 0.7),
                 width: 1.5,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: glowColor.withValues(alpha: 0.6),
-                  blurRadius: 16,
-                  spreadRadius: 2,
+                  color: glowColor.withValues(
+                    alpha: isLightSurface ? 0.18 : 0.6,
+                  ),
+                  blurRadius: isLightSurface ? 12 : 16,
+                  spreadRadius: isLightSurface ? 0 : 2,
                 ),
               ],
             ),
@@ -248,6 +281,8 @@ class _ConnectionCardState extends State<ConnectionCard>
     required bool compact,
     required double contactNameSize,
   }) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
     final badgeSize = compact ? 23.0 : 25.0;
     final iconSize = compact ? 14.0 : 16.0;
 
@@ -261,14 +296,16 @@ class _ConnectionCardState extends State<ConnectionCard>
             Container(
               width: badgeSize,
               height: badgeSize,
-              decoration: const BoxDecoration(
-                color: Color(0xFF49C462),
+              decoration: BoxDecoration(
+                color: const Color(0xFF49C462),
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: Color(0x703FC75F),
-                    blurRadius: 12,
-                    spreadRadius: 1,
+                    color: const Color(
+                      0xFF3FC75F,
+                    ).withValues(alpha: isLightSurface ? 0.20 : 0.44),
+                    blurRadius: isLightSurface ? 8 : 12,
+                    spreadRadius: isLightSurface ? 0 : 1,
                   ),
                 ],
               ),
@@ -287,11 +324,13 @@ class _ConnectionCardState extends State<ConnectionCard>
                 style: TextStyle(
                   fontSize: contactNameSize,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                  letterSpacing: -0.3,
-                  shadows: const [
-                    Shadow(color: Color(0x77000000), blurRadius: 8),
-                  ],
+                  color: isLightSurface
+                      ? readableColors.textPrimary
+                      : Colors.white,
+                  letterSpacing: 0,
+                  shadows: isLightSurface
+                      ? const <Shadow>[]
+                      : const [Shadow(color: Color(0x77000000), blurRadius: 8)],
                 ),
               ),
             ),
@@ -302,19 +341,33 @@ class _ConnectionCardState extends State<ConnectionCard>
   }
 
   Widget _buildSendMessageButton(bool compact) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final foregroundColor = isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF62D984);
+
     return SizedBox(
       width: compact ? 182 : 198,
       height: 42,
       child: ElevatedButton(
         onPressed: widget.isBlocked ? null : widget.onSendMessage,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color.fromRGBO(29, 185, 84, 0.15),
-          foregroundColor: const Color(0xFF62D984),
+          backgroundColor: isLightSurface
+              ? const Color(0xFFE6F6EC)
+              : const Color.fromRGBO(29, 185, 84, 0.15),
+          foregroundColor: foregroundColor,
+          disabledBackgroundColor: readableColors.disabledSurface.withValues(
+            alpha: isLightSurface ? 0.70 : 0.45,
+          ),
+          disabledForegroundColor: readableColors.disabledForeground,
           elevation: 0,
           shadowColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
           side: BorderSide(
-            color: const Color(0xFF2DB65F).withValues(alpha: 0.38),
+            color: const Color(
+              0xFF2DB65F,
+            ).withValues(alpha: isLightSurface ? 0.32 : 0.38),
           ),
           shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(horizontal: 18),
@@ -329,7 +382,10 @@ class _ConnectionCardState extends State<ConnectionCard>
               const SizedBox(width: 8),
               Text(
                 AppLocalizations.of(context)!.send_message,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),

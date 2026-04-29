@@ -56,6 +56,11 @@ carrying the maintenance-time meaning. The doc-scoped Session `1` for Report
 `76` is the completed outbound 1:1 v2-only privacy closure artifact, with
 `76-remove-legacy-1to1-plaintext-path-plan-session-breakdown.md` plus the
 refreshed 1:1 closure reference carrying the maintenance-time meaning.
+The doc-scoped Sessions `1` through `8` for Report `87` are the completed
+app-wide light-theme readability closure artifacts, with
+`87-app-wide-light-theme-readability-session-breakdown.md` carrying the
+maintenance-time verdict `accepted_with_explicit_follow_up` for remaining
+device/simulator visual evidence.
 Roadmaps `15` and `16` plus the residual reliability/measurement sessions `24`
 through `29` remain historical execution artifacts. Reports `01` through `14`
 remain the rationale archive. The current closure state lives in Sections `8`,

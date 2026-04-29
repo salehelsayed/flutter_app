@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/scrollable_messag
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -89,6 +91,7 @@ void main() {
     String? userPeerId = 'alice-peer',
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
+    BackgroundReadableTone? readableToneOverride,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -124,6 +127,7 @@ void main() {
               reactions: reactions,
               userPeerId: userPeerId,
               backgroundPreference: backgroundPreference,
+              readableToneOverride: readableToneOverride,
             ),
           ),
         ),
@@ -152,6 +156,54 @@ void main() {
     expect(find.text('Orbit'), findsOneWidget);
     expect(find.text('Remember'), findsNothing);
   });
+
+  testWidgets(
+    'loading and empty states use representative light readable roles',
+    (tester) async {
+      setPhoneViewport(tester);
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: const [],
+          feedLoaded: false,
+          readableToneOverride: BackgroundReadableTone.representativeLight,
+        ),
+      );
+      await tester.pump();
+
+      final loadingStatus = tester.widget<Container>(
+        find.byKey(const ValueKey('feed-loading-status')),
+      );
+      final loadingDecoration = loadingStatus.decoration as BoxDecoration;
+      expect(
+        loadingDecoration.color,
+        BackgroundReadableColors.representativeLight.surfaceRaised,
+      );
+
+      final loadingTitle = tester.widget<Text>(find.text('Loading Feed...'));
+      expect(
+        loadingTitle.style?.color,
+        BackgroundReadableColors.representativeLight.textPrimary,
+      );
+
+      await tester.pumpWidget(
+        buildFeedScreen(
+          feedItems: const [],
+          feedLoaded: true,
+          readableToneOverride: BackgroundReadableTone.representativeLight,
+        ),
+      );
+      await tester.pump();
+
+      final emptyText = tester.widget<Text>(
+        find.textContaining('Your feed is ready'),
+      );
+      expect(
+        emptyText.style?.color,
+        BackgroundReadableColors.representativeLight.textSecondary,
+      );
+    },
+  );
 
   testWidgets('renders cosmic background when Feed preference is cosmic', (
     tester,
@@ -184,6 +236,96 @@ void main() {
 
     expect(find.byType(CosmicBackground), findsNothing);
     expect(find.text('Feed'), findsOneWidget);
+  });
+
+  testWidgets('renders daylight lagoon with light readable loading state', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        feedItems: const [],
+        feedLoaded: false,
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+
+    final loadingTitle = tester.widget<Text>(find.text('Loading Feed...'));
+    expect(
+      loadingTitle.style?.color,
+      BackgroundReadableColors.representativeLight.textPrimary,
+    );
+  });
+
+  testWidgets('daylight lagoon keeps Feed connection cards readable', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+        feedItems: [
+          ConnectionFeedItem(
+            id: 'connection_bob',
+            timestamp: DateTime(2026, 2, 9, 15),
+            contactPeerId: 'bob-peer',
+            contactUsername: 'Bob',
+          ),
+        ],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+
+    final title = tester.widget<Text>(find.text('Connected!'));
+    expect(title.style?.color, const Color(0xFF167A3A));
+
+    final username = tester.widget<Text>(find.text('Bob'));
+    expect(
+      username.style?.color,
+      BackgroundReadableColors.representativeLight.textPrimary,
+    );
+
+    final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));
+    expect(
+      button.style?.foregroundColor?.resolve(<WidgetState>{}),
+      const Color(0xFF157A39),
+    );
+  });
+
+  testWidgets('daylight lagoon keeps Feed thread headers readable', (
+    tester,
+  ) async {
+    setPhoneViewport(tester);
+
+    await tester.pumpWidget(
+      buildFeedScreen(
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+        feedItems: [
+          buildThreadItem(
+            id: 'thread_bob',
+            username: 'Bob',
+            timestamp: DateTime(2026, 2, 9, 15),
+          ),
+        ],
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+
+    final header = tester.widget<Text>(
+      find.byWidgetPredicate(
+        (widget) => widget is Text && widget.data == 'Bob',
+        description: 'thread header Text("Bob")',
+      ),
+    );
+    expect(
+      header.style?.color,
+      BackgroundReadableColors.representativeLight.textPrimary,
+    );
   });
 
   testWidgets('renders empty state once feed load completes with no items', (

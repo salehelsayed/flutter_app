@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/brand_header.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/choice_card.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Onboarding screen presenting two identity initialization options.
@@ -15,11 +17,13 @@ class IdentityChoiceScreen extends StatefulWidget {
 
   /// Callback invoked when user chooses to restore from mnemonic.
   final VoidCallback? onLoadMyKey;
+  final BackgroundPreference backgroundPreference;
 
   const IdentityChoiceScreen({
     super.key,
     required this.onNewHere,
     required this.onLoadMyKey,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -112,114 +116,122 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
     return Scaffold(
       backgroundColor: AppColors.background,
       body: AmbientBackground(
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight,
-                    ),
-                    child: Column(
-                      children: [
-                        SizedBox(height: constraints.maxHeight * 0.12),
-                        // Brand header with fade-in from top
-                        FadeTransition(
-                          opacity: _headerFadeAnimation,
-                          child: SlideTransition(
-                            position: _headerSlideAnimation,
-                            child: const BrandHeader(),
-                          ),
+        preference: widget.backgroundPreference,
+        child: Builder(
+          builder: (context) {
+            final readableColors = context.backgroundReadableColors;
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
                         ),
-                        SizedBox(height: constraints.maxHeight * 0.12),
-                        // Choice cards
-                        Builder(builder: (context) {
-                          final l10n = AppLocalizations.of(context)!;
-                          return Column(
-                            children: [
-                              FadeTransition(
-                                opacity: _card1FadeAnimation,
-                                child: SlideTransition(
-                                  position: _card1SlideAnimation,
-                                  child: ChoiceCard(
-                                    icon: Icons.add_circle_outline,
-                                    title: l10n.onboarding_new_here,
-                                    description: l10n.onboarding_new_desc,
-                                    onTap: widget.onNewHere,
-                                  ),
-                                ),
+                        child: Column(
+                          children: [
+                            SizedBox(height: constraints.maxHeight * 0.12),
+                            // Brand header with fade-in from top
+                            FadeTransition(
+                              opacity: _headerFadeAnimation,
+                              child: SlideTransition(
+                                position: _headerSlideAnimation,
+                                child: const BrandHeader(),
                               ),
-                              const SizedBox(height: 16),
-                              FadeTransition(
-                                opacity: _card2FadeAnimation,
-                                child: SlideTransition(
-                                  position: _card2SlideAnimation,
-                                  child: ChoiceCard(
-                                    icon: Icons.key_outlined,
-                                    title: l10n.onboarding_load_key,
-                                    description: l10n.onboarding_load_desc,
-                                    onTap: widget.onLoadMyKey,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        }),
-                        SizedBox(height: constraints.maxHeight * 0.12),
-                        // Privacy footer
-                        FadeTransition(
-                          opacity: _footerFadeAnimation,
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                            ),
+                            SizedBox(height: constraints.maxHeight * 0.12),
+                            // Choice cards
+                            Builder(
+                              builder: (context) {
+                                final l10n = AppLocalizations.of(context)!;
+                                return Column(
                                   children: [
-                                    Icon(
-                                      Icons.lock_outline,
-                                      size: 14,
-                                      color: AppColors.textMuted.withValues(
-                                        alpha: 0.6,
+                                    FadeTransition(
+                                      opacity: _card1FadeAnimation,
+                                      child: SlideTransition(
+                                        position: _card1SlideAnimation,
+                                        child: ChoiceCard(
+                                          icon: Icons.add_circle_outline,
+                                          title: l10n.onboarding_new_here,
+                                          description: l10n.onboarding_new_desc,
+                                          onTap: widget.onNewHere,
+                                        ),
                                       ),
                                     ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      AppLocalizations.of(context)!.onboarding_privacy_1,
-                                      style: TextStyle(
-                                        color: AppColors.textMuted.withValues(
-                                          alpha: 0.6,
+                                    const SizedBox(height: 16),
+                                    FadeTransition(
+                                      opacity: _card2FadeAnimation,
+                                      child: SlideTransition(
+                                        position: _card2SlideAnimation,
+                                        child: ChoiceCard(
+                                          icon: Icons.key_outlined,
+                                          title: l10n.onboarding_load_key,
+                                          description:
+                                              l10n.onboarding_load_desc,
+                                          onTap: widget.onLoadMyKey,
                                         ),
-                                        fontSize: 12,
                                       ),
                                     ),
                                   ],
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  AppLocalizations.of(context)!.onboarding_privacy_2,
-                                  style: TextStyle(
-                                    color: AppColors.textMuted.withValues(
-                                      alpha: 0.6,
-                                    ),
-                                    fontSize: 12,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
+                                );
+                              },
                             ),
-                          ),
+                            SizedBox(height: constraints.maxHeight * 0.12),
+                            // Privacy footer
+                            FadeTransition(
+                              opacity: _footerFadeAnimation,
+                              child: Padding(
+                                padding: const EdgeInsets.only(bottom: 24),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.lock_outline,
+                                          size: 14,
+                                          color: readableColors.iconMuted,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          AppLocalizations.of(
+                                            context,
+                                          )!.onboarding_privacy_1,
+                                          style: TextStyle(
+                                            color: readableColors.textMuted,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      AppLocalizations.of(
+                                        context,
+                                      )!.onboarding_privacy_2,
+                                      style: TextStyle(
+                                        color: readableColors.textMuted,
+                                        fontSize: 12,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

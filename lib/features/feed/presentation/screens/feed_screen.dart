@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -77,6 +78,7 @@ class FeedScreen extends StatelessWidget {
   final void Function(String groupId, String messageId, String emoji)?
   onGroupReactionSelected;
   final BackgroundPreference backgroundPreference;
+  final BackgroundReadableTone? readableToneOverride;
 
   const FeedScreen({
     super.key,
@@ -125,6 +127,7 @@ class FeedScreen extends StatelessWidget {
     this.onGroupReactionTap,
     this.onGroupReactionSelected,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.readableToneOverride,
   });
 
   @override
@@ -138,6 +141,7 @@ class FeedScreen extends StatelessWidget {
       child: AmbientBackground(
         preference: backgroundPreference,
         isFeedSurface: true,
+        readableToneOverride: readableToneOverride,
         child: Stack(
           children: [
             // Main content with top-only SafeArea
@@ -1146,18 +1150,20 @@ class _EmptyFeedStateCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        color: const Color.fromRGBO(24, 26, 32, 0.72),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.12)),
+        color: readableColors.surfaceRaised,
+        border: Border.all(color: readableColors.border),
       ),
       child: Text(
         'Your feed is ready, @$username. New connections will appear here.',
         textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: Color.fromRGBO(255, 255, 255, 0.78),
+        style: TextStyle(
+          color: readableColors.textSecondary,
           fontSize: 15,
           height: 1.35,
           fontWeight: FontWeight.w500,
@@ -1174,17 +1180,19 @@ class _FeedLoadingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       key: ValueKey('feed-loading-card-$index'),
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        color: const Color.fromRGBO(24, 26, 32, 0.6),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.1)),
+        color: readableColors.surfaceSubtle,
+        border: Border.all(color: readableColors.border),
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
+        children: [
           _FeedLoadingBar(widthFactor: 0.34, height: 16),
           SizedBox(height: 14),
           _FeedLoadingBar(widthFactor: 0.82),
@@ -1203,25 +1211,27 @@ class _FeedLoadingStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       key: const ValueKey('feed-loading-status'),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: const Color.fromRGBO(16, 18, 24, 0.78),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.12)),
+        color: readableColors.surfaceRaised,
+        border: Border.all(color: readableColors.border),
       ),
-      child: const Row(
+      child: Row(
         children: [
           SizedBox(
             width: 18,
             height: 18,
             child: CircularProgressIndicator(
               strokeWidth: 2.2,
-              color: Color.fromRGBO(255, 255, 255, 0.78),
+              color: readableColors.iconSecondary,
             ),
           ),
-          SizedBox(width: 12),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1229,17 +1239,17 @@ class _FeedLoadingStatusCard extends StatelessWidget {
                 Text(
                   'Loading Feed...',
                   style: TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.92),
+                    color: readableColors.textPrimary,
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.2,
                   ),
                 ),
-                SizedBox(height: 4),
+                const SizedBox(height: 4),
                 Text(
                   'Your recent threads are still syncing.',
                   style: TextStyle(
-                    color: Color.fromRGBO(255, 255, 255, 0.62),
+                    color: readableColors.textSecondary,
                     fontSize: 12,
                     height: 1.3,
                   ),
@@ -1261,6 +1271,8 @@ class _FeedLoadingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return FractionallySizedBox(
       widthFactor: widthFactor,
       alignment: Alignment.centerLeft,
@@ -1268,7 +1280,7 @@ class _FeedLoadingBar extends StatelessWidget {
         height: height,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(height / 2),
-          color: const Color.fromRGBO(255, 255, 255, 0.11),
+          color: readableColors.disabledSurface,
         ),
       ),
     );

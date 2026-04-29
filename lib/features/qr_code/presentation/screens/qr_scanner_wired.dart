@@ -383,7 +383,7 @@ class QRScannerWired extends StatelessWidget {
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primaryAccent,
-                  foregroundColor: Colors.white,
+                  foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -486,6 +486,7 @@ class QRScannerWired extends StatelessWidget {
       groupMessageListener: groupMessageListener,
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
+      appShellController: appShellController,
     );
   }
 

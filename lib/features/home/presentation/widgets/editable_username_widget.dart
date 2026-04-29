@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 
@@ -76,22 +77,30 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final mutedTextColor = readableColors.isLightSurface
+        ? readableColors.textMuted
+        : AppColors.textMuted;
+    final primaryTextColor = readableColors.isLightSurface
+        ? readableColors.textPrimary
+        : AppColors.textPrimary;
+
     if (_isEditing) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
+          Text(
             'mknoon/',
             style: TextStyle(
-              color: AppColors.textMuted,
+              color: mutedTextColor,
               fontSize: 15,
               fontWeight: FontWeight.w400,
             ),
           ),
-          const Text(
+          Text(
             '@',
             style: TextStyle(
-              color: AppColors.textPrimary,
+              color: primaryTextColor,
               fontSize: 15,
               fontWeight: FontWeight.w600,
             ),
@@ -104,10 +113,14 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
                 focusNode: _focusNode,
                 maxLength: 30,
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_\-.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]')),
+                  FilteringTextInputFormatter.allow(
+                    RegExp(
+                      r'[a-zA-Z0-9_\-.\u00C0-\u024F\u0600-\u06FF\u0750-\u077F]',
+                    ),
+                  ),
                 ],
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
+                style: TextStyle(
+                  color: primaryTextColor,
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
                 ),
@@ -130,10 +143,10 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
+          Text(
             'mknoon/',
             style: TextStyle(
-              color: AppColors.textMuted,
+              color: mutedTextColor,
               fontSize: 15,
               fontWeight: FontWeight.w400,
             ),
@@ -142,15 +155,15 @@ class _EditableUsernameWidgetState extends State<EditableUsernameWidget> {
             child: Text(
               '@${widget.username}',
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: AppColors.textPrimary,
+              style: TextStyle(
+                color: primaryTextColor,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
           const SizedBox(width: 8),
-          Icon(Icons.edit, color: AppColors.textMuted, size: 14),
+          Icon(Icons.edit, color: mutedTextColor, size: 14),
         ],
       ),
     );

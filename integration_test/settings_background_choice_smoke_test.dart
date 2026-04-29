@@ -4,6 +4,8 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
@@ -114,6 +116,7 @@ void main() {
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(AmbientBackground), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
     for (var i = 0; i < 10; i++) {
@@ -124,6 +127,92 @@ void main() {
     expect(find.text('Background'), findsOneWidget);
     expect(find.text('Default'), findsOneWidget);
     expect(find.text('Cosmic'), findsOneWidget);
+    expect(find.text('Mirrored cosmic'), findsOneWidget);
+    expect(find.text('Daylight Lagoon'), findsOneWidget);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('background-choice-daylight-lagoon')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('background-choice-daylight-lagoon')),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      await secureKeyStore.read(BackgroundPreference.storageKey),
+      'daylight_lagoon',
+    );
+    expect(
+      find.byKey(
+        const ValueKey('background-choice-daylight-lagoon-selected-icon'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.chevron_left));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    expect(find.byType(FeedScreen), findsOneWidget);
+    expect(find.byType(AmbientBackground), findsOneWidget);
+    expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    expect(find.text('Background'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('background-choice-daylight-lagoon-selected-icon'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('background-choice-cosmic-mirrored')),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      await secureKeyStore.read(BackgroundPreference.storageKey),
+      'cosmic_mirrored',
+    );
+    expect(
+      find.byKey(
+        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byIcon(Icons.chevron_left));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    expect(find.byType(FeedScreen), findsOneWidget);
+    expect(find.byType(AmbientBackground), findsOneWidget);
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+
+    expect(find.text('Background'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey('background-choice-cosmic-mirrored-selected-icon'),
+      ),
+      findsOneWidget,
+    );
 
     await tester.ensureVisible(
       find.byKey(const ValueKey('background-choice-cosmic')),
@@ -145,8 +234,8 @@ void main() {
     }
 
     expect(find.byType(FeedScreen), findsOneWidget);
-    expect(find.byType(AmbientBackground), findsOneWidget);
     expect(find.byType(CosmicBackground), findsOneWidget);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('open-settings-smoke')));
     for (var i = 0; i < 10; i++) {
@@ -176,5 +265,6 @@ void main() {
 
     expect(find.byType(FeedScreen), findsOneWidget);
     expect(find.byType(CosmicBackground), findsNothing);
+    expect(find.byType(CosmicBackgroundMirrored), findsNothing);
   });
 }

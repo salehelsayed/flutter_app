@@ -508,6 +508,28 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_background_cosmic_selected => 'تم اختيار الكونية';
 
   @override
+  String get settings_background_cosmic_mirrored => 'كونية معكوسة';
+
+  @override
+  String get settings_background_cosmic_mirrored_desc =>
+      'حقل النجوم الكوني مع توهجات لونية معكوسة.';
+
+  @override
+  String get settings_background_cosmic_mirrored_selected =>
+      'تم اختيار الكونية المعكوسة';
+
+  @override
+  String get settings_background_daylight_lagoon => 'بحيرة ضوء النهار';
+
+  @override
+  String get settings_background_daylight_lagoon_desc =>
+      'سماء بحيرة مشرقة بتوهجات باستيلية ناعمة.';
+
+  @override
+  String get settings_background_daylight_lagoon_selected =>
+      'تم اختيار بحيرة ضوء النهار';
+
+  @override
   String get settings_background_save_fail => 'تعذر حفظ اختيار الخلفية';
 
   @override

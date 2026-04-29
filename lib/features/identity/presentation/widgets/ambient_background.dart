@@ -1,20 +1,26 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
-/// Animated ambient background with floating glow orbs.
+/// Shared app background that renders the selected ambient treatment.
 class AmbientBackground extends StatefulWidget {
   final Widget child;
   final BackgroundPreference preference;
   final bool isFeedSurface;
+  final BackgroundReadableTone? readableToneOverride;
 
   const AmbientBackground({
     super.key,
     required this.child,
     this.preference = BackgroundPreference.defaultBackground,
     this.isFeedSurface = false,
+    this.readableToneOverride,
   });
 
   @override
@@ -55,26 +61,43 @@ class _AmbientBackgroundState extends State<AmbientBackground>
 
   @override
   Widget build(BuildContext context) {
-    switch (widget.preference) {
-      case BackgroundPreference.defaultBackground:
-        return _DefaultAmbientBackground(
-          animation: _controller,
-          child: widget.child,
-        );
-      case BackgroundPreference.cosmic:
-        if (widget.isFeedSurface) {
-          return CosmicBackground(child: widget.child);
-        }
-        return _DefaultAmbientBackground(
-          animation: _controller,
-          child: widget.child,
-        );
-    }
+    final readableColors = BackgroundReadableColors.resolve(
+      widget.preference,
+      representativeToneOverride: widget.readableToneOverride,
+    );
+    final theme = Theme.of(context);
+    final themedBackground = switch (widget.preference) {
+      BackgroundPreference.defaultBackground => _DefaultAmbientBackground(
+        animation: _controller,
+        child: widget.child,
+      ),
+      BackgroundPreference.cosmic => CosmicBackground(child: widget.child),
+      BackgroundPreference.cosmicMirrored => CosmicBackgroundMirrored(
+        child: widget.child,
+      ),
+      BackgroundPreference.daylightLagoon => DaylightLagoonBackground(
+        child: widget.child,
+      ),
+    };
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: readableColors.systemUiOverlayStyle,
+      child: Theme(
+        data: theme.copyWith(
+          extensions: [
+            ...theme.extensions.values.where(
+              (extension) => extension is! BackgroundReadableColors,
+            ),
+            readableColors,
+          ],
+        ),
+        child: themedBackground,
+      ),
+    );
   }
 
   bool get _usesDefaultBackground {
-    return widget.preference != BackgroundPreference.cosmic ||
-        !widget.isFeedSurface;
+    return widget.preference == BackgroundPreference.defaultBackground;
   }
 }
 

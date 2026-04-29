@@ -39,6 +39,7 @@ import 'package:flutter_app/features/introduction/application/introduction_liste
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_wired.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
@@ -139,6 +140,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   @override
   void initState() {
     super.initState();
+    widget.appShellController?.addListener(_onAppShellChanged);
     emitFlowEvent(layer: 'FL', event: 'FTE_FL_SCREEN_INIT', details: {});
     StartupTiming.instance.mark('fte_init_state');
     // Start listening immediately (lightweight — just subscribes to a stream)
@@ -293,8 +295,15 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
   @override
   void dispose() {
+    widget.appShellController?.removeListener(_onAppShellChanged);
     _requestSubscription?.cancel();
     super.dispose();
+  }
+
+  void _onAppShellChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _loadIdentityAndBuildQR() async {
@@ -599,6 +608,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       groupMessageListener: widget.groupMessageListener,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
+      appShellController: widget.appShellController,
     );
   }
 
@@ -614,6 +624,9 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         onUsernameChanged: _onUsernameChanged,
         onScanPressed: _onScanPressed,
         p2pService: widget.p2pService,
+        backgroundPreference:
+            widget.appShellController?.backgroundPreference ??
+            BackgroundPreference.defaultBackground,
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 class PostsNearbySettingsCard extends StatelessWidget {
@@ -15,6 +16,9 @@ class PostsNearbySettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: ClipRRect(
@@ -24,11 +28,9 @@ class PostsNearbySettingsCard extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: const Color.fromRGBO(255, 255, 255, 0.06),
+              color: readableColors.glassSurface,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.1),
-              ),
+              border: Border.all(color: readableColors.glassBorder),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -38,27 +40,29 @@ class PostsNearbySettingsCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        AppLocalizations.of(context)!.settings_share_nearby,
-                        style: const TextStyle(
-                          color: Colors.white,
+                        l10n.settings_share_nearby,
+                        style: TextStyle(
+                          color: readableColors.textPrimary,
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        sharingEnabled ? AppLocalizations.of(context)!.settings_share_nearby_on : AppLocalizations.of(context)!.settings_share_nearby_off,
-                        style: const TextStyle(
-                          color: Color.fromRGBO(255, 255, 255, 0.7),
+                        sharingEnabled
+                            ? l10n.settings_share_nearby_on
+                            : l10n.settings_share_nearby_off,
+                        style: TextStyle(
+                          color: readableColors.textSecondary,
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        AppLocalizations.of(context)!.settings_share_nearby_desc,
-                        style: const TextStyle(
-                          color: Color.fromRGBO(255, 255, 255, 0.45),
+                        l10n.settings_share_nearby_desc,
+                        style: TextStyle(
+                          color: readableColors.textMuted,
                           fontSize: 12,
                           height: 1.35,
                         ),

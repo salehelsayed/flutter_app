@@ -4,16 +4,12 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import '../../../../core/bridge/bridge.dart';
 import '../../../../core/utils/flow_event_emitter.dart';
 import '../../../identity/domain/repositories/identity_repository.dart';
+import '../../../settings/domain/models/background_preference.dart';
 import '../../application/build_qr_payload_use_case.dart';
 import 'qr_display_screen.dart';
 
 /// Internal state enum for QRDisplayWired
-enum _QRDisplayState {
-  loading,
-  success,
-  noIdentity,
-  error,
-}
+enum _QRDisplayState { loading, success, noIdentity, error }
 
 /// Wired widget that connects QRDisplayScreen to the buildQRPayload use case.
 ///
@@ -34,6 +30,7 @@ class QRDisplayWired extends StatefulWidget {
 
   /// Called when user taps "Scan a friend's code" card.
   final VoidCallback? onScanPressed;
+  final BackgroundPreference backgroundPreference;
 
   const QRDisplayWired({
     super.key,
@@ -41,6 +38,7 @@ class QRDisplayWired extends StatefulWidget {
     required this.bridgeClient,
     required this.onClose,
     this.onScanPressed,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -55,21 +53,13 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
   @override
   void initState() {
     super.initState();
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'QR_FL_SCREEN_INIT',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'QR_FL_SCREEN_INIT', details: {});
     _buildPayload();
   }
 
   @override
   void dispose() {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'QR_FL_SCREEN_CLOSE',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'QR_FL_SCREEN_CLOSE', details: {});
     super.dispose();
   }
 
@@ -79,11 +69,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
       _errorMessage = null;
     });
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'QR_FL_SCREEN_LOADING',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'QR_FL_SCREEN_LOADING', details: {});
 
     try {
       final identity = await widget.repo.loadIdentity();
@@ -96,7 +82,10 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
         return;
       }
 
-      Future<Map<String, dynamic>> jsSign(String dataToSign, String privateKey) {
+      Future<Map<String, dynamic>> jsSign(
+        String dataToSign,
+        String privateKey,
+      ) {
         return callSignPayload(
           bridge: widget.bridgeClient,
           dataToSign: dataToSign,
@@ -167,6 +156,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           qrData: null,
           onClose: widget.onClose,
           onScanPressed: widget.onScanPressed,
+          backgroundPreference: widget.backgroundPreference,
         );
 
       case _QRDisplayState.success:
@@ -174,6 +164,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           qrData: _qrData,
           onClose: widget.onClose,
           onScanPressed: widget.onScanPressed,
+          backgroundPreference: widget.backgroundPreference,
         );
 
       case _QRDisplayState.noIdentity:
@@ -217,11 +208,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 64,
-                color: theme.colorScheme.error,
-              ),
+              Icon(icon, size: 64, color: theme.colorScheme.error),
               const SizedBox(height: 24),
               Text(
                 title,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Segmented filter toggle: "All (N)" / "Archived (N)".
@@ -22,13 +23,13 @@ class FriendsFilterToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0x0FFFFFFF), // rgba(255,255,255,0.06)
+        color: readableColors.surfaceSubtle,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: const Color(0x14FFFFFF), // rgba(255,255,255,0.08)
-        ),
+        border: Border.all(color: readableColors.border),
       ),
       padding: const EdgeInsets.all(3),
       child: Row(
@@ -91,7 +92,7 @@ class _FilterTab extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
           color: isActive
-              ? const Color(0x1FFFFFFF) // rgba(255,255,255,0.12)
+              ? context.backgroundReadableColors.surfaceRaised
               : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
         ),
@@ -104,8 +105,8 @@ class _FilterTab extends StatelessWidget {
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: isActive
-                    ? const Color(0xF2FFFFFF) // rgba(255,255,255,0.95)
-                    : const Color(0x66FFFFFF), // rgba(255,255,255,0.4)
+                    ? context.backgroundReadableColors.textPrimary
+                    : context.backgroundReadableColors.textMuted,
               ),
               child: Text(label),
             ),
@@ -113,12 +114,13 @@ class _FilterTab extends StatelessWidget {
               const SizedBox(width: 6),
               AnimatedContainer(
                 duration: const Duration(milliseconds: 250),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
                   color: isActive
-                      ? const Color(0x33FFFFFF) // rgba(255,255,255,0.2)
-                      : const Color(0x1AFFFFFF), // rgba(255,255,255,0.1)
+                      ? context.backgroundReadableColors.disabledSurface
+                      : context.backgroundReadableColors.surfaceBase.withValues(
+                          alpha: 0.72,
+                        ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -127,8 +129,8 @@ class _FilterTab extends StatelessWidget {
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: isActive
-                        ? const Color(0xF2FFFFFF)
-                        : const Color(0x66FFFFFF),
+                        ? context.backgroundReadableColors.textPrimary
+                        : context.backgroundReadableColors.textMuted,
                   ),
                 ),
               ),

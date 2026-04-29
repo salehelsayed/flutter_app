@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
-import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/inline_reply_input.dart';
@@ -76,7 +76,7 @@ class OpenModeCardBody extends StatelessWidget {
         GestureDetector(
           onTap: onCollapse,
           behavior: HitTestBehavior.opaque,
-          child: _buildHeader(),
+          child: _buildHeader(context),
         ),
         // Scrollable unread messages
         Padding(
@@ -103,7 +103,8 @@ class OpenModeCardBody extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final displayNameDirection = detectTextDirection(thread.displayName);
     final groupThread = thread.isGroup ? thread as GroupThreadFeedItem : null;
 
@@ -138,19 +139,23 @@ class OpenModeCardBody extends StatelessWidget {
                   textDirection: displayNameDirection,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color.fromRGBO(255, 255, 255, 1.0),
+                    color: readableColors.isLightSurface
+                        ? readableColors.textPrimary
+                        : const Color.fromRGBO(255, 255, 255, 1.0),
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   thread.latestMessage.time,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
-                    color: Color.fromRGBO(255, 255, 255, 0.55),
+                    color: readableColors.isLightSurface
+                        ? readableColors.textMuted
+                        : const Color.fromRGBO(255, 255, 255, 0.55),
                   ),
                 ),
               ],
@@ -165,13 +170,18 @@ class OpenModeCardBody extends StatelessWidget {
 
   Widget _buildFooter(BuildContext context) {
     if (!canWrite) {
-      return _buildReadOnlyBanner();
+      return _buildReadOnlyBanner(context);
     }
+    final readableColors = context.backgroundReadableColors;
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+          top: BorderSide(
+            color: readableColors.isLightSurface
+                ? readableColors.divider
+                : const Color.fromRGBO(255, 255, 255, 0.08),
+          ),
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
@@ -197,15 +207,20 @@ class OpenModeCardBody extends StatelessWidget {
     );
   }
 
-  Widget _buildReadOnlyBanner() {
+  Widget _buildReadOnlyBanner(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final groupThread = thread is GroupThreadFeedItem
         ? thread as GroupThreadFeedItem
         : null;
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: Color.fromRGBO(255, 255, 255, 0.08)),
+          top: BorderSide(
+            color: readableColors.isLightSurface
+                ? readableColors.divider
+                : const Color.fromRGBO(255, 255, 255, 0.08),
+          ),
         ),
       ),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
@@ -213,9 +228,11 @@ class OpenModeCardBody extends StatelessWidget {
         groupThread?.readOnlyBannerText ??
             'Only admins can send messages in this group',
         textAlign: TextAlign.center,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
-          color: Color.fromRGBO(255, 255, 255, 0.45),
+          color: readableColors.isLightSurface
+              ? readableColors.textMuted
+              : const Color.fromRGBO(255, 255, 255, 0.45),
         ),
       ),
     );
@@ -230,6 +247,12 @@ class _FeedEditModeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final textColor = isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color.fromRGBO(255, 255, 255, 0.86);
+
     return Container(
       key: const ValueKey('feed-edit-mode-banner'),
       width: double.infinity,
@@ -245,10 +268,10 @@ class _FeedEditModeBanner extends StatelessWidget {
           Expanded(
             child: Text(
               l10n.conversation_editing_message,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color.fromRGBO(255, 255, 255, 0.86),
+                color: textColor,
               ),
             ),
           ),
@@ -256,7 +279,9 @@ class _FeedEditModeBanner extends StatelessWidget {
             key: const ValueKey('feed-cancel-edit-action'),
             onPressed: onCancel,
             style: TextButton.styleFrom(
-              foregroundColor: const Color.fromRGBO(255, 255, 255, 0.72),
+              foregroundColor: isLightSurface
+                  ? readableColors.textSecondary
+                  : const Color.fromRGBO(255, 255, 255, 0.72),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,

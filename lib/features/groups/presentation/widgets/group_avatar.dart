@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 class GroupAvatar extends StatefulWidget {
@@ -79,6 +80,7 @@ class _GroupAvatarState extends State<GroupAvatar> {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final avatarBytes = widget.avatarBytes;
     final imagePath = _resolvedPath;
     final imageKey = widget.cacheBustKey == null || widget.cacheBustKey!.isEmpty
@@ -94,8 +96,8 @@ class _GroupAvatarState extends State<GroupAvatar> {
       height: widget.size,
       decoration: BoxDecoration(
         borderRadius: widget.borderRadius,
-        color: Colors.white.withOpacity(0.08),
-        border: Border.all(color: Colors.white.withOpacity(0.08), width: 0.5),
+        color: readableColors.surfaceSubtle,
+        border: Border.all(color: readableColors.divider, width: 0.5),
       ),
       child: ClipRRect(
         borderRadius: widget.borderRadius,
@@ -116,7 +118,7 @@ class _GroupAvatarState extends State<GroupAvatar> {
             height: widget.size,
             errorBuilder: _errorBuilder,
           ),
-          _ => _buildFallback(),
+          _ => _buildFallback(readableColors),
         },
       ),
     );
@@ -127,20 +129,20 @@ class _GroupAvatarState extends State<GroupAvatar> {
     Object error,
     StackTrace? stackTrace,
   ) {
-    return _buildFallback();
+    return _buildFallback(context.backgroundReadableColors);
   }
 
-  Widget _buildFallback() {
+  Widget _buildFallback(BackgroundReadableColors readableColors) {
     return Container(
       key: ValueKey('group-avatar-fallback-${widget.groupId}'),
       alignment: Alignment.center,
-      color: Colors.white.withOpacity(0.03),
+      color: readableColors.surfaceRaised,
       child: Text(
         _initials(widget.name),
         style: TextStyle(
           fontSize: widget.size * 0.32,
           fontWeight: FontWeight.w700,
-          color: Colors.white.withOpacity(0.68),
+          color: readableColors.textSecondary,
           letterSpacing: 0.2,
         ),
       ),

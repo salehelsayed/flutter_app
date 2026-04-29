@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
@@ -123,6 +124,12 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final actionColor = isLightSurface
+        ? const Color(0xFF0F8F87)
+        : FeedColors.accentTeal;
+
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {}, // absorb taps
@@ -142,15 +149,23 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                       height: 34,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: const Color.fromRGBO(255, 255, 255, 0.08),
+                        color: isLightSurface
+                            ? readableColors.surfaceSubtle.withValues(
+                                alpha: 0.86,
+                              )
+                            : const Color.fromRGBO(255, 255, 255, 0.08),
                         border: Border.all(
-                          color: const Color.fromRGBO(255, 255, 255, 0.12),
+                          color: isLightSurface
+                              ? readableColors.border.withValues(alpha: 0.18)
+                              : const Color.fromRGBO(255, 255, 255, 0.12),
                         ),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.add_rounded,
                         size: 20,
-                        color: Color.fromRGBO(255, 255, 255, 0.50),
+                        color: isLightSurface
+                            ? readableColors.iconSecondary
+                            : const Color.fromRGBO(255, 255, 255, 0.50),
                       ),
                     ),
                   ),
@@ -163,14 +178,26 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                     maxHeight: 120,
                   ),
                   decoration: BoxDecoration(
-                    color: _hasFocus
-                        ? const Color.fromRGBO(255, 255, 255, 0.08)
-                        : const Color.fromRGBO(255, 255, 255, 0.06),
+                    color: isLightSurface
+                        ? (_hasFocus
+                              ? readableColors.inputFill
+                              : readableColors.surfaceBase.withValues(
+                                  alpha: 0.78,
+                                ))
+                        : (_hasFocus
+                              ? const Color.fromRGBO(255, 255, 255, 0.08)
+                              : const Color.fromRGBO(255, 255, 255, 0.06)),
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: _hasFocus
-                          ? const Color.fromRGBO(78, 205, 196, 0.20)
-                          : const Color.fromRGBO(255, 255, 255, 0.08),
+                      color: isLightSurface
+                          ? (_hasFocus
+                                ? const Color(
+                                    0xFF0F8F87,
+                                  ).withValues(alpha: 0.34)
+                                : readableColors.border.withValues(alpha: 0.14))
+                          : (_hasFocus
+                                ? const Color.fromRGBO(78, 205, 196, 0.20)
+                                : const Color.fromRGBO(255, 255, 255, 0.08)),
                     ),
                   ),
                   child: TextField(
@@ -180,16 +207,20 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                     enabled: widget.enabled,
                     maxLines: null,
                     maxLength: maxMessageLength,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
-                      color: Color.fromRGBO(255, 255, 255, 0.90),
+                      color: isLightSurface
+                          ? readableColors.textPrimary
+                          : const Color.fromRGBO(255, 255, 255, 0.90),
                       height: 1.4,
                     ),
                     decoration: InputDecoration(
                       hintText: widget.hintText,
-                      hintStyle: const TextStyle(
+                      hintStyle: TextStyle(
                         fontSize: 14,
-                        color: Color.fromRGBO(255, 255, 255, 0.40),
+                        color: isLightSurface
+                            ? readableColors.placeholderText
+                            : const Color.fromRGBO(255, 255, 255, 0.40),
                       ),
                       border: InputBorder.none,
                       counterText: '',
@@ -216,12 +247,12 @@ class _ExpandedComposeInputState extends State<ExpandedComposeInput>
                   height: 36,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: FeedColors.accentTeal.withValues(alpha: 0.20),
+                    color: actionColor.withValues(alpha: 0.20),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.arrow_upward_rounded,
                     size: 20,
-                    color: FeedColors.accentTeal,
+                    color: actionColor,
                   ),
                 ),
               ),

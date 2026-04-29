@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+import '../../../shared/helpers/readability_test_helpers.dart';
 
 // --- Test contacts ---
 final contactAlice = ContactModel(
@@ -45,10 +49,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: ContactPickerRow(
-              contact: contactAlice,
-              onTap: () {},
-            ),
+            body: ContactPickerRow(contact: contactAlice, onTap: () {}),
           ),
         ),
       );
@@ -91,15 +92,13 @@ void main() {
       expect(find.byIcon(Icons.add_circle_outline), findsNothing);
     });
 
-    testWidgets('shows add_circle_outline when isSelected is false (default)',
-        (tester) async {
+    testWidgets('shows add_circle_outline when isSelected is false (default)', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: ContactPickerRow(
-              contact: contactAlice,
-              onTap: () {},
-            ),
+            body: ContactPickerRow(contact: contactAlice, onTap: () {}),
           ),
         ),
       );
@@ -119,6 +118,8 @@ void main() {
       Set<String> selectedPeerIds = const {},
       VoidCallback? onConfirm,
       VoidCallback? onBack,
+      BackgroundPreference backgroundPreference =
+          BackgroundPreference.defaultBackground,
     }) {
       return MaterialApp(
         locale: const Locale('en'),
@@ -131,6 +132,7 @@ void main() {
           selectedPeerIds: selectedPeerIds,
           onConfirm: onConfirm,
           onBack: onBack ?? () {},
+          backgroundPreference: backgroundPreference,
         ),
       );
     }
@@ -151,8 +153,7 @@ void main() {
       expect(find.text('Bob'), findsOneWidget);
     });
 
-    testWidgets('shows empty state when no contacts available',
-        (tester) async {
+    testWidgets('shows empty state when no contacts available', (tester) async {
       await tester.pumpWidget(buildTestWidget(contacts: []));
 
       expect(find.text('No contacts available'), findsOneWidget);
@@ -175,16 +176,15 @@ void main() {
     testWidgets('calls onBack when back button is tapped', (tester) async {
       var backCalled = false;
 
-      await tester.pumpWidget(
-        buildTestWidget(onBack: () => backCalled = true),
-      );
+      await tester.pumpWidget(buildTestWidget(onBack: () => backCalled = true));
 
       await tester.tap(find.byIcon(Icons.arrow_back_ios_new));
       expect(backCalled, isTrue);
     });
 
-    testWidgets('header shows "Add Members (N)" when contacts are selected',
-        (tester) async {
+    testWidgets('header shows "Add Members (N)" when contacts are selected', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         buildTestWidget(
           contacts: [contactAlice, contactBob],
@@ -196,20 +196,19 @@ void main() {
       expect(find.text('Add Member'), findsNothing);
     });
 
-    testWidgets('header shows "Add Member" when nothing selected',
-        (tester) async {
+    testWidgets('header shows "Add Member" when nothing selected', (
+      tester,
+    ) async {
       await tester.pumpWidget(
-        buildTestWidget(
-          contacts: [contactAlice],
-          selectedPeerIds: {},
-        ),
+        buildTestWidget(contacts: [contactAlice], selectedPeerIds: {}),
       );
 
       expect(find.text('Add Member'), findsOneWidget);
     });
 
-    testWidgets('shows check_circle for selected contacts in list',
-        (tester) async {
+    testWidgets('shows check_circle for selected contacts in list', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         buildTestWidget(
           contacts: [contactAlice, contactBob],
@@ -233,8 +232,7 @@ void main() {
       expect(find.text('Send Invites'), findsOneWidget);
     });
 
-    testWidgets('hides Send Invites button when none selected',
-        (tester) async {
+    testWidgets('hides Send Invites button when none selected', (tester) async {
       await tester.pumpWidget(
         buildTestWidget(
           contacts: [contactAlice],
@@ -286,13 +284,33 @@ void main() {
 
     testWidgets('shows loading indicator when isInviting', (tester) async {
       await tester.pumpWidget(
-        buildTestWidget(
-          contacts: [contactAlice],
-          isInviting: true,
-        ),
+        buildTestWidget(contacts: [contactAlice], isInviting: true),
       );
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('daylight lagoon keeps contact picker content readable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          contacts: [contactAlice, contactBob],
+          selectedPeerIds: {contactAlice.peerId},
+          onConfirm: () {},
+          backgroundPreference: BackgroundPreference.daylightLagoon,
+        ),
+      );
+
+      const colors = BackgroundReadableColors.representativeLight;
+      final header = tester.widget<Text>(find.text('Add Members (1)'));
+      expectTextContrast(header.style!.color!, colors.surfaceBase);
+
+      final alice = tester.widget<Text>(find.text('Alice'));
+      expectTextContrast(alice.style!.color!, colors.surfaceBase);
+
+      final peerId = tester.widget<Text>(find.text('peer-alice-1...'));
+      expectTextContrast(peerId.style!.color!, colors.surfaceBase);
     });
   });
 }

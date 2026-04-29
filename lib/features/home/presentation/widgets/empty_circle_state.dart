@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Empty state with pulsing concentric dashed circles.
 class EmptyCircleState extends StatefulWidget {
@@ -33,6 +34,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final screenHeight = MediaQuery.of(context).size.height;
     // Continuous scaling: 0.0 at 650pt, 1.0 at 900pt
     final t = ((screenHeight - 650) / 250).clamp(0.0, 1.0);
@@ -57,10 +59,9 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
                 painter: _DashedCirclesPainter(
                   animation: _controller.value,
                   scale: painterScale,
+                  color: readableColors.iconMuted,
                 ),
-                child: Center(
-                  child: _buildCenterIcon(scaleFactor: t),
-                ),
+                child: Center(child: _buildCenterIcon(scaleFactor: t)),
               );
             },
           ),
@@ -70,7 +71,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
         Text(
           'Your circle is waiting to be filled',
           style: TextStyle(
-            color: AppColors.textPrimary,
+            color: readableColors.textPrimary,
             fontSize: mainFontSize,
             fontWeight: FontWeight.w500,
           ),
@@ -81,7 +82,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
         Text(
           'Scan a friend\'s code or share yours to connect',
           style: TextStyle(
-            color: AppColors.textMuted,
+            color: readableColors.textSecondary,
             fontSize: subFontSize,
           ),
           textAlign: TextAlign.center,
@@ -101,11 +102,7 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
         shape: BoxShape.circle,
         color: AppColors.primaryAccent.withValues(alpha: 0.1),
       ),
-      child: CustomPaint(
-        painter: _ConstellationDotsPainter(
-          scale: dotScale,
-        ),
-      ),
+      child: CustomPaint(painter: _ConstellationDotsPainter(scale: dotScale)),
     );
   }
 }
@@ -113,8 +110,13 @@ class _EmptyCircleStateState extends State<EmptyCircleState>
 class _DashedCirclesPainter extends CustomPainter {
   final double animation;
   final double scale;
+  final Color color;
 
-  _DashedCirclesPainter({required this.animation, this.scale = 1.0});
+  _DashedCirclesPainter({
+    required this.animation,
+    required this.color,
+    this.scale = 1.0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -130,7 +132,7 @@ class _DashedCirclesPainter extends CustomPainter {
       final opacity = 0.3 + 0.2 * math.sin(animPhase * 2 * math.pi);
 
       final paint = Paint()
-        ..color = AppColors.textMuted.withValues(alpha: opacity)
+        ..color = color.withValues(alpha: opacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5;
 
@@ -173,7 +175,9 @@ class _DashedCirclesPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_DashedCirclesPainter oldDelegate) {
-    return oldDelegate.animation != animation || oldDelegate.scale != scale;
+    return oldDelegate.animation != animation ||
+        oldDelegate.scale != scale ||
+        oldDelegate.color != color;
   }
 }
 

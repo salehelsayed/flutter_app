@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
@@ -7,8 +8,11 @@ import 'package:flutter_app/features/conversation/presentation/widgets/reaction_
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 
+import '../../../../shared/helpers/readability_test_helpers.dart';
+
 void main() {
   Widget buildTestWidget({
+    BackgroundReadableColors readableColors = BackgroundReadableColors.dark,
     bool isIncoming = true,
     String? status,
     String senderName = 'Alice',
@@ -34,6 +38,7 @@ void main() {
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[readableColors]),
       home: Scaffold(
         body: SingleChildScrollView(
           child: LetterCard(
@@ -69,6 +74,54 @@ void main() {
       testWidgets('shows sender name', (tester) async {
         await tester.pumpWidget(buildTestWidget(isIncoming: true));
         expect(find.text('Alice'), findsOneWidget);
+      });
+
+      testWidgets('uses representative light readable roles for content', (
+        tester,
+      ) async {
+        const colors = BackgroundReadableColors.representativeLight;
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            readableColors: colors,
+            isIncoming: true,
+            text: 'Hello مرحبا from Daylight',
+            quotedText: 'Earlier readable message',
+            transport: 'relay',
+            status: 'delivered',
+            reactions: const [
+              MessageReaction(
+                id: 'reaction-1',
+                messageId: 'message-1',
+                emoji: '👍',
+                senderPeerId: 'own-peer',
+                timestamp: '2026-03-15T10:15:30.000Z',
+                createdAt: '2026-03-15T10:15:30.000Z',
+              ),
+            ],
+            ownPeerId: 'own-peer',
+          ),
+        );
+
+        final sender = tester.widget<Text>(find.text('Alice'));
+        expectTextContrast(sender.style!.color!, colors.surfaceRaised);
+
+        final body = tester.widget<LinkableText>(
+          find.byWidgetPredicate(
+            (widget) =>
+                widget is LinkableText &&
+                widget.text == 'Hello مرحبا from Daylight',
+          ),
+        );
+        expectTextContrast(body.style!.color!, colors.surfaceRaised);
+
+        final quote = tester.widget<Text>(
+          find.text('Earlier readable message'),
+        );
+        expectTextContrast(quote.style!.color!, colors.surfaceRaised);
+
+        final time = tester.widget<Text>(find.text('3:30 PM'));
+        expectTextContrast(time.style!.color!, colors.surfaceRaised);
       });
 
       testWidgets('shows message text', (tester) async {

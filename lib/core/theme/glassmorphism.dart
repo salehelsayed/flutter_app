@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'background_readable_colors.dart';
 import 'app_colors.dart';
 
 /// A container with glassmorphic effect using backdrop blur.
@@ -21,6 +22,17 @@ class GlassmorphicContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = Theme.of(
+      context,
+    ).extension<BackgroundReadableColors>();
+    final useReadableRoles = readableColors?.isLightSurface ?? false;
+    final surfaceColor = useReadableRoles
+        ? readableColors!.glassSurface
+        : AppColors.glassBackground;
+    final borderColor = useReadableRoles
+        ? readableColors!.glassBorder
+        : AppColors.glassBorder;
+
     return Container(
       margin: margin,
       child: ClipRRect(
@@ -30,12 +42,9 @@ class GlassmorphicContainer extends StatelessWidget {
           child: Container(
             padding: padding ?? const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: AppColors.glassBackground,
+              color: surfaceColor,
               borderRadius: BorderRadius.circular(borderRadius),
-              border: Border.all(
-                color: AppColors.glassBorder,
-                width: 1.0,
-              ),
+              border: Border.all(color: borderColor, width: 1.0),
             ),
             child: child,
           ),

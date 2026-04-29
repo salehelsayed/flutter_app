@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -73,6 +74,7 @@ class LetterCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    final readableColors = context.backgroundReadableColors;
 
     return GestureDetector(
       onLongPress: onLongPress,
@@ -84,13 +86,9 @@ class LetterCard extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(24),
               color: isIncoming
-                  ? const Color.fromRGBO(255, 255, 255, 0.06)
-                  : const Color.fromRGBO(255, 255, 255, 0.04),
-              border: Border.all(
-                color: isIncoming
-                    ? const Color.fromRGBO(255, 255, 255, 0.10)
-                    : const Color.fromRGBO(255, 255, 255, 0.08),
-              ),
+                  ? readableColors.surfaceRaised
+                  : readableColors.surfaceSubtle,
+              border: Border.all(color: readableColors.border),
             ),
             child: Stack(
               children: [
@@ -148,7 +146,7 @@ class LetterCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: isIncoming
                           ? const Color(0xFF4ecdc4)
-                          : const Color.fromRGBO(255, 255, 255, 0.25),
+                          : readableColors.border,
                       borderRadius: BorderRadius.only(
                         topLeft: isIncoming
                             ? const Radius.circular(24)
@@ -188,8 +186,8 @@ class LetterCard extends StatelessWidget {
                                     ? FontWeight.w600
                                     : FontWeight.w500,
                                 color: isIncoming
-                                    ? const Color.fromRGBO(255, 255, 255, 0.9)
-                                    : const Color.fromRGBO(255, 255, 255, 0.6),
+                                    ? readableColors.textPrimary
+                                    : readableColors.textSecondary,
                               ),
                             ),
                           ),
@@ -198,7 +196,7 @@ class LetterCard extends StatelessWidget {
                             Icon(
                               _transportIcon(transport!),
                               size: 10,
-                              color: const Color.fromRGBO(255, 255, 255, 0.35),
+                              color: readableColors.iconMuted,
                             ),
                           ],
                         ],
@@ -208,7 +206,7 @@ class LetterCard extends StatelessWidget {
                     if (quotedText != null || isQuoteUnavailable)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                        child: _buildQuoteBar(),
+                        child: _buildQuoteBar(readableColors),
                       ),
                     // Media grid (images/videos)
                     if (_imageVideoMedia.isNotEmpty)
@@ -236,11 +234,11 @@ class LetterCard extends StatelessWidget {
                             ? Text(
                                 text,
                                 textDirection: detectTextDirection(text),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w400,
                                   fontStyle: FontStyle.italic,
-                                  color: Color.fromRGBO(255, 255, 255, 0.48),
+                                  color: readableColors.textMuted,
                                   height: 1.65,
                                   letterSpacing: 0.2,
                                 ),
@@ -252,18 +250,8 @@ class LetterCard extends StatelessWidget {
                                   fontSize: 15,
                                   fontWeight: FontWeight.w400,
                                   color: isIncoming
-                                      ? const Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.90,
-                                        )
-                                      : const Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.80,
-                                        ),
+                                      ? readableColors.textPrimary
+                                      : readableColors.textSecondary,
                                   height: 1.65,
                                   letterSpacing: 0.2,
                                 ),
@@ -275,11 +263,11 @@ class LetterCard extends StatelessWidget {
                         child: Text(
                           l10n?.conversation_message_deleted ??
                               'This message was deleted',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w400,
                             fontStyle: FontStyle.italic,
-                            color: Color.fromRGBO(255, 255, 255, 0.48),
+                            color: readableColors.textMuted,
                             height: 1.65,
                             letterSpacing: 0.2,
                           ),
@@ -343,7 +331,9 @@ class LetterCard extends StatelessWidget {
                                 ? Wrap(
                                     spacing: 6,
                                     runSpacing: 4,
-                                    children: _buildReactionChipWidgets(),
+                                    children: _buildReactionChipWidgets(
+                                      readableColors,
+                                    ),
                                   )
                                 : const SizedBox.shrink(),
                           ),
@@ -351,20 +341,20 @@ class LetterCard extends StatelessWidget {
                             const SizedBox(width: 8),
                           Text(
                             time,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w400,
-                              color: Color.fromRGBO(255, 255, 255, 0.35),
+                              color: readableColors.textMuted,
                             ),
                           ),
                           if (isEdited && l10n != null) ...[
                             const SizedBox(width: 6),
                             Text(
                               l10n.conversation_edited_indicator,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w400,
-                                color: Color.fromRGBO(255, 255, 255, 0.35),
+                                color: readableColors.textMuted,
                               ),
                             ),
                           ],
@@ -376,7 +366,7 @@ class LetterCard extends StatelessWidget {
                               child: Icon(
                                 _statusIcon(status!),
                                 size: 14,
-                                color: _statusColor(status!),
+                                color: _statusColor(status!, readableColors),
                               ),
                             ),
                           ],
@@ -423,7 +413,9 @@ class LetterCard extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildReactionChipWidgets() {
+  List<Widget> _buildReactionChipWidgets(
+    BackgroundReadableColors readableColors,
+  ) {
     final groups = <String, List<MessageReaction>>{};
     for (final r in reactions) {
       groups.putIfAbsent(r.emoji, () => []).add(r);
@@ -438,12 +430,12 @@ class LetterCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: const Color.fromRGBO(255, 255, 255, 0.08),
+            color: readableColors.surfaceSubtle,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isOwn
                   ? const Color.fromRGBO(78, 205, 196, 0.30)
-                  : Colors.transparent,
+                  : readableColors.border.withValues(alpha: 0.34),
             ),
           ),
           child: Text(
@@ -455,7 +447,7 @@ class LetterCard extends StatelessWidget {
     }).toList();
   }
 
-  Widget _buildQuoteBar() {
+  Widget _buildQuoteBar(BackgroundReadableColors readableColors) {
     final displayText = isQuoteUnavailable
         ? 'Message unavailable'
         : quotedText!;
@@ -465,7 +457,7 @@ class LetterCard extends StatelessWidget {
           width: 2,
           height: 16,
           decoration: BoxDecoration(
-            color: const Color.fromRGBO(255, 255, 255, 0.15),
+            color: readableColors.divider,
             borderRadius: BorderRadius.circular(1),
           ),
         ),
@@ -482,12 +474,9 @@ class LetterCard extends StatelessWidget {
               fontStyle: isQuoteUnavailable
                   ? FontStyle.italic
                   : FontStyle.normal,
-              color: Color.fromRGBO(
-                255,
-                255,
-                255,
-                isQuoteUnavailable ? 0.20 : 0.35,
-              ),
+              color: isQuoteUnavailable
+                  ? readableColors.disabledForeground
+                  : readableColors.textMuted,
             ),
           ),
         ),
@@ -523,13 +512,28 @@ class LetterCard extends StatelessWidget {
     return Icons.done_rounded; // 'sent', 'sending'
   }
 
-  static Color _statusColor(String status) {
+  static Color _statusColor(
+    String status,
+    BackgroundReadableColors readableColors,
+  ) {
     if (status == 'delivered') {
-      return const Color.fromRGBO(255, 255, 255, 0.45);
+      return readableColors.isLightSurface
+          ? readableColors.iconMuted
+          : const Color.fromRGBO(255, 255, 255, 0.45);
     }
-    if (status == 'failed') return const Color.fromRGBO(255, 100, 100, 0.60);
-    if (status == 'pending') return const Color.fromRGBO(255, 200, 100, 0.50);
-    return const Color.fromRGBO(255, 255, 255, 0.25);
+    if (status == 'failed') {
+      return readableColors.isLightSurface
+          ? const Color(0xFFB42318)
+          : const Color.fromRGBO(255, 100, 100, 0.60);
+    }
+    if (status == 'pending') {
+      return readableColors.isLightSurface
+          ? const Color(0xFF8A4A00)
+          : const Color.fromRGBO(255, 200, 100, 0.50);
+    }
+    return readableColors.isLightSurface
+        ? readableColors.iconMuted
+        : const Color.fromRGBO(255, 255, 255, 0.25);
   }
 
   static String _statusSemantic(String status) {

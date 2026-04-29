@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Empty state shown when the archived tab has no friends.
 class ArchivedEmptyState extends StatelessWidget {
@@ -6,6 +7,8 @@ class ArchivedEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.only(top: 60),
       child: Center(
@@ -15,13 +18,13 @@ class ArchivedEmptyState extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: const Color(0x0FFFFFFF), // rgba(255,255,255,0.06)
+                color: readableColors.surfaceSubtle,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.archive_outlined,
                 size: 24,
-                color: Color(0x40FFFFFF), // rgba(255,255,255,0.25)
+                color: readableColors.iconMuted,
               ),
             ),
             const SizedBox(height: 16),
@@ -30,16 +33,13 @@ class ArchivedEmptyState extends StatelessWidget {
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w500,
-                color: Colors.white.withValues(alpha: 0.4),
+                color: readableColors.textMuted,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               'Swipe left on a friend to archive them.',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.25),
-              ),
+              style: TextStyle(fontSize: 13, color: readableColors.textMuted),
             ),
           ],
         ),

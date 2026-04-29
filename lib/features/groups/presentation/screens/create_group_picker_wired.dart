@@ -23,6 +23,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart'
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Wired widget for the new group creation flow.
@@ -47,7 +48,9 @@ class CreateGroupPickerWired extends StatefulWidget {
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepo;
-  final GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository;
+  final GroupReactionReplayOutboxRepository?
+  groupReactionReplayOutboxRepository;
+  final BackgroundPreference backgroundPreference;
 
   const CreateGroupPickerWired({
     super.key,
@@ -68,6 +71,7 @@ class CreateGroupPickerWired extends StatefulWidget {
     this.audioRecorderService,
     this.reactionRepo,
     this.groupReactionReplayOutboxRepository,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -168,6 +172,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             reactionRepo: widget.reactionRepo,
             groupReactionReplayOutboxRepository:
                 widget.groupReactionReplayOutboxRepository,
+            backgroundPreference: widget.backgroundPreference,
           ),
         ),
         result: FeedRouteChanges(changedGroupIds: {result.group.id}),
@@ -218,6 +223,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
       onStartGroup: _onStartGroup,
       onBack: _onBack,
       isCreating: _isCreating,
+      backgroundPreference: widget.backgroundPreference,
     );
   }
 }

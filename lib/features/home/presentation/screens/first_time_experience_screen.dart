@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import '../widgets/profile_avatar_widget.dart';
 import '../widgets/editable_username_widget.dart';
 import '../widgets/qr_code_section.dart';
@@ -21,6 +22,7 @@ class FirstTimeExperienceScreen extends StatefulWidget {
   final ValueChanged<String>? onUsernameChanged;
   final VoidCallback? onScanPressed;
   final P2PService? p2pService;
+  final BackgroundPreference backgroundPreference;
 
   const FirstTimeExperienceScreen({
     super.key,
@@ -32,6 +34,7 @@ class FirstTimeExperienceScreen extends StatefulWidget {
     this.onUsernameChanged,
     this.onScanPressed,
     this.p2pService,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -124,6 +127,7 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
     final bottomGap = lerpDouble(4, 16, t)!;
 
     return AmbientBackground(
+      preference: widget.backgroundPreference,
       child: SafeArea(
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: horizontalPadding),

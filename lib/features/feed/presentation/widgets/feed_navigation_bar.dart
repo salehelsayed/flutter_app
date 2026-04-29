@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'nav_bar_button.dart';
 import 'nav_bar_theme.dart';
@@ -21,6 +22,9 @@ class FeedNavigationBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
       child: BackdropFilter(
@@ -32,15 +36,26 @@ class FeedNavigationBar extends StatelessWidget {
           padding: NavBarTheme.barPadding,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(NavBarTheme.barBorderRadius),
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: NavBarTheme.barGradientColors,
+              colors: isLightSurface
+                  ? [
+                      readableColors.surfaceBase.withValues(alpha: 0.92),
+                      readableColors.surfaceRaised.withValues(alpha: 0.86),
+                    ]
+                  : NavBarTheme.barGradientColors,
             ),
-            border: Border.all(color: NavBarTheme.barBorderColor),
-            boxShadow: const [
+            border: Border.all(
+              color: isLightSurface
+                  ? readableColors.border.withValues(alpha: 0.20)
+                  : NavBarTheme.barBorderColor,
+            ),
+            boxShadow: [
               BoxShadow(
-                color: NavBarTheme.barShadowColor,
+                color: isLightSurface
+                    ? readableColors.textPrimary.withValues(alpha: 0.08)
+                    : NavBarTheme.barShadowColor,
                 blurRadius: NavBarTheme.barShadowBlur,
                 offset: NavBarTheme.barShadowOffset,
               ),

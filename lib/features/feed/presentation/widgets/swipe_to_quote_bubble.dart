@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Right-swipe gesture wrapper for received message bubbles.
@@ -66,8 +67,10 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
     final dy = details.delta.dy;
 
     if (!_directionLocked) {
-      final totalDx = details.localPosition.dx - (details.localPosition.dx - dx);
-      final totalDy = details.localPosition.dy - (details.localPosition.dy - dy);
+      final totalDx =
+          details.localPosition.dx - (details.localPosition.dx - dx);
+      final totalDy =
+          details.localPosition.dy - (details.localPosition.dy - dy);
       if (totalDx.abs() > _directionThreshold ||
           totalDy.abs() > _directionThreshold) {
         _directionLocked = true;
@@ -110,6 +113,10 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
   @override
   Widget build(BuildContext context) {
     final progress = (_dragOffset / _triggerWidth).clamp(0.0, 1.0);
+    final readableColors = context.backgroundReadableColors;
+    final accentColor = readableColors.isLightSurface
+        ? const Color(0xFF0F8F87)
+        : FeedColors.accentTeal;
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -134,12 +141,12 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
                     height: 32,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: FeedColors.accentTeal.withValues(alpha: 0.15),
+                      color: accentColor.withValues(alpha: 0.15),
                     ),
                     child: Icon(
                       Icons.reply_rounded,
                       size: 18,
-                      color: FeedColors.accentTeal.withValues(alpha: 0.80),
+                      color: accentColor.withValues(alpha: 0.80),
                     ),
                   ),
                 ),

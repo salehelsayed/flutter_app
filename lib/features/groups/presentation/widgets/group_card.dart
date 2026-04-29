@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
@@ -32,6 +33,9 @@ class GroupCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final unreadAccent = _blueAccent(readableColors);
+
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -39,10 +43,7 @@ class GroupCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           border: Border(
-            bottom: BorderSide(
-              color: Colors.white.withOpacity(0.06),
-              width: 0.5,
-            ),
+            bottom: BorderSide(color: readableColors.divider, width: 0.5),
           ),
         ),
         child: Row(
@@ -70,10 +71,10 @@ class GroupCard extends StatelessWidget {
                                 group.name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
-                                  color: Colors.white,
+                                  color: readableColors.textPrimary,
                                 ),
                               ),
                             ),
@@ -94,8 +95,8 @@ class GroupCard extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 12,
                               color: unreadCount > 0
-                                  ? const Color(0xFF64B5F6)
-                                  : Colors.white.withOpacity(0.4),
+                                  ? unreadAccent
+                                  : readableColors.textMuted,
                             ),
                           ),
                         ),
@@ -105,7 +106,7 @@ class GroupCard extends StatelessWidget {
                   // Bottom row: preview + unread
                   Row(
                     children: [
-                      Expanded(child: _buildPreviewText()),
+                      Expanded(child: _buildPreviewText(readableColors)),
                       if (unreadCount > 0) ...[
                         const SizedBox(width: 8),
                         Container(
@@ -114,15 +115,17 @@ class GroupCard extends StatelessWidget {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF64B5F6),
+                            color: unreadAccent,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
                             unreadCount > 99 ? '99+' : '$unreadCount',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: Colors.black,
+                              color: readableColors.isLightSurface
+                                  ? Colors.white
+                                  : Colors.black,
                             ),
                           ),
                         ),
@@ -138,10 +141,13 @@ class GroupCard extends StatelessWidget {
     );
   }
 
-  Widget _buildPreviewText() {
+  Widget _buildPreviewText(BackgroundReadableColors readableColors) {
     final sender = lastMessageSender;
     final body = lastMessageBody;
     final status = statusText;
+    final statusColor = readableColors.isLightSurface
+        ? const Color(0xFF8A4A00)
+        : const Color(0xFFE6C36A);
 
     if (status != null) {
       return Column(
@@ -154,8 +160,7 @@ class GroupCard extends StatelessWidget {
             style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: Color(0xFFE6C36A),
-            ),
+            ).copyWith(color: statusColor),
             textDirection: detectTextDirection(status),
           ),
           if (sender != null || body != null) const SizedBox(height: 2),
@@ -167,7 +172,7 @@ class GroupCard extends StatelessWidget {
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: Colors.white.withOpacity(0.6),
+                color: readableColors.textSecondary,
               ),
               textDirection: detectTextDirection(sender),
             ),
@@ -176,10 +181,7 @@ class GroupCard extends StatelessWidget {
               body,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withOpacity(0.45),
-              ),
+              style: TextStyle(fontSize: 13, color: readableColors.textMuted),
               textDirection: detectTextDirection(body),
             ),
         ],
@@ -198,7 +200,7 @@ class GroupCard extends StatelessWidget {
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: Colors.white.withOpacity(0.6),
+                color: readableColors.textSecondary,
               ),
               textDirection: detectTextDirection(sender),
             ),
@@ -207,10 +209,7 @@ class GroupCard extends StatelessWidget {
               body,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withOpacity(0.45),
-              ),
+              style: TextStyle(fontSize: 13, color: readableColors.textMuted),
               textDirection: detectTextDirection(body),
             ),
         ],
@@ -222,7 +221,13 @@ class GroupCard extends StatelessWidget {
           (group.isDissolved ? 'Group dissolved' : 'No messages yet'),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: TextStyle(fontSize: 13, color: Colors.white.withOpacity(0.45)),
+      style: TextStyle(fontSize: 13, color: readableColors.textMuted),
     );
+  }
+
+  Color _blueAccent(BackgroundReadableColors readableColors) {
+    return readableColors.isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFF64B5F6);
   }
 }

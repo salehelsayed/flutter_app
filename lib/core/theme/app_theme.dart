@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
+import 'background_readable_colors.dart';
 
 /// Application theme configuration for Custom1 dark theme.
 class AppTheme {
@@ -24,19 +25,13 @@ class AppTheme {
           fontWeight: FontWeight.bold,
           fontSize: 32,
         ),
-        bodyLarge: TextStyle(
-          color: AppColors.textMuted,
-          fontSize: 16,
-        ),
-        bodyMedium: TextStyle(
-          color: AppColors.textMuted,
-          fontSize: 14,
-        ),
-        labelSmall: TextStyle(
-          color: AppColors.textMuted,
-          fontSize: 12,
-        ),
+        bodyLarge: TextStyle(color: AppColors.textMuted, fontSize: 16),
+        bodyMedium: TextStyle(color: AppColors.textMuted, fontSize: 14),
+        labelSmall: TextStyle(color: AppColors.textMuted, fontSize: 12),
       ),
+      extensions: const <ThemeExtension<dynamic>>[
+        BackgroundReadableColors.dark,
+      ],
     );
   }
 }

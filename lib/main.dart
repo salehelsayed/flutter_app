@@ -1693,6 +1693,7 @@ void main() async {
                   reactionRepo: reactionRepository,
                   reactionListener: reactionListener,
                   introductionRepository: introductionRepository,
+                  appShellController: appShellController,
                 ),
               ),
             ),
@@ -2009,6 +2010,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       groupMessageListener: widget.groupMessageListener,
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
+      appShellController: widget.appShellController,
       preSendReady: _ensureRuntimeServicesReady,
     );
   }
@@ -2176,6 +2178,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
               notificationTappedAt: tappedAt,
+              backgroundPreference:
+                  widget.appShellController.backgroundPreference,
             ),
           ),
         );
@@ -2265,6 +2269,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           reactionRepo: widget.reactionRepository,
           reactionListener: widget.reactionListener,
           introductionRepository: widget.introductionRepository,
+          appShellController: widget.appShellController,
           notificationTappedAt: notificationTappedAt,
         ),
       ),

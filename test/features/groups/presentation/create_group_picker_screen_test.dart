@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/contact_picker_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_name_panel.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+import '../../../shared/helpers/readability_test_helpers.dart';
 
 // --- Test data ---
 
-ContactModel makeContact({
-  required String peerId,
-  required String username,
-}) =>
+ContactModel makeContact({required String peerId, required String username}) =>
     ContactModel(
       peerId: peerId,
       publicKey: 'pk-$peerId',
@@ -53,6 +54,8 @@ void main() {
       List<ContactModel>? contacts,
       Set<String>? selected,
       bool isCreating = false,
+      BackgroundPreference backgroundPreference =
+          BackgroundPreference.defaultBackground,
     }) {
       return MaterialApp(
         locale: const Locale('en'),
@@ -65,6 +68,7 @@ void main() {
           onStartGroup: (_) {},
           onBack: () => backCalled = true,
           isCreating: isCreating,
+          backgroundPreference: backgroundPreference,
         ),
       );
     }
@@ -122,19 +126,19 @@ void main() {
       expect(lastToggled?.peerId, 'peer-alice');
     });
 
-    testWidgets('GroupNamePanel hidden when no contacts selected',
-        (tester) async {
+    testWidgets('GroupNamePanel hidden when no contacts selected', (
+      tester,
+    ) async {
       await tester.pumpWidget(buildWidget(selected: {}));
       await pumpFrames(tester);
 
       expect(find.byType(GroupNamePanel), findsNothing);
     });
 
-    testWidgets('GroupNamePanel visible when contacts selected',
-        (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selected: {'peer-alice'},
-      ));
+    testWidgets('GroupNamePanel visible when contacts selected', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildWidget(selected: {'peer-alice'}));
       await pumpFrames(tester);
 
       expect(find.byType(GroupNamePanel), findsOneWidget);
@@ -150,13 +154,36 @@ void main() {
     });
 
     testWidgets('shows loading state when isCreating', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selected: {'peer-alice'},
-        isCreating: true,
-      ));
+      await tester.pumpWidget(
+        buildWidget(selected: {'peer-alice'}, isCreating: true),
+      );
       await pumpFrames(tester);
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    });
+
+    testWidgets('daylight lagoon keeps group picker content readable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildWidget(
+          selected: {'peer-alice'},
+          backgroundPreference: BackgroundPreference.daylightLagoon,
+        ),
+      );
+      await pumpFrames(tester);
+
+      const colors = BackgroundReadableColors.representativeLight;
+      final header = tester.widget<Text>(find.text('New Group'));
+      expectTextContrast(header.style!.color!, colors.surfaceBase);
+
+      final aliceTexts = tester.widgetList<Text>(find.text('Alice')).toList();
+      expect(aliceTexts, hasLength(greaterThanOrEqualTo(2)));
+      expectTextContrast(aliceTexts.first.style!.color!, colors.surfaceBase);
+      expectTextContrast(aliceTexts.last.style!.color!, colors.glassSurface);
+
+      final panelButton = tester.widget<Text>(find.text('Start group chat'));
+      expectTextContrast(panelButton.style!.color!, const Color(0xFF0F5F9C));
     });
   });
 }

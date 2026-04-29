@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/editable_username_widget.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -23,6 +24,11 @@ class SettingsProfileSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final cameraBackground = readableColors.isLightSurface
+        ? const Color(0xFF0F766E)
+        : const Color(0xFF14B8A6);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 32, 20, 24),
       child: Column(
@@ -33,11 +39,7 @@ class SettingsProfileSection extends StatelessWidget {
             height: 100,
             child: Stack(
               children: [
-                UserAvatar(
-                  peerId: peerId,
-                  avatarBytes: avatarBytes,
-                  size: 100,
-                ),
+                UserAvatar(peerId: peerId, avatarBytes: avatarBytes, size: 100),
                 Positioned(
                   bottom: 0,
                   right: 0,
@@ -47,10 +49,10 @@ class SettingsProfileSection extends StatelessWidget {
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF14B8A6),
+                        color: cameraBackground,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: const Color(0xFF0A0A0F),
+                          color: readableColors.surfaceBase,
                           width: 2,
                         ),
                       ),

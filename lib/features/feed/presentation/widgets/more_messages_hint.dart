@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 
 /// Animated hint showing remaining unread messages below the visible preview.
@@ -27,10 +28,7 @@ class _MoreMessagesHintState extends State<MoreMessagesHint>
       duration: const Duration(seconds: 2),
     )..repeat();
     _bounce = Tween<double>(begin: 0, end: 4).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: const _BounceCurve(),
-      ),
+      CurvedAnimation(parent: _controller, curve: const _BounceCurve()),
     );
   }
 
@@ -44,6 +42,14 @@ class _MoreMessagesHintState extends State<MoreMessagesHint>
   Widget build(BuildContext context) {
     if (widget.count <= 0) return const SizedBox.shrink();
 
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final textColor = isLightSurface
+        ? const Color(0xFF6D45C9)
+        : FeedColors.moreMessagesHint;
+    final iconColor = isLightSurface
+        ? const Color(0xFF6D45C9).withValues(alpha: 0.72)
+        : FeedColors.chevronColor;
     final label = widget.count == 1
         ? '1 more message'
         : '${widget.count} more messages';
@@ -56,10 +62,10 @@ class _MoreMessagesHintState extends State<MoreMessagesHint>
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: FeedColors.moreMessagesHint,
+              color: textColor,
             ),
           ),
           const SizedBox(width: 4),
@@ -71,10 +77,10 @@ class _MoreMessagesHintState extends State<MoreMessagesHint>
                 child: child,
               );
             },
-            child: const Icon(
+            child: Icon(
               Icons.keyboard_arrow_down_rounded,
               size: 16,
-              color: FeedColors.chevronColor,
+              color: iconColor,
             ),
           ),
         ],

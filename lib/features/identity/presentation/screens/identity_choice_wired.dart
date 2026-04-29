@@ -9,6 +9,7 @@ import 'package:flutter_app/features/identity/presentation/navigation/startup_ro
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_progress_screen.dart';
 import 'package:flutter_app/features/identity/presentation/screens/mnemonic_input_wired.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 class IdentityChoiceWired extends StatefulWidget {
   final IdentityRepository repository;
@@ -18,6 +19,7 @@ class IdentityChoiceWired extends StatefulWidget {
   final Future<Map<String, dynamic>> Function() callMlKemKeygen;
   final Future<void> Function(BuildContext navigationContext) onNavigateToMain;
   final VoidCallback? onProgressRouteFirstFrame;
+  final BackgroundPreference backgroundPreference;
 
   const IdentityChoiceWired({
     super.key,
@@ -27,6 +29,7 @@ class IdentityChoiceWired extends StatefulWidget {
     required this.callMlKemKeygen,
     required this.onNavigateToMain,
     this.onProgressRouteFirstFrame,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -135,7 +138,9 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(AppLocalizations.of(context)!.error_generic(e.toString())),
+          content: Text(
+            AppLocalizations.of(context)!.error_generic(e.toString()),
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -168,6 +173,7 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
     return IdentityChoiceScreen(
       onNewHere: _isGeneratingIdentity ? null : _handleNewHere,
       onLoadMyKey: _isGeneratingIdentity ? null : _handleLoadKey,
+      backgroundPreference: widget.backgroundPreference,
     );
   }
 }
