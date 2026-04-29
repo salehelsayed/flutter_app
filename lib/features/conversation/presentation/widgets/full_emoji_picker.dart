@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Emoji categories for the full picker.
 const _emojiCategories = <String, List<String>>{
@@ -50,11 +51,14 @@ const _emojiCategories = <String, List<String>>{
 ///
 /// Returns the selected emoji string, or null if dismissed.
 Future<String?> showFullEmojiPicker(BuildContext context) {
+  final readableColors = context.backgroundReadableColors;
+
   return showModalBottomSheet<String>(
     context: context,
-    backgroundColor: const Color(0xFF12141C),
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    backgroundColor: readableColors.surfaceBase,
+    shape: RoundedRectangleBorder(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      side: BorderSide(color: readableColors.divider),
     ),
     constraints: BoxConstraints(
       maxHeight: MediaQuery.of(context).size.height * 0.4,
@@ -75,6 +79,10 @@ class _FullEmojiPickerState extends State<_FullEmojiPicker> {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final selectedAccent = readableColors.isLightSurface
+        ? const Color(0xFF16756F)
+        : const Color(0xFF4ECDC4);
     final emojis = _emojiCategories[_selectedCategory] ?? [];
 
     return Column(
@@ -86,7 +94,7 @@ class _FullEmojiPickerState extends State<_FullEmojiPicker> {
             width: 36,
             height: 4,
             decoration: BoxDecoration(
-              color: const Color.fromRGBO(255, 255, 255, 0.2),
+              color: readableColors.divider,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -107,7 +115,7 @@ class _FullEmojiPickerState extends State<_FullEmojiPicker> {
                   margin: const EdgeInsets.only(right: 4),
                   decoration: BoxDecoration(
                     color: isSelected
-                        ? const Color.fromRGBO(78, 205, 196, 0.15)
+                        ? selectedAccent.withValues(alpha: 0.14)
                         : Colors.transparent,
                     borderRadius: BorderRadius.circular(14),
                   ),
@@ -116,8 +124,8 @@ class _FullEmojiPickerState extends State<_FullEmojiPicker> {
                     style: TextStyle(
                       fontSize: 13,
                       color: isSelected
-                          ? const Color(0xFF4ecdc4)
-                          : const Color.fromRGBO(255, 255, 255, 0.5),
+                          ? selectedAccent
+                          : readableColors.textMuted,
                     ),
                   ),
                 ),

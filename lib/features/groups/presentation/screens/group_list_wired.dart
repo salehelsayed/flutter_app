@@ -26,6 +26,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/presentation/screens/group_list_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Wired widget connecting GroupListScreen to business logic.
@@ -46,7 +47,9 @@ class GroupListWired extends StatefulWidget {
   final AudioRecorderService? audioRecorderService;
   final ActiveConversationTracker? groupConversationTracker;
   final ReactionRepository? reactionRepo;
-  final GroupReactionReplayOutboxRepository? groupReactionReplayOutboxRepository;
+  final GroupReactionReplayOutboxRepository?
+  groupReactionReplayOutboxRepository;
+  final BackgroundPreference backgroundPreference;
 
   const GroupListWired({
     super.key,
@@ -67,6 +70,7 @@ class GroupListWired extends StatefulWidget {
     this.groupConversationTracker,
     this.reactionRepo,
     this.groupReactionReplayOutboxRepository,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -212,6 +216,7 @@ class _GroupListWiredState extends State<GroupListWired>
               reactionRepo: widget.reactionRepo,
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
+              backgroundPreference: widget.backgroundPreference,
             ),
           ),
         )
@@ -382,6 +387,7 @@ class _GroupListWiredState extends State<GroupListWired>
       onAcceptPendingInvite: _onAcceptPendingInvite,
       onDeclinePendingInvite: _onDeclinePendingInvite,
       onBack: _onBack,
+      backgroundPreference: widget.backgroundPreference,
     );
   }
 }

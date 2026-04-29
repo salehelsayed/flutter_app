@@ -171,6 +171,10 @@ void main() {
       await pumpFrames(tester);
 
       expect(find.text('Added to your circle!'), findsOneWidget);
+      final okButton = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'OK'),
+      );
+      expect(okButton.style?.foregroundColor?.resolve({}), Colors.black);
       await tester.tap(find.text('OK'));
       await pumpFrames(tester, count: 20);
 

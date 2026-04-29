@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
@@ -25,6 +26,9 @@ class ImageQualityToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: ClipRRect(
@@ -34,29 +38,23 @@ class ImageQualityToggle extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: const Color.fromRGBO(255, 255, 255, 0.06),
+              color: readableColors.glassSurface,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.1),
-              ),
+              border: Border.all(color: readableColors.glassBorder),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(
-                      icon,
-                      size: 16,
-                      color: const Color.fromRGBO(255, 255, 255, 0.5),
-                    ),
+                    Icon(icon, size: 16, color: readableColors.iconMuted),
                     const SizedBox(width: 8),
                     Text(
                       label,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
-                        color: Color.fromRGBO(255, 255, 255, 0.5),
+                        color: readableColors.textMuted,
                         letterSpacing: 0.8,
                       ),
                     ),
@@ -65,24 +63,23 @@ class ImageQualityToggle extends StatelessWidget {
                 const SizedBox(height: 12),
                 Container(
                   decoration: BoxDecoration(
-                    color: const Color.fromRGBO(0, 0, 0, 0.3),
+                    color: readableColors.surfaceSubtle,
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
                     children: [
                       _buildOption(
-                        label: AppLocalizations.of(context)!.settings_compressed,
-                        isSelected:
-                            value == ImageQualityPreference.compressed,
+                        label: l10n.settings_compressed,
+                        isSelected: value == ImageQualityPreference.compressed,
+                        readableColors: readableColors,
                         onTap: () =>
                             onChanged(ImageQualityPreference.compressed),
                       ),
                       _buildOption(
-                        label: AppLocalizations.of(context)!.settings_original,
-                        isSelected:
-                            value == ImageQualityPreference.original,
-                        onTap: () =>
-                            onChanged(ImageQualityPreference.original),
+                        label: l10n.settings_original,
+                        isSelected: value == ImageQualityPreference.original,
+                        readableColors: readableColors,
+                        onTap: () => onChanged(ImageQualityPreference.original),
                       ),
                     ],
                   ),
@@ -90,11 +87,11 @@ class ImageQualityToggle extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   value == ImageQualityPreference.original
-                      ? AppLocalizations.of(context)!.settings_original_desc
-                      : AppLocalizations.of(context)!.settings_compressed_desc,
-                  style: const TextStyle(
+                      ? l10n.settings_original_desc
+                      : l10n.settings_compressed_desc,
+                  style: TextStyle(
                     fontSize: 11,
-                    color: Color.fromRGBO(255, 255, 255, 0.35),
+                    color: readableColors.textMuted,
                   ),
                 ),
               ],
@@ -108,6 +105,7 @@ class ImageQualityToggle extends StatelessWidget {
   Widget _buildOption({
     required String label,
     required bool isSelected,
+    required BackgroundReadableColors readableColors,
     required VoidCallback onTap,
   }) {
     return Expanded(
@@ -118,7 +116,7 @@ class ImageQualityToggle extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             color: isSelected
-                ? const Color.fromRGBO(255, 255, 255, 0.12)
+                ? readableColors.surfaceRaised
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(8),
           ),
@@ -129,8 +127,8 @@ class ImageQualityToggle extends StatelessWidget {
               fontSize: 13,
               fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
               color: isSelected
-                  ? const Color.fromRGBO(255, 255, 255, 0.95)
-                  : const Color.fromRGBO(255, 255, 255, 0.45),
+                  ? readableColors.textPrimary
+                  : readableColors.textSecondary,
             ),
           ),
         ),

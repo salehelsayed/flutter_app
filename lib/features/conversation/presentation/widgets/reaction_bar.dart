@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Preset emojis for the quick-reaction bar.
 const kPresetEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -57,6 +58,8 @@ class _ReactionBarState extends State<ReactionBar>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     final barContent = ScaleTransition(
       scale: _scaleAnimation,
       child: ClipRRect(
@@ -66,17 +69,15 @@ class _ReactionBarState extends State<ReactionBar>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color.fromRGBO(18, 20, 28, 0.95),
+              color: readableColors.glassSurface,
               borderRadius: BorderRadius.circular(28),
-              border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.10),
-              ),
+              border: Border.all(color: readableColors.glassBorder),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                ...kPresetEmojis.map((emoji) => _emojiButton(emoji)),
-                _plusButton(),
+                ...kPresetEmojis.map((emoji) => _emojiButton(context, emoji)),
+                _plusButton(context),
               ],
             ),
           ),
@@ -112,7 +113,11 @@ class _ReactionBarState extends State<ReactionBar>
     );
   }
 
-  Widget _emojiButton(String emoji) {
+  Widget _emojiButton(BuildContext context, String emoji) {
+    final readableColors = context.backgroundReadableColors;
+    final selectedAccent = readableColors.isLightSurface
+        ? const Color(0xFF16756F)
+        : const Color(0xFF4ECDC4);
     final isSelected = widget.currentEmoji == emoji;
     return GestureDetector(
       onTap: () => widget.onReactionSelected(emoji),
@@ -122,7 +127,7 @@ class _ReactionBarState extends State<ReactionBar>
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: isSelected
-              ? const Color.fromRGBO(78, 205, 196, 0.20)
+              ? selectedAccent.withValues(alpha: 0.16)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(22),
         ),
@@ -131,7 +136,8 @@ class _ReactionBarState extends State<ReactionBar>
     );
   }
 
-  Widget _plusButton() {
+  Widget _plusButton(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     return GestureDetector(
       onTap: widget.onPlusTap,
       child: Container(
@@ -139,13 +145,13 @@ class _ReactionBarState extends State<ReactionBar>
         height: 44,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: const Color.fromRGBO(255, 255, 255, 0.06),
+          color: readableColors.surfaceSubtle,
           borderRadius: BorderRadius.circular(22),
         ),
-        child: const Icon(
+        child: Icon(
           Icons.add,
           size: 20,
-          color: Color.fromRGBO(255, 255, 255, 0.5),
+          color: readableColors.iconSecondary,
         ),
       ),
     );

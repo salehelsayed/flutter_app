@@ -18,6 +18,7 @@ import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -52,6 +53,7 @@ import 'package:flutter_app/features/conversation/application/remove_reaction_us
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
@@ -60,6 +62,7 @@ import 'package:flutter_app/features/introduction/application/insert_intro_syste
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_wired.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/sent_confirmation_wired.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'conversation_screen.dart';
 
@@ -197,6 +200,7 @@ class ConversationWired extends StatefulWidget {
   final UploadMediaFn uploadMediaFn;
   final SendVoiceMessageFn sendVoiceMessageFn;
   final DateTime? notificationTappedAt;
+  final AppShellController? appShellController;
 
   const ConversationWired({
     super.key,
@@ -231,6 +235,7 @@ class ConversationWired extends StatefulWidget {
     this.uploadMediaFn = uploadMedia,
     this.sendVoiceMessageFn = sendVoiceMessage,
     this.notificationTappedAt,
+    this.appShellController,
   });
 
   @override
@@ -431,6 +436,7 @@ class _ConversationWiredState extends State<ConversationWired> {
     super.initState();
     _contact = widget.contact;
     _draftText = widget.initialText ?? '';
+    widget.appShellController?.addListener(_onAppShellChanged);
     widget.conversationTracker?.setActive(widget.contact.peerId);
     _updateComposerState(pendingAttachments: _pendingAttachmentFiles());
     final initialPendingMedia = widget.initialPendingMedia;
@@ -2209,63 +2215,71 @@ class _ConversationWiredState extends State<ConversationWired> {
   }
 
   void _onAttach() {
+    final readableColors = context.backgroundReadableColors;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.grey[900],
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      backgroundColor: readableColors.surfaceBase,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+        side: BorderSide(color: readableColors.divider),
       ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
+      builder: (ctx) {
+        final sheetColors = ctx.backgroundReadableColors;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: sheetColors.divider,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              leading: const Icon(Icons.photo_library, color: Colors.white),
-              title: const Text(
-                'Media Library',
-                style: TextStyle(color: Colors.white),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: Icon(
+                  Icons.photo_library,
+                  color: sheetColors.iconPrimary,
+                ),
+                title: Text(
+                  'Media Library',
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFromGallery();
+                },
               ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickFromGallery();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt, color: Colors.white),
-              title: const Text(
-                'Take Photo',
-                style: TextStyle(color: Colors.white),
+              ListTile(
+                leading: Icon(Icons.camera_alt, color: sheetColors.iconPrimary),
+                title: Text(
+                  'Take Photo',
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFromCamera();
+                },
               ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickFromCamera();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.videocam, color: Colors.white),
-              title: const Text(
-                'Record Video',
-                style: TextStyle(color: Colors.white),
+              ListTile(
+                leading: Icon(Icons.videocam, color: sheetColors.iconPrimary),
+                title: Text(
+                  'Record Video',
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickVideoFromCamera();
+                },
               ),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickVideoFromCamera();
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -3382,6 +3396,7 @@ class _ConversationWiredState extends State<ConversationWired> {
   @override
   void dispose() {
     widget.conversationTracker?.clear();
+    widget.appShellController?.removeListener(_onAppShellChanged);
     _scrollController.removeListener(_onScroll);
     _incomingSubscription?.cancel();
     _repoChangeSubscription?.cancel();
@@ -3397,6 +3412,12 @@ class _ConversationWiredState extends State<ConversationWired> {
     _composerState.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _onAppShellChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -3468,6 +3489,9 @@ class _ConversationWiredState extends State<ConversationWired> {
           isEditingMessage: _editingMessageId != null,
           onCancelEdit: _editingMessageId != null ? _onCancelEdit : null,
           allowEditAction: _canEnterEditMode,
+          backgroundPreference:
+              widget.appShellController?.backgroundPreference ??
+              BackgroundPreference.defaultBackground,
         ),
       ),
     );

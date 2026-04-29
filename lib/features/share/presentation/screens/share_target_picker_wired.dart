@@ -18,6 +18,7 @@ import 'package:flutter_app/features/conversation/application/reaction_listener.
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -25,6 +26,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
 import 'package:flutter_app/features/share/application/share_target_selection.dart';
@@ -59,6 +61,7 @@ class ShareTargetPickerWired extends StatefulWidget {
   final ActiveConversationTracker? groupConversationTracker;
   final IntroductionRepository? introductionRepository;
   final ShareBatchDeliveryCoordinator? batchShareCoordinator;
+  final AppShellController? appShellController;
   final Future<void> Function(ShareBatchDeliveryResult? result)? onClose;
   final Future<void> Function()? preSendReady;
 
@@ -87,6 +90,7 @@ class ShareTargetPickerWired extends StatefulWidget {
     this.groupConversationTracker,
     this.introductionRepository,
     this.batchShareCoordinator,
+    this.appShellController,
     this.onClose,
     this.preSendReady,
   });
@@ -113,13 +117,21 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
   @override
   void initState() {
     super.initState();
+    widget.appShellController?.addListener(_onAppShellChanged);
     _loadTargets();
   }
 
   @override
   void dispose() {
+    widget.appShellController?.removeListener(_onAppShellChanged);
     _captionController.dispose();
     super.dispose();
+  }
+
+  void _onAppShellChanged() {
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _loadTargets() async {
@@ -363,9 +375,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
     }
     if (result.hasSkippedOversizedGifs) {
       final count = result.skippedOversizedGifCount;
-      summary.add(
-        'Skipped $count oversized GIF${count == 1 ? '' : 's'}.',
-      );
+      summary.add('Skipped $count oversized GIF${count == 1 ? '' : 's'}.');
     }
     return summary.join(' ');
   }
@@ -399,6 +409,9 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
       onToggleGroup: _toggleGroup,
       onSend: _selectedTargets.isNotEmpty ? _sendSelectedTargets : null,
       onCancel: _isSending ? null : () => _requestClose(),
+      backgroundPreference:
+          widget.appShellController?.backgroundPreference ??
+          BackgroundPreference.defaultBackground,
     );
   }
 }

@@ -145,6 +145,7 @@ class _PostsWiredState extends State<PostsWired> {
     _fallbackAppShellController = AppShellController(
       initialTab: widget.activeTab,
     );
+    _settingsAppShellController.addListener(_onAppShellChanged);
     unawaited(_initializeSurface());
     _postChangeSubscription = widget.postRepo.postChanges.listen((_) {
       _schedulePostChangeRefresh();
@@ -164,12 +165,19 @@ class _PostsWiredState extends State<PostsWired> {
     _postChangeRefreshTimer?.cancel();
     _scrollController.dispose();
     widget.pendingTargetStore?.removeListener(_onPendingTargetStoreChanged);
+    _settingsAppShellController.removeListener(_onAppShellChanged);
     _fallbackAppShellController.dispose();
     super.dispose();
   }
 
   AppShellController get _settingsAppShellController =>
       widget.appShellController ?? _fallbackAppShellController;
+
+  void _onAppShellChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
 
   bool get _canOpenInAppSettings =>
       widget.bridge != null &&
@@ -985,6 +993,7 @@ class _PostsWiredState extends State<PostsWired> {
           reactionRepo: widget.reactionRepo,
           reactionListener: widget.reactionListener,
           introductionRepository: widget.introductionRepository,
+          appShellController: _settingsAppShellController,
         ),
       ),
     );
@@ -1044,6 +1053,7 @@ class _PostsWiredState extends State<PostsWired> {
       focusedPostId: _focusedPostId,
       statusMessage: _statusMessage ?? widget.pendingTargetStore?.statusMessage,
       activePinnedPostIds: _pinnedPosts.map((post) => post.id).toSet(),
+      backgroundPreference: _settingsAppShellController.backgroundPreference,
     );
   }
 

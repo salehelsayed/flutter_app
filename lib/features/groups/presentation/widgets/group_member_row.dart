@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -22,6 +23,8 @@ class GroupMemberRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
@@ -40,10 +43,10 @@ class GroupMemberRow extends StatelessWidget {
                             (member.peerId.length > 12
                                 ? '${member.peerId.substring(0, 12)}...'
                                 : member.peerId)),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: Colors.white,
+                    color: readableColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -61,7 +64,7 @@ class GroupMemberRow extends StatelessWidget {
                   PopupMenuButton<_GroupMemberAction>(
                     key: ValueKey('group-member-actions-${member.peerId}'),
                     tooltip: 'Manage role',
-                    color: const Color(0xFF141A24),
+                    color: readableColors.surfaceRaised,
                     onSelected: (action) {
                       if (action == _GroupMemberAction.toggleAdminRole) {
                         onToggleAdminRole?.call();
@@ -77,12 +80,13 @@ class GroupMemberRow extends StatelessWidget {
                           member.role == MemberRole.admin
                               ? 'Remove Admin'
                               : 'Make Admin',
+                          style: TextStyle(color: readableColors.textPrimary),
                         ),
                       ),
                     ],
                     icon: Icon(
                       Icons.admin_panel_settings_outlined,
-                      color: Colors.white.withOpacity(0.5),
+                      color: readableColors.iconMuted,
                       size: 20,
                     ),
                   ),
@@ -91,7 +95,7 @@ class GroupMemberRow extends StatelessWidget {
                     key: ValueKey('group-member-remove-${member.peerId}'),
                     icon: Icon(
                       Icons.remove_circle_outline,
-                      color: Colors.white.withOpacity(0.4),
+                      color: readableColors.iconMuted,
                       size: 20,
                     ),
                     onPressed: onRemove,
@@ -113,24 +117,40 @@ class _RoleBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Text(
       role.toValue(),
       style: TextStyle(
         fontSize: 11,
-        color: _colorForRole(role),
+        color: _colorForRole(role, readableColors),
         fontWeight: FontWeight.w500,
       ),
     );
   }
 
-  Color _colorForRole(MemberRole role) {
+  Color _colorForRole(
+    MemberRole role,
+    BackgroundReadableColors readableColors,
+  ) {
+    if (readableColors.isLightSurface) {
+      switch (role) {
+        case MemberRole.admin:
+          return const Color(0xFF8A4A00);
+        case MemberRole.writer:
+          return const Color(0xFF0F5F9C);
+        case MemberRole.reader:
+          return readableColors.textMuted;
+      }
+    }
+
     switch (role) {
       case MemberRole.admin:
         return const Color(0xFFFFB74D);
       case MemberRole.writer:
         return const Color(0xFF64B5F6);
       case MemberRole.reader:
-        return Colors.white.withOpacity(0.4);
+        return readableColors.textMuted;
     }
   }
 }

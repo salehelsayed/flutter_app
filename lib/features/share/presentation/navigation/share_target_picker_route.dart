@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_wired.dart';
 
@@ -43,6 +44,7 @@ Route<void> buildShareTargetPickerRoute({
   GroupMessageListener? groupMessageListener,
   ActiveConversationTracker? groupConversationTracker,
   IntroductionRepository? introductionRepository,
+  AppShellController? appShellController,
   Future<void> Function(ShareBatchDeliveryResult? result)? onClose,
   Future<void> Function()? preSendReady,
 }) {
@@ -68,6 +70,7 @@ Route<void> buildShareTargetPickerRoute({
       groupMessageListener: groupMessageListener,
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
+      appShellController: appShellController,
       onClose: onClose,
       preSendReady: preSendReady,
     ),

@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_screen.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
+import '../../../../shared/helpers/readability_test_helpers.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
@@ -34,6 +37,8 @@ void main() {
     FakeIdentityRepository? repoOverride,
     FakeBridge? bridgeOverride,
     VoidCallback? onClose,
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
   }) {
     final widget = MaterialApp(
       locale: const Locale('en'),
@@ -43,6 +48,7 @@ void main() {
         repo: repoOverride ?? repo,
         bridgeClient: bridgeOverride ?? bridge,
         onClose: onClose ?? () {},
+        backgroundPreference: backgroundPreference,
       ),
     );
     return widget;
@@ -76,8 +82,9 @@ void main() {
       expect(find.byType(QRDisplayScreen), findsOneWidget);
     });
 
-    testWidgets('shows noIdentity state when no identity exists',
-        (tester) async {
+    testWidgets('shows noIdentity state when no identity exists', (
+      tester,
+    ) async {
       // Do NOT seed identity -- repo returns null.
       await tester.pumpWidget(pumpQRDisplay(tester));
       await tester.pumpAndSettle();
@@ -161,8 +168,37 @@ void main() {
 
       // QRDisplayScreen uses FTE-style layout with QR code section
       expect(find.byType(QRDisplayScreen), findsOneWidget);
-      expect(find.text('Show this to someone you want in your circle...'),
-          findsOneWidget);
+      expect(
+        find.text('Show this to someone you want in your circle...'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('daylight lagoon keeps QR display copy readable', (
+      tester,
+    ) async {
+      repo.seed(testIdentity);
+      bridge.responses['payload.sign'] = {
+        'ok': true,
+        'signature': 'test-sig-123',
+      };
+
+      await tester.pumpWidget(
+        pumpQRDisplay(
+          tester,
+          backgroundPreference: BackgroundPreference.daylightLagoon,
+        ),
+      );
+      await tester.pump(const Duration(seconds: 1));
+
+      const colors = BackgroundReadableColors.representativeLight;
+      final description = tester.widget<Text>(
+        find.text('Show this to someone you want in your circle...'),
+      );
+      expectTextContrast(description.style!.color!, colors.surfaceBase);
+
+      final scanTitle = tester.widget<Text>(find.text("Scan a friend's code"));
+      expectTextContrast(scanTitle.style!.color!, colors.glassSurface);
     });
 
     testWidgets('no retry button on noIdentity state', (tester) async {

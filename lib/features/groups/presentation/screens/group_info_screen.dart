@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved
 import 'package:flutter_app/features/groups/presentation/widgets/group_member_row.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Pure UI screen for group info.
 ///
@@ -27,6 +29,7 @@ class GroupInfoScreen extends StatelessWidget {
   final ValueChanged<GroupMember>? onRemoveMember;
   final ValueChanged<GroupMember>? onToggleAdminRole;
   final VoidCallback? onAddMember;
+  final BackgroundPreference backgroundPreference;
 
   const GroupInfoScreen({
     super.key,
@@ -45,71 +48,79 @@ class GroupInfoScreen extends StatelessWidget {
     this.onRemoveMember,
     this.onToggleAdminRole,
     this.onAddMember,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
   Widget build(BuildContext context) {
     return AmbientBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: Column(
-            children: [
-              // Header
-              _buildHeader(context),
-              // Body
-              Expanded(
-                child: ListView(
-                  physics: const BouncingScrollPhysics(),
-                  children: [
-                    const SizedBox(height: 24),
-                    // Group info section
-                    _buildGroupInfo(),
-                    const SizedBox(height: 24),
-                    // Members section
-                    _buildMembersSection(),
-                    const SizedBox(height: 32),
-                    if (!group.isDissolved &&
-                        isAdmin &&
-                        onDissolve != null) ...[
-                      _buildDissolveButton(),
-                      const SizedBox(height: 12),
-                    ],
-                    if (group.isDissolved && onDeleteLocally != null) ...[
-                      _buildDeleteLocallyCard(),
-                      const SizedBox(height: 24),
-                    ],
-                    if (!group.isDissolved) ...[
-                      _buildLeaveButton(),
-                      const SizedBox(height: 24),
-                    ],
-                  ],
-                ),
+      preference: backgroundPreference,
+      child: Builder(
+        builder: (context) {
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: Column(
+                children: [
+                  // Header
+                  _buildHeader(context),
+                  // Body
+                  Expanded(
+                    child: ListView(
+                      physics: const BouncingScrollPhysics(),
+                      children: [
+                        const SizedBox(height: 24),
+                        // Group info section
+                        _buildGroupInfo(context),
+                        const SizedBox(height: 24),
+                        // Members section
+                        _buildMembersSection(context),
+                        const SizedBox(height: 32),
+                        if (!group.isDissolved &&
+                            isAdmin &&
+                            onDissolve != null) ...[
+                          _buildDissolveButton(context),
+                          const SizedBox(height: 12),
+                        ],
+                        if (group.isDissolved && onDeleteLocally != null) ...[
+                          _buildDeleteLocallyCard(context),
+                          const SizedBox(height: 24),
+                        ],
+                        if (!group.isDissolved) ...[
+                          _buildLeaveButton(context),
+                          const SizedBox(height: 24),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
   Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
       child: Row(
         children: [
           IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-            color: Colors.white,
+            color: readableColors.iconPrimary,
             onPressed: onBack,
           ),
           const SizedBox(width: 4),
-          const Text(
+          Text(
             'Group Info',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: readableColors.textPrimary,
             ),
           ),
         ],
@@ -117,7 +128,10 @@ class GroupInfoScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildGroupInfo() {
+  Widget _buildGroupInfo(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final actionBlue = _blueAccent(readableColors);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
@@ -142,9 +156,7 @@ class GroupInfoScreen extends StatelessWidget {
                 onPressed: onEditDetails,
                 icon: const Icon(Icons.edit_outlined, size: 18),
                 label: const Text('Edit Details'),
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF64B5F6),
-                ),
+                style: TextButton.styleFrom(foregroundColor: actionBlue),
               ),
             ),
           ],
@@ -154,10 +166,10 @@ class GroupInfoScreen extends StatelessWidget {
               Expanded(
                 child: Text(
                   group.name,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    color: readableColors.textPrimary,
                   ),
                 ),
               ),
@@ -175,7 +187,7 @@ class GroupInfoScreen extends StatelessWidget {
               group.description!,
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.white.withOpacity(0.6),
+                color: readableColors.textSecondary,
                 height: 1.4,
               ),
             ),
@@ -183,30 +195,35 @@ class GroupInfoScreen extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             '${members.length} member${members.length == 1 ? '' : 's'}',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withOpacity(0.35),
-            ),
+            style: TextStyle(fontSize: 12, color: readableColors.textMuted),
           ),
           if (group.isDissolved) ...[
             const SizedBox(height: 20),
-            _buildDissolvedStatusCard(),
+            _buildDissolvedStatusCard(context),
           ],
           const SizedBox(height: 20),
-          _buildMutePreferenceCard(),
+          _buildMutePreferenceCard(context),
         ],
       ),
     );
   }
 
-  Widget _buildDissolvedStatusCard() {
+  Widget _buildDissolvedStatusCard(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final danger = _dangerColor(readableColors);
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0x14FF8A80),
+        color: danger.withOpacity(readableColors.isLightSurface ? 0.08 : 0.12),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0x33FF8A80), width: 0.5),
+        border: Border.all(
+          color: danger.withOpacity(
+            readableColors.isLightSurface ? 0.28 : 0.24,
+          ),
+          width: 0.5,
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -215,22 +232,24 @@ class GroupInfoScreen extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: const Color(0x1FFF8A80),
+              color: danger.withOpacity(
+                readableColors.isLightSurface ? 0.10 : 0.18,
+              ),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.block_outlined, color: Color(0xFFFFB3AD)),
+            child: Icon(Icons.block_outlined, color: danger),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Group dissolved',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    color: readableColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -238,7 +257,7 @@ class GroupInfoScreen extends StatelessWidget {
                   'This conversation is now read-only. Previous messages stay available for reference.',
                   style: TextStyle(
                     fontSize: 13,
-                    color: Colors.white.withOpacity(0.62),
+                    color: readableColors.textSecondary,
                     height: 1.35,
                   ),
                 ),
@@ -250,13 +269,16 @@ class GroupInfoScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildMutePreferenceCard() {
+  Widget _buildMutePreferenceCard(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final muteAccent = _amberAccent(readableColors);
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: readableColors.surfaceRaised,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.08), width: 0.5),
+        border: Border.all(color: readableColors.divider, width: 0.5),
       ),
       child: Row(
         children: [
@@ -264,14 +286,14 @@ class GroupInfoScreen extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.08),
+              color: readableColors.surfaceSubtle,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               isMuted
                   ? Icons.notifications_off_outlined
                   : Icons.notifications_active_outlined,
-              color: isMuted ? const Color(0xFFFFC857) : Colors.white70,
+              color: isMuted ? muteAccent : readableColors.iconSecondary,
             ),
           ),
           const SizedBox(width: 12),
@@ -279,12 +301,12 @@ class GroupInfoScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Mute Notifications',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: readableColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -295,7 +317,7 @@ class GroupInfoScreen extends StatelessWidget {
                   key: const ValueKey('group-mute-subtitle'),
                   style: TextStyle(
                     fontSize: 13,
-                    color: Colors.white.withOpacity(0.58),
+                    color: readableColors.textSecondary,
                     height: 1.35,
                   ),
                 ),
@@ -307,14 +329,16 @@ class GroupInfoScreen extends StatelessWidget {
             key: const ValueKey('group-mute-switch'),
             value: isMuted,
             onChanged: isUpdatingMute ? null : onMuteChanged,
-            activeColor: const Color(0xFFFFC857),
+            activeColor: muteAccent,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMembersSection() {
+  Widget _buildMembersSection(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -325,14 +349,14 @@ class GroupInfoScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Colors.white.withOpacity(0.5),
+              color: readableColors.textMuted,
               letterSpacing: 0.5,
             ),
           ),
         ),
         const SizedBox(height: 8),
         if (!group.isDissolved && isAdmin && onAddMember != null)
-          _buildAddMemberButton(),
+          _buildAddMemberButton(context),
         ...members.map((member) {
           final isSelf = ownPeerId != null && member.peerId == ownPeerId;
           return GroupMemberRow(
@@ -359,7 +383,10 @@ class GroupInfoScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildAddMemberButton() {
+  Widget _buildAddMemberButton(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final actionBlue = _blueAccent(readableColors);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: GestureDetector(
@@ -367,28 +394,28 @@ class GroupInfoScreen extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: const Color(0xFF64B5F6).withOpacity(0.08),
+            color: actionBlue.withOpacity(
+              readableColors.isLightSurface ? 0.08 : 0.10,
+            ),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: const Color(0xFF64B5F6).withOpacity(0.15),
+              color: actionBlue.withOpacity(
+                readableColors.isLightSurface ? 0.20 : 0.18,
+              ),
               width: 0.5,
             ),
           ),
-          child: const Row(
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                Icons.person_add_outlined,
-                size: 20,
-                color: Color(0xFF64B5F6),
-              ),
-              SizedBox(width: 8),
+              Icon(Icons.person_add_outlined, size: 20, color: actionBlue),
+              const SizedBox(width: 8),
               Text(
                 'Add Member',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF64B5F6),
+                  color: actionBlue,
                 ),
               ),
             ],
@@ -398,7 +425,10 @@ class GroupInfoScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildLeaveButton() {
+  Widget _buildLeaveButton(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final danger = _dangerColor(readableColors);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GestureDetector(
@@ -408,17 +438,24 @@ class GroupInfoScreen extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: Colors.red.withOpacity(0.1),
+            color: danger.withOpacity(
+              readableColors.isLightSurface ? 0.08 : 0.10,
+            ),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.red.withOpacity(0.2), width: 0.5),
+            border: Border.all(
+              color: danger.withOpacity(
+                readableColors.isLightSurface ? 0.24 : 0.20,
+              ),
+              width: 0.5,
+            ),
           ),
-          child: const Text(
+          child: Text(
             'Leave Group',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: Colors.red,
+              color: danger,
             ),
           ),
         ),
@@ -426,7 +463,10 @@ class GroupInfoScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDissolveButton() {
+  Widget _buildDissolveButton(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final danger = _dangerColor(readableColors);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: GestureDetector(
@@ -436,17 +476,24 @@ class GroupInfoScreen extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: const Color(0x14FF8A80),
+            color: danger.withOpacity(
+              readableColors.isLightSurface ? 0.08 : 0.12,
+            ),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0x33FF8A80), width: 0.5),
+            border: Border.all(
+              color: danger.withOpacity(
+                readableColors.isLightSurface ? 0.28 : 0.24,
+              ),
+              width: 0.5,
+            ),
           ),
-          child: const Text(
+          child: Text(
             'Dissolve Group',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w700,
-              color: Color(0xFFFFB3AD),
+              color: danger,
             ),
           ),
         ),
@@ -454,26 +501,29 @@ class GroupInfoScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDeleteLocallyCard() {
+  Widget _buildDeleteLocallyCard(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final danger = _dangerColor(readableColors);
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: readableColors.surfaceRaised,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.08), width: 0.5),
+          border: Border.all(color: readableColors.divider, width: 0.5),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Delete from this device',
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
-                color: Colors.white,
+                color: readableColors.textPrimary,
               ),
             ),
             const SizedBox(height: 6),
@@ -481,7 +531,7 @@ class GroupInfoScreen extends StatelessWidget {
               'Keep this dissolved history as long as you want, or remove it from this device only. This will not affect anyone else.',
               style: TextStyle(
                 fontSize: 13,
-                color: Colors.white.withOpacity(0.62),
+                color: readableColors.textSecondary,
                 height: 1.35,
               ),
             ),
@@ -493,20 +543,24 @@ class GroupInfoScreen extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
+                  color: danger.withOpacity(
+                    readableColors.isLightSurface ? 0.08 : 0.10,
+                  ),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: Colors.red.withOpacity(0.2),
+                    color: danger.withOpacity(
+                      readableColors.isLightSurface ? 0.24 : 0.20,
+                    ),
                     width: 0.5,
                   ),
                 ),
-                child: const Text(
+                child: Text(
                   'Delete Group Locally',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
-                    color: Colors.red,
+                    color: danger,
                   ),
                 ),
               ),
@@ -515,5 +569,23 @@ class GroupInfoScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Color _blueAccent(BackgroundReadableColors readableColors) {
+    return readableColors.isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFF64B5F6);
+  }
+
+  Color _amberAccent(BackgroundReadableColors readableColors) {
+    return readableColors.isLightSurface
+        ? const Color(0xFF8A4A00)
+        : const Color(0xFFFFC857);
+  }
+
+  Color _dangerColor(BackgroundReadableColors readableColors) {
+    return readableColors.isLightSurface
+        ? const Color(0xFF9D1C12)
+        : const Color(0xFFFFB3AD);
   }
 }

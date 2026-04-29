@@ -10,6 +10,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
@@ -320,6 +321,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _publishAllProjections();
     _publishHostGestureContracts();
     _openRowNotifier.addListener(_onOpenRowNotifierChanged);
+    widget.appShellController?.addListener(_onAppShellChanged);
     emitFlowEvent(layer: 'FL', event: 'ORBIT_FL_SCREEN_INIT', details: {});
 
     _collapseController = AnimationController(
@@ -373,6 +375,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _attachExternalRouteChangesListenable(
         widget.externalRouteChangesListenable,
       );
+    }
+    if (oldWidget.appShellController != widget.appShellController) {
+      oldWidget.appShellController?.removeListener(_onAppShellChanged);
+      widget.appShellController?.addListener(_onAppShellChanged);
+    }
+  }
+
+  void _onAppShellChanged() {
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -1370,6 +1382,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               reactionListener: widget.reactionListener,
               introductionRepository: widget.introductionRepository,
               deleteContactFn: _deleteContactFromOrbit,
+              appShellController: widget.appShellController,
             ),
           ),
         )
@@ -1419,6 +1432,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           bridgeClient: widget.bridge,
           onClose: () => Navigator.of(context).pop(),
           onScanPressed: _onScanQR,
+          backgroundPreference:
+              widget.appShellController?.backgroundPreference ??
+              BackgroundPreference.defaultBackground,
         ),
       ),
     );
@@ -1549,6 +1565,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _searchController.dispose();
     _searchFocusNode.dispose();
     _openRowNotifier.removeListener(_onOpenRowNotifierChanged);
+    widget.appShellController?.removeListener(_onAppShellChanged);
     widget.onEmbeddedExitActionChanged?.call(null);
     widget.onRowActionOpenChanged?.call(false);
     _openRowNotifier.dispose();
@@ -1610,6 +1627,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onIntroBannerTap: () => _onFilterChanged('intros'),
       onHeaderBuild: widget.debugOnHeaderBuild,
       onListBuild: widget.debugOnListBuild,
+      backgroundPreference:
+          widget.appShellController?.backgroundPreference ??
+          BackgroundPreference.defaultBackground,
     );
   }
 
@@ -1712,6 +1732,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               reactionRepo: widget.reactionRepository,
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
+              backgroundPreference:
+                  widget.appShellController?.backgroundPreference ??
+                  BackgroundPreference.defaultBackground,
             ),
           ),
         )
@@ -1753,6 +1776,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               reactionRepo: widget.reactionRepository,
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
+              backgroundPreference:
+                  widget.appShellController?.backgroundPreference ??
+                  BackgroundPreference.defaultBackground,
             ),
           ),
         )

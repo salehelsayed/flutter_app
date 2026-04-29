@@ -1024,6 +1024,42 @@ abstract class AppLocalizations {
   /// **'Cosmic selected'**
   String get settings_background_cosmic_selected;
 
+  /// No description provided for @settings_background_cosmic_mirrored.
+  ///
+  /// In en, this message translates to:
+  /// **'Mirrored cosmic'**
+  String get settings_background_cosmic_mirrored;
+
+  /// No description provided for @settings_background_cosmic_mirrored_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'The cosmic starfield with mirrored color blooms.'**
+  String get settings_background_cosmic_mirrored_desc;
+
+  /// No description provided for @settings_background_cosmic_mirrored_selected.
+  ///
+  /// In en, this message translates to:
+  /// **'Mirrored cosmic selected'**
+  String get settings_background_cosmic_mirrored_selected;
+
+  /// No description provided for @settings_background_daylight_lagoon.
+  ///
+  /// In en, this message translates to:
+  /// **'Daylight Lagoon'**
+  String get settings_background_daylight_lagoon;
+
+  /// No description provided for @settings_background_daylight_lagoon_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'A bright lagoon sky with soft pastel blooms.'**
+  String get settings_background_daylight_lagoon_desc;
+
+  /// No description provided for @settings_background_daylight_lagoon_selected.
+  ///
+  /// In en, this message translates to:
+  /// **'Daylight Lagoon selected'**
+  String get settings_background_daylight_lagoon_selected;
+
   /// No description provided for @settings_background_save_fail.
   ///
   /// In en, this message translates to:

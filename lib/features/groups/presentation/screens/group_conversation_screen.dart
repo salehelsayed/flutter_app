@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
@@ -21,6 +22,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.da
 import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 
@@ -72,6 +74,7 @@ class GroupConversationScreen extends StatelessWidget {
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
   final GroupBacklogRetentionNotice? backlogRetentionNotice;
+  final BackgroundPreference backgroundPreference;
 
   const GroupConversationScreen({
     super.key,
@@ -118,6 +121,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
     this.backlogRetentionNotice,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -142,30 +146,38 @@ class GroupConversationScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: AmbientBackground(
-        child: Column(
-          children: [
-            _buildHeader(context),
-            if (backlogRetentionNotice != null)
-              _buildBacklogRetentionBanner(backlogRetentionNotice!),
-            if (uploadProgress != null)
-              UploadProgressBanner(
-                state: uploadProgress!,
-                onCancel: onCancelUpload,
-              ),
-            Expanded(
-              child: messages.isEmpty
-                  ? _buildEmptyOrLoadingState()
-                  : _buildMessageList(),
-            ),
-            if (composerStateListenable == null)
-              _buildComposerSection(_legacyComposerState)
-            else
-              ValueListenableBuilder<ConversationComposerViewState>(
-                valueListenable: composerStateListenable!,
-                builder: (context, composerState, child) =>
-                    _buildComposerSection(composerState),
-              ),
-          ],
+        preference: backgroundPreference,
+        child: Builder(
+          builder: (context) {
+            return Column(
+              children: [
+                _buildHeader(context),
+                if (backlogRetentionNotice != null)
+                  _buildBacklogRetentionBanner(
+                    context,
+                    backlogRetentionNotice!,
+                  ),
+                if (uploadProgress != null)
+                  UploadProgressBanner(
+                    state: uploadProgress!,
+                    onCancel: onCancelUpload,
+                  ),
+                Expanded(
+                  child: messages.isEmpty
+                      ? _buildEmptyOrLoadingState(context)
+                      : _buildMessageList(),
+                ),
+                if (composerStateListenable == null)
+                  _buildComposerSection(_legacyComposerState)
+                else
+                  ValueListenableBuilder<ConversationComposerViewState>(
+                    valueListenable: composerStateListenable!,
+                    builder: (context, composerState, child) =>
+                        _buildComposerSection(composerState),
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -211,6 +223,8 @@ class GroupConversationScreen extends StatelessWidget {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return SafeArea(
       bottom: false,
       child: Container(
@@ -218,17 +232,14 @@ class GroupConversationScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(4, 8, 8, 8),
         decoration: BoxDecoration(
           border: Border(
-            bottom: BorderSide(
-              color: Colors.white.withValues(alpha: 0.06),
-              width: 0.5,
-            ),
+            bottom: BorderSide(color: readableColors.divider, width: 0.5),
           ),
         ),
         child: Row(
           children: [
             IconButton(
               icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-              color: Colors.white,
+              color: readableColors.iconPrimary,
               onPressed: onBack,
             ),
             const SizedBox(width: 4),
@@ -254,8 +265,7 @@ class GroupConversationScreen extends StatelessWidget {
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
+                          ).copyWith(color: readableColors.textPrimary),
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -273,7 +283,7 @@ class GroupConversationScreen extends StatelessWidget {
               IconButton(
                 icon: Icon(
                   Icons.info_outline,
-                  color: Colors.white.withValues(alpha: 0.6),
+                  color: readableColors.iconSecondary,
                   size: 22,
                 ),
                 onPressed: onInfo,
@@ -284,14 +294,15 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyOrLoadingState() {
+  Widget _buildEmptyOrLoadingState(BuildContext context) {
     if (!initialLoadDone) {
       return const _GroupConversationLoadingShell();
     }
-    return _buildEmptyState();
+    return _buildEmptyState(context);
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final notice = backlogRetentionNotice;
     final emptyTitle = group.isDissolved
         ? 'No messages yet'
@@ -310,22 +321,19 @@ class GroupConversationScreen extends StatelessWidget {
           Icon(
             Icons.chat_bubble_outline,
             size: 48,
-            color: Colors.white.withValues(alpha: 0.15),
+            color: readableColors.iconMuted,
           ),
           const SizedBox(height: 12),
           Text(
             emptyTitle,
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.white.withValues(alpha: 0.3),
-            ),
+            style: TextStyle(fontSize: 14, color: readableColors.textMuted),
           ),
           const SizedBox(height: 4),
           Text(
             emptySubtitle,
             style: TextStyle(
               fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.2),
+              color: readableColors.disabledForeground,
             ),
           ),
         ],
@@ -333,7 +341,14 @@ class GroupConversationScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBacklogRetentionBanner(GroupBacklogRetentionNotice notice) {
+  Widget _buildBacklogRetentionBanner(
+    BuildContext context,
+    GroupBacklogRetentionNotice notice,
+  ) {
+    final readableColors = context.backgroundReadableColors;
+    final retentionAccent = readableColors.isLightSurface
+        ? const Color(0xFF8A4A00)
+        : const Color(0xFFE6C36A);
     final icon = notice.kind == GroupBacklogRetentionNoticeKind.mixedWindow
         ? Icons.history_rounded
         : Icons.history_toggle_off_rounded;
@@ -344,22 +359,28 @@ class GroupConversationScreen extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0x16D9B96E),
+        color: retentionAccent.withOpacity(
+          readableColors.isLightSurface ? 0.08 : 0.12,
+        ),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0x33D9B96E)),
+        border: Border.all(
+          color: retentionAccent.withOpacity(
+            readableColors.isLightSurface ? 0.24 : 0.20,
+          ),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: const Color(0xFFE6C36A)),
+          Icon(icon, size: 18, color: retentionAccent),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               notice.bannerText,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 height: 1.35,
-                color: Colors.white70,
+                color: readableColors.textSecondary,
               ),
             ),
           ),
@@ -448,13 +469,14 @@ class GroupConversationScreen extends StatelessWidget {
         }
 
         if (isHighlighted) {
+          final readableColors = context.backgroundReadableColors;
           bubble = AnimatedContainer(
             key: ValueKey('grp-highlight-${message.id}'),
             duration: const Duration(milliseconds: 180),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.07),
+              color: readableColors.surfaceSubtle,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+              border: Border.all(color: readableColors.border),
             ),
             child: bubble,
           );
@@ -492,15 +514,19 @@ class GroupConversationScreen extends StatelessWidget {
   }
 
   Widget _buildReadOnlyBanner() {
+    // This is only called from the `AmbientBackground` subtree.
+    return Builder(builder: _buildReadOnlyBannerInner);
+  }
+
+  Widget _buildReadOnlyBannerInner(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       key: const ValueKey('group-read-only-banner'),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(
-            color: Colors.white.withValues(alpha: 0.06),
-            width: 0.5,
-          ),
+          top: BorderSide(color: readableColors.divider, width: 0.5),
         ),
       ),
       child: Text(
@@ -508,10 +534,7 @@ class GroupConversationScreen extends StatelessWidget {
             ? 'This group has been dissolved. History stays available, but new messages are disabled.'
             : 'Only admins can send messages in this group',
         textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: 13,
-          color: Colors.white.withValues(alpha: 0.35),
-        ),
+        style: TextStyle(fontSize: 13, color: readableColors.textMuted),
       ),
     );
   }
@@ -656,6 +679,8 @@ class _GroupConversationLoadingBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Align(
       alignment: alignment,
       child: Container(
@@ -664,8 +689,8 @@ class _GroupConversationLoadingBubble extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
-          color: const Color.fromRGBO(255, 255, 255, 0.08),
-          border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.1)),
+          color: readableColors.surfaceRaised,
+          border: Border.all(color: readableColors.divider),
         ),
         child: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -687,6 +712,8 @@ class _GroupConversationLoadingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return FractionallySizedBox(
       widthFactor: widthFactor,
       alignment: Alignment.centerLeft,
@@ -694,7 +721,7 @@ class _GroupConversationLoadingBar extends StatelessWidget {
         height: 12,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
-          color: const Color.fromRGBO(255, 255, 255, 0.12),
+          color: readableColors.disabledSurface,
         ),
       ),
     );

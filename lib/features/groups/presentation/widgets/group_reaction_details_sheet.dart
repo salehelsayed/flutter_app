@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -161,6 +162,8 @@ class GroupReactionDetailsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
@@ -172,17 +175,17 @@ class GroupReactionDetailsSheet extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.18),
+                color: readableColors.divider,
                 borderRadius: BorderRadius.circular(999),
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Reactions',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
-                color: Colors.white,
+                color: readableColors.textPrimary,
               ),
             ),
             const SizedBox(height: 4),
@@ -190,7 +193,7 @@ class GroupReactionDetailsSheet extends StatelessWidget {
               '$emoji ${participants.length}',
               style: TextStyle(
                 fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.62),
+                color: readableColors.textSecondary,
               ),
             ),
             const SizedBox(height: 16),
@@ -200,7 +203,7 @@ class GroupReactionDetailsSheet extends StatelessWidget {
                 itemCount: participants.length,
                 separatorBuilder: (_, __) => Divider(
                   height: 1,
-                  color: Colors.white.withValues(alpha: 0.08),
+                  color: readableColors.divider,
                 ),
                 itemBuilder: (context, index) {
                   final participant = participants[index];
@@ -214,10 +217,10 @@ class GroupReactionDetailsSheet extends StatelessWidget {
                     ),
                     title: Text(
                       participant.displayName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                        color: readableColors.textPrimary,
                       ),
                     ),
                     trailing: Text(

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import '../../../../core/services/p2p_service.dart';
 import '../../../../core/utils/flow_event_emitter.dart';
 import '../../domain/models/node_state.dart';
@@ -138,6 +139,8 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
   Widget build(BuildContext context) {
     final badgeState = _displayedBadgeState;
     final connectionCount = _connectionCount;
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
 
     final Color baseColor;
     final Color textColor;
@@ -145,13 +148,19 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
       case BadgeReadinessState.online:
       case BadgeReadinessState.onlineDotted:
         baseColor = Colors.green;
-        textColor = Colors.green[300]!;
+        textColor = isLightSurface
+            ? const Color(0xFF157A39)
+            : Colors.green[300]!;
       case BadgeReadinessState.connecting:
         baseColor = Colors.amber;
-        textColor = Colors.amber[300]!;
+        textColor = isLightSurface
+            ? const Color(0xFF8A5D00)
+            : Colors.amber[300]!;
       case BadgeReadinessState.offline:
         baseColor = Colors.grey;
-        textColor = Colors.grey[400]!;
+        textColor = isLightSurface
+            ? readableColors.textMuted
+            : Colors.grey[400]!;
     }
     final label = _labelForBadgeState(badgeState);
     final semanticsLabel = _semanticsLabelForBadgeState(badgeState);
@@ -163,10 +172,10 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: baseColor.withValues(alpha: 0.2),
+            color: baseColor.withValues(alpha: isLightSurface ? 0.12 : 0.2),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: baseColor.withValues(alpha: 0.4),
+              color: baseColor.withValues(alpha: isLightSurface ? 0.32 : 0.4),
               width: 1,
             ),
           ),
@@ -197,7 +206,7 @@ class _ConnectionStatusIndicatorState extends State<ConnectionStatusIndicator> {
                 Text(
                   '($connectionCount)',
                   style: TextStyle(
-                    color: Colors.green[300]?.withValues(alpha: 0.7),
+                    color: textColor.withValues(alpha: 0.7),
                     fontSize: 11,
                   ),
                 ),

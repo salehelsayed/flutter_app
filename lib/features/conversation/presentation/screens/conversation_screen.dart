@@ -19,6 +19,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/message_c
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_system_message.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -146,6 +147,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onCancelEdit;
   final bool allowEditAction;
   final ConversationMediaViewerBuilder? mediaViewerBuilder;
+  final BackgroundPreference backgroundPreference;
 
   const ConversationScreen({
     super.key,
@@ -204,6 +206,7 @@ class ConversationScreen extends StatefulWidget {
     this.onCancelEdit,
     this.allowEditAction = true,
     this.mediaViewerBuilder,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -242,6 +245,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   @override
   Widget build(BuildContext context) {
     return AmbientBackground(
+      preference: widget.backgroundPreference,
       child: Column(
         children: [
           // Header

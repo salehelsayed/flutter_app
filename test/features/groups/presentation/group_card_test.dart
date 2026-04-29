@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_card.dart';
+
+import '../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   final testGroup = GroupModel(
@@ -15,10 +18,25 @@ void main() {
     myRole: GroupRole.admin,
   );
 
-  Widget buildTestWidget({GroupModel? group, int unreadCount = 0}) {
+  Widget buildTestWidget({
+    GroupModel? group,
+    int unreadCount = 0,
+    String? lastMessageSender,
+    String? lastMessageBody,
+    String? lastMessageTime,
+    BackgroundReadableColors readableColors = BackgroundReadableColors.dark,
+  }) {
     return MaterialApp(
+      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[readableColors]),
       home: Scaffold(
-        body: GroupCard(group: group ?? testGroup, unreadCount: unreadCount),
+        backgroundColor: readableColors.surfaceBase,
+        body: GroupCard(
+          group: group ?? testGroup,
+          lastMessageSender: lastMessageSender,
+          lastMessageBody: lastMessageBody,
+          lastMessageTime: lastMessageTime,
+          unreadCount: unreadCount,
+        ),
       ),
     );
   }
@@ -34,5 +52,28 @@ void main() {
     await tester.pumpWidget(buildTestWidget(unreadCount: 5));
 
     expect(find.text('5'), findsOneWidget);
+  });
+
+  testWidgets('uses representative light readable roles', (tester) async {
+    const colors = BackgroundReadableColors.representativeLight;
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        readableColors: colors,
+        lastMessageSender: 'Alice',
+        lastMessageBody: 'Hello مرحبا from Daylight',
+        lastMessageTime: '9:30 AM',
+        unreadCount: 3,
+      ),
+    );
+
+    final title = tester.widget<Text>(find.text('Test Group'));
+    expectTextContrast(title.style!.color!, colors.surfaceBase);
+
+    final sender = tester.widget<Text>(find.text('Alice'));
+    expectTextContrast(sender.style!.color!, colors.surfaceBase);
+
+    final body = tester.widget<Text>(find.text('Hello مرحبا from Daylight'));
+    expectTextContrast(body.style!.color!, colors.surfaceBase);
   });
 }

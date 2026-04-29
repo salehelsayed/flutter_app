@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
@@ -36,8 +37,7 @@ class IntroductionConnectionCard extends StatefulWidget {
       _IntroductionConnectionCardState();
 }
 
-class _IntroductionConnectionCardState
-    extends State<IntroductionConnectionCard>
+class _IntroductionConnectionCardState extends State<IntroductionConnectionCard>
     with SingleTickerProviderStateMixin {
   late final AnimationController _entryController;
   late final Animation<double> _opacity;
@@ -88,10 +88,29 @@ class _IntroductionConnectionCardState
   }
 
   Widget _buildCard() {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(34),
-        border: Border.all(color: FeedColors.cardBorder),
+        color: isLightSurface
+            ? readableColors.surfaceRaised.withValues(alpha: 0.62)
+            : Colors.transparent,
+        border: Border.all(
+          color: isLightSurface
+              ? readableColors.border.withValues(alpha: 0.18)
+              : FeedColors.cardBorder,
+        ),
+        boxShadow: isLightSurface
+            ? [
+                BoxShadow(
+                  color: readableColors.textPrimary.withValues(alpha: 0.08),
+                  blurRadius: 18,
+                  offset: const Offset(0, 10),
+                ),
+              ]
+            : null,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(34),
@@ -126,6 +145,8 @@ class _IntroductionConnectionCardState
   }
 
   Widget _buildDualAvatarSection(bool compact) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
     final avatarSize = compact ? 64.0 : 72.0;
     final outerSize = avatarSize + 20;
     final gap = compact ? 28.0 : 36.0;
@@ -144,7 +165,11 @@ class _IntroductionConnectionCardState
             top: outerSize / 2,
             child: CustomPaint(
               size: Size(gap, 1),
-              painter: _DashedLinePainter(),
+              painter: _DashedLinePainter(
+                color: isLightSurface
+                    ? const Color(0xFF1DB954).withValues(alpha: 0.38)
+                    : const Color(0x661DB954),
+              ),
             ),
           ),
           // Left avatar (own)
@@ -183,6 +208,9 @@ class _IntroductionConnectionCardState
     required double outerSize,
     required bool compact,
   }) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+
     return Column(
       children: [
         SizedBox(
@@ -194,15 +222,19 @@ class _IntroductionConnectionCardState
               Container(
                 width: outerSize,
                 height: outerSize,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
                     colors: [
-                      Color(0x402DB65F),
-                      Color(0x1F2DB65F),
+                      const Color(
+                        0xFF2DB65F,
+                      ).withValues(alpha: isLightSurface ? 0.16 : 0.25),
+                      const Color(
+                        0xFF2DB65F,
+                      ).withValues(alpha: isLightSurface ? 0.07 : 0.12),
                       Colors.transparent,
                     ],
-                    stops: [0.0, 0.55, 1.0],
+                    stops: const [0.0, 0.55, 1.0],
                   ),
                 ),
               ),
@@ -210,15 +242,21 @@ class _IntroductionConnectionCardState
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color.fromRGBO(11, 13, 17, 0.78),
+                  color: isLightSurface
+                      ? readableColors.surfaceBase.withValues(alpha: 0.88)
+                      : const Color.fromRGBO(11, 13, 17, 0.78),
                   border: Border.all(
-                    color: const Color.fromRGBO(255, 255, 255, 0.15),
+                    color: isLightSurface
+                        ? readableColors.border.withValues(alpha: 0.16)
+                        : const Color.fromRGBO(255, 255, 255, 0.15),
                   ),
-                  boxShadow: const [
+                  boxShadow: [
                     BoxShadow(
-                      color: Color.fromRGBO(0, 0, 0, 0.45),
-                      blurRadius: 16,
-                      offset: Offset(0, 8),
+                      color: isLightSurface
+                          ? readableColors.textPrimary.withValues(alpha: 0.08)
+                          : const Color.fromRGBO(0, 0, 0, 0.45),
+                      blurRadius: isLightSurface ? 12 : 16,
+                      offset: Offset(0, isLightSurface ? 5 : 8),
                     ),
                   ],
                 ),
@@ -238,8 +276,8 @@ class _IntroductionConnectionCardState
             style: TextStyle(
               fontSize: compact ? 13 : 14,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
-              letterSpacing: -0.2,
+              color: isLightSurface ? readableColors.textPrimary : Colors.white,
+              letterSpacing: 0,
             ),
           ),
         ),
@@ -248,6 +286,9 @@ class _IntroductionConnectionCardState
   }
 
   Widget _buildIntroducedByRow(bool compact) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
@@ -260,7 +301,9 @@ class _IntroductionConnectionCardState
           AppLocalizations.of(context)!.introduced_by(widget.introducedBy),
           style: TextStyle(
             fontSize: compact ? 12 : 13,
-            color: const Color(0x99FFFFFF),
+            color: isLightSurface
+                ? readableColors.textSecondary
+                : const Color(0x99FFFFFF),
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -269,19 +312,33 @@ class _IntroductionConnectionCardState
   }
 
   Widget _buildSendMessageButton(bool compact) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final foregroundColor = isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF62D984);
+
     return SizedBox(
       width: compact ? 182 : 198,
       height: 42,
       child: ElevatedButton(
         onPressed: widget.isBlocked ? null : widget.onSendMessage,
         style: ElevatedButton.styleFrom(
-          backgroundColor: const Color.fromRGBO(29, 185, 84, 0.15),
-          foregroundColor: const Color(0xFF62D984),
+          backgroundColor: isLightSurface
+              ? const Color(0xFFE6F6EC)
+              : const Color.fromRGBO(29, 185, 84, 0.15),
+          foregroundColor: foregroundColor,
+          disabledBackgroundColor: readableColors.disabledSurface.withValues(
+            alpha: isLightSurface ? 0.70 : 0.45,
+          ),
+          disabledForegroundColor: readableColors.disabledForeground,
           elevation: 0,
           shadowColor: Colors.transparent,
           surfaceTintColor: Colors.transparent,
           side: BorderSide(
-            color: const Color(0xFF2DB65F).withValues(alpha: 0.38),
+            color: const Color(
+              0xFF2DB65F,
+            ).withValues(alpha: isLightSurface ? 0.32 : 0.38),
           ),
           shape: const StadiumBorder(),
           padding: const EdgeInsets.symmetric(horizontal: 18),
@@ -296,7 +353,10 @@ class _IntroductionConnectionCardState
               const SizedBox(width: 8),
               Text(
                 AppLocalizations.of(context)!.send_message,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -340,10 +400,14 @@ class _IntroductionConnectionCardState
 
 /// Paints a horizontal dashed line between the two avatars.
 class _DashedLinePainter extends CustomPainter {
+  final Color color;
+
+  const _DashedLinePainter({required this.color});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0x661DB954)
+      ..color = color
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
 
@@ -360,5 +424,7 @@ class _DashedLinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _DashedLinePainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
 }

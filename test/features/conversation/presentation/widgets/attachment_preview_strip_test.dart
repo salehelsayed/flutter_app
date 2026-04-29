@@ -2,7 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
+
+import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   late Directory tempDir;
@@ -74,6 +77,7 @@ void main() {
 
   Widget buildTestWidget({
     required List<File> attachments,
+    BackgroundReadableColors readableColors = BackgroundReadableColors.dark,
     bool isUploading = false,
     bool isProcessing = false,
     double processingProgress = 0.0,
@@ -82,6 +86,7 @@ void main() {
     ValueChanged<int>? onRemove,
   }) {
     return MaterialApp(
+      theme: ThemeData(extensions: <ThemeExtension<dynamic>>[readableColors]),
       home: Scaffold(
         body: AttachmentPreviewStrip(
           attachments: attachments,
@@ -239,6 +244,28 @@ void main() {
       expect(find.text('Processing'), findsOneWidget);
       expect(find.text('50%'), findsOneWidget);
     });
+
+    testWidgets(
+      'processing thumbnail uses representative light readable text',
+      (tester) async {
+        const colors = BackgroundReadableColors.representativeLight;
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            attachments: [],
+            readableColors: colors,
+            isProcessing: true,
+            processingProgress: 0.5,
+          ),
+        );
+        await tester.pump();
+
+        final label = tester.widget<Text>(find.text('Processing'));
+        expectTextContrast(label.style!.color!, colors.surfaceSubtle);
+        final percent = tester.widget<Text>(find.text('50%'));
+        expectTextContrast(percent.style!.color!, colors.surfaceSubtle);
+      },
+    );
 
     testWidgets(
       'shows batch processing label when multiple videos are active',

@@ -527,6 +527,28 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_background_cosmic_selected => 'Kosmisch ausgewählt';
 
   @override
+  String get settings_background_cosmic_mirrored => 'Kosmisch gespiegelt';
+
+  @override
+  String get settings_background_cosmic_mirrored_desc =>
+      'Das kosmische Sternenfeld mit gespiegelten Farblichtern.';
+
+  @override
+  String get settings_background_cosmic_mirrored_selected =>
+      'Kosmisch gespiegelt ausgewählt';
+
+  @override
+  String get settings_background_daylight_lagoon => 'Tageslicht-Lagune';
+
+  @override
+  String get settings_background_daylight_lagoon_desc =>
+      'Ein heller Lagunenhimmel mit sanften Pastelllichtern.';
+
+  @override
+  String get settings_background_daylight_lagoon_selected =>
+      'Tageslicht-Lagune ausgewählt';
+
+  @override
   String get settings_background_save_fail =>
       'Hintergrundauswahl konnte nicht gespeichert werden';
 

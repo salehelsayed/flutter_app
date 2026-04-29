@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/share/presentation/screens/share_target_picker_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+import '../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   ContactModel makeContact({required String peerId, required String username}) {
@@ -44,6 +48,8 @@ void main() {
     ValueChanged<GroupModel>? onToggleGroup,
     VoidCallback? onSend,
     VoidCallback? onCancel,
+    BackgroundPreference backgroundPreference =
+        BackgroundPreference.defaultBackground,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -63,6 +69,7 @@ void main() {
         onToggleGroup: onToggleGroup ?? (_) {},
         onSend: onSend,
         onCancel: onCancel ?? () {},
+        backgroundPreference: backgroundPreference,
       ),
     );
   }
@@ -347,6 +354,41 @@ void main() {
       expect(find.byType(CircularProgressIndicator), findsNothing);
     },
   );
+
+  testWidgets('daylight lagoon keeps share picker content readable', (
+    tester,
+  ) async {
+    final captionController = TextEditingController(text: 'Caption text');
+    addTearDown(captionController.dispose);
+
+    await tester.pumpWidget(
+      buildScreen(
+        sharedText: 'Hello مرحبا from share',
+        captionController: captionController,
+        contacts: [makeContact(peerId: 'alice', username: 'Alice')],
+        groups: [makeGroup(id: 'friends', name: 'Friends')],
+        selectedContactPeerIds: const {'alice'},
+        onSend: () {},
+        backgroundPreference: BackgroundPreference.daylightLagoon,
+      ),
+    );
+    await tester.pump();
+
+    const colors = BackgroundReadableColors.representativeLight;
+    final header = tester.widget<Text>(find.text('Share with (1)'));
+    expectTextContrast(header.style!.color!, colors.surfaceBase);
+
+    final captionLabel = tester.widget<Text>(
+      find.byKey(const ValueKey('share-caption-label')),
+    );
+    expectTextContrast(captionLabel.style!.color!, colors.surfaceBase);
+
+    final contact = tester.widget<Text>(find.text('Alice'));
+    expectTextContrast(contact.style!.color!, colors.surfaceBase);
+
+    final group = tester.widget<Text>(find.text('Friends'));
+    expectTextContrast(group.style!.color!, colors.surfaceBase);
+  });
 }
 
 Text _previewText(WidgetTester tester, String text) {

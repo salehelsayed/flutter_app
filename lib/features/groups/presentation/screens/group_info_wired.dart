@@ -10,6 +10,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
@@ -34,6 +35,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_scre
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Wired widget connecting GroupInfoScreen to business logic.
 class GroupInfoWired extends StatefulWidget {
@@ -47,6 +49,7 @@ class GroupInfoWired extends StatefulWidget {
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
   final UploadMediaFn uploadMediaFn;
+  final BackgroundPreference backgroundPreference;
 
   const GroupInfoWired({
     super.key,
@@ -60,6 +63,7 @@ class GroupInfoWired extends StatefulWidget {
     this.imageProcessor,
     this.mediaPicker,
     this.uploadMediaFn = uploadMedia,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -806,15 +810,18 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   Future<void> _onEditDetails() async {
     final result = await showDialog<_GroupMetadataEditResult>(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: const Color(0xFF10151D),
-        insetPadding: const EdgeInsets.all(16),
-        child: _GroupMetadataEditorSheet(
-          group: _group,
-          mediaPicker: _mediaPicker,
-          imageProcessor: widget.imageProcessor,
-        ),
-      ),
+      builder: (context) {
+        final readableColors = context.backgroundReadableColors;
+        return Dialog(
+          backgroundColor: readableColors.surfaceBase,
+          insetPadding: const EdgeInsets.all(16),
+          child: _GroupMetadataEditorSheet(
+            group: _group,
+            mediaPicker: _mediaPicker,
+            imageProcessor: widget.imageProcessor,
+          ),
+        );
+      },
     );
 
     if (result == null) {
@@ -995,6 +1002,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
               identityRepo: widget.identityRepo,
               p2pService: widget.p2pService,
               msgRepo: widget.msgRepo,
+              backgroundPreference: widget.backgroundPreference,
             ),
           ),
         )
@@ -1040,6 +1048,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       onRemoveMember: canManageGroup ? _confirmRemoveMember : null,
       onToggleAdminRole: canManageGroup ? _confirmRoleChange : null,
       onAddMember: canManageGroup ? _onAddMember : null,
+      backgroundPreference: widget.backgroundPreference,
     );
   }
 
@@ -1189,6 +1198,7 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final readableColors = context.backgroundReadableColors;
 
     return SafeArea(
       top: false,
@@ -1204,18 +1214,18 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                   width: 36,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.18),
+                    color: readableColors.divider,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'Edit Group Details',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  color: readableColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 16),
@@ -1249,12 +1259,12 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
+              Text(
                 'Group Name',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white70,
+                  color: readableColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 8),
@@ -1265,12 +1275,12 @@ class _GroupMetadataEditorSheetState extends State<_GroupMetadataEditorSheet> {
                 onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Text(
                 'Description',
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white70,
+                  color: readableColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 8),
@@ -1352,21 +1362,23 @@ class _EditorField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: readableColors.inputFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.08), width: 0.5),
+        border: Border.all(color: readableColors.inputBorder, width: 0.5),
       ),
       child: TextField(
         controller: controller,
         maxLines: maxLines,
         onChanged: onChanged,
-        style: const TextStyle(fontSize: 15, color: Colors.white),
+        style: TextStyle(fontSize: 15, color: readableColors.textPrimary),
         decoration: InputDecoration(
           border: InputBorder.none,
           contentPadding: const EdgeInsets.all(14),
-          hintStyle: TextStyle(color: Colors.white.withOpacity(0.25)),
+          hintStyle: TextStyle(color: readableColors.placeholderText),
         ),
       ),
     );

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -35,12 +36,13 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
       return const SizedBox.shrink();
     }
 
+    final readableColors = context.backgroundReadableColors;
     final previewPosts = widget.posts.take(5).toList(growable: false);
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF151922),
+        color: readableColors.surfaceRaised,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
+        border: Border.all(color: readableColors.border),
       ),
       child: Column(
         children: [
@@ -59,8 +61,8 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
                       children: [
                         Text(
                           AppLocalizations.of(context)!.pinned_title,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: readableColors.textPrimary,
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
                           ),
@@ -68,8 +70,8 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
                         const SizedBox(height: 4),
                         Text(
                           _summaryCopy(widget.posts),
-                          style: const TextStyle(
-                            color: Color.fromRGBO(255, 255, 255, 0.6),
+                          style: TextStyle(
+                            color: readableColors.textMuted,
                             fontSize: 13,
                           ),
                         ),
@@ -88,17 +90,14 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
                   const SizedBox(width: 8),
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
-                    color: Colors.white70,
+                    color: readableColors.iconSecondary,
                   ),
                 ],
               ),
             ),
           ),
           if (_expanded) ...[
-            const Divider(
-              height: 1,
-              color: Color.fromRGBO(255, 255, 255, 0.08),
-            ),
+            Divider(height: 1, color: readableColors.divider),
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -134,7 +133,9 @@ class _PinnedPostsSectionState extends State<PinnedPostsSection> {
                         );
                       },
                       child: Text(
-                        AppLocalizations.of(context)!.pinned_see_all(widget.posts.length),
+                        AppLocalizations.of(
+                          context,
+                        )!.pinned_see_all(widget.posts.length),
                         style: const TextStyle(
                           color: Color(0xFF8FD6B5),
                           fontSize: 13,
@@ -190,14 +191,15 @@ class _PinnedPostCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final isAuthor = viewerPeerId != null && viewerPeerId == post.authorPeerId;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F141B),
+        color: readableColors.surfaceSubtle,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
+        border: Border.all(color: readableColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -212,8 +214,8 @@ class _PinnedPostCard extends StatelessWidget {
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
                     post.authorUsername,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: readableColors.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                     ),
@@ -226,8 +228,8 @@ class _PinnedPostCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               post.text,
-              style: const TextStyle(
-                color: Colors.white70,
+              style: TextStyle(
+                color: readableColors.textSecondary,
                 fontSize: 14,
                 height: 1.4,
               ),
@@ -246,7 +248,11 @@ class _PinnedPostCard extends StatelessWidget {
               if (!isAuthor && onMessage != null)
                 TextButton(
                   onPressed: () => onMessage!(post),
-                  child: Text(AppLocalizations.of(context)!.pinned_message(post.authorUsername)),
+                  child: Text(
+                    AppLocalizations.of(
+                      context,
+                    )!.pinned_message(post.authorUsername),
+                  ),
                 ),
               if (isAuthor && onEdit != null)
                 TextButton(
@@ -280,6 +286,7 @@ class _PinnedAvatarStack extends StatelessWidget {
     final authorPosts = authorsByPeerId.values.toList(growable: false);
     final visibleAuthors = authorPosts.take(6).toList(growable: false);
     final overflowCount = authorPosts.length - visibleAuthors.length;
+    final readableColors = context.backgroundReadableColors;
     return SizedBox(
       width: 28.0 * visibleAuthors.length + (overflowCount > 0 ? 30 : 0),
       height: 28,
@@ -297,14 +304,14 @@ class _PinnedAvatarStack extends StatelessWidget {
                 width: 28,
                 height: 28,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF263341),
+                  color: readableColors.disabledSurface,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 alignment: Alignment.center,
                 child: Text(
                   '+$overflowCount',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: readableColors.textPrimary,
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -324,14 +331,16 @@ class _AvatarBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       width: 28,
       height: 28,
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F141B),
+        color: readableColors.surfaceBase,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFF151922), width: 2),
+        border: Border.all(color: readableColors.border, width: 2),
       ),
       child: ClipOval(
         child: UserAvatar(
@@ -365,12 +374,14 @@ class _PinnedPostsSeeAllPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1016),
+      backgroundColor: context.backgroundReadableColors.surfaceBase,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        foregroundColor: Colors.white,
+        foregroundColor: context.backgroundReadableColors.textPrimary,
         title: Text(
-          posts.length == 1 ? AppLocalizations.of(context)!.pinned_count_1 : AppLocalizations.of(context)!.pinned_count_n(posts.length),
+          posts.length == 1
+              ? AppLocalizations.of(context)!.pinned_count_1
+              : AppLocalizations.of(context)!.pinned_count_n(posts.length),
         ),
       ),
       body: ListView.separated(

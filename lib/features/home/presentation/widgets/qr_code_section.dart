@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -16,6 +17,7 @@ class QRCodeSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     // Calculate responsive QR size based on both width and height.
     final screenWidth = MediaQuery.of(context).size.width;
     final t = scaleFactor;
@@ -33,7 +35,7 @@ class QRCodeSection extends StatelessWidget {
         Text(
           AppLocalizations.of(context)!.qr_show_desc,
           style: TextStyle(
-            color: AppColors.textMuted,
+            color: readableColors.textSecondary,
             fontSize: textSize,
           ),
           textAlign: TextAlign.center,
@@ -85,7 +87,7 @@ class QRCodeSection extends StatelessWidget {
             padding: const EdgeInsets.only(top: 8),
             child: Text(
               AppLocalizations.of(context)!.qr_copy_hint,
-              style: const TextStyle(color: Colors.white38, fontSize: 10),
+              style: TextStyle(color: readableColors.textMuted, fontSize: 10),
             ),
           ),
       ],
@@ -104,11 +106,7 @@ class QRCodeSection extends StatelessWidget {
   }
 
   Widget _buildLoadingShimmer(double size) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: const _PulsingShimmer(),
-    );
+    return SizedBox(width: size, height: size, child: const _PulsingShimmer());
   }
 }
 
@@ -145,13 +143,15 @@ class _PulsingShimmerState extends State<_PulsingShimmer>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return FadeTransition(
       opacity: _opacity,
       child: Container(
         key: const ValueKey('qr-loading-shimmer'),
         margin: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.grey,
+          color: readableColors.disabledSurface,
           borderRadius: BorderRadius.circular(12),
         ),
       ),

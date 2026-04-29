@@ -19,6 +19,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Wired widget that loads contacts, filters out existing members,
 /// provides multi-select toggling, and batch-invites all selected contacts.
@@ -79,6 +80,7 @@ class ContactPickerWired extends StatefulWidget {
   final IdentityRepository identityRepo;
   final P2PService p2pService;
   final GroupMessageRepository? msgRepo;
+  final BackgroundPreference backgroundPreference;
 
   const ContactPickerWired({
     super.key,
@@ -89,6 +91,7 @@ class ContactPickerWired extends StatefulWidget {
     required this.identityRepo,
     required this.p2pService,
     this.msgRepo,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -372,6 +375,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       selectedPeerIds: _selectedPeerIds,
       onConfirm: _selectedPeerIds.isNotEmpty ? _inviteSelected : null,
       onBack: _onBack,
+      backgroundPreference: widget.backgroundPreference,
     );
   }
 }

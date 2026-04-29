@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
@@ -167,6 +168,12 @@ class _InlineReplyInputState extends State<InlineReplyInput>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final actionColor = isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF1DB954);
+
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {}, // absorb taps
@@ -181,17 +188,23 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                   width: 36,
                   height: 36,
                   decoration: BoxDecoration(
-                    color: const Color.fromRGBO(255, 255, 255, 0.08),
+                    color: isLightSurface
+                        ? readableColors.surfaceSubtle.withValues(alpha: 0.86)
+                        : const Color.fromRGBO(255, 255, 255, 0.08),
                     borderRadius: BorderRadius.circular(100),
                     border: Border.all(
-                      color: const Color.fromRGBO(255, 255, 255, 0.15),
+                      color: isLightSurface
+                          ? readableColors.border.withValues(alpha: 0.18)
+                          : const Color.fromRGBO(255, 255, 255, 0.15),
                     ),
                   ),
-                  child: const Center(
+                  child: Center(
                     child: Icon(
                       Icons.add_rounded,
                       size: 20,
-                      color: Color.fromRGBO(255, 255, 255, 0.5),
+                      color: isLightSurface
+                          ? readableColors.iconSecondary
+                          : const Color.fromRGBO(255, 255, 255, 0.5),
                     ),
                   ),
                 ),
@@ -208,33 +221,67 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                   : AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       decoration: BoxDecoration(
-                        color: const Color.fromRGBO(255, 255, 255, 0.06),
+                        color: isLightSurface
+                            ? (_hasFocus
+                                  ? readableColors.inputFill
+                                  : readableColors.surfaceBase.withValues(
+                                      alpha: 0.78,
+                                    ))
+                            : const Color.fromRGBO(255, 255, 255, 0.06),
                         borderRadius: BorderRadius.circular(22),
                         border: Border.all(
-                          color: _hasFocus
-                              ? const Color.fromRGBO(255, 255, 255, 0.20)
-                              : const Color.fromRGBO(255, 255, 255, 0.10),
+                          color: isLightSurface
+                              ? (_hasFocus
+                                    ? const Color(
+                                        0xFF0F8F87,
+                                      ).withValues(alpha: 0.34)
+                                    : readableColors.border.withValues(
+                                        alpha: 0.14,
+                                      ))
+                              : (_hasFocus
+                                    ? const Color.fromRGBO(255, 255, 255, 0.20)
+                                    : const Color.fromRGBO(
+                                        255,
+                                        255,
+                                        255,
+                                        0.10,
+                                      )),
                         ),
-                        boxShadow: _hasFocus
-                            ? const [
+                        boxShadow: isLightSurface
+                            ? [
                                 BoxShadow(
-                                  color: Color.fromRGBO(255, 255, 255, 0.08),
-                                  blurRadius: 0,
-                                  spreadRadius: 1,
-                                ),
-                                BoxShadow(
-                                  color: Color.fromRGBO(0, 0, 0, 0.3),
-                                  blurRadius: 20,
-                                  offset: Offset(0, 4),
+                                  color: readableColors.textPrimary.withValues(
+                                    alpha: _hasFocus ? 0.08 : 0.04,
+                                  ),
+                                  blurRadius: _hasFocus ? 14 : 8,
+                                  offset: const Offset(0, 4),
                                 ),
                               ]
-                            : [
-                                const BoxShadow(
-                                  color: Color.fromRGBO(0, 0, 0, 0.24),
-                                  blurRadius: 12,
-                                  offset: Offset(0, 6),
-                                ),
-                              ],
+                            : (_hasFocus
+                                  ? const [
+                                      BoxShadow(
+                                        color: Color.fromRGBO(
+                                          255,
+                                          255,
+                                          255,
+                                          0.08,
+                                        ),
+                                        blurRadius: 0,
+                                        spreadRadius: 1,
+                                      ),
+                                      BoxShadow(
+                                        color: Color.fromRGBO(0, 0, 0, 0.3),
+                                        blurRadius: 20,
+                                        offset: Offset(0, 4),
+                                      ),
+                                    ]
+                                  : [
+                                      const BoxShadow(
+                                        color: Color.fromRGBO(0, 0, 0, 0.24),
+                                        blurRadius: 12,
+                                        offset: Offset(0, 6),
+                                      ),
+                                    ]),
                       ),
                       child: TextField(
                         controller: _controller,
@@ -243,9 +290,11 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                         enabled: widget.enabled && !_isRecording,
                         maxLines: 1,
                         maxLength: maxMessageLength,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
-                          color: Color.fromRGBO(255, 255, 255, 0.95),
+                          color: isLightSurface
+                              ? readableColors.textPrimary
+                              : const Color.fromRGBO(255, 255, 255, 0.95),
                           height: 1.5,
                         ),
                         textAlignVertical: TextAlignVertical.center,
@@ -253,12 +302,16 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                           hintText: widget.hintText,
                           hintStyle: TextStyle(
                             fontSize: 15,
-                            color: Color.fromRGBO(
-                              255,
-                              255,
-                              255,
-                              _hasFocus ? 0.2 : 0.3,
-                            ),
+                            color: isLightSurface
+                                ? readableColors.placeholderText.withValues(
+                                    alpha: _hasFocus ? 0.55 : 0.75,
+                                  )
+                                : Color.fromRGBO(
+                                    255,
+                                    255,
+                                    255,
+                                    _hasFocus ? 0.2 : 0.3,
+                                  ),
                           ),
                           border: InputBorder.none,
                           counterText: '',
@@ -290,17 +343,21 @@ class _InlineReplyInputState extends State<InlineReplyInput>
                       width: 36,
                       height: 36,
                       decoration: BoxDecoration(
-                        color: const Color.fromRGBO(29, 185, 84, 0.15),
+                        color: isLightSurface
+                            ? const Color(0xFFE6F6EC)
+                            : const Color.fromRGBO(29, 185, 84, 0.15),
                         borderRadius: BorderRadius.circular(100),
                         border: Border.all(
-                          color: const Color.fromRGBO(29, 185, 84, 0.3),
+                          color: isLightSurface
+                              ? const Color(0xFF2DB65F).withValues(alpha: 0.32)
+                              : const Color.fromRGBO(29, 185, 84, 0.3),
                         ),
                       ),
-                      child: const Center(
+                      child: Center(
                         child: Icon(
                           Icons.arrow_upward_rounded,
                           size: 20,
-                          color: Color(0xFF1DB954),
+                          color: actionColor,
                         ),
                       ),
                     ),

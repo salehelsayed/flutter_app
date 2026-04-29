@@ -20,7 +20,9 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
@@ -183,6 +185,54 @@ class _FakeP2PService implements P2PService {
   void dispose() {}
 }
 
+class _CountingP2PService extends _FakeP2PService {
+  var startNodeCalls = 0;
+  var startNodeCoreCalls = 0;
+  var warmBackgroundCalls = 0;
+  var stopNodeCalls = 0;
+  var reinitializeCalls = 0;
+  var dialPeerCalls = 0;
+
+  @override
+  Future<bool> startNode(String privateKeyBase64, String peerId) async {
+    startNodeCalls++;
+    return super.startNode(privateKeyBase64, peerId);
+  }
+
+  @override
+  Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
+    startNodeCoreCalls++;
+    return super.startNodeCore(privateKeyBase64, peerId);
+  }
+
+  @override
+  Future<void> warmBackground() async {
+    warmBackgroundCalls++;
+    return super.warmBackground();
+  }
+
+  @override
+  Future<bool> stopNode() async {
+    stopNodeCalls++;
+    return super.stopNode();
+  }
+
+  @override
+  Future<void> reinitialize() async {
+    reinitializeCalls++;
+  }
+
+  @override
+  Future<bool> dialPeer(
+    String peerId, {
+    List<String>? addresses,
+    int? timeoutMs,
+  }) async {
+    dialPeerCalls++;
+    return super.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
+  }
+}
+
 class _FailingWriteSecureKeyStore extends FakeSecureKeyStore {
   @override
   Future<void> write(String key, String value) async {
@@ -213,7 +263,12 @@ void main() {
     SecureKeyStore? secureKeyStore,
     InMemoryIntroductionRepository? introductionRepository,
     InMemoryPostsPrivacySettingsRepository? postsPrivacySettingsRepository,
+    AppShellController? appShellController,
   }) async {
+    final shellController = appShellController ?? AppShellController();
+    if (appShellController == null) {
+      addTearDown(shellController.dispose);
+    }
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
@@ -226,7 +281,7 @@ void main() {
           p2pService: p2pService ?? _FakeP2PService(),
           secureKeyStore: secureKeyStore ?? FakeSecureKeyStore(),
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
-          appShellController: AppShellController(),
+          appShellController: shellController,
           introductionRepository: introductionRepository,
           postsPrivacySettingsRepository:
               postsPrivacySettingsRepository ??
@@ -494,13 +549,25 @@ void main() {
   testWidgets('loads and persists cosmic background selection', (tester) async {
     final identityRepo = FakeIdentityRepository(makeIdentity());
     final store = FakeSecureKeyStore();
+    final appShellController = AppShellController();
+    addTearDown(appShellController.dispose);
     await store.write('background_preference', 'cosmic');
 
-    await pumpScreen(tester, identityRepo: identityRepo, secureKeyStore: store);
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      secureKeyStore: store,
+      appShellController: appShellController,
+    );
 
     expect(
       find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
       findsOneWidget,
+    );
+    expect(find.byType(CosmicBackground), findsOneWidget);
+    expect(
+      appShellController.backgroundPreference,
+      BackgroundPreference.cosmic,
     );
 
     await tester.ensureVisible(
@@ -510,15 +577,59 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(await store.read('background_preference'), 'default');
+    expect(find.byType(CosmicBackground), findsNothing);
+    expect(
+      appShellController.backgroundPreference,
+      BackgroundPreference.defaultBackground,
+    );
 
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('background-choice-cosmic')),
+    );
     await tester.tap(find.byKey(const ValueKey('background-choice-cosmic')));
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(await store.read('background_preference'), 'cosmic');
+    expect(find.byType(CosmicBackground), findsOneWidget);
+    expect(
+      appShellController.backgroundPreference,
+      BackgroundPreference.cosmic,
+    );
     expect(
       find.byKey(const ValueKey('background-choice-cosmic-selected-icon')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('background selection does not restart p2p service', (
+    tester,
+  ) async {
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    final store = FakeSecureKeyStore();
+    final p2pService = _CountingP2PService();
+
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      secureKeyStore: store,
+      p2pService: p2pService,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('background-choice-daylight-lagoon')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('background-choice-daylight-lagoon')),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(await store.read('background_preference'), 'daylight_lagoon');
+    expect(p2pService.startNodeCalls, 0);
+    expect(p2pService.startNodeCoreCalls, 0);
+    expect(p2pService.warmBackgroundCalls, 0);
+    expect(p2pService.stopNodeCalls, 0);
+    expect(p2pService.reinitializeCalls, 0);
+    expect(p2pService.dialPeerCalls, 0);
   });
 
   testWidgets('emits non-sensitive cosmic background success telemetry', (
@@ -580,6 +691,8 @@ void main() {
     (tester) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final store = _FailingWriteSecureKeyStore();
+      final appShellController = AppShellController();
+      addTearDown(appShellController.dispose);
       final events = <Map<String, dynamic>>[];
       debugSetFlowEventSink(events.add);
       addTearDown(() => debugSetFlowEventSink(null));
@@ -588,6 +701,7 @@ void main() {
         tester,
         identityRepo: identityRepo,
         secureKeyStore: store,
+        appShellController: appShellController,
       );
 
       await tester.ensureVisible(
@@ -597,6 +711,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
 
       expect(await store.read('background_preference'), isNull);
+      expect(find.byType(CosmicBackground), findsNothing);
+      expect(
+        appShellController.backgroundPreference,
+        BackgroundPreference.defaultBackground,
+      );
       expect(find.text('Background choice could not be saved'), findsWidgets);
       expect(
         events,

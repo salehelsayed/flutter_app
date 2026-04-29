@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/full_emoji_picker.dart';
+
+import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   group('FullEmojiPicker', () {
@@ -91,6 +94,36 @@ void main() {
 
       // Should see animal emojis
       expect(find.text('🐶'), findsOneWidget);
+    });
+
+    testWidgets('category labels stay readable on light background sheets', (
+      tester,
+    ) async {
+      const colors = BackgroundReadableColors.representativeLight;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(extensions: const <ThemeExtension<dynamic>>[colors]),
+          home: Builder(
+            builder: (context) {
+              return Scaffold(
+                body: ElevatedButton(
+                  onPressed: () => showFullEmojiPicker(context),
+                  child: const Text('Open'),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      final smileys = tester.widget<Text>(find.text('Smileys'));
+      final people = tester.widget<Text>(find.text('People'));
+
+      expectTextContrast(smileys.style!.color!, colors.surfaceBase);
+      expectTextContrast(people.style!.color!, colors.surfaceBase);
     });
   });
 }

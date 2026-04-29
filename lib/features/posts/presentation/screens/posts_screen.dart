@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_repost_visual_state.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/pinned_posts_section.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 class PostsScreen extends StatelessWidget {
   final String username;
@@ -29,6 +31,7 @@ class PostsScreen extends StatelessWidget {
   final String? focusedPostId;
   final String? statusMessage;
   final Set<String> activePinnedPostIds;
+  final BackgroundPreference backgroundPreference;
 
   const PostsScreen({
     super.key,
@@ -52,6 +55,7 @@ class PostsScreen extends StatelessWidget {
     this.focusedPostId,
     this.statusMessage,
     this.activePinnedPostIds = const <String>{},
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -60,141 +64,161 @@ class PostsScreen extends StatelessWidget {
     final grouped = _groupPosts(posts);
 
     return AmbientBackground(
-      child: Material(
-        type: MaterialType.transparency,
-        child: Stack(
-          children: [
-            SafeArea(
-              bottom: false,
-              child: CustomScrollView(
-                controller: scrollController,
-                physics: const BouncingScrollPhysics(),
-                slivers: [
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-                    sliver: SliverToBoxAdapter(
-                      child: _PostsHeader(
-                        username: username,
-                        onCompose: onCompose,
-                      ),
-                    ),
-                  ),
-                  if (statusMessage != null)
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      sliver: SliverToBoxAdapter(
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1A2630),
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: Text(
-                            statusMessage!,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (pinnedPosts.isNotEmpty)
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                      sliver: SliverToBoxAdapter(
-                        child: PinnedPostsSection(
-                          posts: pinnedPosts,
-                          viewerPeerId: viewerPeerId,
-                          onDismiss: onDismissPin,
-                          onMessage: onMessageFromPin,
-                          onEdit: onEditPinnedPost,
-                          onRemove: onRemovePin,
-                        ),
-                      ),
-                    ),
-                  if (posts.isEmpty && pinnedPosts.isEmpty)
-                    SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: _EmptyState(onCompose: onCompose),
-                    )
-                  else if (posts.isNotEmpty)
-                    for (final section in grouped.entries) ...[
+      preference: backgroundPreference,
+      child: Builder(
+        builder: (context) {
+          final readableColors = context.backgroundReadableColors;
+
+          return Material(
+            type: MaterialType.transparency,
+            child: Stack(
+              children: [
+                SafeArea(
+                  bottom: false,
+                  child: CustomScrollView(
+                    controller: scrollController,
+                    physics: const BouncingScrollPhysics(),
+                    slivers: [
                       SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+                        padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
                         sliver: SliverToBoxAdapter(
-                          child: Text(
-                            _translateGroupKey(section.key, context),
-                            style: const TextStyle(
-                              color: Color.fromRGBO(255, 255, 255, 0.6),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          child: _PostsHeader(
+                            username: username,
+                            onCompose: onCompose,
                           ),
                         ),
                       ),
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate((context, index) {
-                          final post = section.value[index];
-                          return PostCard(
-                            key:
-                                postKeys[post.id] ??
-                                ValueKey<String>('post-${post.id}'),
-                            post: post,
-                            onOpenComments: onOpenComments == null
-                                ? null
-                                : () => onOpenComments!(post),
-                            onToggleHeart: onToggleHeart == null
-                                ? null
-                                : () => onToggleHeart!(post),
-                            onPassAlong: onPassAlong == null
-                                ? null
-                                : () => onPassAlong!(post),
-                            onPinPost:
-                                onPinPost != null &&
-                                    viewerPeerId != null &&
-                                    post.authorPeerId == viewerPeerId &&
-                                    !activePinnedPostIds.contains(post.id)
-                                ? () => onPinPost!(post)
-                                : null,
-                            viewerPeerId: viewerPeerId,
-                            repostVisualState: resolvePostRepostVisualState(
-                              post,
-                              viewerPeerId: viewerPeerId,
+                      if (statusMessage != null)
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          sliver: SliverToBoxAdapter(
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: readableColors.surfaceRaised,
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(
+                                  color: readableColors.border,
+                                ),
+                              ),
+                              child: Text(
+                                statusMessage!,
+                                style: TextStyle(
+                                  color: readableColors.textPrimary,
+                                ),
+                              ),
                             ),
-                            isFocused:
-                                post.id == focusedPostId || post.isFocused,
-                          );
-                        }, childCount: section.value.length),
+                          ),
+                        ),
+                      if (pinnedPosts.isNotEmpty)
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                          sliver: SliverToBoxAdapter(
+                            child: PinnedPostsSection(
+                              posts: pinnedPosts,
+                              viewerPeerId: viewerPeerId,
+                              onDismiss: onDismissPin,
+                              onMessage: onMessageFromPin,
+                              onEdit: onEditPinnedPost,
+                              onRemove: onRemovePin,
+                            ),
+                          ),
+                        ),
+                      if (posts.isEmpty && pinnedPosts.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: _EmptyState(onCompose: onCompose),
+                        )
+                      else if (posts.isNotEmpty)
+                        for (final section in grouped.entries) ...[
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+                            sliver: SliverToBoxAdapter(
+                              child: Text(
+                                _translateGroupKey(section.key, context),
+                                style: TextStyle(
+                                  color: readableColors.textMuted,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                          SliverList(
+                            delegate: SliverChildBuilderDelegate((
+                              context,
+                              index,
+                            ) {
+                              final post = section.value[index];
+                              return PostCard(
+                                key:
+                                    postKeys[post.id] ??
+                                    ValueKey<String>('post-${post.id}'),
+                                post: post,
+                                onOpenComments: onOpenComments == null
+                                    ? null
+                                    : () => onOpenComments!(post),
+                                onToggleHeart: onToggleHeart == null
+                                    ? null
+                                    : () => onToggleHeart!(post),
+                                onPassAlong: onPassAlong == null
+                                    ? null
+                                    : () => onPassAlong!(post),
+                                onPinPost:
+                                    onPinPost != null &&
+                                        viewerPeerId != null &&
+                                        post.authorPeerId == viewerPeerId &&
+                                        !activePinnedPostIds.contains(post.id)
+                                    ? () => onPinPost!(post)
+                                    : null,
+                                viewerPeerId: viewerPeerId,
+                                repostVisualState: resolvePostRepostVisualState(
+                                  post,
+                                  viewerPeerId: viewerPeerId,
+                                ),
+                                isFocused:
+                                    post.id == focusedPostId || post.isFocused,
+                              );
+                            }, childCount: section.value.length),
+                          ),
+                        ],
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            20,
+                            8,
+                            20,
+                            88 + bottomInset,
+                          ),
+                          child: Text(
+                            AppLocalizations.of(context)!.posts_caught_up,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: readableColors.textMuted,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
                       ),
                     ],
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: EdgeInsets.fromLTRB(20, 8, 20, 88 + bottomInset),
-                      child: Text(
-                        AppLocalizations.of(context)!.posts_caught_up,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color.fromRGBO(255, 255, 255, 0.45),
-                          fontSize: 13,
-                        ),
-                      ),
+                  ),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: bottomInset - 14,
+                  child: Center(
+                    child: FeedNavigationBar(
+                      activeTab: activeTab,
+                      onSwitchView: onSwitchView,
                     ),
                   ),
-                ],
-              ),
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: bottomInset - 14,
-              child: Center(
-                child: FeedNavigationBar(
-                  activeTab: activeTab,
-                  onSwitchView: onSwitchView,
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -251,23 +275,22 @@ class _PostsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           AppLocalizations.of(context)!.posts_title,
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-            color: Colors.white,
+            color: readableColors.textPrimary,
             fontWeight: FontWeight.w700,
           ),
         ),
         const SizedBox(height: 6),
         Text(
           AppLocalizations.of(context)!.posts_header_subtitle(username),
-          style: const TextStyle(
-            color: Color.fromRGBO(255, 255, 255, 0.6),
-            fontSize: 14,
-          ),
+          style: TextStyle(color: readableColors.textMuted, fontSize: 14),
         ),
         const SizedBox(height: 18),
         InkWell(
@@ -276,23 +299,24 @@ class _PostsHeader extends StatelessWidget {
           child: Ink(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: const Color(0xFF151922),
+              color: readableColors.surfaceRaised,
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: const Color.fromRGBO(255, 255, 255, 0.08),
-              ),
+              border: Border.all(color: readableColors.border),
             ),
             child: Row(
               children: [
-                const Icon(Icons.edit_outlined, color: Colors.white70),
+                Icon(Icons.edit_outlined, color: readableColors.iconSecondary),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     AppLocalizations.of(context)!.posts_compose_button,
-                    style: const TextStyle(color: Colors.white70, fontSize: 15),
+                    style: TextStyle(
+                      color: readableColors.textSecondary,
+                      fontSize: 15,
+                    ),
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: Colors.white38),
+                Icon(Icons.chevron_right, color: readableColors.iconMuted),
               ],
             ),
           ),
@@ -309,6 +333,8 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -317,8 +343,8 @@ class _EmptyState extends StatelessWidget {
           children: [
             Text(
               AppLocalizations.of(context)!.posts_empty_title,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: readableColors.textPrimary,
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
               ),
@@ -327,10 +353,7 @@ class _EmptyState extends StatelessWidget {
             Text(
               AppLocalizations.of(context)!.posts_empty_desc,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Color.fromRGBO(255, 255, 255, 0.6),
-                fontSize: 14,
-              ),
+              style: TextStyle(color: readableColors.textMuted, fontSize: 14),
             ),
             const SizedBox(height: 18),
             ElevatedButton(

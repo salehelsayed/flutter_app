@@ -46,9 +46,7 @@ class _ConfirmationDialog extends StatelessWidget {
           onTap: () => Navigator.of(context).pop(false),
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-            child: Container(
-              color: const Color(0x9E05080E),
-            ),
+            child: Container(color: const Color(0x9E05080E)),
           ),
         ),
 
@@ -109,10 +107,18 @@ class _ConfirmationDialog extends StatelessWidget {
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(10),
                                 color: const Color.fromRGBO(
-                                  255, 255, 255, 0.07),
+                                  255,
+                                  255,
+                                  255,
+                                  0.07,
+                                ),
                                 border: Border.all(
                                   color: const Color.fromRGBO(
-                                    255, 255, 255, 0.16),
+                                    255,
+                                    255,
+                                    255,
+                                    0.16,
+                                  ),
                                 ),
                               ),
                               child: const Center(
@@ -121,8 +127,7 @@ class _ConfirmationDialog extends StatelessWidget {
                                   style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
-                                    color: Color.fromRGBO(
-                                      255, 255, 255, 0.7),
+                                    color: Color.fromRGBO(255, 255, 255, 0.7),
                                   ),
                                 ),
                               ),
@@ -142,8 +147,8 @@ class _ConfirmationDialog extends StatelessWidget {
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
                                   colors: [
-                                    Color(0xFFEF4444),
-                                    Color(0xFFDC2626),
+                                    Color(0xFFB91C1C),
+                                    Color(0xFF991B1B),
                                   ],
                                 ),
                               ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
@@ -7,6 +8,7 @@ import 'package:flutter_app/features/groups/presentation/group_backlog_retention
 import 'package:flutter_app/features/groups/presentation/widgets/group_card.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Pure UI screen displaying a list of groups.
 ///
@@ -23,6 +25,7 @@ class GroupListScreen extends StatelessWidget {
   final ValueChanged<PendingGroupInvite>? onAcceptPendingInvite;
   final ValueChanged<PendingGroupInvite>? onDeclinePendingInvite;
   final VoidCallback onBack;
+  final BackgroundPreference backgroundPreference;
 
   const GroupListScreen({
     super.key,
@@ -36,48 +39,56 @@ class GroupListScreen extends StatelessWidget {
     this.onAcceptPendingInvite,
     this.onDeclinePendingInvite,
     required this.onBack,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
   Widget build(BuildContext context) {
     return AmbientBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: Column(
-            children: [
-              _buildHeader(context),
-              Expanded(
-                child: groups.isNotEmpty || pendingInvites.isNotEmpty
-                    ? _buildContent()
-                    : isLoading
-                    ? _buildLoadingState()
-                    : _buildEmptyState(),
+      preference: backgroundPreference,
+      child: Builder(
+        builder: (context) {
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: Column(
+                children: [
+                  _buildHeader(context),
+                  Expanded(
+                    child: groups.isNotEmpty || pendingInvites.isNotEmpty
+                        ? _buildContent(context)
+                        : isLoading
+                        ? _buildLoadingState(context)
+                        : _buildEmptyState(context),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
   Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
       child: Row(
         children: [
           IconButton(
             icon: const Icon(Icons.arrow_back_ios_new, size: 20),
-            color: Colors.white,
+            color: readableColors.iconPrimary,
             onPressed: onBack,
           ),
           const SizedBox(width: 4),
-          const Text(
+          Text(
             'Groups',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: readableColors.textPrimary,
             ),
           ),
         ],
@@ -85,30 +96,25 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.group_outlined,
-            size: 64,
-            color: Colors.white.withOpacity(0.2),
-          ),
+          Icon(Icons.group_outlined, size: 64, color: readableColors.iconMuted),
           const SizedBox(height: 16),
           Text(
             'No groups yet',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.white.withOpacity(0.4),
-            ),
+            style: TextStyle(fontSize: 16, color: readableColors.textMuted),
           ),
           const SizedBox(height: 8),
           Text(
             'Create a group to get started',
             style: TextStyle(
               fontSize: 13,
-              color: Colors.white.withOpacity(0.25),
+              color: readableColors.disabledForeground,
             ),
           ),
         ],
@@ -116,13 +122,13 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildContent() {
+  Widget _buildContent(BuildContext context) {
     return ListView(
       physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         if (pendingInvites.isNotEmpty) ...[
-          _buildSectionLabel('Pending Invites'),
+          _buildSectionLabel(context, 'Pending Invites'),
           const SizedBox(height: 12),
           ...pendingInvites.map(
             (invite) => Padding(
@@ -143,7 +149,7 @@ class GroupListScreen extends StatelessWidget {
         ],
         if (groups.isNotEmpty) ...[
           if (pendingInvites.isNotEmpty) ...[
-            _buildSectionLabel('Joined Groups'),
+            _buildSectionLabel(context, 'Joined Groups'),
             const SizedBox(height: 12),
           ],
           ...groups.map(
@@ -153,7 +159,7 @@ class GroupListScreen extends StatelessWidget {
             ),
           ),
         ] else if (pendingInvites.isNotEmpty) ...[
-          _buildNoJoinedGroupsCard(),
+          _buildNoJoinedGroupsCard(context),
         ],
       ],
     );
@@ -177,57 +183,63 @@ class GroupListScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildSectionLabel(String label) {
+  Widget _buildSectionLabel(BuildContext context, String label) {
+    final readableColors = context.backgroundReadableColors;
+
     return Text(
       label,
       style: TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w700,
-        color: Colors.white.withOpacity(0.5),
+        color: readableColors.textMuted,
         letterSpacing: 0.8,
       ),
     );
   }
 
-  Widget _buildNoJoinedGroupsCard() {
+  Widget _buildNoJoinedGroupsCard(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0x10FFFFFF),
+        color: readableColors.surfaceRaised,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0x16FFFFFF)),
+        border: Border.all(color: readableColors.divider),
       ),
       child: Text(
         'No joined groups yet. Accept an invite to add it here.',
         style: TextStyle(
           fontSize: 13,
-          color: Colors.white.withOpacity(0.5),
+          color: readableColors.textSecondary,
           height: 1.35,
         ),
       ),
     );
   }
 
-  Widget _buildLoadingState() {
+  Widget _buildLoadingState(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: const [
+      children: [
         Center(
           child: SizedBox(
             width: 24,
             height: 24,
             child: CircularProgressIndicator(
               strokeWidth: 2,
-              color: Colors.white54,
+              color: readableColors.iconMuted,
             ),
           ),
         ),
-        SizedBox(height: 20),
-        _GroupLoadingRow(index: 0),
-        SizedBox(height: 12),
-        _GroupLoadingRow(index: 1),
-        SizedBox(height: 12),
-        _GroupLoadingRow(index: 2),
+        const SizedBox(height: 20),
+        const _GroupLoadingRow(index: 0),
+        const SizedBox(height: 12),
+        const _GroupLoadingRow(index: 1),
+        const SizedBox(height: 12),
+        const _GroupLoadingRow(index: 2),
       ],
     );
   }
@@ -250,13 +262,15 @@ class _GroupLoadingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       key: ValueKey('group-loading-row-$index'),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: const Color(0x14FFFFFF),
+        color: readableColors.surfaceRaised,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0x1FFFFFFF)),
+        border: Border.all(color: readableColors.divider),
       ),
       child: Row(
         children: const [
@@ -274,11 +288,13 @@ class _GroupLoadingAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Container(
       width: 48,
       height: 48,
       decoration: BoxDecoration(
-        color: const Color(0x12FFFFFF),
+        color: readableColors.surfaceSubtle,
         borderRadius: BorderRadius.circular(14),
       ),
     );
@@ -311,13 +327,15 @@ class _GroupLoadingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return FractionallySizedBox(
       widthFactor: widthFactor,
       alignment: Alignment.centerLeft,
       child: Container(
         height: height,
         decoration: BoxDecoration(
-          color: const Color(0x12FFFFFF),
+          color: readableColors.disabledSurface,
           borderRadius: BorderRadius.circular(height / 2),
         ),
       ),

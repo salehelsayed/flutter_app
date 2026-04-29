@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Bottom-docked search input panel that slides up from the bottom.
@@ -25,17 +26,14 @@ class OrbitSearchDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
     return Container(
       padding: EdgeInsets.only(bottom: bottomPadding),
-      decoration: const BoxDecoration(
-        color: Color(0xFA121216), // rgba(18,18,22,0.98)
-        border: Border(
-          top: BorderSide(
-            color: Color(0x14FFFFFF), // rgba(255,255,255,0.08)
-          ),
-        ),
+      decoration: BoxDecoration(
+        color: readableColors.glassSurface,
+        border: Border(top: BorderSide(color: readableColors.glassBorder)),
       ),
       child: SafeArea(
         top: false,
@@ -48,18 +46,16 @@ class OrbitSearchDock extends StatelessWidget {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14),
                   decoration: BoxDecoration(
-                    color: const Color(0x0FFFFFFF), // rgba(255,255,255,0.06)
+                    color: readableColors.inputFill,
                     borderRadius: BorderRadius.circular(24),
-                    border: Border.all(
-                      color: const Color(0x1AFFFFFF), // rgba(255,255,255,0.1)
-                    ),
+                    border: Border.all(color: readableColors.inputBorder),
                   ),
                   child: Row(
                     children: [
                       Icon(
                         Icons.search,
                         size: 18,
-                        color: Colors.white.withValues(alpha: 0.4),
+                        color: readableColors.iconMuted,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -67,15 +63,17 @@ class OrbitSearchDock extends StatelessWidget {
                           controller: controller,
                           focusNode: focusNode,
                           onChanged: onChanged,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 15,
-                            color: Colors.white,
+                            color: readableColors.textPrimary,
                           ),
                           decoration: InputDecoration(
-                            hintText: AppLocalizations.of(context)!.orbit_search,
+                            hintText: AppLocalizations.of(
+                              context,
+                            )!.orbit_search,
                             hintStyle: TextStyle(
                               fontSize: 15,
-                              color: Colors.white.withValues(alpha: 0.3),
+                              color: readableColors.placeholderText,
                             ),
                             border: InputBorder.none,
                             contentPadding: const EdgeInsets.symmetric(
@@ -93,12 +91,12 @@ class OrbitSearchDock extends StatelessWidget {
                             height: 28,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: Colors.white.withValues(alpha: 0.1),
+                              color: readableColors.disabledSurface,
                             ),
                             child: Icon(
                               Icons.close,
                               size: 16,
-                              color: Colors.white.withValues(alpha: 0.5),
+                              color: readableColors.iconMuted,
                             ),
                           ),
                         ),
@@ -117,15 +115,13 @@ class OrbitSearchDock extends StatelessWidget {
                   height: 38,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: const Color(0xE61E1E23), // rgba(30,30,35,0.9)
-                    border: Border.all(
-                      color: const Color(0x24FFFFFF), // rgba(255,255,255,0.14)
-                    ),
+                    color: readableColors.surfaceRaised,
+                    border: Border.all(color: readableColors.border),
                   ),
                   child: Icon(
                     Icons.close,
                     size: 15,
-                    color: Colors.white.withValues(alpha: 0.72),
+                    color: readableColors.iconSecondary,
                   ),
                 ),
               ),

@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Pure UI screen for picking one or more share targets.
@@ -27,6 +29,7 @@ class ShareTargetPickerScreen extends StatefulWidget {
   final ValueChanged<GroupModel> onToggleGroup;
   final VoidCallback? onSend;
   final VoidCallback? onCancel;
+  final BackgroundPreference backgroundPreference;
 
   const ShareTargetPickerScreen({
     super.key,
@@ -43,6 +46,7 @@ class ShareTargetPickerScreen extends StatefulWidget {
     required this.onToggleGroup,
     this.onSend,
     this.onCancel,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -110,44 +114,53 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
   @override
   Widget build(BuildContext context) {
     return AmbientBackground(
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          child: Stack(
-            children: [
-              Column(
+      preference: widget.backgroundPreference,
+      child: Builder(
+        builder: (context) {
+          final readableColors = context.backgroundReadableColors;
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            body: SafeArea(
+              child: Stack(
                 children: [
-                  _buildHeader(),
-                  if (widget.sharedFilePaths.isNotEmpty ||
-                      (!_showsCaptionField && widget.sharedText != null))
-                    _buildPreviewStrip(),
-                  if (_showsCaptionField) _buildCaptionField(),
-                  _buildSearchField(),
-                  Expanded(child: _buildTargetList()),
-                  if (_selectionCount > 0) _buildSendButton(),
-                ],
-              ),
-              if (widget.isSending)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    ignoring: false,
-                    child: Container(
-                      color: Colors.black.withValues(alpha: 0.18),
-                      alignment: Alignment.center,
-                      child: const CircularProgressIndicator(
-                        color: Colors.white,
+                  Column(
+                    children: [
+                      _buildHeader(context),
+                      if (widget.sharedFilePaths.isNotEmpty ||
+                          (!_showsCaptionField && widget.sharedText != null))
+                        _buildPreviewStrip(context),
+                      if (_showsCaptionField) _buildCaptionField(context),
+                      _buildSearchField(context),
+                      Expanded(child: _buildTargetList(context)),
+                      if (_selectionCount > 0) _buildSendButton(context),
+                    ],
+                  ),
+                  if (widget.isSending)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        ignoring: false,
+                        child: Container(
+                          color: readableColors.overlayScrim.withValues(
+                            alpha: readableColors.isLightSurface ? 0.18 : 0.22,
+                          ),
+                          alignment: Alignment.center,
+                          child: CircularProgressIndicator(
+                            color: readableColors.iconPrimary,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
-            ],
-          ),
-        ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHeader(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final title = _selectionCount > 0
         ? 'Share with ($_selectionCount)'
         : 'Share with...';
@@ -158,7 +171,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
         children: [
           IconButton(
             icon: const Icon(Icons.close),
-            color: Colors.white,
+            color: readableColors.iconPrimary,
             onPressed: widget.isSending ? null : widget.onCancel,
           ),
           const SizedBox(width: 4),
@@ -168,8 +181,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
               style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
-              ),
+              ).copyWith(color: readableColors.textPrimary),
             ),
           ),
         ],
@@ -177,7 +189,8 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
     );
   }
 
-  Widget _buildPreviewStrip() {
+  Widget _buildPreviewStrip(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final previewPath = widget.sharedFilePaths.isEmpty
         ? null
         : widget.sharedFilePaths.first;
@@ -187,9 +200,9 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color.fromRGBO(255, 255, 255, 0.06),
+        color: readableColors.surfaceRaised,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
+        border: Border.all(color: readableColors.divider),
       ),
       child: Row(
         children: [
@@ -208,14 +221,20 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                         cacheHeight: isGifPreview ? null : 144,
                         filterQuality: FilterQuality.low,
                         errorBuilder: (context, error, stackTrace) => Container(
-                          color: const Color.fromRGBO(255, 255, 255, 0.1),
-                          child: const Icon(Icons.image, color: Colors.white38),
+                          color: readableColors.surfaceSubtle,
+                          child: Icon(
+                            Icons.image,
+                            color: readableColors.iconMuted,
+                          ),
                         ),
                       )
                     : Container(
                         key: const ValueKey('share-preview-placeholder'),
-                        color: const Color.fromRGBO(255, 255, 255, 0.1),
-                        child: const Icon(Icons.image, color: Colors.white38),
+                        color: readableColors.surfaceSubtle,
+                        child: Icon(
+                          Icons.image,
+                          color: readableColors.iconMuted,
+                        ),
                       ),
               ),
             ),
@@ -224,7 +243,10 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                 padding: const EdgeInsets.only(left: 8),
                 child: Text(
                   '+${widget.sharedFilePaths.length - 1}',
-                  style: const TextStyle(color: Colors.white54, fontSize: 13),
+                  style: TextStyle(
+                    color: readableColors.textMuted,
+                    fontSize: 13,
+                  ),
                 ),
               ),
             const SizedBox(width: 12),
@@ -236,7 +258,10 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 textDirection: detectTextDirection(widget.sharedText!),
-                style: const TextStyle(color: Colors.white70, fontSize: 13),
+                style: TextStyle(
+                  color: readableColors.textSecondary,
+                  fontSize: 13,
+                ),
               ),
             ),
         ],
@@ -244,7 +269,9 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
     );
   }
 
-  Widget _buildCaptionField() {
+  Widget _buildCaptionField(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
@@ -253,8 +280,8 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
           Text(
             _draftFieldLabel,
             key: const ValueKey('share-caption-label'),
-            style: const TextStyle(
-              color: Colors.white70,
+            style: TextStyle(
+              color: readableColors.textSecondary,
               fontSize: 12,
               fontWeight: FontWeight.w600,
               letterSpacing: 0.3,
@@ -267,12 +294,15 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
             enabled: !widget.isSending,
             minLines: 1,
             maxLines: 4,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
+            style: TextStyle(color: readableColors.textPrimary, fontSize: 14),
             decoration: InputDecoration(
               hintText: _draftFieldLabel,
-              hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
+              hintStyle: TextStyle(
+                color: readableColors.placeholderText,
+                fontSize: 14,
+              ),
               filled: true,
-              fillColor: const Color.fromRGBO(255, 255, 255, 0.06),
+              fillColor: readableColors.inputFill,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
@@ -288,20 +318,29 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
     );
   }
 
-  Widget _buildSearchField() {
+  Widget _buildSearchField(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: TextField(
         key: const ValueKey('share-search-field'),
         controller: _searchController,
         enabled: !widget.isSending,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: TextStyle(color: readableColors.textPrimary, fontSize: 14),
         decoration: InputDecoration(
           hintText: AppLocalizations.of(context)!.picker_search_all,
-          hintStyle: const TextStyle(color: Colors.white38, fontSize: 14),
-          prefixIcon: const Icon(Icons.search, color: Colors.white38, size: 20),
+          hintStyle: TextStyle(
+            color: readableColors.placeholderText,
+            fontSize: 14,
+          ),
+          prefixIcon: Icon(
+            Icons.search,
+            color: readableColors.iconMuted,
+            size: 20,
+          ),
           filled: true,
-          fillColor: const Color.fromRGBO(255, 255, 255, 0.06),
+          fillColor: readableColors.inputFill,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
@@ -315,14 +354,15 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
     );
   }
 
-  Widget _buildTargetList() {
+  Widget _buildTargetList(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final contacts = _filteredContacts;
     final groups = _filteredGroups;
 
     if (contacts.isEmpty && groups.isEmpty && widget.isLoading) {
-      return const Center(
+      return Center(
         child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.white54),
+          valueColor: AlwaysStoppedAnimation<Color>(readableColors.iconMuted),
         ),
       );
     }
@@ -333,7 +373,7 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
           _searchQuery.isEmpty
               ? 'No contacts or groups yet'
               : 'No matches found',
-          style: const TextStyle(color: Colors.white38, fontSize: 14),
+          style: TextStyle(color: readableColors.textMuted, fontSize: 14),
         ),
       );
     }
@@ -356,26 +396,28 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       itemBuilder: (context, index) {
         final entry = entries[index];
         if (entry is _SectionHeaderEntry) {
-          return _buildSectionHeader(entry.title);
+          return _buildSectionHeader(context, entry.title);
         }
         if (entry is _ContactEntry) {
-          return _buildContactRow(entry.contact);
+          return _buildContactRow(context, entry.contact);
         }
         if (entry is _GroupEntry) {
-          return _buildGroupRow(entry.group);
+          return _buildGroupRow(context, entry.group);
         }
         return const SizedBox.shrink();
       },
     );
   }
 
-  Widget _buildSectionHeader(String title) {
+  Widget _buildSectionHeader(BuildContext context, String title) {
+    final readableColors = context.backgroundReadableColors;
+
     return Padding(
       padding: const EdgeInsets.only(top: 8, bottom: 4),
       child: Text(
         title,
-        style: const TextStyle(
-          color: Colors.white38,
+        style: TextStyle(
+          color: readableColors.textMuted,
           fontSize: 12,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.5,
@@ -384,7 +426,8 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
     );
   }
 
-  Widget _buildContactRow(ContactModel contact) {
+  Widget _buildContactRow(BuildContext context, ContactModel contact) {
+    final readableColors = context.backgroundReadableColors;
     final isSelected = widget.selectedContactPeerIds.contains(contact.peerId);
     return ListTile(
       key: ValueKey('share-contact-${contact.peerId}'),
@@ -393,14 +436,18 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       leading: RingAvatar(peerId: contact.peerId, size: 40),
       title: Text(
         contact.username,
-        style: const TextStyle(color: Colors.white, fontSize: 15),
+        style: TextStyle(color: readableColors.textPrimary, fontSize: 15),
       ),
-      trailing: _buildSelectionIcon(isSelected),
+      trailing: _buildSelectionIcon(context, isSelected),
       onTap: widget.isSending ? null : () => widget.onToggleContact(contact),
     );
   }
 
-  Widget _buildGroupRow(GroupModel group) {
+  Widget _buildGroupRow(BuildContext context, GroupModel group) {
+    final readableColors = context.backgroundReadableColors;
+    final groupAccent = readableColors.isLightSurface
+        ? const Color(0xFF16756F)
+        : const Color(0xFF4ECDC4);
     final isSelected = widget.selectedGroupIds.contains(group.id);
     return ListTile(
       key: ValueKey('share-group-${group.id}'),
@@ -408,30 +455,38 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       enabled: !widget.isSending,
       leading: CircleAvatar(
         radius: 20,
-        backgroundColor: const Color.fromRGBO(78, 205, 196, 0.15),
-        child: const Icon(Icons.group, color: Color(0xFF4ECDC4), size: 20),
+        backgroundColor: groupAccent.withValues(alpha: 0.15),
+        child: Icon(Icons.group, color: groupAccent, size: 20),
       ),
       title: Text(
         group.name,
-        style: const TextStyle(color: Colors.white, fontSize: 15),
+        style: TextStyle(color: readableColors.textPrimary, fontSize: 15),
       ),
       subtitle: Text(
         group.type == GroupType.announcement ? 'Announcement' : 'Chat',
-        style: const TextStyle(color: Colors.white38, fontSize: 12),
+        style: TextStyle(color: readableColors.textMuted, fontSize: 12),
       ),
-      trailing: _buildSelectionIcon(isSelected),
+      trailing: _buildSelectionIcon(context, isSelected),
       onTap: widget.isSending ? null : () => widget.onToggleGroup(group),
     );
   }
 
-  Widget _buildSelectionIcon(bool isSelected) {
+  Widget _buildSelectionIcon(BuildContext context, bool isSelected) {
+    final readableColors = context.backgroundReadableColors;
+    final selectedColor = _blueAccent(readableColors);
     return Icon(
       isSelected ? Icons.check_circle : Icons.add_circle_outline,
-      color: isSelected ? const Color(0xFF64B5F6) : Colors.white38,
+      color: isSelected ? selectedColor : readableColors.iconMuted,
     );
   }
 
-  Widget _buildSendButton() {
+  Widget _buildSendButton(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final start = _blueAccent(readableColors);
+    final end = readableColors.isLightSurface
+        ? const Color(0xFF0B4D82)
+        : const Color(0xFF42A5F5);
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: GestureDetector(
@@ -440,23 +495,29 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF64B5F6), Color(0xFF42A5F5)],
-            ),
+            gradient: LinearGradient(colors: [start, end]),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(
             widget.isSending ? 'Sending...' : 'Send',
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: Colors.white,
+              color: readableColors.isLightSurface
+                  ? Colors.white
+                  : Colors.black,
             ),
           ),
         ),
       ),
     );
+  }
+
+  Color _blueAccent(BackgroundReadableColors readableColors) {
+    return readableColors.isLightSurface
+        ? const Color(0xFF0F5F9C)
+        : const Color(0xFF64B5F6);
   }
 }
 

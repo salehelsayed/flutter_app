@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/glassmorphism.dart';
 
 /// A glassmorphic choice card with icon, title, description, and arrow.
@@ -59,6 +60,7 @@ class _ChoiceCardState extends State<ChoiceCard>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final isDisabled = widget.onTap == null;
     return GestureDetector(
       onTapDown: isDisabled ? null : _onTapDown,
@@ -98,8 +100,8 @@ class _ChoiceCardState extends State<ChoiceCard>
                     children: [
                       Text(
                         widget.title,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
+                        style: TextStyle(
+                          color: readableColors.textPrimary,
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
                         ),
@@ -107,8 +109,8 @@ class _ChoiceCardState extends State<ChoiceCard>
                       const SizedBox(height: 4),
                       Text(
                         widget.description,
-                        style: const TextStyle(
-                          color: AppColors.textMuted,
+                        style: TextStyle(
+                          color: readableColors.textSecondary,
                           fontSize: 14,
                         ),
                       ),
@@ -116,9 +118,9 @@ class _ChoiceCardState extends State<ChoiceCard>
                   ),
                 ),
                 // Arrow
-                const Icon(
+                Icon(
                   Icons.arrow_forward_ios,
-                  color: AppColors.textMuted,
+                  color: readableColors.iconSecondary,
                   size: 16,
                 ),
               ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/unread_count_badge.dart';
@@ -13,17 +14,15 @@ class GroupRow extends StatelessWidget {
   final OrbitGroup group;
   final VoidCallback onTap;
 
-  const GroupRow({
-    super.key,
-    required this.group,
-    required this.onTap,
-  });
+  const GroupRow({super.key, required this.group, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
     final relativeTime = group.lastActivityTimestamp != null
         ? formatRelativeTime(
-            group.lastActivityTimestamp!.toUtc().toIso8601String())
+            group.lastActivityTimestamp!.toUtc().toIso8601String(),
+          )
         : '';
     final senderUsername = group.latestMessageSenderUsername;
     final senderDisplayName = senderUsername ?? 'Unknown';
@@ -35,11 +34,9 @@ class GroupRow extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: const Color(0x14FFFFFF),
+          color: readableColors.surfaceSubtle,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: const Color(0x1FFFFFFF),
-          ),
+          border: Border.all(color: readableColors.border),
         ),
         child: Row(
           children: [
@@ -48,16 +45,16 @@ class GroupRow extends StatelessWidget {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: const Color(0x14FFFFFF),
+                color: readableColors.disabledSurface,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Center(
                 child: Text(
                   _initials(group.name),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
-                    color: Color(0x99FFFFFF),
+                    color: readableColors.iconMuted,
                   ),
                 ),
               ),
@@ -74,10 +71,10 @@ class GroupRow extends StatelessWidget {
                       Flexible(
                         child: Text(
                           group.name,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xF2FFFFFF),
+                            color: readableColors.textPrimary,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -94,9 +91,9 @@ class GroupRow extends StatelessWidget {
                           fit: FlexFit.loose,
                           child: Text(
                             senderDisplayName,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: Color(0x99FFFFFF),
+                              color: readableColors.textMuted,
                             ),
                             textDirection: detectTextDirection(
                               senderDisplayName,
@@ -105,19 +102,19 @@ class GroupRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        const Text(
+                        Text(
                           ': ',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Color(0x99FFFFFF),
+                            color: readableColors.textMuted,
                           ),
                         ),
                         Expanded(
                           child: Text(
                             latestMessageText,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: Color(0x99FFFFFF),
+                              color: readableColors.textMuted,
                             ),
                             textDirection: detectTextDirection(
                               latestMessageText,
@@ -131,9 +128,9 @@ class GroupRow extends StatelessWidget {
                   else
                     Text(
                       latestMessageText ?? 'No messages yet',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Color(0x99FFFFFF),
+                        color: readableColors.textMuted,
                       ),
                       textDirection: latestMessageText != null
                           ? detectTextDirection(latestMessageText)
@@ -152,19 +149,19 @@ class GroupRow extends StatelessWidget {
                 if (relativeTime.isNotEmpty)
                   Text(
                     relativeTime,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color: Color(0x66FFFFFF),
+                      color: readableColors.textMuted,
                     ),
                   ),
                 const SizedBox(height: 4),
                 if (group.unreadCount > 0)
                   UnreadCountBadge(count: group.unreadCount)
                 else
-                  const Icon(
+                  Icon(
                     Icons.chevron_right,
                     size: 16,
-                    color: Color(0x66FFFFFF),
+                    color: readableColors.iconMuted,
                   ),
               ],
             ),

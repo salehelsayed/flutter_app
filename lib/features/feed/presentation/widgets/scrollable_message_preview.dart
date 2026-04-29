@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -166,6 +167,11 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
   }
 
   Widget _buildCollapseHint() {
+    final readableColors = context.backgroundReadableColors;
+    final hintColor = readableColors.isLightSurface
+        ? readableColors.textMuted
+        : FeedColors.viewEarlierText;
+
     return GestureDetector(
       onTap: widget.onCollapse,
       behavior: HitTestBehavior.opaque,
@@ -175,18 +181,14 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.keyboard_arrow_up_rounded,
-                size: 16,
-                color: FeedColors.viewEarlierText,
-              ),
+              Icon(Icons.keyboard_arrow_up_rounded, size: 16, color: hintColor),
               const SizedBox(width: 2),
               Text(
                 AppLocalizations.of(context)!.feed_collapse,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: FeedColors.viewEarlierText,
+                  color: hintColor,
                 ),
               ),
             ],

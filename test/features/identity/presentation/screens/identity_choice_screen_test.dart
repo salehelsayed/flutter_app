@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_screen.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/brand_header.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+
+import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -83,6 +88,22 @@ void main() {
       expect(find.byType(AmbientBackground), findsOneWidget);
     });
 
+    testWidgets('renders the selected cosmic background before Settings', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          IdentityChoiceScreen(
+            onNewHere: () {},
+            onLoadMyKey: () {},
+            backgroundPreference: BackgroundPreference.cosmic,
+          ),
+        ),
+      );
+
+      expect(find.byType(CosmicBackground), findsOneWidget);
+    });
+
     testWidgets('dims choice cards when callbacks are null', (tester) async {
       await tester.pumpWidget(
         wrap(const IdentityChoiceScreen(onNewHere: null, onLoadMyKey: null)),
@@ -110,6 +131,33 @@ void main() {
       await tester.pump();
 
       expect(find.byType(BrandHeader), findsOneWidget);
+    });
+
+    testWidgets('daylight lagoon keeps identity choice copy readable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          IdentityChoiceScreen(
+            onNewHere: () {},
+            onLoadMyKey: () {},
+            backgroundPreference: BackgroundPreference.daylightLagoon,
+          ),
+        ),
+      );
+      await pumpPastAnimations(tester);
+
+      const colors = BackgroundReadableColors.representativeLight;
+      final brand = tester.widget<Text>(find.text('mknoon'));
+      expectTextContrast(brand.style!.color!, colors.surfaceBase);
+
+      final title = tester.widget<Text>(find.text("I'm new here"));
+      expectTextContrast(title.style!.color!, colors.glassSurface);
+
+      final description = tester.widget<Text>(
+        find.text('Generate a fresh identity'),
+      );
+      expectTextContrast(description.style!.color!, colors.glassSurface);
     });
   });
 }

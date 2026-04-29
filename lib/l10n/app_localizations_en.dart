@@ -513,6 +513,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_background_cosmic_selected => 'Cosmic selected';
 
   @override
+  String get settings_background_cosmic_mirrored => 'Mirrored cosmic';
+
+  @override
+  String get settings_background_cosmic_mirrored_desc =>
+      'The cosmic starfield with mirrored color blooms.';
+
+  @override
+  String get settings_background_cosmic_mirrored_selected =>
+      'Mirrored cosmic selected';
+
+  @override
+  String get settings_background_daylight_lagoon => 'Daylight Lagoon';
+
+  @override
+  String get settings_background_daylight_lagoon_desc =>
+      'A bright lagoon sky with soft pastel blooms.';
+
+  @override
+  String get settings_background_daylight_lagoon_selected =>
+      'Daylight Lagoon selected';
+
+  @override
   String get settings_background_save_fail =>
       'Background choice could not be saved';
 

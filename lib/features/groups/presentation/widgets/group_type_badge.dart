@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 /// Small badge showing group type with color coding.
@@ -10,10 +11,18 @@ class GroupTypeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final typeColor = _colorForType(
+      type,
+      isLightSurface: readableColors.isLightSurface,
+    );
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
-        color: _colorForType(type).withOpacity(0.15),
+        color: typeColor.withOpacity(
+          readableColors.isLightSurface ? 0.12 : 0.15,
+        ),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
@@ -21,14 +30,25 @@ class GroupTypeBadge extends StatelessWidget {
         style: TextStyle(
           fontSize: 9,
           fontWeight: FontWeight.w600,
-          color: _colorForType(type),
+          color: typeColor,
           letterSpacing: 0.3,
         ),
       ),
     );
   }
 
-  static Color _colorForType(GroupType type) {
+  static Color _colorForType(GroupType type, {required bool isLightSurface}) {
+    if (isLightSurface) {
+      switch (type) {
+        case GroupType.chat:
+          return const Color(0xFF0F5F9C);
+        case GroupType.announcement:
+          return const Color(0xFF8A4A00);
+        case GroupType.qa:
+          return const Color(0xFF1D6F35);
+      }
+    }
+
     switch (type) {
       case GroupType.chat:
         return const Color(0xFF64B5F6); // blue

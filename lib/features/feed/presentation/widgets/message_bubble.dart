@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -66,6 +67,12 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
+    final accentColor = isLightSurface
+        ? const Color(0xFF0F8F87)
+        : FeedColors.accentTeal;
+
     return Align(
       alignment: isIncoming ? Alignment.centerLeft : Alignment.centerRight,
       child: GestureDetector(
@@ -77,7 +84,10 @@ class MessageBubble extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: _borderColor),
+              color: isLightSurface
+                  ? readableColors.surfaceBase.withValues(alpha: 0.72)
+                  : null,
+              border: Border.all(color: _borderColor(context)),
             ),
             child: Stack(
               children: [
@@ -95,7 +105,7 @@ class MessageBubble extends StatelessWidget {
                             begin: Alignment.centerLeft,
                             end: Alignment.centerRight,
                             colors: [
-                              FeedColors.accentTeal.withValues(alpha: 0.08),
+                              accentColor.withValues(alpha: 0.08),
                               Colors.transparent,
                             ],
                           ),
@@ -116,7 +126,7 @@ class MessageBubble extends StatelessWidget {
                             begin: Alignment.centerRight,
                             end: Alignment.centerLeft,
                             colors: [
-                              FeedColors.accentTeal.withValues(alpha: 0.04),
+                              accentColor.withValues(alpha: 0.04),
                               Colors.transparent,
                             ],
                           ),
@@ -134,8 +144,8 @@ class MessageBubble extends StatelessWidget {
                     width: 3,
                     decoration: BoxDecoration(
                       color: isIncoming
-                          ? FeedColors.accentTeal
-                          : FeedColors.accentTeal.withValues(alpha: 0.25),
+                          ? accentColor
+                          : accentColor.withValues(alpha: 0.25),
                       borderRadius: BorderRadius.only(
                         topLeft: isIncoming
                             ? const Radius.circular(14)
@@ -161,7 +171,7 @@ class MessageBubble extends StatelessWidget {
                     if (quotedText != null || isQuoteUnavailable)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                        child: _buildQuoteBar(),
+                        child: _buildQuoteBar(context),
                       ),
                     // Media grid
                     if (_imageVideoMedia.isNotEmpty)
@@ -202,21 +212,29 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _buildInlineContent(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
     final name =
         senderLabel ??
         (isIncoming ? '' : AppLocalizations.of(context)!.feed_you);
-    const nameStyle = TextStyle(
+    final nameStyle = TextStyle(
       fontSize: 14,
       fontWeight: FontWeight.w600,
-      color: Color.fromRGBO(255, 255, 255, 0.9),
+      color: isLightSurface
+          ? readableColors.textPrimary
+          : const Color.fromRGBO(255, 255, 255, 0.9),
       height: 1.5,
     );
     final bodyStyle = TextStyle(
       fontSize: 14,
       fontWeight: FontWeight.w400,
-      color: isIncoming
-          ? const Color.fromRGBO(255, 255, 255, 0.90)
-          : const Color.fromRGBO(255, 255, 255, 0.80),
+      color: isLightSurface
+          ? (isIncoming
+                ? readableColors.textPrimary
+                : readableColors.textSecondary)
+          : (isIncoming
+                ? const Color.fromRGBO(255, 255, 255, 0.90)
+                : const Color.fromRGBO(255, 255, 255, 0.80)),
       height: 1.5,
     );
     final deletedText = isDeleted
@@ -250,7 +268,9 @@ class MessageBubble extends StatelessWidget {
                   textDirection: detectTextDirection(displayText),
                   style: bodyStyle.copyWith(
                     fontStyle: FontStyle.italic,
-                    color: const Color.fromRGBO(255, 255, 255, 0.60),
+                    color: isLightSurface
+                        ? readableColors.textMuted
+                        : const Color.fromRGBO(255, 255, 255, 0.60),
                   ),
                 )
               : LinkableText(
@@ -267,26 +287,30 @@ class MessageBubble extends StatelessWidget {
                   ? Wrap(
                       spacing: 6,
                       runSpacing: 4,
-                      children: _buildReactionChipWidgets(),
+                      children: _buildReactionChipWidgets(context),
                     )
                   : const SizedBox.shrink(),
             ),
             Text(
               time,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w400,
-                color: Color.fromRGBO(255, 255, 255, 0.35),
+                color: isLightSurface
+                    ? readableColors.textMuted
+                    : const Color.fromRGBO(255, 255, 255, 0.35),
               ),
             ),
             if (isEdited && !isDeleted) ...[
               const SizedBox(width: 6),
               Text(
                 AppLocalizations.of(context)!.conversation_edited_indicator,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w400,
-                  color: Color.fromRGBO(255, 255, 255, 0.35),
+                  color: isLightSurface
+                      ? readableColors.textMuted
+                      : const Color.fromRGBO(255, 255, 255, 0.35),
                 ),
               ),
             ],
@@ -297,7 +321,7 @@ class MessageBubble extends StatelessWidget {
                 child: Icon(
                   _statusIcon(status!),
                   size: 14,
-                  color: _statusColor(status!),
+                  color: _statusColor(context, status!),
                 ),
               ),
             ],
@@ -307,7 +331,9 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  List<Widget> _buildReactionChipWidgets() {
+  List<Widget> _buildReactionChipWidgets(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
     final groups = <String, List<MessageReaction>>{};
     for (final r in reactions) {
       groups.putIfAbsent(r.emoji, () => []).add(r);
@@ -324,11 +350,15 @@ class MessageBubble extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: const Color.fromRGBO(255, 255, 255, 0.08),
+            color: isLightSurface
+                ? readableColors.surfaceSubtle.withValues(alpha: 0.82)
+                : const Color.fromRGBO(255, 255, 255, 0.08),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: isOwn
-                  ? const Color.fromRGBO(78, 205, 196, 0.30)
+                  ? (isLightSurface
+                        ? const Color(0xFF0F8F87).withValues(alpha: 0.36)
+                        : const Color.fromRGBO(78, 205, 196, 0.30))
                   : Colors.transparent,
             ),
           ),
@@ -341,13 +371,21 @@ class MessageBubble extends StatelessWidget {
     }).toList();
   }
 
-  Color get _borderColor {
+  Color _borderColor(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    if (readableColors.isLightSurface) {
+      return isIncoming
+          ? readableColors.border.withValues(alpha: 0.16)
+          : readableColors.border.withValues(alpha: 0.12);
+    }
     return isIncoming
         ? const Color.fromRGBO(255, 255, 255, 0.10)
         : const Color.fromRGBO(255, 255, 255, 0.08);
   }
 
-  Widget _buildQuoteBar() {
+  Widget _buildQuoteBar(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final isLightSurface = readableColors.isLightSurface;
     final displayText = isQuoteUnavailable
         ? 'Message unavailable'
         : quotedText!;
@@ -357,7 +395,9 @@ class MessageBubble extends StatelessWidget {
           width: 2,
           height: 16,
           decoration: BoxDecoration(
-            color: const Color.fromRGBO(255, 255, 255, 0.15),
+            color: isLightSurface
+                ? readableColors.divider
+                : const Color.fromRGBO(255, 255, 255, 0.15),
             borderRadius: BorderRadius.circular(1),
           ),
         ),
@@ -374,12 +414,16 @@ class MessageBubble extends StatelessWidget {
               fontStyle: isQuoteUnavailable
                   ? FontStyle.italic
                   : FontStyle.normal,
-              color: Color.fromRGBO(
-                255,
-                255,
-                255,
-                isQuoteUnavailable ? 0.20 : 0.35,
-              ),
+              color: isLightSurface
+                  ? readableColors.textMuted.withValues(
+                      alpha: isQuoteUnavailable ? 0.55 : 0.78,
+                    )
+                  : Color.fromRGBO(
+                      255,
+                      255,
+                      255,
+                      isQuoteUnavailable ? 0.20 : 0.35,
+                    ),
             ),
           ),
         ),
@@ -397,7 +441,14 @@ class MessageBubble extends StatelessWidget {
     return Icons.done_rounded; // 'sent', 'sending'
   }
 
-  static Color _statusColor(String status) {
+  static Color _statusColor(BuildContext context, String status) {
+    final readableColors = context.backgroundReadableColors;
+    if (readableColors.isLightSurface) {
+      if (status == 'delivered') return readableColors.iconMuted;
+      if (status == 'failed') return const Color(0xFFC62828);
+      if (status == 'pending') return const Color(0xFF8A5D00);
+      return readableColors.iconMuted.withValues(alpha: 0.75);
+    }
     if (status == 'delivered') {
       return const Color.fromRGBO(255, 255, 255, 0.45);
     }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
@@ -41,12 +42,16 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return AlertDialog(
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: readableColors.surfaceBase,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(20),
         side: BorderSide(
-          color: AppColors.primaryAccent.withValues(alpha: 0.3),
+          color: readableColors.isLightSurface
+              ? readableColors.border
+              : AppColors.primaryAccent.withValues(alpha: 0.3),
         ),
       ),
       content: Column(
@@ -60,8 +65,8 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
           Text(
             widget.request.username,
             textDirection: detectTextDirection(widget.request.username),
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: readableColors.textPrimary,
               fontSize: 20,
               fontWeight: FontWeight.w600,
             ),
@@ -72,7 +77,7 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
           Text(
             'wants to connect with you',
             style: TextStyle(
-              color: AppColors.textMuted,
+              color: readableColors.textSecondary,
               fontSize: 14,
             ),
             textAlign: TextAlign.center,
@@ -86,10 +91,9 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
                 child: OutlinedButton(
                   onPressed: _isProcessing ? null : _handleDecline,
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.textMuted,
-                    side: BorderSide(
-                      color: AppColors.textMuted.withValues(alpha: 0.3),
-                    ),
+                    foregroundColor: readableColors.textSecondary,
+                    disabledForegroundColor: readableColors.disabledForeground,
+                    side: BorderSide(color: readableColors.inputBorder),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -111,7 +115,9 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
                   onPressed: _isProcessing ? null : _handleAccept,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primaryAccent,
-                    foregroundColor: Colors.white,
+                    foregroundColor: Colors.black,
+                    disabledBackgroundColor: readableColors.disabledSurface,
+                    disabledForegroundColor: readableColors.disabledForeground,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),

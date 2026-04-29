@@ -3,7 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-/// Cosmic Feed background with a static reduced-motion mode.
+/// Cosmic shared app background with a static reduced-motion mode.
 class CosmicBackground extends StatefulWidget {
   final Widget child;
   final int starCount;

@@ -179,6 +179,7 @@ class _SettingsWiredState extends State<SettingsWired> {
       secureKeyStore: widget.secureKeyStore,
     );
     if (mounted) {
+      widget.appShellController.setBackgroundPreference(pref);
       setState(() => _currentBackgroundPreference = pref);
     }
   }
@@ -212,6 +213,7 @@ class _SettingsWiredState extends State<SettingsWired> {
         event: 'SETTINGS_FL_BACKGROUND_PREFERENCE_SAVED',
         details: {'preference': storageValue, 'outcome': 'success'},
       );
+      widget.appShellController.setBackgroundPreference(newPreference);
     } catch (e) {
       if (!mounted) return;
 
