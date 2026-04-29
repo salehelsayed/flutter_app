@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -14,6 +15,7 @@ import 'package:integration_test/integration_test.dart';
 import '../test/core/bridge/fake_bridge.dart';
 import '../test/features/push/application/remote_message_fixtures.dart';
 import '../test/shared/fakes/fake_group_pubsub_network.dart';
+import '../test/shared/fakes/fake_media_file_manager.dart';
 import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/group_test_user.dart';
 
@@ -60,6 +62,16 @@ class _CursorInboxBridge extends FakeBridge {
       });
     }
 
+    if (cmd == 'media:download') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final outputPath = payload['outputPath'] as String;
+      final file = File(outputPath);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(<int>[1, 2, 3, 4]);
+
+      return jsonEncode({'ok': true, 'id': payload['id'], 'size': 4});
+    }
+
     return super.send(message);
   }
 }
@@ -101,6 +113,7 @@ class _ForegroundGroupPushHarness {
       username: 'Bob',
       network: network,
       bridge: memberBridge,
+      mediaFileManager: FakeMediaFileManager(),
       notificationService: notificationService,
       groupConversationTracker: ActiveConversationTracker(),
       getAppLifecycleState: () => AppLifecycleState.resumed,
@@ -201,6 +214,84 @@ void main() {
         expect(
           harness.notificationService.shown.single.payload,
           'group:group-foreground|message:group-msg-1',
+        );
+      },
+    );
+
+    testWidgets(
+      'foreground group push drains media exactly once with descriptor and download trigger',
+      (tester) async {
+        final harness = await _ForegroundGroupPushHarness.create();
+        addTearDown(harness.dispose);
+
+        harness.member.unsubscribeFromGroup('group-foreground');
+        harness.memberBridge.addPage('group-foreground', '', [
+          {
+            'groupId': 'group-foreground',
+            'senderId': 'alice-peer',
+            'senderUsername': 'Alice',
+            'keyEpoch': 0,
+            'text': '',
+            'timestamp': DateTime.now().toUtc().toIso8601String(),
+            'messageId': 'group-media-msg-1',
+            'media': [
+              {
+                'id': 'blob-foreground-image',
+                'mime': 'image/jpeg',
+                'size': 2048,
+                'mediaType': 'image',
+                'width': 640,
+                'height': 480,
+                'downloadStatus': 'pending',
+                'createdAt': DateTime.now().toUtc().toIso8601String(),
+              },
+            ],
+          },
+        ], '');
+
+        final pushData = groupMessageData(
+          groupId: 'group-foreground',
+          messageId: 'group-media-msg-1',
+        );
+        await harness.runForegroundPush(pushData);
+        await tester.pumpAndSettle();
+        await _settle();
+
+        await harness.runForegroundPush(pushData);
+        await tester.pumpAndSettle();
+        await _settle();
+
+        final messages = await harness.incomingMessages();
+        expect(messages, hasLength(1));
+        expect(messages.single.id, 'group-media-msg-1');
+        expect(messages.single.text, isEmpty);
+
+        final attachments = await harness.member.mediaAttachmentRepo
+            .getAttachmentsForMessage('group-media-msg-1');
+        expect(attachments, hasLength(1));
+        final image = attachments.single;
+        expect(image.id, 'blob-foreground-image');
+        expect(image.mediaType, 'image');
+        expect(image.mime, 'image/jpeg');
+        expect(image.width, 640);
+        expect(image.height, 480);
+        expect(image.downloadStatus, 'done');
+        expect(image.localPath, isNotNull);
+
+        expect(harness.notificationService.shown, hasLength(1));
+        expect(
+          harness.notificationService.shown.single.payload,
+          'group:group-foreground|message:group-media-msg-1',
+        );
+        expect(
+          harness.notificationService.shown.single.messageText,
+          'Alice: Photo',
+        );
+        expect(
+          harness.memberBridge.commandLog.where(
+            (cmd) => cmd == 'media:download',
+          ),
+          hasLength(1),
         );
       },
     );

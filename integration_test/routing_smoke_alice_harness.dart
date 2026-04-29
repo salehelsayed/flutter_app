@@ -69,9 +69,15 @@ import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 // Config from dart-defines
 // ---------------------------------------------------------------------------
 
-const _sharedDir = String.fromEnvironment('E2E_SHARED_DIR', defaultValue: '/tmp');
+const _sharedDir = String.fromEnvironment(
+  'E2E_SHARED_DIR',
+  defaultValue: '/tmp',
+);
 const _runId = String.fromEnvironment('SMOKE_RUN_ID', defaultValue: 'adhoc');
-const _dbName = String.fromEnvironment('E2E_DB_NAME', defaultValue: 'routing_smoke_alice.db');
+const _dbName = String.fromEnvironment(
+  'E2E_DB_NAME',
+  defaultValue: 'routing_smoke_alice.db',
+);
 
 String _sig(String name) => '$_sharedDir/smoke_${_runId}_$name';
 
@@ -122,10 +128,14 @@ Future<Map<String, dynamic>> _waitForJsonSignal(
 
 class _FakeSecureKeyStore implements SecureKeyStore {
   final Map<String, String> _store = {};
-  @override Future<String?> read(String key) async => _store[key];
-  @override Future<void> write(String key, String value) async => _store[key] = value;
-  @override Future<void> delete(String key) async => _store.remove(key);
-  @override Future<bool> containsKey(String key) async => _store.containsKey(key);
+  @override
+  Future<String?> read(String key) async => _store[key];
+  @override
+  Future<void> write(String key, String value) async => _store[key] = value;
+  @override
+  Future<void> delete(String key) async => _store.remove(key);
+  @override
+  Future<bool> containsKey(String key) async => _store.containsKey(key);
 }
 
 // ---------------------------------------------------------------------------
@@ -235,12 +245,17 @@ Future<List<Map<String, dynamic>>> _captureFlowEvents(
   }
   return printed
       .where((l) => l.startsWith('[FLOW] '))
-      .map((l) => jsonDecode(l.substring('[FLOW] '.length)) as Map<String, dynamic>)
+      .map(
+        (l) =>
+            jsonDecode(l.substring('[FLOW] '.length)) as Map<String, dynamic>,
+      )
       .toList();
 }
 
-List<Map<String, dynamic>> _filter(List<Map<String, dynamic>> events, String name) =>
-    events.where((e) => e['event'] == name).toList();
+List<Map<String, dynamic>> _filter(
+  List<Map<String, dynamic>> events,
+  String name,
+) => events.where((e) => e['event'] == name).toList();
 
 // ---------------------------------------------------------------------------
 // Send + capture helper
@@ -343,35 +358,60 @@ void main() {
     final messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
       dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(db, p),
-      dbLoadLatestMessageForContact: (p) => dbLoadLatestMessageForContact(db, p),
+      dbLoadLatestMessageForContact: (p) =>
+          dbLoadLatestMessageForContact(db, p),
       dbUpdateMessageStatus: (id, s) => dbUpdateMessageStatus(db, id, s),
       dbLoadMessage: (id) => dbLoadMessage(db, id),
       dbCountMessagesForContact: (p) => dbCountMessagesForContact(db, p),
       dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(db, p),
       dbCountUnreadForContact: (p) => dbCountUnreadForContact(db, p),
       dbCountTotalUnread: () => dbCountTotalUnread(db),
-      dbCountTotalUnreadExcludingArchived: () => dbCountTotalUnreadExcludingArchived(db),
+      dbCountTotalUnreadExcludingArchived: () =>
+          dbCountTotalUnreadExcludingArchived(db),
       dbDeleteMessagesForContact: (p) => dbDeleteMessagesForContact(db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(db, id),
       dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(db, p, limit: limit, beforeTimestamp: beforeTimestamp),
+          dbLoadMessagesPage(
+            db,
+            p,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
       dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
           dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
       dbLoadConversationThreadSummaries: (ids) =>
           dbLoadConversationThreadSummaries(db, ids),
-      dbRecoverStuckSendingMessages: ({required DateTime olderThan, int limit = 50}) =>
-          dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(db, id, we),
-      dbLoadStuckSendingOutgoingMessages: ({required DateTime olderThan, int limit = 50}) =>
-          dbLoadStuckSendingOutgoingMessages(db, olderThan: olderThan, limit: limit),
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
-      dbConditionalTransitionStatus: (id, {required fromStatus, required toStatus}) =>
-          dbConditionalTransitionStatus(db, id, fromStatus: fromStatus, toStatus: toStatus),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
     );
 
     // Generate identity
-    final genResp = await bridge.send(jsonEncode({'cmd': 'identity.generate', 'payload': {}}));
+    final genResp = await bridge.send(
+      jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
+    );
     final genResult = jsonDecode(genResp) as Map<String, dynamic>;
     if (genResult['ok'] != true) throw StateError('identity.generate failed');
     final identity = genResult['identity'] as Map<String, dynamic>;
@@ -379,10 +419,16 @@ void main() {
     final ownPrivateKey = identity['privateKey'] as String;
     final ownPublicKey = identity['publicKey'] as String;
 
-    final mlkemResp = await bridge.send(jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}));
+    final mlkemResp = await bridge.send(
+      jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+    );
     final mlkemResult = jsonDecode(mlkemResp) as Map<String, dynamic>;
-    final ownMlKemPk = mlkemResult['ok'] == true ? mlkemResult['publicKey'] as String? : null;
-    final ownMlKemSk = mlkemResult['ok'] == true ? mlkemResult['secretKey'] as String? : null;
+    final ownMlKemPk = mlkemResult['ok'] == true
+        ? mlkemResult['publicKey'] as String?
+        : null;
+    final ownMlKemSk = mlkemResult['ok'] == true
+        ? mlkemResult['secretKey'] as String?
+        : null;
 
     print('[ALICE] peerId=${ownPeerId.substring(0, 20)}...');
 
@@ -417,19 +463,24 @@ void main() {
     _writeSignal('alice_ready', 'ok');
     print('[ALICE] Ready (identity written, waiting for Bob...)');
 
-    final bobFixture = await _waitForJsonSignal('bob_identity.json');
+    final bobFixture = await _waitForJsonSignal(
+      'bob_identity.json',
+      timeout: const Duration(minutes: 15),
+    );
     final bobPeerId = bobFixture['peerId'] as String;
     final bobMlKemPk = bobFixture['mlKemPublicKey'] as String?;
 
-    await contactRepo.addContact(ContactModel(
-      peerId: bobPeerId,
-      publicKey: bobFixture['publicKey'] as String,
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'Bob',
-      signature: 'sig-bob',
-      scannedAt: DateTime.now().toUtc().toIso8601String(),
-      mlKemPublicKey: bobMlKemPk,
-    ));
+    await contactRepo.addContact(
+      ContactModel(
+        peerId: bobPeerId,
+        publicKey: bobFixture['publicKey'] as String,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Bob',
+        signature: 'sig-bob',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: bobMlKemPk,
+      ),
+    );
     print('[ALICE] Bob added as contact');
 
     // Helper to send + capture timing
@@ -444,11 +495,15 @@ void main() {
     );
 
     // Helper to wait for message in Alice's DB (for bidirectional receive)
-    Future<bool> waitForIncoming(String substring, {Duration timeout = const Duration(seconds: 30)}) async {
+    Future<bool> waitForIncoming(
+      String substring, {
+      Duration timeout = const Duration(seconds: 30),
+    }) async {
       final deadline = DateTime.now().add(timeout);
       while (DateTime.now().isBefore(deadline)) {
         final msgs = await messageRepo.getMessagesForContact(bobPeerId);
-        if (msgs.any((m) => m.isIncoming && m.text.contains(substring))) return true;
+        if (msgs.any((m) => m.isIncoming && m.text.contains(substring)))
+          return true;
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
       return false;
@@ -641,11 +696,15 @@ void main() {
       }
     });
     s10DeleteSw.stop();
-    final s10DeleteTimings = _filter(s10DeleteEvents, 'CHAT_MSG_DELETE_FOR_EVERYONE_TIMING');
+    final s10DeleteTimings = _filter(
+      s10DeleteEvents,
+      'CHAT_MSG_DELETE_FOR_EVERYONE_TIMING',
+    );
     _writeTimingSignal('s10_alice_delete_sent', {
       'deleteMs': s10DeleteSw.elapsedMilliseconds,
       'outcome': s10DeleteTimings.isNotEmpty
-          ? (s10DeleteTimings.first['details'] as Map<String, dynamic>)['outcome']
+          ? (s10DeleteTimings.first['details']
+                as Map<String, dynamic>)['outcome']
           : 'no_timing',
     });
     await _waitForSignal('s10_verified');
@@ -671,7 +730,9 @@ void main() {
     final s11Sw = Stopwatch()..start();
     try {
       // Create a synthetic audio file
-      final testFile = File('${Directory.systemTemp.path}/smoke_test_voice.mp4');
+      final testFile = File(
+        '${Directory.systemTemp.path}/smoke_test_voice.mp4',
+      );
       testFile.writeAsBytesSync(List.filled(10240, 0x42)); // 10KB dummy
 
       final s11Events = await _captureFlowEvents(() async {
@@ -737,12 +798,16 @@ void main() {
       } catch (e) {
         s12Sw.stop();
         upload1mbMs = s12Sw.elapsedMilliseconds;
-        s12Error1mb = e.toString().substring(0, (e.toString().length).clamp(0, 200));
+        s12Error1mb = e.toString().substring(
+          0,
+          (e.toString().length).clamp(0, 200),
+        );
       }
     });
     final s12StreamOpen1mb = _filter(s12Events1mb, 'media:stream_open_timing');
     if (s12StreamOpen1mb.isNotEmpty) {
-      s12StreamTiming1mb = s12StreamOpen1mb.first['details'] as Map<String, dynamic>?;
+      s12StreamTiming1mb =
+          s12StreamOpen1mb.first['details'] as Map<String, dynamic>?;
     }
 
     // -- 5MB upload --
@@ -768,12 +833,16 @@ void main() {
       } catch (e) {
         s12Sw5.stop();
         upload5mbMs = s12Sw5.elapsedMilliseconds;
-        s12Error5mb = e.toString().substring(0, (e.toString().length).clamp(0, 200));
+        s12Error5mb = e.toString().substring(
+          0,
+          (e.toString().length).clamp(0, 200),
+        );
       }
     });
     final s12StreamOpen5mb = _filter(s12Events5mb, 'media:stream_open_timing');
     if (s12StreamOpen5mb.isNotEmpty) {
-      s12StreamTiming5mb = s12StreamOpen5mb.first['details'] as Map<String, dynamic>?;
+      s12StreamTiming5mb =
+          s12StreamOpen5mb.first['details'] as Map<String, dynamic>?;
     }
 
     // -- Report combined signal --
@@ -847,7 +916,10 @@ void main() {
       );
     });
     final s15Timings = _filter(s15Events, 'CHAT_MSG_SEND_TIMING');
-    final s15ProbeEvents = _filter(s15Events, 'CHAT_MSG_SEND_RELAY_PROBE_BEGIN');
+    final s15ProbeEvents = _filter(
+      s15Events,
+      'CHAT_MSG_SEND_RELAY_PROBE_BEGIN',
+    );
     final s15Details = s15Timings.isNotEmpty
         ? s15Timings.first['details'] as Map<String, dynamic>
         : <String, dynamic>{};
@@ -884,7 +956,9 @@ void main() {
     );
     chatListener.start();
     x1Sw.stop();
-    _writeTimingSignal('x1_alice_restarted', {'restartMs': x1Sw.elapsedMilliseconds});
+    _writeTimingSignal('x1_alice_restarted', {
+      'restartMs': x1Sw.elapsedMilliseconds,
+    });
 
     // Wait for Bob to also be restarted, then send
     await _waitForSignal('x1_bob_restarted');
@@ -904,12 +978,11 @@ void main() {
 
     await _waitForSignal('x2_resume');
     final x2Sw = Stopwatch()..start();
-    await handleAppResumed(
-      bridge: bridge,
-      p2pService: p2pService,
-    );
+    await handleAppResumed(bridge: bridge, p2pService: p2pService);
     x2Sw.stop();
-    _writeTimingSignal('x2_alice_resumed', {'resumeMs': x2Sw.elapsedMilliseconds});
+    _writeTimingSignal('x2_alice_resumed', {
+      'resumeMs': x2Sw.elapsedMilliseconds,
+    });
 
     // Send after resume
     final x2Send = await send('X2: post-resume msg');

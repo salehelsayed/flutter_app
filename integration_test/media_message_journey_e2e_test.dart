@@ -856,6 +856,11 @@ Future<void> _leaveThread(WidgetTester tester) async {
     fail('No visible back control found for the current thread.');
   }
   await _pumpFrames(tester, count: 8);
+  final confirmLeave = find.byKey(const ValueKey('upload-leave-confirm'));
+  if (confirmLeave.evaluate().isNotEmpty) {
+    await tester.tap(confirmLeave);
+    await _pumpFrames(tester, count: 8);
+  }
   if (!homeVisible()) {
     await _pumpUntilAsync(
       tester,

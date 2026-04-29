@@ -3811,6 +3811,11 @@ void main() {
                 groupId: groupId,
                 text: 'During split 2',
               );
+          final (thirdResult, thirdSent) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'During split 3',
+              );
 
           expect(firstResult, SendGroupMessageResult.success);
           expect(firstSent, isNotNull);
@@ -3818,13 +3823,16 @@ void main() {
           expect(secondResult, SendGroupMessageResult.success);
           expect(secondSent, isNotNull);
           expect(secondSent!.inboxStored, isTrue);
+          expect(thirdResult, SendGroupMessageResult.success);
+          expect(thirdSent, isNotNull);
+          expect(thirdSent!.inboxStored, isTrue);
 
           await pumpUntilAsync(() async {
             final texts = (await onlineReader.loadGroupMessages(groupId))
                 .where((message) => message.isIncoming)
                 .map((message) => message.text)
                 .toList(growable: false);
-            return texts.length >= 3;
+            return texts.length >= 4;
           }, maxPumps: 120);
 
           onlineTexts = (await onlineReader.loadGroupMessages(groupId))
@@ -3840,6 +3848,7 @@ void main() {
             'Before split',
             'During split 1',
             'During split 2',
+            'During split 3',
           ]);
           expect(
             partitionedTexts,
@@ -3848,7 +3857,7 @@ void main() {
           );
 
           final inboxStores = bridgePayloads(admin.bridge, 'group:inboxStore');
-          expect(inboxStores, hasLength(2));
+          expect(inboxStores, hasLength(3));
           for (final payload in inboxStores) {
             expect(
               (payload['recipientPeerIds'] as List<dynamic>).cast<String>(),
@@ -3869,6 +3878,14 @@ void main() {
             fromPeerId: admin.peerId,
             storedMessage: inboxStores[1]['message'] as String,
             cursor: 'cursor-partition-page-2',
+            nextCursor: 'cursor-partition-page-3',
+          );
+          _addRelayStoredMessagePage(
+            receiverBridge: partitionBridge,
+            groupId: groupId,
+            fromPeerId: admin.peerId,
+            storedMessage: inboxStores[2]['message'] as String,
+            cursor: 'cursor-partition-page-3',
           );
 
           await rejoinGroupTopics(
@@ -3895,6 +3912,7 @@ void main() {
             'Before split',
             'During split 1',
             'During split 2',
+            'During split 3',
           ]);
 
           await admin.sendGroupMessage(groupId: groupId, text: 'After heal');
@@ -3913,12 +3931,14 @@ void main() {
             'Before split',
             'During split 1',
             'During split 2',
+            'During split 3',
             'After heal',
           ]);
           expect(partitionedTexts, [
             'Before split',
             'During split 1',
             'During split 2',
+            'During split 3',
             'After heal',
           ]);
 
@@ -3926,9 +3946,10 @@ void main() {
               .map((message) => jsonDecode(message) as Map<String, dynamic>)
               .where((message) => message['cmd'] == 'group:inboxRetrieveCursor')
               .toList(growable: false);
-          expect(cursorCmds, hasLength(2));
+          expect(cursorCmds, hasLength(3));
           expect(cursorCmds[0]['payload']['cursor'], '');
           expect(cursorCmds[1]['payload']['cursor'], 'cursor-partition-page-2');
+          expect(cursorCmds[2]['payload']['cursor'], 'cursor-partition-page-3');
 
           admin.dispose();
           onlineReader.dispose();

@@ -19,6 +19,8 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/video_thumbnail_overlay.dart';
 
 import '../../../shared/helpers/readability_test_helpers.dart';
 
@@ -308,6 +310,43 @@ void main() {
     );
   }
 
+  MediaAttachment makeVideoAttachment({
+    String id = 'video-1',
+    String messageId = '',
+    String downloadStatus = 'pending',
+  }) {
+    return MediaAttachment(
+      id: id,
+      messageId: messageId,
+      mime: 'video/mp4',
+      size: 4096,
+      mediaType: 'video',
+      width: 1280,
+      height: 720,
+      durationMs: 12_000,
+      downloadStatus: downloadStatus,
+      createdAt: '2026-02-09T15:31:00.000Z',
+    );
+  }
+
+  MediaAttachment makeAudioAttachment({
+    String id = 'audio-1',
+    String messageId = '',
+    String downloadStatus = 'pending',
+  }) {
+    return MediaAttachment(
+      id: id,
+      messageId: messageId,
+      mime: 'audio/mp4',
+      size: 2048,
+      mediaType: 'audio',
+      durationMs: 4200,
+      downloadStatus: downloadStatus,
+      createdAt: '2026-02-09T15:32:00.000Z',
+      waveform: const <double>[0.2, 0.6, 0.3],
+    );
+  }
+
   testWidgets('passes isSending through to the compose send affordance', (
     tester,
   ) async {
@@ -462,6 +501,58 @@ void main() {
       expect(rowBackdropFilter(message.id), findsOneWidget);
     },
   );
+
+  testWidgets('renders text plus video, voice, and failed media rows visibly', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    final timestamp = DateTime.utc(2026, 4, 29, 12);
+    final mediaMessage = GroupMessage(
+      id: 'msg-post-join-media',
+      groupId: 'group-1',
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: 'post-join text plus media',
+      timestamp: timestamp,
+      createdAt: timestamp,
+      isIncoming: true,
+      media: [
+        makeVideoAttachment(
+          id: 'att-post-join-video',
+          messageId: 'msg-post-join-media',
+        ),
+        makeAudioAttachment(
+          id: 'att-post-join-voice',
+          messageId: 'msg-post-join-media',
+        ),
+        makeImageAttachment(
+          id: 'att-post-join-failed',
+          messageId: 'msg-post-join-media',
+          localPath: '',
+          downloadStatus: 'failed',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(messages: [mediaMessage], initialLoadDone: true),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('post-join text plus media'), findsOneWidget);
+    expect(messageRow(mediaMessage.id), findsOneWidget);
+    expect(find.byType(VideoThumbnailOverlay), findsOneWidget);
+    expect(find.text('0:12'), findsOneWidget);
+    expect(find.byType(AudioPlayerWidget), findsOneWidget);
+    expect(find.text('--:--'), findsOneWidget);
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+  });
 
   testWidgets('renders active quote preview and dismisses it', (tester) async {
     var cleared = false;

@@ -183,5 +183,42 @@ void main() {
         expect(drainCalls, 1);
       },
     );
+
+    test(
+      'returns missing for a stale removed-group notification after local cleanup',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        var drainCalls = 0;
+
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: _groupId,
+            name: 'Orbit Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$_groupId',
+            createdAt: DateTime.utc(2026, 4, 6, 10),
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupRepo.deleteGroup(_groupId);
+
+        final result = await resolveGroupNotificationRouteTarget(
+          groupId: _groupId,
+          groupRepo: groupRepo,
+          pendingInviteRepo: pendingInviteRepo,
+          drainOfflineInbox: () async {
+            drainCalls += 1;
+          },
+        );
+
+        expect(result.group, isNull);
+        expect(result.pendingInvite, isNull);
+        expect(result.hasGroup, isFalse);
+        expect(result.hasPendingInvite, isFalse);
+        expect(drainCalls, 1);
+      },
+    );
   });
 }
