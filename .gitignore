@@ -124,3 +124,21 @@ android/app/libs/*.jar
 
 # Private keys
 *.pem
+
+# Xcode DerivedData / index / module caches accidentally committed at the repo root
+Index.noindex/
+ModuleCache.noindex/
+SDKStatCaches.noindex/
+
+# iOS build outputs (Flutter writes the iOS archive/ipa here, separate from the root /build/)
+ios/build/
+
+# Local distribution outputs
+/dist/
+
+# Local test/regression run logs
+.codex-test-logs/
+.full_regression_logs/
+
+# Claude Code scheduler state
+.claude/scheduled_tasks.lock
