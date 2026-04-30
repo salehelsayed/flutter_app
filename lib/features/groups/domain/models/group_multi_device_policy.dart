@@ -8,6 +8,7 @@ enum GroupMultiDeviceFacet {
   unreadCounters,
   localNotifications,
   pendingInviteReview,
+  composerDrafts,
 }
 
 // Shared state applies once a second device has already materialized the group
@@ -25,6 +26,7 @@ groupMultiDeviceScopes = {
   GroupMultiDeviceFacet.unreadCounters: GroupMultiDeviceScope.deviceLocal,
   GroupMultiDeviceFacet.localNotifications: GroupMultiDeviceScope.deviceLocal,
   GroupMultiDeviceFacet.pendingInviteReview: GroupMultiDeviceScope.deviceLocal,
+  GroupMultiDeviceFacet.composerDrafts: GroupMultiDeviceScope.deviceLocal,
 };
 
 GroupMultiDeviceScope groupMultiDeviceScopeFor(GroupMultiDeviceFacet facet) =>

@@ -13,6 +13,9 @@ import 'package:flutter_app/core/media/amplitude_buffer.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/media/downsample_waveform.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_mime_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -759,6 +762,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             mediaFileManager: widget.mediaFileManager!,
             attachment: attachment,
             contactPeerId: widget.group.id,
+            enforceGroupMediaPolicy: true,
           );
         } catch (_) {
           downloaded = null;
@@ -771,7 +775,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             final idx = list.indexWhere((a) => a.id == attachment.id);
             if (idx >= 0) {
               list[idx] =
-                  downloaded ?? attachment.copyWith(downloadStatus: 'failed');
+                  downloaded ??
+                  attachment.copyWith(
+                    downloadStatus: kMediaDownloadStatusFailed,
+                  );
               _updateMediaForMessage(entry.key, list);
             }
           });
@@ -856,6 +863,30 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     for (final pending in mediaToUpload) {
       final mime = _mimeFromPath(pending.file.path);
+      final validation = GroupMediaMimePolicy.validateDescriptor(
+        mime: mime,
+        mediaType: GroupMediaMimePolicy.mediaTypeForMime(mime),
+      );
+      if (!validation.isValid) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_MEDIA_DURABLE_PREP_REJECTED_INVALID_MIME',
+          details: {'mime': mime, 'reason': validation.reason},
+        );
+        throw const _RejectedPendingGroupMediaException();
+      }
+      final sizeValidation = GroupMediaSizePolicy.validateSize(
+        sizeBytes: pending.budgetBytes,
+        mime: mime,
+      );
+      if (!sizeValidation.isValid) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_CONV_FL_MEDIA_DURABLE_PREP_REJECTED_INVALID_SIZE',
+          details: {'mime': mime, 'reason': sizeValidation.reason},
+        );
+        throw const _RejectedPendingGroupMediaException();
+      }
       final blobId = _uuid.v4();
       final durableRelativePath = await mediaFileManager.copyToDurableStorage(
         sourceFilePath: pending.file.path,
@@ -866,12 +897,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       final absoluteDurablePath = await mediaFileManager.resolveStoredPath(
         durableRelativePath,
       );
+      final contentHash = await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+        absoluteDurablePath,
+      );
       final pendingAttachment = MediaAttachment(
         id: blobId,
         messageId: messageId,
         mime: mime,
-        // Size is not required for the durable pre-upload contract.
-        size: 0,
+        size: pending.budgetBytes,
         mediaType: MediaAttachment.mediaTypeFromMime(mime),
         width: pending.width,
         height: pending.height,
@@ -879,6 +912,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         localPath: durableRelativePath,
         downloadStatus: 'upload_pending',
         createdAt: createdAt,
+        contentHash: contentHash,
       );
       emitFlowEvent(
         layer: 'FL',
@@ -1006,7 +1040,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         plan: plan,
         uploaded: uploaded,
       );
-      await mediaAttachmentRepo.saveAttachment(completed);
       completedAttachments.add(completed);
     }
 
@@ -1026,6 +1059,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return null;
     }
 
+    for (final completed in completedAttachments) {
+      await mediaAttachmentRepo.saveAttachment(completed);
+    }
+
     return completedAttachments;
   }
 
@@ -1035,6 +1072,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     required MediaAttachment uploaded,
   }) async {
     final mediaFileManager = widget.mediaFileManager;
+    final sourceFile = File(plan.absoluteDurablePath);
+    final contentHash =
+        uploaded.contentHash ??
+        plan.pendingAttachment.contentHash ??
+        (await sourceFile.exists()
+            ? await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                plan.absoluteDurablePath,
+              )
+            : null);
     if (mediaFileManager == null) {
       return uploaded.copyWith(
         id: plan.pendingAttachment.id,
@@ -1048,6 +1094,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         downloadStatus: 'done',
         uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
         waveform: uploaded.waveform,
+        contentHash: contentHash,
       );
     }
 
@@ -1056,7 +1103,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       blobId: plan.pendingAttachment.id,
       mime: plan.pendingAttachment.mime,
     );
-    final sourceFile = File(plan.absoluteDurablePath);
     if (!await sourceFile.exists()) {
       return uploaded.copyWith(
         id: plan.pendingAttachment.id,
@@ -1070,6 +1116,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         downloadStatus: 'done',
         uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
         waveform: uploaded.waveform,
+        contentHash: contentHash,
       );
     }
     if (absoluteOwnedPath != plan.absoluteDurablePath) {
@@ -1097,6 +1144,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       downloadStatus: 'done',
       uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
       waveform: uploaded.waveform,
+      contentHash: contentHash,
     );
   }
 
@@ -1121,6 +1169,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
     // 2. Capture and clear pending attachments
     final mediaToUpload = List<PendingComposerMedia>.from(_pendingAttachments);
+    if (!_validatePendingGroupMediaDescriptors(mediaToUpload)) {
+      _endSendFlow();
+      return;
+    }
     List<MediaAttachment>? optimisticMedia;
     var optimisticDisplayed = false;
 
@@ -1225,24 +1277,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               return;
             }
           } else {
-            optimisticMedia = mediaToUpload
-                .map((m) {
-                  final mime = _mimeFromPath(m.file.path);
-                  return MediaAttachment(
-                    id: _uuid.v4(),
-                    messageId: messageId,
-                    mime: mime,
-                    size: 0,
-                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                    width: m.width,
-                    height: m.height,
-                    durationMs: m.durationMs,
-                    localPath: m.file.path,
-                    downloadStatus: 'done',
-                    createdAt: now.toIso8601String(),
-                  );
-                })
-                .toList(growable: false);
+            final optimistic = <MediaAttachment>[];
+            for (final m in mediaToUpload) {
+              final mime = _mimeFromPath(m.file.path);
+              optimistic.add(
+                MediaAttachment(
+                  id: _uuid.v4(),
+                  messageId: messageId,
+                  mime: mime,
+                  size: 0,
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  width: m.width,
+                  height: m.height,
+                  durationMs: m.durationMs,
+                  localPath: m.file.path,
+                  downloadStatus: 'done',
+                  createdAt: now.toIso8601String(),
+                ),
+              );
+            }
+            optimisticMedia = optimistic;
             showOptimisticMessage();
 
             uploadedAttachments = [];
@@ -1280,11 +1334,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               );
               if (result != null) {
                 _markRelayUploadCompleted(fileSize);
+                final contentHash =
+                    result.contentHash ??
+                    await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                      pending.file.path,
+                    );
                 uploadedAttachments.add(
                   result.copyWith(
                     id: attachmentId,
                     messageId: messageId,
                     downloadStatus: 'done',
+                    contentHash: contentHash,
                   ),
                 );
               } else {
@@ -1414,6 +1474,126 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     setState(() => _draftText = text);
   }
 
+  Future<void> _onRetryUnavailableMedia(
+    String messageId,
+    String attachmentId,
+  ) async {
+    final mediaAttachmentRepo = widget.mediaAttachmentRepo;
+    final mediaFileManager = widget.mediaFileManager;
+    if (mediaAttachmentRepo == null || mediaFileManager == null) {
+      _showFloatingSnackBar(
+        'Retry unavailable right now.',
+        backgroundColor: Colors.red[700],
+      );
+      return;
+    }
+
+    final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    final fallback = _mediaMap[messageId] ?? persisted;
+    final target = persisted
+        .where((attachment) => attachment.id == attachmentId)
+        .firstOrNull;
+    if (target == null) {
+      _showFloatingSnackBar(
+        'Media unavailable right now.',
+        backgroundColor: Colors.red[700],
+      );
+      return;
+    }
+
+    await _deleteUnsafeLocalMediaFile(target);
+
+    final retrying = target.copyWith(
+      clearLocalPath: true,
+      downloadStatus: kMediaDownloadStatusDownloading,
+    );
+    await mediaAttachmentRepo.saveAttachment(retrying);
+    if (mounted) {
+      setState(() {
+        _updateMediaForMessage(
+          messageId,
+          _replaceAttachment(fallback, retrying),
+        );
+      });
+    }
+
+    MediaAttachment? downloaded;
+    try {
+      downloaded = await downloadMedia(
+        bridge: widget.bridge,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        attachment: retrying,
+        contactPeerId: widget.group.id,
+        enforceGroupMediaPolicy: true,
+      );
+    } catch (_) {
+      downloaded = null;
+    }
+
+    final resolved = await _resolveHydratedMediaForMessage(
+      messageId,
+      fallbackMedia: _replaceAttachment(
+        fallback,
+        downloaded ??
+            retrying.copyWith(
+              clearLocalPath: true,
+              downloadStatus: kMediaDownloadStatusIntegrityFailed,
+            ),
+      ),
+    );
+    if (!mounted) return;
+
+    setState(() => _updateMediaForMessage(messageId, resolved));
+
+    final refreshedTarget = resolved
+        .where((attachment) => attachment.id == attachmentId)
+        .firstOrNull;
+    if (refreshedTarget == null ||
+        !GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
+          refreshedTarget,
+        )) {
+      _showFloatingSnackBar(
+        'Media is still unavailable.',
+        backgroundColor: Colors.red[700],
+      );
+    }
+  }
+
+  List<MediaAttachment> _replaceAttachment(
+    List<MediaAttachment> attachments,
+    MediaAttachment replacement,
+  ) {
+    final next = List<MediaAttachment>.from(attachments);
+    final index = next.indexWhere(
+      (attachment) => attachment.id == replacement.id,
+    );
+    if (index >= 0) {
+      next[index] = replacement;
+    } else {
+      next.add(replacement);
+    }
+    return next;
+  }
+
+  Future<void> _deleteUnsafeLocalMediaFile(MediaAttachment attachment) async {
+    final localPath = attachment.localPath;
+    final mediaFileManager = widget.mediaFileManager;
+    if (localPath == null || mediaFileManager == null) return;
+    if (_isPendingUploadPath(localPath)) return;
+
+    try {
+      final absolutePath = await mediaFileManager.resolveStoredPath(localPath);
+      if (_isPendingUploadPath(absolutePath)) return;
+      final file = File(absolutePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+
   Future<void> _onRetryFailedMedia(String messageId) async {
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
     final mediaFileManager = widget.mediaFileManager;
@@ -1489,19 +1669,23 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     String? snackText,
     bool showSnackBar = false,
   }) async {
+    _draftText = snapshot.draftText;
+    _pendingAttachments = List<PendingComposerMedia>.from(
+      snapshot.pendingAttachments,
+    );
     if (mounted) {
-      setState(() {
-        _draftText = snapshot.draftText;
-        _pendingAttachments = List<PendingComposerMedia>.from(
-          snapshot.pendingAttachments,
-        );
-        _activeQuoteMessageId = snapshot.quotedMessageId;
-      });
       _updateComposerState(
         pendingAttachments: _pendingAttachmentFiles(),
         isUploading: false,
       );
-      _updateLocalMessageStatus(messageId, 'failed');
+    }
+    _updateLocalMessageStatus(messageId, 'failed');
+    if (mounted) {
+      setState(() {
+        _activeQuoteMessageId = snapshot.quotedMessageId;
+      });
+    } else {
+      _activeQuoteMessageId = snapshot.quotedMessageId;
     }
     await _persistMessageStatus(messageId, 'failed');
     if (showSnackBar && snackText != null) {
@@ -1616,11 +1800,24 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   ) async {
     final mediaFileManager = widget.mediaFileManager;
     if (mediaFileManager == null) {
-      return attachments;
+      return Future.wait(
+        attachments.map((attachment) async {
+          if (attachment.downloadStatus == kMediaDownloadStatusDone &&
+              !GroupMediaIntegrityPolicy.hasValidContentHash(attachment)) {
+            return _markDisplayIntegrityFailed(attachment);
+          }
+          return attachment;
+        }),
+      );
     }
 
     final resolved = <MediaAttachment>[];
     for (final attachment in attachments) {
+      if (attachment.downloadStatus == kMediaDownloadStatusDone &&
+          !GroupMediaIntegrityPolicy.hasValidContentHash(attachment)) {
+        resolved.add(await _markDisplayIntegrityFailed(attachment));
+        continue;
+      }
       if (attachment.localPath == null) {
         resolved.add(attachment);
         continue;
@@ -1634,24 +1831,71 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         continue;
       }
       final exists = await File(absolutePath).exists();
-      if (!exists && attachment.downloadStatus == 'done') {
+      if (!exists && attachment.downloadStatus == kMediaDownloadStatusDone) {
         resolved.add(
           attachment.copyWith(
             localPath: absolutePath,
-            downloadStatus: 'pending',
+            downloadStatus: kMediaDownloadStatusPending,
           ),
         );
         continue;
+      }
+      if (attachment.downloadStatus == kMediaDownloadStatusDone &&
+          !attachment.hasEncryptionMetadata) {
+        final integrityValidation =
+            await GroupMediaIntegrityPolicy.validateFileContentHash(
+              path: absolutePath,
+              expectedHash: attachment.contentHash,
+            );
+        if (!integrityValidation.isValid) {
+          resolved.add(
+            await _markDisplayIntegrityFailed(
+              attachment,
+              absolutePath: absolutePath,
+              deleteLocalFile: true,
+            ),
+          );
+          continue;
+        }
       }
       resolved.add(attachment.copyWith(localPath: absolutePath));
     }
     return resolved;
   }
 
+  Future<MediaAttachment> _markDisplayIntegrityFailed(
+    MediaAttachment attachment, {
+    String? absolutePath,
+    bool deleteLocalFile = false,
+  }) async {
+    try {
+      await widget.mediaAttachmentRepo?.updateDownloadStatus(
+        attachment.id,
+        kMediaDownloadStatusIntegrityFailed,
+      );
+    } catch (_) {}
+
+    if (deleteLocalFile && absolutePath != null) {
+      await _deleteUnsafeLocalMediaFile(
+        attachment.copyWith(localPath: absolutePath),
+      );
+    }
+
+    final quarantined = attachment.copyWith(
+      clearLocalPath: true,
+      downloadStatus: kMediaDownloadStatusIntegrityFailed,
+    );
+    try {
+      await widget.mediaAttachmentRepo?.saveAttachment(quarantined);
+    } catch (_) {}
+
+    return quarantined;
+  }
+
   bool _shouldRecoverVisibleAttachment(MediaAttachment attachment) {
-    return attachment.downloadStatus == 'pending' ||
-        attachment.downloadStatus == 'downloading' ||
-        attachment.downloadStatus == 'failed';
+    return attachment.downloadStatus == kMediaDownloadStatusPending ||
+        attachment.downloadStatus == kMediaDownloadStatusDownloading ||
+        attachment.downloadStatus == kMediaDownloadStatusFailed;
   }
 
   bool _isPendingUploadPath(String path) {
@@ -2197,6 +2441,34 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       MediaAttachment? pendingAttachment;
 
       try {
+        final validation = GroupMediaMimePolicy.validateDescriptor(
+          mime: recording.mime,
+          mediaType: 'audio',
+        );
+        if (!validation.isValid) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_CONV_FL_VOICE_REJECTED_INVALID_MIME',
+            details: {'mime': recording.mime, 'reason': validation.reason},
+          );
+          throw const _RejectedPendingGroupMediaException();
+        }
+        final sizeValidation = GroupMediaSizePolicy.validateSize(
+          sizeBytes: recording.sizeBytes,
+          mime: recording.mime,
+        );
+        if (!sizeValidation.isValid) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_CONV_FL_VOICE_REJECTED_INVALID_SIZE',
+            details: {
+              'mime': recording.mime,
+              'sizeBytes': recording.sizeBytes,
+              'reason': sizeValidation.reason,
+            },
+          );
+          throw const _RejectedPendingGroupMediaException();
+        }
         durableRelativePath = await mediaFileManager.copyToDurableStorage(
           sourceFilePath: recording.filePath,
           messageId: messageId,
@@ -2206,6 +2478,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         absoluteDurablePath = await mediaFileManager.resolveStoredPath(
           durableRelativePath,
         );
+        final contentHash =
+            await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+              absoluteDurablePath,
+            );
         try {
           await File(recording.filePath).delete();
         } catch (_) {}
@@ -2221,6 +2497,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           waveform: waveform,
           downloadStatus: 'upload_pending',
           createdAt: now.toIso8601String(),
+          contentHash: contentHash,
         );
         await mediaAttachmentRepo.saveAttachment(pendingAttachment);
         await widget.msgRepo.saveMessage(optimisticMessage);
@@ -2289,6 +2566,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           messageId: messageId,
           downloadStatus: 'done',
           uploadRetryCount: durablePendingAttachment.uploadRetryCount,
+          contentHash:
+              voiceAttachment.contentHash ??
+              durablePendingAttachment.contentHash,
         );
         _markRelayUploadCompleted(recording.sizeBytes);
         await _stopRelayUploadTracking();
@@ -2467,9 +2747,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final visual = attachments
         .where((a) => a.mediaType == 'image' || a.mediaType == 'video')
         .toList();
-    if (index < visual.length && visual[index].localPath != null) {
+    if (index < visual.length &&
+        GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(visual[index])) {
       final allPaths = visual
-          .where((a) => a.localPath != null && a.downloadStatus == 'done')
+          .where(GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia)
           .map((a) => a.localPath!)
           .toList();
       if (allPaths.isEmpty) return;
@@ -2619,6 +2900,52 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       'aac': 'audio/aac',
     };
     return map[ext] ?? 'application/octet-stream';
+  }
+
+  bool _validatePendingGroupMediaDescriptors(List<PendingComposerMedia> media) {
+    for (final pending in media) {
+      final mime = _mimeFromPath(pending.file.path);
+      final validation = GroupMediaMimePolicy.validateDescriptor(
+        mime: mime,
+        mediaType: GroupMediaMimePolicy.mediaTypeForMime(mime),
+      );
+      if (validation.isValid) continue;
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_MEDIA_REJECTED_INVALID_MIME',
+        details: {'mime': mime, 'reason': validation.reason},
+      );
+      _showFloatingSnackBar('This media type is not supported in groups.');
+      return false;
+    }
+    final sizeValidation = GroupMediaSizePolicy.validateAttachments(
+      media
+          .map(
+            (pending) => MediaAttachment(
+              id: pending.file.path,
+              messageId: '',
+              mime: _mimeFromPath(pending.file.path),
+              size: pending.budgetBytes,
+              mediaType: MediaAttachment.mediaTypeFromMime(
+                _mimeFromPath(pending.file.path),
+              ),
+              downloadStatus: 'upload_pending',
+              createdAt: DateTime.now().toUtc().toIso8601String(),
+            ),
+          )
+          .toList(growable: false),
+    );
+    if (!sizeValidation.isValid) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_MEDIA_REJECTED_INVALID_SIZE',
+        details: {'reason': sizeValidation.reason},
+      );
+      _showAttachmentTooLargeMessage();
+      return false;
+    }
+    return true;
   }
 
   Future<void> _loadReactions(List<GroupMessage> messages) async {
@@ -2872,6 +3199,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 widget.mediaAttachmentRepo != null &&
                 widget.mediaFileManager != null
             ? _onRetryFailedMedia
+            : null,
+        onRetryUnavailableMedia:
+            widget.mediaAttachmentRepo != null &&
+                widget.mediaFileManager != null
+            ? _onRetryUnavailableMedia
             : null,
         onDeleteFailedMedia:
             _canWrite &&

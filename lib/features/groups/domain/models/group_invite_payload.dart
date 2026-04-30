@@ -19,6 +19,7 @@ class GroupInvitePayload {
   final String senderPeerId;
   final String senderUsername;
   final String timestamp;
+  final String? recipientPeerId;
 
   const GroupInvitePayload({
     required this.id,
@@ -29,6 +30,7 @@ class GroupInvitePayload {
     required this.senderPeerId,
     required this.senderUsername,
     required this.timestamp,
+    this.recipientPeerId,
   });
 
   /// Serializes only the inner payload fields (without envelope wrapper).
@@ -44,6 +46,8 @@ class GroupInvitePayload {
       'senderPeerId': senderPeerId,
       'senderUsername': senderUsername,
       'timestamp': timestamp,
+      if (recipientPeerId != null && recipientPeerId!.isNotEmpty)
+        'recipientPeerId': recipientPeerId,
     });
   }
 
@@ -62,6 +66,7 @@ class GroupInvitePayload {
       final senderPeerId = payload['senderPeerId'] as String?;
       final senderUsername = payload['senderUsername'] as String?;
       final timestamp = payload['timestamp'] as String?;
+      final recipientPeerId = payload['recipientPeerId'] as String?;
 
       if (id == null ||
           groupId == null ||
@@ -83,6 +88,7 @@ class GroupInvitePayload {
         senderPeerId: senderPeerId,
         senderUsername: senderUsername,
         timestamp: timestamp,
+        recipientPeerId: recipientPeerId,
       );
     } catch (_) {
       return null;
@@ -100,6 +106,8 @@ class GroupInvitePayload {
       'senderPeerId': senderPeerId,
       'senderUsername': senderUsername,
       'timestamp': timestamp,
+      if (recipientPeerId != null && recipientPeerId!.isNotEmpty)
+        'recipientPeerId': recipientPeerId,
     };
     final envelope = {
       'type': 'group_invite',
@@ -129,6 +137,7 @@ class GroupInvitePayload {
       final senderPeerId = payload['senderPeerId'] as String?;
       final senderUsername = payload['senderUsername'] as String?;
       final timestamp = payload['timestamp'] as String?;
+      final recipientPeerId = payload['recipientPeerId'] as String?;
 
       if (id == null ||
           groupId == null ||
@@ -150,6 +159,7 @@ class GroupInvitePayload {
         senderPeerId: senderPeerId,
         senderUsername: senderUsername,
         timestamp: timestamp,
+        recipientPeerId: recipientPeerId,
       );
     } catch (_) {
       return null;

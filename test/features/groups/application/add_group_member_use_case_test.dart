@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
@@ -132,6 +134,159 @@ void main() {
       ),
       throwsA(isA<StateError>()),
     );
+
+    expect(await groupRepo.getMember('group-2', 'peer-new'), isNull);
+    expect(bridge.commandLog, isEmpty);
+  });
+
+  test(
+    'allows writer with invite permission override to add a member',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-inviter',
+          username: 'Inviter',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(inviteMembers: true),
+          publicKey: 'pk-inviter',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final newMember = GroupMember(
+        groupId: 'group-2',
+        peerId: 'peer-custom',
+        username: 'CustomInvitee',
+        role: MemberRole.reader,
+        publicKey: 'pk-custom',
+        joinedAt: DateTime.now().toUtc(),
+      );
+
+      await addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-2',
+        newMember: newMember,
+        selfPeerId: 'peer-inviter',
+      );
+
+      expect(await groupRepo.getMember('group-2', 'peer-custom'), isNotNull);
+      expect(bridge.commandLog, contains('group:updateConfig'));
+
+      final updateConfigMessage = bridge.sentMessages.firstWhere((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final payload =
+          (jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      final members = (groupConfig['members'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final inviterEntry = members.firstWhere(
+        (member) => member['peerId'] == 'peer-inviter',
+      );
+      expect(inviterEntry['role'], 'writer');
+      expect(inviterEntry['permissions'], {'inviteMembers': true});
+    },
+  );
+
+  test(
+    'rechecks revoked invite permission before adding a queued member',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-inviter',
+          username: 'Inviter',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(inviteMembers: true),
+          publicKey: 'pk-inviter',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-2',
+          peerId: 'peer-inviter',
+          username: 'Inviter',
+          role: MemberRole.writer,
+          publicKey: 'pk-inviter',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final queuedMember = GroupMember(
+        groupId: 'group-2',
+        peerId: 'peer-stale-invite',
+        username: 'StaleInvitee',
+        role: MemberRole.reader,
+        publicKey: 'pk-stale-invite',
+        joinedAt: DateTime.now().toUtc(),
+      );
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-2',
+          newMember: queuedMember,
+          selfPeerId: 'peer-inviter',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Only admins can add members'),
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getMember('group-2', 'peer-stale-invite'), isNull);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
+
+  test('denies admin whose invite permission override is false', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        permissions: const GroupMemberPermissions(inviteMembers: false),
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    final newMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-denied',
+      username: 'DeniedUser',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: newMember,
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('Only admins can add members'),
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-denied'), isNull);
+    expect(bridge.commandLog, isEmpty);
   });
 
   test('rejects while group recovery is in progress', () async {

@@ -49,7 +49,9 @@ Future<Map<String, Object?>?> dbLoadLatestGroupKey(
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_KEYS_DB_LOAD_LATEST_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
@@ -142,7 +144,9 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupKeys(
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_KEYS_DB_LOAD_ALL_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
@@ -175,15 +179,13 @@ Future<void> dbDeleteAllGroupKeys(Database db, String groupId) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_KEYS_DB_DELETE_ALL_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
-    await db.delete(
-      'group_keys',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
-    );
+    await db.delete('group_keys', where: 'group_id = ?', whereArgs: [groupId]);
 
     emitFlowEvent(
       layer: 'DB',
@@ -194,6 +196,43 @@ Future<void> dbDeleteAllGroupKeys(Database db, String groupId) async {
     emitFlowEvent(
       layer: 'DB',
       event: 'GROUP_KEYS_DB_DELETE_ALL_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Deletes keys older than [minKeyGenerationToKeep] for a group.
+Future<void> dbDeleteGroupKeysBeforeGeneration(
+  Database db,
+  String groupId,
+  int minKeyGenerationToKeep,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'GROUP_KEYS_DB_DELETE_OBSOLETE_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'minKeyGenerationToKeep': minKeyGenerationToKeep,
+    },
+  );
+
+  try {
+    await db.delete(
+      'group_keys',
+      where: 'group_id = ? AND key_generation < ?',
+      whereArgs: [groupId, minKeyGenerationToKeep],
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEYS_DB_DELETE_OBSOLETE_SUCCESS',
+      details: {'minKeyGenerationToKeep': minKeyGenerationToKeep},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'GROUP_KEYS_DB_DELETE_OBSOLETE_ERROR',
       details: {'error': e.toString()},
     );
     rethrow;

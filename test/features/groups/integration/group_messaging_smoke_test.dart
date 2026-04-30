@@ -265,6 +265,112 @@ void main() {
     );
 
     test(
+      'concurrent A/B/C sends and quoted replies converge to deterministic order',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+
+        const groupId = 'group-ms004-concurrent';
+        await alice.createGroup(groupId: groupId, name: 'MS-004');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        final concurrentAt = DateTime.utc(2026, 4, 29, 12);
+        final sent = await Future.wait([
+          alice.sendGroupMessage(
+            groupId: groupId,
+            text: 'Concurrent A',
+            messageId: 'ms004-a',
+            timestamp: concurrentAt,
+          ),
+          bob.sendGroupMessage(
+            groupId: groupId,
+            text: 'Concurrent B',
+            messageId: 'ms004-b',
+            timestamp: concurrentAt,
+          ),
+          charlie.sendGroupMessage(
+            groupId: groupId,
+            text: 'Concurrent C',
+            messageId: 'ms004-c',
+            timestamp: concurrentAt,
+          ),
+        ]);
+        await pump();
+
+        await Future.wait([
+          bob.sendGroupMessage(
+            groupId: groupId,
+            text: 'Reply to A',
+            quotedMessageId: sent[0]!.id,
+            messageId: 'ms004-reply-b-to-a',
+            timestamp: concurrentAt.add(const Duration(milliseconds: 1)),
+          ),
+          charlie.sendGroupMessage(
+            groupId: groupId,
+            text: 'Reply to B',
+            quotedMessageId: sent[1]!.id,
+            messageId: 'ms004-reply-c-to-b',
+            timestamp: concurrentAt.add(const Duration(milliseconds: 1)),
+          ),
+        ]);
+        await pump();
+
+        Future<void> expectConverged(GroupTestUser user) async {
+          final messages = await user.loadGroupMessages(groupId);
+          expect(
+            messages.map((message) => message.id).toList(),
+            [
+              'ms004-a',
+              'ms004-b',
+              'ms004-c',
+              'ms004-reply-b-to-a',
+              'ms004-reply-c-to-b',
+            ],
+            reason: '${user.username} should render the same stable order',
+          );
+          expect(
+            messages
+                .singleWhere((message) => message.id == 'ms004-reply-b-to-a')
+                .quotedMessageId,
+            'ms004-a',
+          );
+          expect(
+            messages
+                .singleWhere((message) => message.id == 'ms004-reply-c-to-b')
+                .quotedMessageId,
+            'ms004-b',
+          );
+        }
+
+        await expectConverged(alice);
+        await expectConverged(bob);
+        await expectConverged(charlie);
+
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
       'same sender sequential messages stay ordered for both recipients',
       () async {
         final alice = GroupTestUser.create(

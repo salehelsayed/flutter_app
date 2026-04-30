@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
@@ -20,6 +22,9 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 import '../../conversation/application/helpers/fake_upload_media_fn.dart';
+
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
@@ -55,13 +60,14 @@ MediaAttachment _pendingAttachment({
   required String messageId,
   String localPath = 'pending_uploads/msg-1/blob.jpg',
   String mime = 'image/jpeg',
+  int size = 2048,
   int? uploadRetryCount,
 }) {
   return MediaAttachment(
     id: id,
     messageId: messageId,
     mime: mime,
-    size: 2048,
+    size: size,
     mediaType: MediaAttachment.mediaTypeFromMime(mime),
     localPath: localPath,
     downloadStatus: 'upload_pending',
@@ -74,15 +80,20 @@ MediaAttachment _doneAttachment({
   required String id,
   required String messageId,
   String mime = 'image/jpeg',
+  int size = 4096,
 }) {
   return MediaAttachment(
     id: id,
     messageId: messageId,
     mime: mime,
-    size: 4096,
+    size: size,
     mediaType: MediaAttachment.mediaTypeFromMime(mime),
     localPath: 'media/group-1/$id.jpg',
     downloadStatus: 'done',
+    contentHash: _validContentHash,
+    encryptionKeyBase64: 'key-$id',
+    encryptionNonce: 'nonce-$id',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     createdAt: DateTime.now().toUtc().toIso8601String(),
   );
 }
@@ -148,6 +159,16 @@ void main() {
     await groupRepo.saveMember(
       GroupMember(
         groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        joinedAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
         peerId: 'peer-2',
         username: 'Bob',
         role: MemberRole.writer,
@@ -172,6 +193,94 @@ void main() {
 
       expect(count, 0);
     });
+
+    test(
+      'MD-012 quarantined download failures are not picked up by incomplete upload retry',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-md012-download-only',
+            groupId: 'group-1',
+            senderPeerId: 'peer-2',
+            senderUsername: 'Bob',
+            text: 'download repair only',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-md012-upload-owner',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'upload retry owner',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _doneAttachment(
+            id: 'download-integrity-failed',
+            messageId: 'msg-md012-download-only',
+          ).copyWith(downloadStatus: kMediaDownloadStatusIntegrityFailed),
+        );
+        await mediaRepo.saveAttachment(
+          _doneAttachment(
+            id: 'download-transient-failed',
+            messageId: 'msg-md012-download-only',
+          ).copyWith(downloadStatus: 'failed'),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'upload-pending-md012',
+            messageId: 'msg-md012-upload-owner',
+            localPath: 'pending_uploads/msg-md012-upload-owner/blob.jpg',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'upload-pending-md012',
+            messageId: 'msg-md012-upload-owner',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        expect(uploadFn.callCount, 1);
+        expect(uploadFn.lastBlobId, 'upload-pending-md012');
+        final downloadOnly = await mediaRepo.getAttachmentsForMessage(
+          'msg-md012-download-only',
+        );
+        expect(
+          downloadOnly.map((attachment) => attachment.id),
+          unorderedEquals([
+            'download-integrity-failed',
+            'download-transient-failed',
+          ]),
+        );
+        expect(
+          downloadOnly.map((attachment) => attachment.downloadStatus),
+          unorderedEquals([kMediaDownloadStatusIntegrityFailed, 'failed']),
+        );
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+      },
+    );
 
     test(
       'reuploads only group upload_pending attachments and uses blobId',
@@ -230,6 +339,12 @@ void main() {
         );
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        expect(publishMsg, contains('"contentHash":"$_validContentHash"'));
         expect(deletedDirs, contains('msg-1'));
         expect(
           (await mediaRepo.getAttachmentsForMessage(
@@ -243,6 +358,269 @@ void main() {
           ),
           isTrue,
           reason: '1:1 upload_pending rows must be skipped',
+        );
+      },
+    );
+
+    test(
+      'terminalizes dangerous MIME pending attachments without upload or resend',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-dangerous-mime',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Blocked media',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-dangerous',
+            messageId: 'msg-dangerous-mime',
+            localPath: 'pending_uploads/msg-dangerous-mime/payload.pdf',
+            mime: 'application/pdf',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-dangerous',
+            messageId: 'msg-dangerous-mime',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          'msg-dangerous-mime',
+        );
+        expect(attachments.single.downloadStatus, 'upload_failed');
+      },
+    );
+
+    test(
+      'MD-011 retry excludes a removed member from media ACLs and inbox recipients',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-removed',
+            username: 'Removed',
+            role: MemberRole.writer,
+            publicKey: 'pk-removed',
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await groupRepo.removeMember('group-1', 'peer-removed');
+        expect(
+          (await groupRepo.getMembers(
+            'group-1',
+          )).map((member) => member.peerId),
+          unorderedEquals(['peer-admin', 'peer-2']),
+        );
+
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-md011-retry',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Retry future media',
+            timestamp: DateTime.utc(2026, 1, 1, 12),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1, 12),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-md011-retry',
+            messageId: 'msg-md011-retry',
+            localPath: 'pending_uploads/msg-md011-retry/photo.jpg',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-md011-retry',
+            messageId: 'msg-md011-retry',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        expect(uploadFn.callCount, 1);
+        expect(uploadFn.lastAllowedPeers, unorderedEquals(['peer-2']));
+        expect(uploadFn.lastAllowedPeers, isNot(contains('peer-admin')));
+        expect(uploadFn.lastAllowedPeers, isNot(contains('peer-removed')));
+
+        final inboxPayload = bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:inboxStore')
+            .map((message) => message['payload'] as Map<String, dynamic>)
+            .last;
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          unorderedEquals(['peer-2']),
+        );
+        final replayEnvelope =
+            jsonDecode(inboxPayload['message'] as String)
+                as Map<String, dynamic>;
+        final replayPlaintext =
+            jsonDecode(replayEnvelope['ciphertext'] as String)
+                as Map<String, dynamic>;
+        expect(replayPlaintext['messageId'], 'msg-md011-retry');
+        expect(
+          ((replayPlaintext['media'] as List<dynamic>).single
+              as Map<String, dynamic>)['id'],
+          'pending-md011-retry',
+        );
+      },
+    );
+
+    test(
+      'terminalizes oversized pending attachments without upload or resend',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-oversized-pending',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Blocked media',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-oversized',
+            messageId: 'msg-oversized-pending',
+            localPath: 'pending_uploads/msg-oversized-pending/photo.jpg',
+            size: kGroupMediaPerAttachmentLimitBytes + 1,
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-oversized',
+            messageId: 'msg-oversized-pending',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(
+          (await mediaRepo.getAttachmentsForMessage(
+            'msg-oversized-pending',
+          )).single.downloadStatus,
+          'upload_failed',
+        );
+      },
+    );
+
+    test(
+      'aborts final resend when done plus pending attachments exceed total limit',
+      () async {
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-total-oversized-retry',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Blocked total media',
+            timestamp: DateTime.utc(2026, 1, 1),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _doneAttachment(
+            id: 'done-total-boundary',
+            messageId: 'msg-total-oversized-retry',
+            size: kGroupMediaTotalMessageLimitBytes,
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-total-extra',
+            messageId: 'msg-total-oversized-retry',
+            size: 1,
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-total-extra',
+            messageId: 'msg-total-oversized-retry',
+            size: 1,
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 0);
+        expect(uploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(
+          (await mediaRepo.getAttachmentsForMessage(
+                'msg-total-oversized-retry',
+              ))
+              .where((attachment) => attachment.id == 'pending-total-extra')
+              .single
+              .downloadStatus,
+          'upload_failed',
         );
       },
     );
@@ -298,7 +676,9 @@ void main() {
         expect(uploadFn.lastMime, 'image/gif');
         expect(uploadFn.lastBlobId, 'pending-gif');
         final publishMsg = bridge.sentMessages.firstWhere(
-          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] == 'group:publish',
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
         );
         expect(publishMsg, contains('"mime":"image/gif"'));
       },

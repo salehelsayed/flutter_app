@@ -6,6 +6,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
+import 'package:flutter_app/features/feed/application/group_feed_media_verification.dart';
 import 'package:flutter_app/features/feed/domain/utils/group_group_messages_into_threads.dart';
 import 'package:flutter_app/features/feed/domain/utils/group_messages_into_threads.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -104,26 +105,15 @@ Future<List<GroupThreadFeedItem>> loadGroupFeedItems({
     final mediaMap = await mediaAttachmentRepo.getAttachmentsForMessages(ids);
     if (mediaMap.isNotEmpty) {
       final resolvedMap = <String, List<MediaAttachment>>{};
-      if (mediaFileManager != null) {
-        for (final entry in mediaMap.entries) {
-          final resolved = <MediaAttachment>[];
-          for (final a in entry.value) {
-            if (a.localPath != null) {
-              final absPath = await mediaFileManager.resolveStoredPath(
-                a.localPath!,
-              );
-              resolved.add(a.copyWith(localPath: absPath));
-            } else {
-              resolved.add(a);
-            }
-          }
-          resolvedMap[entry.key] = resolved;
-        }
+      for (final entry in mediaMap.entries) {
+        resolvedMap[entry.key] = await resolveGroupFeedMediaForDisplay(
+          attachments: entry.value,
+          mediaFileManager: mediaFileManager,
+        );
       }
 
-      final effectiveMap = mediaFileManager != null ? resolvedMap : mediaMap;
       allGroupMessages = allGroupMessages
-          .map((m) => m.copyWith(media: effectiveMap[m.id] ?? const []))
+          .map((m) => m.copyWith(media: resolvedMap[m.id] ?? const []))
           .toList();
     }
   }

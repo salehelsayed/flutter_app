@@ -40,9 +40,7 @@ class InMemoryGroupRepository implements GroupRepository {
 
   @override
   Future<List<GroupModel>> getActiveGroups() async {
-    final list = _groups.values
-        .where((g) => !g.isArchived)
-        .toList()
+    final list = _groups.values.where((g) => !g.isArchived).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return list;
   }
@@ -101,6 +99,7 @@ class InMemoryGroupRepository implements GroupRepository {
         peerId: member.peerId,
         username: member.username,
         role: role,
+        permissions: member.permissions,
         publicKey: member.publicKey,
         mlKemPublicKey: member.mlKemPublicKey,
         joinedAt: member.joinedAt,
@@ -124,9 +123,11 @@ class InMemoryGroupRepository implements GroupRepository {
   Future<void> saveKey(GroupKeyInfo key) async {
     _keys.putIfAbsent(key.groupId, () => []);
     // Remove existing key with same generation if present
-    _keys[key.groupId]!
-        .removeWhere((k) => k.keyGeneration == key.keyGeneration);
+    _keys[key.groupId]!.removeWhere(
+      (k) => k.keyGeneration == key.keyGeneration,
+    );
     _keys[key.groupId]!.add(key);
+    _pruneObsoleteKeys(key.groupId);
   }
 
   @override
@@ -158,4 +159,17 @@ class InMemoryGroupRepository implements GroupRepository {
   }
 
   int get groupCount => _groups.length;
+
+  void _pruneObsoleteKeys(String groupId) {
+    final groupKeys = _keys[groupId];
+    if (groupKeys == null || groupKeys.length <= 2) {
+      return;
+    }
+
+    final latestGeneration = groupKeys
+        .map((key) => key.keyGeneration)
+        .reduce((a, b) => a > b ? a : b);
+    final minKeyGenerationToKeep = latestGeneration - 1;
+    groupKeys.removeWhere((key) => key.keyGeneration < minKeyGenerationToKeep);
+  }
 }

@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -8,6 +10,9 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 class _CountingGroupRepository extends InMemoryGroupRepository {
   var getGroupCalls = 0;
@@ -23,6 +28,40 @@ class _CountingGroupRepository extends InMemoryGroupRepository {
   Future<GroupMember?> getMember(String groupId, String peerId) async {
     getMemberCalls++;
     return super.getMember(groupId, peerId);
+  }
+}
+
+class _FakeEventLog {
+  final entries = <Map<String, Object?>>[];
+  final _payloadBySourceEventId = <String, String>{};
+
+  Future<Map<String, Object?>> append({
+    required String groupId,
+    required String eventType,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> payload,
+    DateTime? createdAt,
+  }) async {
+    final canonical = canonicalizeGroupEventLogPayload(payload);
+    final existing = _payloadBySourceEventId[sourceEventId];
+    if (existing != null && existing != canonical) {
+      throw GroupEventLogTamperException('conflicting replay');
+    }
+    _payloadBySourceEventId[sourceEventId] = canonical;
+    final entry = {
+      'groupId': groupId,
+      'eventType': eventType,
+      'sourcePeerId': sourcePeerId,
+      'sourceEventId': sourceEventId,
+      'sourceTimestamp': sourceTimestamp,
+      'payload': payload,
+    };
+    if (existing == null) {
+      entries.add(entry);
+    }
+    return entry;
   }
 }
 
@@ -94,6 +133,76 @@ void main() {
     expect(result.isIncoming, true);
     expect(result.senderPeerId, 'peer-sender');
   });
+
+  test('records incoming message in tamper-evident event log', () async {
+    final eventLog = _FakeEventLog();
+    final timestamp = DateTime.utc(2026, 4, 30, 12).toIso8601String();
+
+    final result = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 3,
+      text: 'Logged message',
+      timestamp: timestamp,
+      messageId: 'msg-log-1',
+      quotedMessageId: 'msg-parent-1',
+      appendGroupEventLogEntry: eventLog.append,
+    );
+
+    expect(result, isNotNull);
+    expect(eventLog.entries, hasLength(1));
+    expect(eventLog.entries.single['eventType'], 'message');
+    expect(eventLog.entries.single['sourceEventId'], 'msg-log-1');
+    final payload = eventLog.entries.single['payload'] as Map<String, Object?>;
+    expect(payload['text'], 'Logged message');
+    expect(payload['keyEpoch'], 3);
+    expect(payload['quotedMessageId'], 'msg-parent-1');
+  });
+
+  test(
+    'event log rejects tampered duplicate before stored message changes',
+    () async {
+      final eventLog = _FakeEventLog();
+      final timestamp = DateTime.utc(2026, 4, 30, 12).toIso8601String();
+
+      await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Original',
+        timestamp: timestamp,
+        messageId: 'msg-replay-1',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+
+      expect(
+        () => handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'Tampered',
+          timestamp: timestamp,
+          messageId: 'msg-replay-1',
+          appendGroupEventLogEntry: eventLog.append,
+        ),
+        throwsA(isA<GroupEventLogTamperException>()),
+      );
+
+      final stored = await msgRepo.getMessage('msg-replay-1');
+      expect(stored, isNotNull);
+      expect(stored!.text, 'Original');
+      expect(msgRepo.count, 1);
+    },
+  );
 
   test('persists same-self delivery as local sent history', () async {
     final result = await handleIncomingGroupMessage(
@@ -521,6 +630,95 @@ void main() {
     expect(msgRepo.count, 3); // all unique
   });
 
+  test('far future incoming timestamp is clamped to receive time', () async {
+    final beforeReceive = DateTime.now().toUtc();
+    final farFuture = beforeReceive.add(const Duration(days: 2));
+
+    final result = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'Future-skewed message',
+      timestamp: farFuture.toIso8601String(),
+      messageId: 'msg-future-skew',
+    );
+    final afterReceive = DateTime.now().toUtc();
+
+    expect(result, isNotNull);
+    expect(result!.timestamp.isBefore(farFuture), isTrue);
+    expect(
+      result.timestamp.isAfter(
+        beforeReceive.subtract(const Duration(seconds: 1)),
+      ),
+      isTrue,
+    );
+    expect(
+      result.timestamp.isBefore(afterReceive.add(const Duration(seconds: 1))),
+      isTrue,
+    );
+
+    final saved = await msgRepo.getMessage('msg-future-skew');
+    expect(saved, isNotNull);
+    expect(saved!.timestamp, result.timestamp);
+  });
+
+  test(
+    'past current and near future timestamps retain chronological order',
+    () async {
+      final base = DateTime.now().toUtc();
+      final past = base.subtract(const Duration(minutes: 3));
+      final nearFuture = base.add(const Duration(minutes: 3));
+
+      await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Current clock',
+        timestamp: base.toIso8601String(),
+        messageId: 'msg-clock-current',
+      );
+      await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Past clock',
+        timestamp: past.toIso8601String(),
+        messageId: 'msg-clock-past',
+      );
+      await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Near future clock',
+        timestamp: nearFuture.toIso8601String(),
+        messageId: 'msg-clock-near-future',
+      );
+
+      final page = await msgRepo.getMessagesPage('group-1');
+      expect(page.map((message) => message.id), [
+        'msg-clock-past',
+        'msg-clock-current',
+        'msg-clock-near-future',
+      ]);
+      expect(
+        (await msgRepo.getLatestMessage('group-1'))!.id,
+        'msg-clock-near-future',
+      );
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // Phase 6: messageId-based dedupe tests
   // ---------------------------------------------------------------------------
@@ -650,6 +848,49 @@ void main() {
     },
   );
 
+  test(
+    'duplicate replay with the same messageId ignores conflicting content',
+    () async {
+      const sharedMessageId = 'msg-replay-content-tampered';
+      final originalTimestamp = DateTime.utc(2026, 4, 5, 12, 30, 0);
+
+      final first = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Trusted live content',
+        timestamp: originalTimestamp.toIso8601String(),
+        messageId: sharedMessageId,
+      );
+      expect(first, isNotNull);
+
+      final replay = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Tampered inbox content',
+        timestamp: originalTimestamp
+            .add(const Duration(minutes: 1))
+            .toIso8601String(),
+        messageId: sharedMessageId,
+      );
+
+      expect(replay, isNull);
+
+      final saved = await msgRepo.getMessage(sharedMessageId);
+      expect(saved, isNotNull);
+      expect(saved!.text, 'Trusted live content');
+      expect(saved.timestamp, originalTimestamp);
+      expect(msgRepo.count, 1);
+    },
+  );
+
   test('duplicate replay saves missing media attachments', () async {
     final mediaRepo = InMemoryMediaAttachmentRepository();
     const sharedMessageId = 'msg-media-repair';
@@ -660,6 +901,10 @@ void main() {
         'mime': 'image/png',
         'size': 2048,
         'mediaType': 'image',
+        'contentHash': _validContentHash,
+        'encryptionKeyBase64': 'key-fixture',
+        'encryptionNonce': 'nonce-fixture',
+        'encryptionScheme': 'blob_aes_256_gcm_v1',
         'downloadStatus': 'pending',
         'createdAt': ts,
       },
@@ -715,6 +960,10 @@ void main() {
         'mime': 'image/png',
         'size': 1000,
         'mediaType': 'image',
+        'contentHash': _validContentHash,
+        'encryptionKeyBase64': 'key-fixture',
+        'encryptionNonce': 'nonce-fixture',
+        'encryptionScheme': 'blob_aes_256_gcm_v1',
         'downloadStatus': 'pending',
         'createdAt': ts,
       },
@@ -883,6 +1132,10 @@ void main() {
           'mime': 'image/jpeg',
           'size': 12345,
           'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
           'downloadStatus': 'pending',
           'createdAt': DateTime.now().toUtc().toIso8601String(),
         },
@@ -917,6 +1170,10 @@ void main() {
           'mime': 'audio/mp4',
           'size': 5000,
           'mediaType': 'audio',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
           'downloadStatus': 'pending',
           'createdAt': DateTime.now().toUtc().toIso8601String(),
         },
@@ -940,6 +1197,380 @@ void main() {
       expect(pending.length, 1);
       expect(pending.first.downloadStatus, 'pending');
     });
+
+    test(
+      'rejects invalid live media before saving message or attachment',
+      () async {
+        final media = [
+          {
+            'id': 'blob-dangerous',
+            'mime': 'text/html',
+            'size': 5000,
+            'mediaType': 'file',
+            'contentHash': _validContentHash,
+            'encryptionKeyBase64': 'key-fixture',
+            'encryptionNonce': 'nonce-fixture',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ];
+
+        final result = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'Dangerous media',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          messageId: 'msg-dangerous-media',
+          media: media,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, isNull);
+        expect(await msgRepo.getMessage('msg-dangerous-media'), isNull);
+        expect(msgRepo.count, 0);
+        expect(mediaRepo.count, 0);
+      },
+    );
+
+    test('rejects incoming mediaType mismatches before storage', () async {
+      final media = [
+        {
+          'id': 'blob-mismatch',
+          'mime': 'image/jpeg',
+          'size': 5000,
+          'mediaType': 'video',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Mismatch media',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-mismatch-media',
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-mismatch-media'), isNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test(
+      'rejects oversized live media before saving message or attachment',
+      () async {
+        final media = [
+          {
+            'id': 'blob-oversized-live',
+            'mime': 'image/jpeg',
+            'size': kGroupMediaPerAttachmentLimitBytes + 1,
+            'mediaType': 'image',
+            'contentHash': _validContentHash,
+            'encryptionKeyBase64': 'key-fixture',
+            'encryptionNonce': 'nonce-fixture',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ];
+
+        final result = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'Oversized media',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          messageId: 'msg-oversized-live',
+          media: media,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, isNull);
+        expect(await msgRepo.getMessage('msg-oversized-live'), isNull);
+        expect(msgRepo.count, 0);
+        expect(mediaRepo.count, 0);
+      },
+    );
+
+    test('rejects total-over-limit live media before storage', () async {
+      final media = [
+        {
+          'id': 'blob-total-1',
+          'mime': 'image/jpeg',
+          'size': kGroupMediaTotalMessageLimitBytes,
+          'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+        {
+          'id': 'blob-total-2',
+          'mime': 'image/png',
+          'size': 1,
+          'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Too much media',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-total-oversized-live',
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-total-oversized-live'), isNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test('rejects malformed media descriptors before storage', () async {
+      final media = [
+        {
+          'id': 'blob-malformed',
+          'mime': 42,
+          'size': 5000,
+          'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Malformed media',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-malformed-media',
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-malformed-media'), isNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test('rejects malformed media size before storage', () async {
+      final media = [
+        {
+          'id': 'blob-bad-size',
+          'mime': 'image/png',
+          'size': '5000',
+          'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Malformed media size',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-malformed-media-size',
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-malformed-media-size'), isNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test('rejects missing content hash before storage', () async {
+      final media = [
+        {
+          'id': 'blob-missing-hash',
+          'mime': 'image/png',
+          'size': 5000,
+          'mediaType': 'image',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Missing hash',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-missing-content-hash',
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-missing-content-hash'), isNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test('rejects malformed content hash before storage', () async {
+      final media = [
+        {
+          'id': 'blob-bad-hash',
+          'mime': 'image/png',
+          'size': 5000,
+          'mediaType': 'image',
+          'contentHash': 'not-a-sha256',
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Bad hash',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-bad-content-hash',
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-bad-content-hash'), isNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test('rejects missing media encryption metadata before storage', () async {
+      final media = [
+        {
+          'id': 'blob-missing-encryption',
+          'mime': 'image/png',
+          'size': 5000,
+          'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'downloadStatus': 'pending',
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      ];
+
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Missing encryption',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-missing-media-encryption',
+        media: media,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-missing-media-encryption'), isNull);
+      expect(mediaRepo.count, 0);
+    });
+
+    test(
+      'duplicate replay with oversized media does not enrich existing sparse message',
+      () async {
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-duplicate-oversized',
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            senderUsername: 'Sender',
+            text: 'Existing message',
+            timestamp: DateTime.now().toUtc(),
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final result = await handleIncomingGroupMessage(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          keyEpoch: 0,
+          text: 'Existing message',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          messageId: 'msg-duplicate-oversized',
+          media: [
+            {
+              'id': 'blob-duplicate-oversized',
+              'mime': 'image/jpeg',
+              'size': kGroupMediaPerAttachmentLimitBytes + 1,
+              'mediaType': 'image',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'key-fixture',
+              'encryptionNonce': 'nonce-fixture',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'downloadStatus': 'pending',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          ],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, isNull);
+        expect(mediaRepo.count, 0);
+      },
+    );
 
     test('handles message without media (backward compat)', () async {
       final result = await handleIncomingGroupMessage(
@@ -966,6 +1597,10 @@ void main() {
           'mime': 'image/png',
           'size': 1000,
           'mediaType': 'image',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
           'downloadStatus': 'pending',
           'createdAt': ts,
         },

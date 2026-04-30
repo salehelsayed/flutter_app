@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	mcrypto "github.com/mknoon/go-mknoon/crypto"
 )
 
 func TestBuildGroupInboxStoreRequest_MarshalsRecipientPeerIds(t *testing.T) {
@@ -86,14 +88,37 @@ func TestBuildGroupInboxStoreRequest_MarshalsPushBody(t *testing.T) {
 }
 
 func TestBuildGroupInboxStoreRequest_PreservesOpaqueReplayEnvelope(t *testing.T) {
-	envelope := `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":4,"messageId":"msg-opaque-1","ciphertext":"opaque-ciphertext-1","nonce":"opaque-nonce-1"}`
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	plaintext := `{"text":"Alice private relay body","mediaKey":"media-key-secret-alpha","inviteToken":"invite-token-secret-beta","history":"history repair secret gamma"}`
+	sensitiveFragments := []string{
+		"Alice private relay body",
+		"media-key-secret-alpha",
+		"invite-token-secret-beta",
+		"history repair secret gamma",
+	}
+	envelope := buildTestEnvelopeWithPlaintext(
+		t,
+		"group-1",
+		"group_message",
+		"peer-self",
+		privB64,
+		pubB64,
+		groupKey,
+		4,
+		plaintext,
+	)
 	req := buildGroupInboxStoreRequest(
 		"group-1",
 		"peer-self",
 		envelope,
 		[]string{"peer-reader"},
-		"Replay Title",
-		"Replay Body",
+		"New group activity",
+		"Open the app to view encrypted group updates.",
 	)
 
 	raw, err := json.Marshal(req)
@@ -108,6 +133,12 @@ func TestBuildGroupInboxStoreRequest_PreservesOpaqueReplayEnvelope(t *testing.T)
 
 	if decoded["message"] != envelope {
 		t.Fatalf("message = %#v, want exact opaque envelope %q", decoded["message"], envelope)
+	}
+	rawRequest := string(raw)
+	for _, fragment := range sensitiveFragments {
+		if strings.Contains(rawRequest, fragment) {
+			t.Fatalf("relay-visible group inbox request leaked plaintext fragment %q in %s", fragment, rawRequest)
+		}
 	}
 }
 

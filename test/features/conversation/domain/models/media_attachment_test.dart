@@ -14,6 +14,13 @@ void main() {
     localPath: '/path/to/file.jpg',
     downloadStatus: 'done',
     createdAt: '2026-02-20T10:00:00.000Z',
+    contentHash:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    thumbnailHash:
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    encryptionKeyBase64: 'key-1',
+    encryptionNonce: 'nonce-1',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
   );
 
   group('MediaAttachment', () {
@@ -33,6 +40,14 @@ void main() {
         expect(restored.localPath, testAttachment.localPath);
         expect(restored.downloadStatus, testAttachment.downloadStatus);
         expect(restored.createdAt, testAttachment.createdAt);
+        expect(restored.contentHash, testAttachment.contentHash);
+        expect(restored.thumbnailHash, testAttachment.thumbnailHash);
+        expect(
+          restored.encryptionKeyBase64,
+          testAttachment.encryptionKeyBase64,
+        );
+        expect(restored.encryptionNonce, testAttachment.encryptionNonce);
+        expect(restored.encryptionScheme, testAttachment.encryptionScheme);
       });
 
       test('toMap produces correct snake_case keys', () {
@@ -49,6 +64,20 @@ void main() {
         expect(map['local_path'], '/path/to/file.jpg');
         expect(map['download_status'], 'done');
         expect(map['created_at'], '2026-02-20T10:00:00.000Z');
+        expect(
+          map['content_hash'],
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        );
+        expect(
+          map['thumbnail_hash'],
+          'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        );
+        expect(map['encryption_key_base64'], 'key-1');
+        expect(map['encryption_nonce'], 'nonce-1');
+        expect(
+          map['encryption_scheme'],
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
       });
 
       test('round-trips with null optional fields', () {
@@ -95,6 +124,20 @@ void main() {
         expect(json['mediaType'], 'image');
         expect(json['width'], 1920);
         expect(json['height'], 1080);
+        expect(
+          json['contentHash'],
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        );
+        expect(
+          json['thumbnailHash'],
+          'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        );
+        expect(json['encryptionKeyBase64'], 'key-1');
+        expect(json['encryptionNonce'], 'nonce-1');
+        expect(
+          json['encryptionScheme'],
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
         // toJson excludes DB-only fields
         expect(json.containsKey('messageId'), isFalse);
         expect(json.containsKey('localPath'), isFalse);
@@ -128,6 +171,13 @@ void main() {
           'width': 1280,
           'height': 720,
           'durationMs': 30000,
+          'contentHash':
+              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          'thumbnailHash':
+              'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+          'encryptionKeyBase64': 'key-wire',
+          'encryptionNonce': 'nonce-wire',
+          'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         };
         final restored = MediaAttachment.fromJson(json);
 
@@ -138,6 +188,21 @@ void main() {
         expect(restored.width, 1280);
         expect(restored.height, 720);
         expect(restored.durationMs, 30000);
+        expect(
+          restored.contentHash,
+          'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        );
+        expect(
+          restored.thumbnailHash,
+          'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        );
+        expect(restored.encryptionKeyBase64, 'key-wire');
+        expect(restored.encryptionNonce, 'nonce-wire');
+        expect(
+          restored.encryptionScheme,
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        expect(restored.hasEncryptionMetadata, isTrue);
         // fromJson sets these to defaults
         expect(restored.messageId, '');
         expect(restored.localPath, isNull);
@@ -146,33 +211,25 @@ void main() {
       });
 
       test('fromJson infers mediaType from mime when not provided', () {
-        final json = {
-          'id': 'blob-infer',
-          'mime': 'image/png',
-          'size': 1000,
-        };
+        final json = {'id': 'blob-infer', 'mime': 'image/png', 'size': 1000};
         final restored = MediaAttachment.fromJson(json);
         expect(restored.mediaType, 'image');
       });
 
-      test('fromJson keeps GIF attachments animated when mediaType is omitted', () {
-        final json = {
-          'id': 'blob-gif',
-          'mime': 'image/gif',
-          'size': 4096,
-        };
+      test(
+        'fromJson keeps GIF attachments animated when mediaType is omitted',
+        () {
+          final json = {'id': 'blob-gif', 'mime': 'image/gif', 'size': 4096};
 
-        final restored = MediaAttachment.fromJson(json);
+          final restored = MediaAttachment.fromJson(json);
 
-        expect(restored.mediaType, 'image');
-        expect(restored.isAnimated, isTrue);
-      });
+          expect(restored.mediaType, 'image');
+          expect(restored.isAnimated, isTrue);
+        },
+      );
 
       test('fromJson defaults mime to application/octet-stream when null', () {
-        final json = {
-          'id': 'blob-no-mime',
-          'size': 100,
-        };
+        final json = {'id': 'blob-no-mime', 'size': 100};
         final restored = MediaAttachment.fromJson(json);
         expect(restored.mime, 'application/octet-stream');
         expect(restored.mediaType, 'file');
@@ -188,6 +245,11 @@ void main() {
         expect(restored.mediaType, testAttachment.mediaType);
         expect(restored.width, testAttachment.width);
         expect(restored.height, testAttachment.height);
+        expect(
+          restored.encryptionKeyBase64,
+          testAttachment.encryptionKeyBase64,
+        );
+        expect(restored.encryptionNonce, testAttachment.encryptionNonce);
       });
     });
 
@@ -213,14 +275,19 @@ void main() {
       test('returns file for unknown mime types', () {
         expect(MediaAttachment.mediaTypeFromMime('application/pdf'), 'file');
         expect(MediaAttachment.mediaTypeFromMime('text/plain'), 'file');
-        expect(MediaAttachment.mediaTypeFromMime('application/octet-stream'), 'file');
+        expect(
+          MediaAttachment.mediaTypeFromMime('application/octet-stream'),
+          'file',
+        );
       });
     });
 
     group('isAnimated', () {
       test('returns true for image/gif', () {
         expect(
-          testAttachment.copyWith(mime: 'image/gif', mediaType: 'image').isAnimated,
+          testAttachment
+              .copyWith(mime: 'image/gif', mediaType: 'image')
+              .isAnimated,
           isTrue,
         );
       });
@@ -228,15 +295,21 @@ void main() {
       test('returns false for static images and non-image media', () {
         expect(testAttachment.isAnimated, isFalse);
         expect(
-          testAttachment.copyWith(mime: 'image/png', mediaType: 'image').isAnimated,
+          testAttachment
+              .copyWith(mime: 'image/png', mediaType: 'image')
+              .isAnimated,
           isFalse,
         );
         expect(
-          testAttachment.copyWith(mime: 'video/mp4', mediaType: 'video').isAnimated,
+          testAttachment
+              .copyWith(mime: 'video/mp4', mediaType: 'video')
+              .isAnimated,
           isFalse,
         );
         expect(
-          testAttachment.copyWith(mime: 'audio/aac', mediaType: 'audio').isAnimated,
+          testAttachment
+              .copyWith(mime: 'audio/aac', mediaType: 'audio')
+              .isAnimated,
           isFalse,
         );
       });
@@ -269,6 +342,11 @@ void main() {
         expect(copy.localPath, testAttachment.localPath);
         expect(copy.downloadStatus, testAttachment.downloadStatus);
         expect(copy.createdAt, testAttachment.createdAt);
+        expect(copy.contentHash, testAttachment.contentHash);
+        expect(copy.thumbnailHash, testAttachment.thumbnailHash);
+        expect(copy.encryptionKeyBase64, testAttachment.encryptionKeyBase64);
+        expect(copy.encryptionNonce, testAttachment.encryptionNonce);
+        expect(copy.encryptionScheme, testAttachment.encryptionScheme);
       });
 
       test('can update messageId for post-upload assignment', () {
@@ -284,6 +362,53 @@ void main() {
         final assigned = uploaded.copyWith(messageId: 'msg-final-001');
         expect(assigned.messageId, 'msg-final-001');
         expect(assigned.id, 'blob-upload');
+      });
+
+      test('can update and clear integrity hashes', () {
+        final updated = testAttachment.copyWith(
+          contentHash:
+              'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          thumbnailHash:
+              'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        );
+
+        expect(
+          updated.contentHash,
+          'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        );
+        expect(
+          updated.thumbnailHash,
+          'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        );
+
+        final cleared = updated.copyWith(
+          clearContentHash: true,
+          clearThumbnailHash: true,
+        );
+        expect(cleared.contentHash, isNull);
+        expect(cleared.thumbnailHash, isNull);
+      });
+
+      test('can update and clear media encryption metadata', () {
+        final updated = testAttachment.copyWith(
+          encryptionKeyBase64: 'key-2',
+          encryptionNonce: 'nonce-2',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+
+        expect(updated.encryptionKeyBase64, 'key-2');
+        expect(updated.encryptionNonce, 'nonce-2');
+        expect(updated.hasEncryptionMetadata, isTrue);
+
+        final cleared = updated.copyWith(
+          clearEncryptionKeyBase64: true,
+          clearEncryptionNonce: true,
+          clearEncryptionScheme: true,
+        );
+        expect(cleared.encryptionKeyBase64, isNull);
+        expect(cleared.encryptionNonce, isNull);
+        expect(cleared.encryptionScheme, isNull);
+        expect(cleared.hasEncryptionMetadata, isFalse);
       });
     });
 
@@ -364,11 +489,7 @@ void main() {
         });
 
         test('fromJson defaults waveform to null when absent', () {
-          final json = {
-            'id': 'blob-no-wf',
-            'mime': 'audio/mp4',
-            'size': 1000,
-          };
+          final json = {'id': 'blob-no-wf', 'mime': 'audio/mp4', 'size': 1000};
           final restored = MediaAttachment.fromJson(json);
           expect(restored.waveform, isNull);
         });
@@ -408,9 +529,7 @@ void main() {
 
       group('copyWith', () {
         test('can set waveform on attachment that had none', () {
-          final updated = testAttachment.copyWith(
-            waveform: [0.1, 0.2, 0.3],
-          );
+          final updated = testAttachment.copyWith(waveform: [0.1, 0.2, 0.3]);
           expect(updated.waveform, [0.1, 0.2, 0.3]);
         });
 

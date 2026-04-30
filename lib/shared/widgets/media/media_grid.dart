@@ -14,11 +14,15 @@ import 'media_grid_cell.dart';
 class MediaGrid extends StatelessWidget {
   final List<MediaAttachment> media;
   final void Function(int index)? onTap;
+  final void Function(MediaAttachment attachment)? onRetryUnavailableMedia;
+  final bool requireVerifiedContentHash;
 
   const MediaGrid({
     super.key,
     required this.media,
     this.onTap,
+    this.onRetryUnavailableMedia,
+    this.requireVerifiedContentHash = false,
   });
 
   @override
@@ -40,10 +44,7 @@ class MediaGrid extends StatelessWidget {
   }
 
   Widget _buildSingle() {
-    return AspectRatio(
-      aspectRatio: 4 / 3,
-      child: _cell(0),
-    );
+    return AspectRatio(aspectRatio: 4 / 3, child: _cell(0));
   }
 
   Widget _buildTwo() {
@@ -96,6 +97,10 @@ class MediaGrid extends StatelessWidget {
                   showOverlayCount: overflow > 0,
                   overlayCount: overflow,
                   onTap: onTap != null ? () => onTap!(3) : null,
+                  onRetryUnavailableMedia: onRetryUnavailableMedia != null
+                      ? () => onRetryUnavailableMedia!(media[3])
+                      : null,
+                  requireVerifiedContentHash: requireVerifiedContentHash,
                 ),
               ),
             ),
@@ -109,6 +114,10 @@ class MediaGrid extends StatelessWidget {
     return MediaGridCell(
       attachment: media[index],
       onTap: onTap != null ? () => onTap!(index) : null,
+      onRetryUnavailableMedia: onRetryUnavailableMedia != null
+          ? () => onRetryUnavailableMedia!(media[index])
+          : null,
+      requireVerifiedContentHash: requireVerifiedContentHash,
     );
   }
 }

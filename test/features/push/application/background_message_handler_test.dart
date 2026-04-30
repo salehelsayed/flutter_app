@@ -254,6 +254,8 @@ void main() {
         expect(log.where((call) => call.method == 'show'), hasLength(1));
         final showCall = log.firstWhere((call) => call.method == 'show');
         final showArgs = showCall.arguments as Map;
+        expect(showArgs['title'], backgroundPushDefaultTitle);
+        expect(showArgs['body'], backgroundPushDefaultBody);
         final platformSpecifics = showArgs['platformSpecifics'] as Map;
         expect(platformSpecifics['presentSound'], isTrue);
         expect(platformSpecifics['presentAlert'], isTrue);

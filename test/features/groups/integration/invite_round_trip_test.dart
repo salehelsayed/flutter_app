@@ -1540,7 +1540,10 @@ void main() {
 
         expect(acceptResult, AcceptPendingGroupInviteResult.bridgeError);
         expect(group, isNotNull);
-        expect(await receiverPendingInviteRepo.getPendingInvite(_groupId), isNull);
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNull,
+        );
         expect(await receiverGroupRepo.getGroup(_groupId), isNotNull);
         expect(receiverBridge.commandLog, contains('group:publish'));
         expect(receiverBridge.commandLog, contains('group:inboxStore'));
@@ -1567,14 +1570,14 @@ void main() {
 
         await Future<void>.delayed(const Duration(milliseconds: 50));
 
-        final adminLatestMessage = await adminMsgRepo.getLatestMessage(_groupId);
+        final adminLatestMessage = await adminMsgRepo.getLatestMessage(
+          _groupId,
+        );
         expect(adminLatestMessage, isNotNull);
         expect(adminLatestMessage!.text, 'Receiver joined the group');
 
-        final receiverHistoryAfterAccept = await receiverMsgRepo.getMessagesPage(
-          _groupId,
-          limit: 10,
-        );
+        final receiverHistoryAfterAccept = await receiverMsgRepo
+            .getMessagesPage(_groupId, limit: 10);
         expect(
           receiverHistoryAfterAccept.where(
             (message) => message.text == 'Receiver joined the group',
@@ -1627,12 +1630,13 @@ void main() {
         );
         expect(recoveredMessage, isNotNull);
         expect(recoveredMessage!.text, 'Recovered after bridge error');
-        expect(await receiverPendingInviteRepo.getPendingInvite(_groupId), isNull);
-
-        final receiverHistoryAfterRecovery = await receiverMsgRepo.getMessagesPage(
-          _groupId,
-          limit: 20,
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNull,
         );
+
+        final receiverHistoryAfterRecovery = await receiverMsgRepo
+            .getMessagesPage(_groupId, limit: 20);
         expect(
           receiverHistoryAfterRecovery.where(
             (message) => message.text == 'Receiver joined the group',
@@ -1645,6 +1649,197 @@ void main() {
             .where((message) => message['cmd'] == 'group:join')
             .toList();
         expect(joinCommands, hasLength(2));
+      },
+    );
+
+    test(
+      'concurrent pending accepts converge members, key epoch, and sendability',
+      () async {
+        const charliePeerId = '12D3KooWCharliePeerId';
+        const davePeerId = '12D3KooWDavePeerId';
+        const groupId = 'grp-concurrent-joins';
+        const groupKey = 'base64ConcurrentJoinKey==';
+        const keyEpoch = 3;
+        final receivedAt = DateTime.utc(2026, 4, 29, 12);
+        final groupConfig = {
+          'name': 'Concurrent Joins',
+          'groupType': 'chat',
+          'description': 'Concurrent invite accept proof',
+          'members': [
+            {
+              'peerId': _adminPeerId,
+              'username': 'Admin',
+              'role': 'admin',
+              'publicKey': 'adminPubKey64',
+              'mlKemPublicKey': _adminMlKemPublicKey,
+            },
+            {
+              'peerId': charliePeerId,
+              'username': 'Charlie',
+              'role': 'writer',
+              'publicKey': 'charliePubKey64',
+              'mlKemPublicKey': 'charlieMlKemPub64',
+            },
+            {
+              'peerId': davePeerId,
+              'username': 'Dave',
+              'role': 'writer',
+              'publicKey': 'davePubKey64',
+              'mlKemPublicKey': 'daveMlKemPub64',
+            },
+          ],
+          'createdBy': _adminPeerId,
+          'createdAt': receivedAt
+              .subtract(const Duration(days: 1))
+              .toIso8601String(),
+        };
+
+        PendingGroupInvite makePendingInvite({required String inviteId}) {
+          return PendingGroupInvite.fromPayload(
+            GroupInvitePayload(
+              id: inviteId,
+              groupId: groupId,
+              groupKey: groupKey,
+              keyEpoch: keyEpoch,
+              groupConfig: groupConfig,
+              senderPeerId: _adminPeerId,
+              senderUsername: 'Admin',
+              timestamp: receivedAt.toIso8601String(),
+            ),
+            receivedAt: receivedAt,
+          );
+        }
+
+        final charliePendingRepo = InMemoryPendingGroupInviteRepository();
+        final davePendingRepo = InMemoryPendingGroupInviteRepository();
+        final charlieGroupRepo = InMemoryGroupRepository();
+        final daveGroupRepo = InMemoryGroupRepository();
+        final charlieMsgRepo = InMemoryGroupMessageRepository();
+        final daveMsgRepo = InMemoryGroupMessageRepository();
+        final charlieBridge = FakeBridge();
+        final daveBridge = FakeBridge();
+
+        await charliePendingRepo.savePendingInvite(
+          makePendingInvite(inviteId: 'invite-charlie'),
+        );
+        await davePendingRepo.savePendingInvite(
+          makePendingInvite(inviteId: 'invite-dave'),
+        );
+
+        final acceptResults = await Future.wait([
+          acceptPendingGroupInvite(
+            pendingInviteRepo: charliePendingRepo,
+            groupRepo: charlieGroupRepo,
+            msgRepo: charlieMsgRepo,
+            bridge: charlieBridge,
+            groupId: groupId,
+            senderPeerId: charliePeerId,
+            senderPublicKey: 'charliePubKey64',
+            senderPrivateKey: 'charliePrivKey64',
+            senderUsername: 'Charlie',
+            now: receivedAt.add(const Duration(minutes: 1)),
+          ),
+          acceptPendingGroupInvite(
+            pendingInviteRepo: davePendingRepo,
+            groupRepo: daveGroupRepo,
+            msgRepo: daveMsgRepo,
+            bridge: daveBridge,
+            groupId: groupId,
+            senderPeerId: davePeerId,
+            senderPublicKey: 'davePubKey64',
+            senderPrivateKey: 'davePrivKey64',
+            senderUsername: 'Dave',
+            now: receivedAt.add(const Duration(minutes: 1)),
+          ),
+        ]);
+
+        expect(acceptResults[0].$1, AcceptPendingGroupInviteResult.success);
+        expect(acceptResults[1].$1, AcceptPendingGroupInviteResult.success);
+
+        Future<void> expectConvergedReceiver({
+          required InMemoryGroupRepository repo,
+          required String receiverPeerId,
+        }) async {
+          final group = await repo.getGroup(groupId);
+          expect(group, isNotNull);
+          expect(group!.myRole, GroupRole.member);
+
+          final members = await repo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            _adminPeerId,
+            charliePeerId,
+            davePeerId,
+          });
+          expect(
+            members.where((member) => member.peerId == receiverPeerId),
+            hasLength(1),
+          );
+          expect(
+            members.firstWhere((member) => member.peerId == _adminPeerId).role,
+            MemberRole.admin,
+          );
+          expect(
+            members.firstWhere((member) => member.peerId == charliePeerId).role,
+            MemberRole.writer,
+          );
+          expect(
+            members.firstWhere((member) => member.peerId == davePeerId).role,
+            MemberRole.writer,
+          );
+
+          final latestKey = await repo.getLatestKey(groupId);
+          expect(latestKey, isNotNull);
+          expect(latestKey!.keyGeneration, keyEpoch);
+          expect(latestKey.encryptedKey, groupKey);
+        }
+
+        await expectConvergedReceiver(
+          repo: charlieGroupRepo,
+          receiverPeerId: charliePeerId,
+        );
+        await expectConvergedReceiver(
+          repo: daveGroupRepo,
+          receiverPeerId: davePeerId,
+        );
+
+        final (charlieSendResult, charlieMessage) = await group_send
+            .sendGroupMessage(
+              bridge: charlieBridge,
+              groupRepo: charlieGroupRepo,
+              msgRepo: charlieMsgRepo,
+              groupId: groupId,
+              text: 'Charlie can send after convergence',
+              senderPeerId: charliePeerId,
+              senderPublicKey: 'charliePubKey64',
+              senderPrivateKey: 'charliePrivKey64',
+              senderUsername: 'Charlie',
+            );
+        final (daveSendResult, daveMessage) = await group_send.sendGroupMessage(
+          bridge: daveBridge,
+          groupRepo: daveGroupRepo,
+          msgRepo: daveMsgRepo,
+          groupId: groupId,
+          text: 'Dave can send after convergence',
+          senderPeerId: davePeerId,
+          senderPublicKey: 'davePubKey64',
+          senderPrivateKey: 'davePrivKey64',
+          senderUsername: 'Dave',
+        );
+
+        expect(charlieSendResult, group_send.SendGroupMessageResult.success);
+        expect(charlieMessage, isNotNull);
+        expect(daveSendResult, group_send.SendGroupMessageResult.success);
+        expect(daveMessage, isNotNull);
+        expect(await charliePendingRepo.getPendingInvite(groupId), isNull);
+        expect(await davePendingRepo.getPendingInvite(groupId), isNull);
+        expect(
+          await charliePendingRepo.getConsumedInvite('invite-charlie'),
+          isNotNull,
+        );
+        expect(
+          await davePendingRepo.getConsumedInvite('invite-dave'),
+          isNotNull,
+        );
       },
     );
   });

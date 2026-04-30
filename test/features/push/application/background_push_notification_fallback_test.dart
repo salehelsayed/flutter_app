@@ -23,7 +23,7 @@ void main() {
       expect(fallback.payload, '12D3KooWPeer');
     });
 
-    test('uses provided title/body data when present', () {
+    test('ignores title/body data on protected chat pushes', () {
       const message = RemoteMessage(
         data: {
           'type': 'new_message',
@@ -34,8 +34,8 @@ void main() {
       );
 
       final fallback = buildBackgroundPushFallbackNotification(message);
-      expect(fallback.title, 'Alice');
-      expect(fallback.body, 'Hello');
+      expect(fallback.title, backgroundPushDefaultTitle);
+      expect(fallback.body, backgroundPushDefaultBody);
       expect(fallback.payload, '12D3KooWPeer');
     });
 
@@ -70,29 +70,26 @@ void main() {
       expect(fallback.payload, '12D3KooWPeer');
     });
 
-    test(
-      'preserves mixed-script title/body while trimming outer whitespace',
-      () {
-        const message = RemoteMessage(
-          data: {
-            'type': 'new_message',
-            'sender_id': '12D3KooWPeer',
-            'title': '  \u0644\u064a\u0644\u0649 Alpha  ',
-            'body': '\n\u0645\u0631\u062d\u0628\u0627 Team 42\t',
-          },
-        );
-
-        final fallback = buildBackgroundPushFallbackNotification(message);
-        expect(fallback.title, '\u0644\u064a\u0644\u0649 Alpha');
-        expect(fallback.body, '\u0645\u0631\u062d\u0628\u0627 Team 42');
-        expect(fallback.payload, '12D3KooWPeer');
-      },
-    );
-
-    test('preserves bidi control marks in fallback body passthrough', () {
+    test('preserves mixed-script title/body for non-message fallback copy', () {
       const message = RemoteMessage(
         data: {
-          'type': 'new_message',
+          'type': 'contact_request',
+          'sender_id': '12D3KooWPeer',
+          'title': '  \u0644\u064a\u0644\u0649 Alpha  ',
+          'body': '\n\u0645\u0631\u062d\u0628\u0627 Team 42\t',
+        },
+      );
+
+      final fallback = buildBackgroundPushFallbackNotification(message);
+      expect(fallback.title, '\u0644\u064a\u0644\u0649 Alpha');
+      expect(fallback.body, '\u0645\u0631\u062d\u0628\u0627 Team 42');
+      expect(fallback.payload, 'contact_request:12D3KooWPeer');
+    });
+
+    test('preserves bidi control marks in non-message fallback body', () {
+      const message = RemoteMessage(
+        data: {
+          'type': 'contact_request',
           'sender_id': '12D3KooWPeer',
           'body': ' \u200f\u0645\u0631\u062d\u0628\u0627 Alpha\u200f ',
         },
@@ -161,8 +158,8 @@ void main() {
       expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
 
       final fallback = buildBackgroundPushFallbackNotification(message);
-      expect(fallback.title, 'Team Chat');
-      expect(fallback.body, 'New group message');
+      expect(fallback.title, backgroundPushDefaultTitle);
+      expect(fallback.body, backgroundPushDefaultBody);
       expect(fallback.payload, 'group:group-abc-123|message:msg-123');
     });
 
@@ -180,6 +177,9 @@ void main() {
         );
 
         expect(shouldShowBackgroundPushFallbackNotification(message), isTrue);
+        final fallback = buildBackgroundPushFallbackNotification(message);
+        expect(fallback.title, backgroundPushDefaultTitle);
+        expect(fallback.body, backgroundPushDefaultBody);
       },
     );
 

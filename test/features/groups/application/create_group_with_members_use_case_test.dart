@@ -501,6 +501,7 @@ void main() {
         final members = await groupRepo.getMembers('test-group-id');
         expect(members.map((member) => member.peerId).toSet(), {'peer-admin'});
         expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(p2pService.sentMessageLog, isEmpty);
       },
     );
 

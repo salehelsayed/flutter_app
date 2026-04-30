@@ -275,6 +275,100 @@ func waitForCollectedEventContaining(t *testing.T, collector *testEventCollector
 	t.Fatalf("timed out waiting for collected event containing %q", needle)
 }
 
+func waitForCollectedEventCount(t *testing.T, collector *testEventCollector, eventName string, want int, timeout time.Duration) []map[string]interface{} {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		events := collector.collectEvents(eventName)
+		if len(events) >= want {
+			return events
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	events := collector.collectEvents(eventName)
+	t.Fatalf("timed out waiting for %d %q events; got %d", want, eventName, len(events))
+	return nil
+}
+
+func TestPublishGroupMessage_DuplicateProvidedMessageIdRemainsVisibleAfterDecrypt(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "test-duplicate-message-id-pubsub"
+	duplicateMessageId := "msg-duplicate-pubsub-001"
+	config := &GroupConfig{
+		Name:      "Duplicate Message ID Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: pubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "peerBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	var nodeBAddrStrs []string
+	for _, addr := range nodeB.Host().Addrs() {
+		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
+	}
+	if err := nodeA.DialPeer(nodeB.PeerId(), nodeBAddrStrs); err != nil {
+		t.Fatalf("DialPeer A->B: %v", err)
+	}
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 2*time.Second)
+
+	for i := 0; i < 2; i++ {
+		msgID, peerCount, err := nodeA.PublishGroupMessage(
+			groupId,
+			privB64,
+			nodeA.PeerId(),
+			pubB64,
+			"Alice",
+			"duplicate pubsub body",
+			duplicateMessageId,
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("PublishGroupMessage %d failed: %v", i+1, err)
+		}
+		if msgID != duplicateMessageId {
+			t.Fatalf("PublishGroupMessage %d messageId = %q, want %q", i+1, msgID, duplicateMessageId)
+		}
+		if peerCount < 1 {
+			t.Fatalf("PublishGroupMessage %d topicPeers = %d, want >= 1", i+1, peerCount)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	events := waitForCollectedEventCount(t, nodeBCapture, "group_message:received", 2, 5*time.Second)
+	for i, event := range events[:2] {
+		if got, _ := event["messageId"].(string); got != duplicateMessageId {
+			t.Fatalf("event %d messageId = %q, want %q", i+1, got, duplicateMessageId)
+		}
+		if got, _ := event["text"].(string); got != "duplicate pubsub body" {
+			t.Fatalf("event %d text = %q, want duplicate pubsub body", i+1, got)
+		}
+		if got := int(event["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+			t.Fatalf("event %d keyEpoch = %d, want %d", i+1, got, keyInfo.KeyEpoch)
+		}
+	}
+}
+
 // Test: startup group recovery dials known members before waiting on a local
 // circuit address, so live topic peers can form immediately.
 func TestGroupPeerDiscoveryLoop_DialsKnownMembersBeforeCircuitAddressWait(t *testing.T) {

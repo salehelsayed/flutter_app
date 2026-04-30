@@ -7,6 +7,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
     as group_send;
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart'
     as group_react;
+import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -20,6 +21,9 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/group_test_user.dart';
+
+const _downloadedBytesHash =
+    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
 
 class _DownloadWritingBridge extends FakeBridge {
   @override
@@ -62,6 +66,7 @@ void main() {
     int? height,
     int? durationMs,
     List<double>? waveform,
+    String contentHash = _downloadedBytesHash,
   }) {
     return MediaAttachment(
       id: id,
@@ -74,6 +79,10 @@ void main() {
       durationMs: durationMs,
       localPath: 'pending_uploads/$id',
       downloadStatus: 'done',
+      contentHash: contentHash,
+      encryptionKeyBase64: 'key-$id',
+      encryptionNonce: 'nonce-$id',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       createdAt: '2026-04-29T00:00:00.000Z',
       waveform: waveform,
     );
@@ -81,6 +90,7 @@ void main() {
 
   Future<void> waitForDownloads({
     required GroupTestUser user,
+    required String groupId,
     required int expectedCount,
   }) async {
     final deadline = DateTime.now().add(const Duration(seconds: 3));
@@ -88,10 +98,21 @@ void main() {
       final downloadCount = user.bridge.commandLog
           .where((cmd) => cmd == 'media:download')
           .length;
-      if (downloadCount >= expectedCount) return;
+      final messages = await user.loadGroupMessages(groupId);
+      var doneCount = 0;
+      for (final message in messages) {
+        final attachments = await user.mediaAttachmentRepo
+            .getAttachmentsForMessage(message.id);
+        doneCount += attachments
+            .where((attachment) => attachment.downloadStatus == 'done')
+            .length;
+      }
+      if (downloadCount >= expectedCount && doneCount >= expectedCount) {
+        return;
+      }
       await pump();
     }
-    fail('Expected $expectedCount media download attempts');
+    fail('Expected $expectedCount completed media downloads');
   }
 
   Future<void> saveLatestKey({
@@ -172,7 +193,7 @@ void main() {
         final image = attachment(
           id: 'blob-new-member-image',
           mime: 'image/jpeg',
-          size: 2048,
+          size: 4,
           width: 640,
           height: 480,
         );
@@ -186,7 +207,7 @@ void main() {
         final video = attachment(
           id: 'blob-new-member-video',
           mime: 'video/mp4',
-          size: 4096,
+          size: 4,
           width: 1280,
           height: 720,
           durationMs: 12_000,
@@ -201,7 +222,7 @@ void main() {
         final voice = attachment(
           id: 'blob-new-member-voice',
           mime: 'audio/mp4',
-          size: 1024,
+          size: 4,
           durationMs: 3500,
           waveform: const <double>[0.1, 0.4, 0.2],
         );
@@ -212,7 +233,11 @@ void main() {
         );
         expect(voiceResult, group_send.SendGroupMessageResult.success);
 
-        await waitForDownloads(user: bob, expectedCount: 3);
+        await waitForDownloads(
+          user: bob,
+          groupId: groupId,
+          expectedCount: 3,
+        );
 
         final bobIncoming = (await bob.loadGroupMessages(
           groupId,
@@ -350,6 +375,122 @@ void main() {
             reason: recipient.username,
           );
         }
+      },
+    );
+
+    test(
+      'new member receives current metadata and roles without pre-join history',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-current-state-onboarding-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-current-state-onboarding-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-current-state-onboarding-peer',
+          username: 'Bob',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          charlie.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-new-member-current-state';
+        final createdAt = DateTime.utc(2026, 4, 29, 9);
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'Original Charter',
+          description: 'Draft state',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: DateTime.utc(2026, 4, 29, 9, 1),
+        );
+
+        alice.start();
+        charlie.start();
+        bob.start();
+
+        final preJoin = await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'pre-join state history',
+        );
+        expect(preJoin, isNotNull);
+        await pump();
+
+        final metadataAt = DateTime.utc(2026, 4, 29, 9, 2);
+        await updateGroupMetadata(
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          name: 'Final Charter',
+          description: 'Current authorized state',
+          eventAt: metadataAt,
+        );
+        await alice.updateMemberRole(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          role: MemberRole.reader,
+          changedAt: DateTime.utc(2026, 4, 29, 9, 3),
+        );
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: DateTime.utc(2026, 4, 29, 9, 4),
+        );
+
+        final bobGroup = await bob.groupRepo.getGroup(groupId);
+        expect(bobGroup, isNotNull);
+        expect(bobGroup!.name, 'Final Charter');
+        expect(bobGroup.description, 'Current authorized state');
+        expect(bobGroup.createdBy, alice.peerId);
+        expect(bobGroup.createdAt, createdAt);
+        expect(bobGroup.type, GroupType.chat);
+        expect(bobGroup.myRole, GroupRole.member);
+        expect(bobGroup.lastMetadataEventAt, metadataAt);
+
+        final bobMembersByPeerId = {
+          for (final member in await bob.groupRepo.getMembers(groupId))
+            member.peerId: member,
+        };
+        expect(bobMembersByPeerId.keys.toSet(), {
+          alice.peerId,
+          charlie.peerId,
+          bob.peerId,
+        });
+        expect(bobMembersByPeerId[alice.peerId]!.role, MemberRole.admin);
+        expect(bobMembersByPeerId[charlie.peerId]!.role, MemberRole.reader);
+        expect(bobMembersByPeerId[bob.peerId]!.role, MemberRole.writer);
+
+        final bobMessagesBeforePostJoin = await bob.loadGroupMessages(groupId);
+        expect(
+          bobMessagesBeforePostJoin.map((message) => message.text),
+          isNot(contains('pre-join state history')),
+        );
+
+        final (sendResult, postJoin) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'post-join current-state message',
+        );
+        expect(sendResult, group_send.SendGroupMessageResult.success);
+        expect(postJoin, isNotNull);
+        await pump();
+
+        final bobIncomingTexts = (await bob.loadGroupMessages(groupId))
+            .where((message) => message.isIncoming)
+            .map((message) => message.text)
+            .toList();
+        expect(bobIncomingTexts, contains('post-join current-state message'));
+        expect(bobIncomingTexts, isNot(contains('pre-join state history')));
       },
     );
 
@@ -615,6 +756,8 @@ void main() {
             ownPeerId: bob.peerId,
           ),
         );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
 
         expect(find.text('post-join quoted reply'), findsWidgets);
         expect(find.text('Message unavailable'), findsOneWidget);

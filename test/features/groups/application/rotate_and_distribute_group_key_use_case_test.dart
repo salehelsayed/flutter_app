@@ -88,6 +88,120 @@ void main() {
     bridge.responses['group:publish'] = {'ok': true, 'messageId': 'sys-msg-id'};
   });
 
+  test(
+    'allows writer with rotate permission override to rotate keys',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(rotateKeys: true),
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'selfMlKem',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+      );
+
+      expect(result, isNotNull);
+      expect(result!.keyGeneration, 2);
+      expect(bridge.commandLog, contains('group:generateNextKey'));
+
+      final latestKey = await groupRepo.getLatestKey(groupId);
+      expect(latestKey, isNotNull);
+      expect(latestKey!.keyGeneration, 2);
+    },
+  );
+
+  test('denies admin whose rotate permission override is false', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: selfPeerId,
+        username: 'Self',
+        role: MemberRole.admin,
+        permissions: const GroupMemberPermissions(rotateKeys: false),
+        publicKey: 'selfPubKey',
+        mlKemPublicKey: 'selfMlKem',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    final result = await rotateAndDistributeGroupKey(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      senderPublicKey: 'selfPubKey',
+      senderPrivateKey: 'selfPrivKey',
+      senderUsername: 'Self',
+    );
+
+    expect(result, isNull);
+    expect(bridge.commandLog, isEmpty);
+
+    final latestKey = await groupRepo.getLatestKey(groupId);
+    expect(latestKey, isNotNull);
+    expect(latestKey!.keyGeneration, 1);
+  });
+
+  test(
+    'rechecks revoked rotate permission before generating a queued key',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(rotateKeys: true),
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'selfMlKem',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.writer,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'selfMlKem',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+      );
+
+      expect(result, isNull);
+      expect(bridge.commandLog, isEmpty);
+
+      final latestKey = await groupRepo.getLatestKey(groupId);
+      expect(latestKey, isNotNull);
+      expect(latestKey!.keyGeneration, 1);
+    },
+  );
+
   test('promotes generated key only after distribution completes', () async {
     final bobSend = Completer<bool>();
     final carolSend = Completer<bool>();

@@ -867,7 +867,15 @@ void main() {
 
       final groupRepo = InMemoryGroupRepository();
       await groupRepo.saveGroup(nonAdminGroup);
-      await groupRepo.saveMember(memberAdmin);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
 
       await tester.pumpWidget(
         buildDirectWiredTestWidget(

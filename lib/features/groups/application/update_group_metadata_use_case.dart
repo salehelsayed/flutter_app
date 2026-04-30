@@ -1,7 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+typedef BeforePersistGroupMetadataUpdate =
+    FutureOr<void> Function(GroupModel updated);
 
 Future<GroupModel> updateGroupMetadata({
   required GroupRepository groupRepo,
@@ -12,6 +17,7 @@ Future<GroupModel> updateGroupMetadata({
   String? avatarMime,
   String? avatarPath,
   DateTime? eventAt,
+  BeforePersistGroupMetadataUpdate? beforePersist,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -68,6 +74,7 @@ Future<GroupModel> updateGroupMetadata({
     avatarPath: avatarPath,
     lastMetadataEventAt: resolvedEventAt,
   );
+  await beforePersist?.call(updated);
   await groupRepo.updateGroup(updated);
 
   emitFlowEvent(

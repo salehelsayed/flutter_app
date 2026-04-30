@@ -6,6 +6,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -15,6 +16,9 @@ import '../../../features/identity/domain/repositories/fake_identity_repository.
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
@@ -79,7 +83,20 @@ GroupMessage _makeFailedGroupMessage({
   required String text,
   required String timestampIso,
   String? inboxRetryPayload,
+  String? quotedMessageId,
+  List<Map<String, Object?>> media = const [],
 }) {
+  final messageJson = {
+    'groupId': 'group-1',
+    'senderId': 'peer-1',
+    'senderUsername': 'Alice',
+    'keyEpoch': 0,
+    'text': text,
+    'timestamp': timestampIso,
+    'messageId': id,
+    if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+    if (media.isNotEmpty) 'media': media,
+  };
   return GroupMessage(
     id: id,
     groupId: 'group-1',
@@ -87,6 +104,7 @@ GroupMessage _makeFailedGroupMessage({
     senderUsername: 'Alice',
     text: text,
     timestamp: DateTime.parse(timestampIso),
+    quotedMessageId: quotedMessageId,
     keyGeneration: 0,
     status: 'failed',
     isIncoming: false,
@@ -97,26 +115,28 @@ GroupMessage _makeFailedGroupMessage({
       'senderPeerId': 'peer-1',
       'senderUsername': 'Alice',
       'messageId': id,
+      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+      if (media.isNotEmpty) 'media': media,
     }),
     inboxStored: false,
     inboxRetryPayload:
         inboxRetryPayload ??
         jsonEncode({
           'groupId': 'group-1',
-          'message': jsonEncode({
-            'groupId': 'group-1',
-            'senderId': 'peer-1',
-            'senderUsername': 'Alice',
-            'keyEpoch': 0,
-            'text': text,
-            'timestamp': timestampIso,
-            'messageId': id,
-          }),
+          'message': jsonEncode(messageJson),
           'recipientPeerIds': ['peer-2'],
           'pushTitle': 'Test Group',
           'pushBody': 'Alice: $text',
         }),
   );
+}
+
+List<Map<String, dynamic>> _publishedGroupPayloads(FakeBridge bridge) {
+  return bridge.sentMessages
+      .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == 'group:publish')
+      .map((message) => (message['payload'] as Map).cast<String, dynamic>())
+      .toList();
 }
 
 MediaAttachment _makeAttachment({
@@ -133,6 +153,10 @@ MediaAttachment _makeAttachment({
     mediaType: MediaAttachment.mediaTypeFromMime(mime),
     localPath: 'media/group-1/$id.jpg',
     downloadStatus: downloadStatus,
+    contentHash: _validContentHash,
+    encryptionKeyBase64: 'key-$id',
+    encryptionNonce: 'nonce-$id',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     createdAt: '2026-01-15T12:00:00.000Z',
   );
 }
@@ -285,6 +309,55 @@ void main() {
           bridge.commandLog.where((cmd) => cmd == 'group:publish').length,
           1,
         );
+      },
+    );
+
+    test(
+      'does not replay a failed text row after sender was removed locally',
+      () async {
+        identityRepo.seed(_makeIdentity(peerId: 'peer-1'));
+        await groupRepo.saveGroup(_makeGroup());
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            joinedAt: DateTime.utc(2026, 1, 15, 12),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-2',
+            joinedAt: DateTime.utc(2026, 1, 15, 12, 1),
+          ),
+        );
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-stale-retry',
+            text: 'Retry after removal',
+            timestampIso: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+
+        final count = await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 0);
+        final saved = await msgRepo.getMessage('msg-stale-retry');
+        expect(saved, isNotNull);
+        expect(saved!.status, 'failed');
+        expect(bridge.commandLog, isEmpty);
       },
     );
 
@@ -507,6 +580,85 @@ void main() {
               'group:publish',
         );
         expect(publishMsg, contains('"mime":"image/gif"'));
+      },
+    );
+
+    test(
+      'deterministic restart retry publishes text quote and media rows in persisted order',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await groupRepo.saveGroup(_makeGroup());
+
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-quote-later',
+            text: 'Reply after restart',
+            timestampIso: '2026-01-15T12:02:00.000Z',
+            quotedMessageId: 'msg-root',
+          ),
+        );
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-media-middle',
+            text: 'Photo after restart',
+            timestampIso: '2026-01-15T12:01:00.000Z',
+            media: [
+              {'id': 'att-media-middle', 'mime': 'image/jpeg'},
+            ],
+          ),
+        );
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-alpha-text',
+            text: 'First after restart',
+            timestampIso: '2026-01-15T12:01:00.000Z',
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _makeAttachment(
+            id: 'att-media-middle',
+            messageId: 'msg-media-middle',
+            downloadStatus: 'done',
+          ),
+        );
+
+        final count = await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 3);
+        final publishPayloads = _publishedGroupPayloads(bridge);
+        expect(
+          publishPayloads.map((payload) => payload['messageId']).toList(),
+          ['msg-alpha-text', 'msg-media-middle', 'msg-quote-later'],
+        );
+        expect(publishPayloads[0]['text'], 'First after restart');
+        expect(publishPayloads[1]['text'], 'Photo after restart');
+        expect(
+          (publishPayloads[1]['media'] as List).cast<Map>().single['id'],
+          'att-media-middle',
+        );
+        expect(publishPayloads[2]['quotedMessageId'], 'msg-root');
+
+        final alpha = await msgRepo.getMessage('msg-alpha-text');
+        final media = await msgRepo.getMessage('msg-media-middle');
+        final quote = await msgRepo.getMessage('msg-quote-later');
+        expect(alpha!.status, 'sent');
+        expect(media!.status, 'sent');
+        expect(quote!.status, 'sent');
+        expect(quote.timestamp, DateTime.parse('2026-01-15T12:02:00.000Z'));
+        expect(quote.quotedMessageId, 'msg-root');
+
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          'msg-media-middle',
+        );
+        expect(attachments, hasLength(1));
+        expect(attachments.single.id, 'att-media-middle');
+        expect(attachments.single.downloadStatus, 'done');
       },
     );
 

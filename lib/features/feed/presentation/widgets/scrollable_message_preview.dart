@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
@@ -39,6 +40,7 @@ class ScrollableMessagePreview extends StatefulWidget {
   final void Function(ThreadMessage message, BuildContext bubbleContext)?
   onMessageLongPress;
   final void Function(String messageId, String emoji)? onReactionTap;
+  final bool requireVerifiedContentHash;
 
   const ScrollableMessagePreview({
     super.key,
@@ -56,6 +58,7 @@ class ScrollableMessagePreview extends StatefulWidget {
     this.ownPeerId,
     this.onMessageLongPress,
     this.onReactionTap,
+    this.requireVerifiedContentHash = false,
   });
 
   @override
@@ -210,9 +213,19 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
 
     final tapped = visual[tappedIndex];
     if (tapped.localPath == null || tapped.downloadStatus != 'done') return;
+    if (widget.requireVerifiedContentHash &&
+        !GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(tapped)) {
+      return;
+    }
 
     final allPaths = visual
-        .where((a) => a.localPath != null && a.downloadStatus == 'done')
+        .where(
+          (a) =>
+              a.localPath != null &&
+              a.downloadStatus == 'done' &&
+              (!widget.requireVerifiedContentHash ||
+                  GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(a)),
+        )
         .map((a) => a.localPath!)
         .toList();
 
@@ -295,6 +308,7 @@ class _ScrollableMessagePreviewState extends State<ScrollableMessagePreview> {
             onMediaTap: msg.media.isNotEmpty
                 ? (index) => _openMediaViewer(context, msg.media, index)
                 : null,
+            requireVerifiedContentHash: widget.requireVerifiedContentHash,
             quotedText: quotedText,
             isQuoteUnavailable: isQuoteUnavailable,
             reactions: msg.isDeleted ? const [] : reactions,

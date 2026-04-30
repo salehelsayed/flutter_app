@@ -95,6 +95,7 @@ class OpenModeCardBody extends StatelessWidget {
             ownPeerId: ownPeerId,
             onMessageLongPress: onMessageLongPress,
             onReactionTap: onReactionTap,
+            requireVerifiedContentHash: thread.isGroup,
           ),
         ),
         // Footer with reply input

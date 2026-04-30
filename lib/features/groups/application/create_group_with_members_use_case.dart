@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -80,6 +81,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   required GroupType type,
   String? name,
   String? description,
+  AppendGroupEventLogEntry? appendGroupEventLogEntry,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -109,6 +111,8 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     creatorPublicKey: identity.publicKey,
     creatorMlKemPublicKey: identity.mlKemPublicKey ?? '',
     creatorUsername: identity.username,
+    creatorPrivateKey: identity.privateKey,
+    appendGroupEventLogEntry: appendGroupEventLogEntry,
     description: description,
   );
 

@@ -73,6 +73,7 @@ type Node struct {
 	warmRelayConnectionWithTimeoutHook func(peer.AddrInfo, time.Duration) error
 	waitForCircuitAddressHook          func(time.Duration) bool
 	rendezvousRegisterHook             func(string, []string) error
+	rendezvousDiscoverHook             func(string, []string) ([]peer.AddrInfo, error)
 	refreshRelaySessionHook            func() *RecoveryResult
 	openChatStreamHook                 func(context.Context, host.Host, peer.ID) (network.Stream, error)
 	recoverPeerForSendHook             func(host.Host, peer.ID, string, time.Duration) error
@@ -1537,7 +1538,14 @@ func (n *Node) watchConnectionEvents() {
 			pid := e.Peer.String()
 			if e.Connectedness == network.Connected || e.Connectedness == network.Limited {
 				addr := ""
-				conns := n.host.Network().ConnsToPeer(e.Peer)
+				n.mu.RLock()
+				h := n.host
+				n.mu.RUnlock()
+				if h == nil {
+					continue
+				}
+
+				conns := h.Network().ConnsToPeer(e.Peer)
 				direction := "inbound"
 				limited := e.Connectedness == network.Limited
 				if len(conns) > 0 {

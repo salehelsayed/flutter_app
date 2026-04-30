@@ -294,6 +294,7 @@ void main() {
         expect(inner['groupId'], equals('grp-abc123'));
         expect(inner['groupKey'], equals('base64GroupKey=='));
         expect(inner['keyEpoch'], equals(1));
+        expect(inner['recipientPeerId'], equals('12D3KooWBob'));
 
         final config = inner['groupConfig'] as Map<String, dynamic>;
         expect(config['name'], equals('Book Club'));
@@ -305,6 +306,95 @@ void main() {
         expect(firstMember['role'], equals('admin'));
         expect(firstMember['publicKey'], equals('alicePubKey64'));
         expect(firstMember['mlKemPublicKey'], equals('aliceMlKem64'));
+      },
+    );
+
+    test(
+      'keeps join material and policy details inside encrypted invite payload',
+      () async {
+        final sensitiveConfig = <String, dynamic>{
+          ..._testGroupConfig,
+          'allowedDevices': ['receiver-phone-device'],
+          'invitePermissions': {
+            'assignedRole': 'writer',
+            'canInviteOthers': false,
+          },
+          'joinMaterialRef': {'kind': 'inlineGroupKey', 'keyEpoch': 1},
+        };
+
+        for (final directSendSucceeds in [true, false]) {
+          final scopedP2P = FakeP2PService(
+            initialState: const NodeState(isStarted: true),
+            sendMessageResult: directSendSucceeds,
+            storeInInboxResult: true,
+          );
+          addTearDown(scopedP2P.dispose);
+
+          final result = await sendGroupInvite(
+            p2pService: scopedP2P,
+            bridge: bridge,
+            recipientPeerId: '12D3KooWBob',
+            recipientMlKemPublicKey: 'bobMlKem64',
+            senderPeerId: '12D3KooWAlice',
+            senderUsername: 'Alice',
+            groupId: 'grp-abc123',
+            groupKey: 'base64GroupKey==',
+            keyEpoch: 1,
+            groupConfig: sensitiveConfig,
+          );
+
+          expect(result, SendGroupInviteResult.success);
+          final envelopeJson = directSendSucceeds
+              ? scopedP2P.lastSendMessageContent!
+              : scopedP2P.lastStoreInInboxMessage!;
+          final envelope = jsonDecode(envelopeJson) as Map<String, dynamic>;
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          final cleartextEnvelope = Map<String, dynamic>.from(envelope)
+            ..remove('encrypted');
+
+          expect(
+            cleartextEnvelope.keys,
+            unorderedEquals([
+              'type',
+              'version',
+              'id',
+              'senderPeerId',
+              'senderUsername',
+              'groupId',
+              'groupName',
+            ]),
+          );
+          expect(cleartextEnvelope['groupId'], 'grp-abc123');
+          expect(cleartextEnvelope['groupName'], 'Book Club');
+
+          final cleartextPreview = cleartextEnvelope.toString();
+          expect(cleartextPreview, isNot(contains('base64GroupKey==')));
+          expect(cleartextPreview, isNot(contains('alicePubKey64')));
+          expect(cleartextPreview, isNot(contains('bobMlKem64')));
+          expect(cleartextPreview, isNot(contains('allowedDevices')));
+          expect(cleartextPreview, isNot(contains('invitePermissions')));
+          expect(cleartextPreview, isNot(contains('joinMaterialRef')));
+
+          final inner =
+              jsonDecode(encrypted['ciphertext'] as String)
+                  as Map<String, dynamic>;
+          expect(inner['groupKey'], 'base64GroupKey==');
+          expect(inner['keyEpoch'], 1);
+          expect(inner['recipientPeerId'], '12D3KooWBob');
+
+          final config = inner['groupConfig'] as Map<String, dynamic>;
+          expect(config['allowedDevices'], ['receiver-phone-device']);
+          expect(config['invitePermissions']['assignedRole'], 'writer');
+          expect(config['invitePermissions']['canInviteOthers'], isFalse);
+          expect(config['joinMaterialRef']['kind'], 'inlineGroupKey');
+          expect(config['joinMaterialRef']['keyEpoch'], 1);
+
+          final members = config['members'] as List<dynamic>;
+          final alice = members.first as Map<String, dynamic>;
+          final bob = members[1] as Map<String, dynamic>;
+          expect(alice['publicKey'], 'alicePubKey64');
+          expect(bob['mlKemPublicKey'], 'bobMlKem64');
+        }
       },
     );
   });

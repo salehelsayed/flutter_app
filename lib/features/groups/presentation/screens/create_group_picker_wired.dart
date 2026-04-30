@@ -145,6 +145,8 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
         selectedContacts: selectedContacts,
         type: widget.groupType,
         name: name,
+        appendGroupEventLogEntry:
+            widget.groupMessageListener.appendGroupEventLogEntry,
       );
 
       if (!mounted) return;

@@ -110,6 +110,44 @@ void main() {
       expect(results[0]['id'], 'msg-2');
       expect(results[1]['id'], 'msg-3');
     });
+
+    test('orders equal-timestamp pages by message id', () async {
+      const sharedTimestamp = '2026-01-02T00:00:00.000Z';
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-c',
+          timestamp: sharedTimestamp,
+          createdAt: '2026-01-02T00:00:03.000Z',
+        ),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-a',
+          timestamp: sharedTimestamp,
+          createdAt: '2026-01-02T00:00:01.000Z',
+        ),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-b',
+          timestamp: sharedTimestamp,
+          createdAt: '2026-01-02T00:00:02.000Z',
+        ),
+      );
+
+      final results = await dbLoadGroupMessagesPage(db, 'group-1');
+      expect(results.map((row) => row['id']).toList(), [
+        'msg-a',
+        'msg-b',
+        'msg-c',
+      ]);
+
+      final latestPage = await dbLoadGroupMessagesPage(db, 'group-1', limit: 2);
+      expect(latestPage.map((row) => row['id']).toList(), ['msg-b', 'msg-c']);
+    });
   });
 
   group('dbLoadAllGroupMessages', () {
@@ -126,6 +164,29 @@ void main() {
       final results = await dbLoadAllGroupMessages(db, 'group-1');
       expect(results.length, 1);
       expect(results[0]['id'], 'msg-g1');
+    });
+
+    test('orders equal-timestamp messages by message id', () async {
+      const sharedTimestamp = '2026-01-02T00:00:00.000Z';
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'msg-c', timestamp: sharedTimestamp),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'msg-a', timestamp: sharedTimestamp),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'msg-b', timestamp: sharedTimestamp),
+      );
+
+      final results = await dbLoadAllGroupMessages(db, 'group-1');
+      expect(results.map((row) => row['id']).toList(), [
+        'msg-a',
+        'msg-b',
+        'msg-c',
+      ]);
     });
   });
 
@@ -149,6 +210,64 @@ void main() {
       expect(result, isNotNull);
       expect(result!['id'], 'msg-new');
     });
+
+    test(
+      'uses message id as latest tie-breaker for equal timestamps',
+      () async {
+        const sharedTimestamp = '2026-01-02T00:00:00.000Z';
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-c',
+            timestamp: sharedTimestamp,
+            createdAt: '2026-01-02T00:00:01.000Z',
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-a',
+            timestamp: sharedTimestamp,
+            createdAt: '2026-01-02T00:00:03.000Z',
+          ),
+        );
+
+        final result = await dbLoadLatestGroupMessage(db, 'group-1');
+        expect(result, isNotNull);
+        expect(result!['id'], 'msg-c');
+      },
+    );
+  });
+
+  group('dbLoadGroupThreadSummaries', () {
+    test(
+      'uses message id as latest tie-breaker for equal timestamps',
+      () async {
+        const sharedTimestamp = '2026-01-02T00:00:00.000Z';
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-c',
+            timestamp: sharedTimestamp,
+            quotedMessageId: 'msg-parent',
+            createdAt: '2026-01-02T00:00:01.000Z',
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'msg-a',
+            timestamp: sharedTimestamp,
+            createdAt: '2026-01-02T00:00:03.000Z',
+          ),
+        );
+
+        final rows = await dbLoadGroupThreadSummaries(db, ['group-1']);
+        expect(rows, hasLength(1));
+        expect(rows.single['latest_id'], 'msg-c');
+        expect(rows.single['latest_quoted_message_id'], 'msg-parent');
+      },
+    );
   });
 
   group('dbLoadGroupMessage', () {

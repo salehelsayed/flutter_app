@@ -4,8 +4,12 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+const lastAdminRemovalBlockedMessage =
+    "You can't remove the last admin from this group.";
 
 /// Removes a member from a group and updates the Go topic validator config
 /// so the removed member can no longer publish.
@@ -22,6 +26,7 @@ Future<void> removeGroupMember({
   required GroupRepository groupRepo,
   required String groupId,
   required String memberPeerId,
+  String? selfPeerId,
   DateTime? eventAt,
 }) async {
   emitFlowEvent(
@@ -55,8 +60,19 @@ Future<void> removeGroupMember({
     throw StateError('Group not found: $groupId');
   }
 
-  if (group.myRole != GroupRole.admin) {
-    throw StateError('Only admins can remove members');
+  final selfMember = selfPeerId == null
+      ? null
+      : await groupRepo.getMember(groupId, selfPeerId);
+  final canRemove = selfMember != null
+      ? selfMember.permissions.allows(
+          GroupMemberPermission.removeMembers,
+          selfMember.role,
+        )
+      : group.myRole == GroupRole.admin;
+  if (!canRemove) {
+    throw StateError(
+      'Only admins can remove members unless remove permission is granted',
+    );
   }
 
   final removedMember = await groupRepo.getMember(groupId, memberPeerId);
@@ -72,6 +88,26 @@ Future<void> removeGroupMember({
       },
     );
     throw StateError('Member not found');
+  }
+
+  if (removedMember.role == MemberRole.admin) {
+    final members = await groupRepo.getMembers(groupId);
+    final adminCount = members
+        .where((member) => member.role == MemberRole.admin)
+        .length;
+    if (adminCount <= 1) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REMOVE_MEMBER_USE_CASE_LAST_ADMIN_BLOCKED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'peerId': memberPeerId.length > 8
+              ? memberPeerId.substring(0, 8)
+              : memberPeerId,
+        },
+      );
+      throw StateError(lastAdminRemovalBlockedMessage);
+    }
   }
 
   // 2. Remove member from local DB

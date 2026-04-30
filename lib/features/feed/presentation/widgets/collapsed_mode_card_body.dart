@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
@@ -260,7 +261,11 @@ class CollapsedModeCardBody extends StatelessWidget {
     final showThumb =
         thumbAttachment != null &&
         thumbAttachment.downloadStatus == 'done' &&
-        thumbAttachment.localPath != null;
+        thumbAttachment.localPath != null &&
+        (!thread.isGroup ||
+            GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
+              thumbAttachment,
+            ));
     final thumbPath = thumbAttachment?.localPath;
 
     return Padding(
@@ -361,6 +366,7 @@ class CollapsedModeCardBody extends StatelessWidget {
       ownPeerId: ownPeerId,
       onMessageLongPress: onMessageLongPress,
       onReactionTap: onReactionTap,
+      requireVerifiedContentHash: thread.isGroup,
     );
   }
 

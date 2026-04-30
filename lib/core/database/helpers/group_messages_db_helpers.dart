@@ -34,7 +34,7 @@ Future<void> dbInsertGroupMessage(Database db, Map<String, Object?> row) async {
   }
 }
 
-/// Loads a page of group messages, ordered by timestamp ASC.
+/// Loads a page of group messages, ordered by timestamp ASC, id ASC.
 ///
 /// Returns at most [limit] messages starting at [offset].
 Future<List<Map<String, Object?>>> dbLoadGroupMessagesPage(
@@ -54,12 +54,12 @@ Future<List<Map<String, Object?>>> dbLoadGroupMessagesPage(
   );
 
   try {
-    // Get the most recent messages (DESC), then reverse to ASC
+    // Get the most recent messages (DESC), then reverse to ASC.
     final results = await db.query(
       'group_messages',
       where: 'group_id = ?',
       whereArgs: [groupId],
-      orderBy: 'timestamp DESC',
+      orderBy: 'timestamp DESC, id DESC',
       limit: limit,
       offset: offset,
     );
@@ -81,7 +81,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupMessagesPage(
   }
 }
 
-/// Loads all messages for a group, ordered by timestamp ASC.
+/// Loads all messages for a group, ordered by timestamp ASC, id ASC.
 Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
   Database db,
   String groupId,
@@ -99,7 +99,7 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
       'group_messages',
       where: 'group_id = ?',
       whereArgs: [groupId],
-      orderBy: 'timestamp ASC',
+      orderBy: 'timestamp ASC, id ASC',
     );
 
     emitFlowEvent(
@@ -131,14 +131,14 @@ Future<String?> dbLoadLatestGroupRemovalTimestampForSender(
     columns: ['timestamp'],
     where: 'group_id = ? AND id LIKE ?',
     whereArgs: [groupId, 'sys-member_removed:$groupId:$senderPeerId:%'],
-    orderBy: 'timestamp DESC',
+    orderBy: 'timestamp DESC, id DESC',
     limit: 1,
   );
   if (rows.isEmpty) return null;
   return rows.first['timestamp'] as String?;
 }
 
-/// Loads the latest message for a group (most recent by timestamp).
+/// Loads the latest message for a group (most recent by timestamp, then id).
 Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
   Database db,
   String groupId,
@@ -156,7 +156,7 @@ Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
       'group_messages',
       where: 'group_id = ?',
       whereArgs: [groupId],
-      orderBy: 'timestamp DESC',
+      orderBy: 'timestamp DESC, id DESC',
       limit: 1,
     );
 
@@ -231,7 +231,6 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
         FROM group_messages inner_latest
         WHERE inner_latest.group_id = summary.group_id
         ORDER BY inner_latest.timestamp DESC,
-                 inner_latest.created_at DESC,
                  inner_latest.id DESC
         LIMIT 1
       )
@@ -488,7 +487,7 @@ Future<List<Map<String, dynamic>>> dbLoadStuckSendingGroupMessages(
 }) async {
   final threshold = olderThan.toUtc().toIso8601String();
   return db.rawQuery(
-    "SELECT * FROM group_messages WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ? ORDER BY timestamp ASC LIMIT ?",
+    "SELECT * FROM group_messages WHERE status = 'sending' AND is_incoming = 0 AND timestamp < ? ORDER BY timestamp ASC, id ASC LIMIT ?",
     [threshold, limit],
   );
 }
@@ -501,7 +500,7 @@ Future<List<Map<String, dynamic>>> dbLoadFailedOutgoingGroupMessages(
   int? limit,
 }) async {
   final sql = StringBuffer(
-    "SELECT * FROM group_messages WHERE status = 'failed' AND is_incoming = 0 ORDER BY timestamp ASC",
+    "SELECT * FROM group_messages WHERE status = 'failed' AND is_incoming = 0 ORDER BY timestamp ASC, id ASC",
   );
   if (limit != null) {
     sql.write(' LIMIT ?');
@@ -519,7 +518,7 @@ Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
   int limit = 50,
 }) async {
   return db.rawQuery(
-    "SELECT * FROM group_messages WHERE is_incoming = 0 AND inbox_stored = 0 AND status IN ('sent', 'pending') AND inbox_retry_payload IS NOT NULL ORDER BY timestamp ASC LIMIT ?",
+    "SELECT * FROM group_messages WHERE is_incoming = 0 AND inbox_stored = 0 AND status IN ('sent', 'pending') AND inbox_retry_payload IS NOT NULL ORDER BY timestamp ASC, id ASC LIMIT ?",
     [limit],
   );
 }

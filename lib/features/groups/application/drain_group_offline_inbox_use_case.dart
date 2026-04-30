@@ -10,8 +10,11 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+const groupUndecryptablePlaceholderText = 'Message could not be decrypted.';
 
 /// Drains offline inboxes for all groups on startup.
 ///
@@ -213,12 +216,20 @@ Future<void> _drainGroupInbox({
       try {
         payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
       } catch (e) {
+        final placeholderSaved =
+            await _persistUndecryptablePlaceholderFromEnvelope(
+              msgRepo: msgRepo,
+              groupId: groupId,
+              envelope: msg,
+              error: e,
+            );
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
           details: {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
             'error': e.toString(),
+            'placeholderSaved': placeholderSaved,
           },
         );
         continue;
@@ -477,6 +488,108 @@ Future<Map<String, dynamic>> decodeInboxMessage(
     'text': messageStr?.toString() ?? '',
     'timestamp': DateTime.now().toUtc().toIso8601String(),
   };
+}
+
+Future<bool> _persistUndecryptablePlaceholderFromEnvelope({
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required Map<String, dynamic> envelope,
+  required Object error,
+}) async {
+  if (!_isMissingGroupReplayKeyError(error)) return false;
+
+  final replayEnvelope = _tryDecodeReplayEnvelope(envelope['message']);
+  if (replayEnvelope == null || !isGroupOfflineReplayEnvelope(replayEnvelope)) {
+    return false;
+  }
+
+  final payloadType =
+      replayEnvelope['payloadType'] as String? ??
+      groupOfflineReplayPayloadTypeMessage;
+  if (payloadType != groupOfflineReplayPayloadTypeMessage) {
+    return false;
+  }
+
+  final messageId = (replayEnvelope['messageId'] as String?)?.trim();
+  if (messageId == null || messageId.isEmpty) {
+    return false;
+  }
+
+  final existing = await msgRepo.getMessage(messageId);
+  if (existing != null) {
+    return true;
+  }
+
+  final keyEpoch = replayEnvelope['keyEpoch'] as int;
+  final timestamp =
+      _tryParseRelayTimestamp(envelope['timestamp']) ?? DateTime.now().toUtc();
+  final senderPeerId = (envelope['from'] as String?)?.trim();
+
+  await msgRepo.saveMessage(
+    GroupMessage(
+      id: messageId,
+      groupId: groupId,
+      senderPeerId: senderPeerId == null || senderPeerId.isEmpty
+          ? 'unknown'
+          : senderPeerId,
+      senderUsername: null,
+      text: groupUndecryptablePlaceholderText,
+      timestamp: timestamp,
+      keyGeneration: keyEpoch,
+      status: 'undecryptable',
+      isIncoming: true,
+      createdAt: DateTime.now().toUtc(),
+    ),
+  );
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_DRAIN_OFFLINE_INBOX_UNDECRYPTABLE_PLACEHOLDER_SAVED',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+      'keyEpoch': keyEpoch,
+    },
+  );
+
+  return true;
+}
+
+bool _isMissingGroupReplayKeyError(Object error) {
+  return error.toString().contains('Missing group replay key');
+}
+
+Map<String, dynamic>? _tryDecodeReplayEnvelope(Object? rawMessage) {
+  if (rawMessage is! String || rawMessage.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(rawMessage);
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded);
+    }
+  } catch (_) {
+    return null;
+  }
+  return null;
+}
+
+DateTime? _tryParseRelayTimestamp(Object? rawTimestamp) {
+  if (rawTimestamp is int) {
+    return DateTime.fromMillisecondsSinceEpoch(rawTimestamp, isUtc: true);
+  }
+  if (rawTimestamp is double) {
+    return DateTime.fromMillisecondsSinceEpoch(
+      rawTimestamp.round(),
+      isUtc: true,
+    );
+  }
+  if (rawTimestamp is String) {
+    final millis = int.tryParse(rawTimestamp);
+    if (millis != null) {
+      return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+    }
+    return DateTime.tryParse(rawTimestamp)?.toUtc();
+  }
+  return null;
 }
 
 Future<void> _persistRetentionState({

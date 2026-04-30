@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -31,8 +32,10 @@ void main() {
     VoidCallback? onRetryFailedMessage,
     VoidCallback? onRetryFailedMedia,
     VoidCallback? onDeleteFailedMedia,
+    void Function(String attachmentId)? onRetryUnavailableMedia,
     String? failedMessageActionKeySuffix,
     String? failedMediaActionKeySuffix,
+    bool requireVerifiedContentHash = false,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -61,8 +64,10 @@ void main() {
             onRetryFailedMessage: onRetryFailedMessage,
             onRetryFailedMedia: onRetryFailedMedia,
             onDeleteFailedMedia: onDeleteFailedMedia,
+            onRetryUnavailableMedia: onRetryUnavailableMedia,
             failedMessageActionKeySuffix: failedMessageActionKeySuffix,
             failedMediaActionKeySuffix: failedMediaActionKeySuffix,
+            requireVerifiedContentHash: requireVerifiedContentHash,
           ),
         ),
       ),
@@ -823,6 +828,82 @@ void main() {
           findsNothing,
         );
       });
+
+      testWidgets(
+        'MD-012 unavailable media actions are separate from failed-message resend',
+        (tester) async {
+          var failedMessageRetried = false;
+          var failedMediaRetried = false;
+          String? unavailableAttachmentId;
+
+          await tester.pumpWidget(
+            buildTestWidget(
+              isIncoming: false,
+              status: 'failed',
+              text: '',
+              requireVerifiedContentHash: true,
+              media: const [
+                MediaAttachment(
+                  id: 'failed-attachment',
+                  messageId: 'failed-message',
+                  mime: 'image/jpeg',
+                  size: 10,
+                  mediaType: 'image',
+                  localPath: '/tmp/failed.jpg',
+                  downloadStatus: 'upload_failed',
+                  createdAt: '2026-02-27T10:00:00.000Z',
+                ),
+                MediaAttachment(
+                  id: 'quarantined-attachment',
+                  messageId: 'failed-message',
+                  mime: 'image/jpeg',
+                  size: 10,
+                  mediaType: 'image',
+                  localPath: '/tmp/quarantined.jpg',
+                  downloadStatus: kMediaDownloadStatusIntegrityFailed,
+                  contentHash:
+                      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  encryptionKeyBase64: 'key-quarantined',
+                  encryptionNonce: 'nonce-quarantined',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                  createdAt: '2026-02-27T10:00:00.000Z',
+                ),
+              ],
+              onRetryFailedMessage: () => failedMessageRetried = true,
+              onRetryFailedMedia: () => failedMediaRetried = true,
+              onRetryUnavailableMedia: (attachmentId) {
+                unavailableAttachmentId = attachmentId;
+              },
+              failedMessageActionKeySuffix: 'failed-message',
+              failedMediaActionKeySuffix: 'failed-message',
+            ),
+          );
+
+          final unavailableRetry = find.byKey(
+            const ValueKey(
+              'unavailable-media-retry-failed-message-quarantined-attachment',
+            ),
+          );
+          expect(unavailableRetry, findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('failed-message-retry-failed-message')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('failed-media-retry-failed-message')),
+            findsOneWidget,
+          );
+
+          await tester.ensureVisible(unavailableRetry);
+          await tester.tap(unavailableRetry);
+          await tester.pump();
+
+          expect(unavailableAttachmentId, 'quarantined-attachment');
+          expect(failedMessageRetried, isFalse);
+          expect(failedMediaRetried, isFalse);
+        },
+      );
     });
 
     group('failed text actions', () {

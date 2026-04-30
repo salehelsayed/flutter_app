@@ -36,8 +36,10 @@ class LetterCard extends StatelessWidget {
   final VoidCallback? onRetryFailedMessage;
   final VoidCallback? onRetryFailedMedia;
   final VoidCallback? onDeleteFailedMedia;
+  final void Function(String attachmentId)? onRetryUnavailableMedia;
   final String? failedMessageActionKeySuffix;
   final String? failedMediaActionKeySuffix;
+  final bool requireVerifiedContentHash;
 
   const LetterCard({
     super.key,
@@ -61,8 +63,10 @@ class LetterCard extends StatelessWidget {
     this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
+    this.onRetryUnavailableMedia,
     this.failedMessageActionKeySuffix,
     this.failedMediaActionKeySuffix,
+    this.requireVerifiedContentHash = false,
   });
 
   List<MediaAttachment> get _imageVideoMedia => media
@@ -215,6 +219,13 @@ class LetterCard extends StatelessWidget {
                         child: MediaGrid(
                           media: _imageVideoMedia,
                           onTap: onMediaTap,
+                          onRetryUnavailableMedia:
+                              onRetryUnavailableMedia != null
+                              ? (attachment) =>
+                                    onRetryUnavailableMedia!(attachment.id)
+                              : null,
+                          requireVerifiedContentHash:
+                              requireVerifiedContentHash,
                         ),
                       ),
                     // Audio players
@@ -224,6 +235,12 @@ class LetterCard extends StatelessWidget {
                         child: AudioPlayerWidget(
                           key: ValueKey(audio.id),
                           attachment: audio,
+                          onRetryUnavailableMedia:
+                              onRetryUnavailableMedia != null
+                              ? () => onRetryUnavailableMedia!(audio.id)
+                              : null,
+                          requireVerifiedContentHash:
+                              requireVerifiedContentHash,
                         ),
                       ),
                     // Body text (only if non-empty)

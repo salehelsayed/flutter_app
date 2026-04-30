@@ -29,6 +29,16 @@ void main() {
 
   Future<void> pump() => Future.delayed(const Duration(milliseconds: 50));
 
+  Future<void> waitUntil(
+    Future<bool> Function() condition, {
+    int maxTicks = 20,
+  }) async {
+    for (var i = 0; i < maxTicks; i++) {
+      if (await condition()) return;
+      await pump();
+    }
+  }
+
   Map<String, dynamic> decodeReplayPayload(Map<String, dynamic> inboxPayload) {
     final envelope =
         jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
@@ -554,7 +564,9 @@ void main() {
           memberPeerId: charlie.peerId,
           memberUsername: charlie.username,
         );
-        await pump();
+        await waitUntil(
+          () async => await charlie.groupRepo.getGroup(groupId) == null,
+        );
 
         expect(await bob.groupRepo.getMember(groupId, charlie.peerId), isNull);
         expect(await charlie.groupRepo.getGroup(groupId), isNull);

@@ -11,7 +11,9 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository.dart';
@@ -20,6 +22,9 @@ enum AcceptPendingGroupInviteResult {
   success,
   notFound,
   expired,
+  revoked,
+  alreadyUsed,
+  repairPending,
   invalidPayload,
   duplicateGroup,
   bridgeError,
@@ -60,6 +65,34 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
   }
 
   final effectiveNow = (now ?? DateTime.now()).toUtc();
+  final revocation = await pendingInviteRepo.getRevokedInvite(invite.inviteId);
+  if (revocation != null && revocation.isActiveAt(effectiveNow)) {
+    await pendingInviteRepo.deletePendingInvite(groupId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_REVOKED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    return (AcceptPendingGroupInviteResult.revoked, null);
+  }
+
+  final consumption = await pendingInviteRepo.getConsumedInvite(
+    invite.inviteId,
+  );
+  if (consumption != null && consumption.isActiveAt(effectiveNow)) {
+    await pendingInviteRepo.deletePendingInvite(groupId);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_ALREADY_USED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    return (AcceptPendingGroupInviteResult.alreadyUsed, null);
+  }
+
   if (invite.isExpiredAt(effectiveNow)) {
     await pendingInviteRepo.deletePendingInvite(groupId);
     emitFlowEvent(
@@ -74,15 +107,14 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
 
   final payload = invite.toPayload();
   if (payload == null) {
-    await pendingInviteRepo.deletePendingInvite(groupId);
     emitFlowEvent(
       layer: 'FL',
-      event: 'PENDING_GROUP_INVITE_ACCEPT_INVALID_PAYLOAD',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_REPAIR_PENDING',
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
       },
     );
-    return (AcceptPendingGroupInviteResult.invalidPayload, null);
+    return (AcceptPendingGroupInviteResult.repairPending, null);
   }
 
   final (result, acceptedGroupId) = await materializeAcceptedGroupInvitePayload(
@@ -94,6 +126,11 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
 
   switch (result) {
     case HandleGroupInviteResult.success:
+      await _recordConsumedInvite(
+        pendingInviteRepo: pendingInviteRepo,
+        invite: invite,
+        consumedAt: effectiveNow,
+      );
       await pendingInviteRepo.deletePendingInvite(groupId);
       await drainGroupOfflineInboxForGroup(
         bridge: bridge,
@@ -118,6 +155,11 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
       );
       return (AcceptPendingGroupInviteResult.success, group);
     case HandleGroupInviteResult.bridgeError:
+      await _recordConsumedInvite(
+        pendingInviteRepo: pendingInviteRepo,
+        invite: invite,
+        consumedAt: effectiveNow,
+      );
       await pendingInviteRepo.deletePendingInvite(groupId);
       final acceptedId = acceptedGroupId ?? groupId;
       final group = await groupRepo.getGroup(acceptedId);
@@ -136,13 +178,38 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
       await pendingInviteRepo.deletePendingInvite(groupId);
       return (AcceptPendingGroupInviteResult.duplicateGroup, null);
     case HandleGroupInviteResult.invalidPayload:
-      await pendingInviteRepo.deletePendingInvite(groupId);
-      return (AcceptPendingGroupInviteResult.invalidPayload, null);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_GROUP_INVITE_ACCEPT_REPAIR_PENDING',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return (AcceptPendingGroupInviteResult.repairPending, null);
     case HandleGroupInviteResult.unknownSender:
     case HandleGroupInviteResult.decryptionFailed:
       await pendingInviteRepo.deletePendingInvite(groupId);
       return (AcceptPendingGroupInviteResult.invalidPayload, null);
   }
+}
+
+Future<void> _recordConsumedInvite({
+  required PendingGroupInviteRepository pendingInviteRepo,
+  required PendingGroupInvite invite,
+  required DateTime consumedAt,
+}) async {
+  final consumedAtUtc = consumedAt.toUtc();
+  final retentionExpiry = consumedAtUtc.add(pendingGroupInviteTtl);
+  await pendingInviteRepo.saveConsumedInvite(
+    GroupInviteConsumption(
+      inviteId: invite.inviteId,
+      groupId: invite.groupId,
+      consumedAt: consumedAtUtc,
+      expiresAt: invite.expiresAt.isAfter(retentionExpiry)
+          ? invite.expiresAt
+          : retentionExpiry,
+    ),
+  );
 }
 
 Future<void> _publishAcceptedJoinTimelineIfPossible({

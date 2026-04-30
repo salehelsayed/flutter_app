@@ -132,6 +132,279 @@ void main() {
     expect(bridge.commandLog, isEmpty);
   });
 
+  test(
+    'allows writer with manage-roles permission override to update role',
+    () async {
+      const groupId = 'group-custom-manage';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Managed Group',
+          type: GroupType.chat,
+          topicName: 'topic-managed',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-manager',
+          username: 'Manager',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(manageRoles: true),
+          publicKey: 'pk-manager',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-existing-admin',
+          username: 'Existing Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-existing-admin',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-target',
+          username: 'Target',
+          role: MemberRole.reader,
+          publicKey: 'pk-target',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        memberPeerId: 'peer-target',
+        role: MemberRole.writer,
+        selfPeerId: 'peer-manager',
+      );
+
+      final updated = await groupRepo.getMember(groupId, 'peer-target');
+      expect(updated, isNotNull);
+      expect(updated!.role, MemberRole.writer);
+      expect(bridge.commandLog, contains('group:updateConfig'));
+
+      final updateConfigMessage = bridge.sentMessages.firstWhere((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final payload =
+          (jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      final members = (groupConfig['members'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final managerEntry = members.firstWhere(
+        (member) => member['peerId'] == 'peer-manager',
+      );
+      expect(managerEntry['role'], 'writer');
+      expect(managerEntry['permissions'], {'manageRoles': true});
+    },
+  );
+
+  test(
+    'writer with manage-roles permission cannot promote a member to admin',
+    () async {
+      const groupId = 'group-custom-manage-no-admin-grant';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Managed Group',
+          type: GroupType.chat,
+          topicName: 'topic-managed-no-admin-grant',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-manager',
+          username: 'Manager',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(manageRoles: true),
+          publicKey: 'pk-manager',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-existing-admin',
+          username: 'Existing Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-existing-admin',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-target',
+          username: 'Target',
+          role: MemberRole.reader,
+          publicKey: 'pk-target',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await expectLater(
+        updateGroupMemberRole(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          memberPeerId: 'peer-target',
+          role: MemberRole.admin,
+          selfPeerId: 'peer-manager',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('cannot grant roles or permissions'),
+          ),
+        ),
+      );
+
+      final target = await groupRepo.getMember(groupId, 'peer-target');
+      expect(target, isNotNull);
+      expect(target!.role, MemberRole.reader);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
+
+  test(
+    'rechecks revoked manage-roles permission before applying queued role update',
+    () async {
+      const groupId = 'group-stale-manage';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Stale Managed Group',
+          type: GroupType.chat,
+          topicName: 'topic-stale-managed',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-manager',
+          username: 'Manager',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(manageRoles: true),
+          publicKey: 'pk-manager',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-manager',
+          username: 'Manager',
+          role: MemberRole.writer,
+          publicKey: 'pk-manager',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-existing-admin',
+          username: 'Existing Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-existing-admin',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-target',
+          username: 'Target',
+          role: MemberRole.reader,
+          publicKey: 'pk-target',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await expectLater(
+        updateGroupMemberRole(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          memberPeerId: 'peer-target',
+          role: MemberRole.writer,
+          selfPeerId: 'peer-manager',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('Only admins can manage member roles'),
+          ),
+        ),
+      );
+
+      final target = await groupRepo.getMember(groupId, 'peer-target');
+      expect(target, isNotNull);
+      expect(target!.role, MemberRole.reader);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
+
+  test(
+    'denies admin whose manage-roles permission override is false',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          permissions: const GroupMemberPermissions(manageRoles: false),
+          publicKey: 'pk-admin',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await expectLater(
+        updateGroupMemberRole(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-writer',
+          role: MemberRole.admin,
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('Only admins can manage member roles'),
+          ),
+        ),
+      );
+
+      final writer = await groupRepo.getMember('group-1', 'peer-writer');
+      expect(writer, isNotNull);
+      expect(writer!.role, MemberRole.writer);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
+
   test('rejects non-member target before sync', () async {
     await expectLater(
       updateGroupMemberRole(

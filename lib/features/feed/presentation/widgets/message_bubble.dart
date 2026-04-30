@@ -34,6 +34,7 @@ class MessageBubble extends StatelessWidget {
   final String? ownPeerId;
   final VoidCallback? onLongPress;
   final void Function(String emoji)? onReactionTap;
+  final bool requireVerifiedContentHash;
 
   const MessageBubble({
     super.key,
@@ -54,6 +55,7 @@ class MessageBubble extends StatelessWidget {
     this.ownPeerId,
     this.onLongPress,
     this.onReactionTap,
+    this.requireVerifiedContentHash = false,
   });
 
   List<MediaAttachment> get _imageVideoMedia => isDeleted
@@ -180,13 +182,19 @@ class MessageBubble extends StatelessWidget {
                         child: MediaGrid(
                           media: _imageVideoMedia,
                           onTap: onMediaTap,
+                          requireVerifiedContentHash:
+                              requireVerifiedContentHash,
                         ),
                       ),
                     // Audio players
                     for (final audio in _audioMedia)
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                        child: AudioPlayerWidget(attachment: audio),
+                        child: AudioPlayerWidget(
+                          attachment: audio,
+                          requireVerifiedContentHash:
+                              requireVerifiedContentHash,
+                        ),
                       ),
                     // Inline name + text + time + status
                     Padding(

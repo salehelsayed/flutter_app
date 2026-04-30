@@ -28,6 +28,8 @@ enum HandleGroupInviteResult {
 enum StorePendingGroupInviteResult {
   storedPending,
   duplicateGroup,
+  revoked,
+  alreadyUsed,
   invalidPayload,
   unknownSender,
   decryptionFailed,
@@ -52,6 +54,7 @@ _resolveIncomingGroupInvite({
   required ContactRepository contactRepo,
   required Bridge bridge,
   String? ownMlKemSecretKey,
+  String? ownPeerId,
 }) async {
   GroupInvitePayload? payload;
 
@@ -136,6 +139,24 @@ _resolveIncomingGroupInvite({
     return (_ResolveIncomingGroupInviteResult.invalidPayload, null);
   }
 
+  final boundRecipientPeerId = payload.recipientPeerId;
+  if (boundRecipientPeerId != null &&
+      boundRecipientPeerId.isNotEmpty &&
+      ownPeerId != null &&
+      ownPeerId.isNotEmpty &&
+      boundRecipientPeerId != ownPeerId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_RECIPIENT_MISMATCH',
+      details: {
+        'messageTo': message.to.length > 10
+            ? message.to.substring(0, 10)
+            : message.to,
+      },
+    );
+    return (_ResolveIncomingGroupInviteResult.invalidPayload, null);
+  }
+
   final senderPeerId = payload.senderPeerId;
   final contact = await contactRepo.getContact(senderPeerId);
   if (contact == null) {
@@ -165,6 +186,7 @@ storeIncomingPendingGroupInvite({
   required ContactRepository contactRepo,
   required Bridge bridge,
   String? ownMlKemSecretKey,
+  String? ownPeerId,
   DateTime? receivedAt,
   Duration ttl = pendingGroupInviteTtl,
 }) async {
@@ -183,6 +205,7 @@ storeIncomingPendingGroupInvite({
     contactRepo: contactRepo,
     bridge: bridge,
     ownMlKemSecretKey: ownMlKemSecretKey,
+    ownPeerId: ownPeerId,
   );
 
   switch (resolveResult) {
@@ -197,6 +220,35 @@ storeIncomingPendingGroupInvite({
   }
 
   final payload = resolvedInvite!.payload;
+  final effectiveReceivedAt = (receivedAt ?? DateTime.now()).toUtc();
+  final revocation = await pendingInviteRepo.getRevokedInvite(payload.id);
+  if (revocation != null && revocation.isActiveAt(effectiveReceivedAt)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_STORE_PENDING_REVOKED',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+      },
+    );
+    return (StorePendingGroupInviteResult.revoked, null);
+  }
+
+  final consumption = await pendingInviteRepo.getConsumedInvite(payload.id);
+  if (consumption != null && consumption.isActiveAt(effectiveReceivedAt)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_STORE_PENDING_ALREADY_USED',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+      },
+    );
+    return (StorePendingGroupInviteResult.alreadyUsed, null);
+  }
+
   final existingGroup = await groupRepo.getGroup(payload.groupId);
   if (existingGroup != null) {
     emitFlowEvent(
@@ -213,7 +265,7 @@ storeIncomingPendingGroupInvite({
 
   final invite = PendingGroupInvite.fromPayload(
     payload,
-    receivedAt: (receivedAt ?? DateTime.now()).toUtc(),
+    receivedAt: effectiveReceivedAt,
     ttl: ttl,
   );
   await pendingInviteRepo.savePendingInvite(invite);
@@ -252,6 +304,7 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
   required ContactRepository contactRepo,
   required Bridge bridge,
   String? ownMlKemSecretKey,
+  String? ownPeerId,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
 }) async {
   emitFlowEvent(
@@ -269,6 +322,7 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
     contactRepo: contactRepo,
     bridge: bridge,
     ownMlKemSecretKey: ownMlKemSecretKey,
+    ownPeerId: ownPeerId,
   );
 
   switch (resolveResult) {
@@ -312,6 +366,21 @@ materializeAcceptedGroupInvitePayload({
   }
 
   final config = payload.groupConfig;
+  if (payload.groupKey.trim().isEmpty || payload.keyEpoch <= 0) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_INVALID_JOIN_MATERIAL',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+        'hasGroupKey': payload.groupKey.trim().isNotEmpty,
+        'keyEpoch': payload.keyEpoch,
+      },
+    );
+    return (HandleGroupInviteResult.invalidPayload, null);
+  }
+
   final groupName = config['name'] as String? ?? 'Unnamed Group';
   final groupTypeStr = config['groupType'] as String? ?? 'chat';
   final description = config['description'] as String?;
@@ -352,6 +421,7 @@ materializeAcceptedGroupInvitePayload({
       peerId: m['peerId'] as String? ?? '',
       username: m['username'] as String?,
       role: _parseMemberRole(m['role'] as String? ?? 'member'),
+      permissions: GroupMemberPermissions.fromJson(m['permissions']),
       publicKey: m['publicKey'] as String?,
       mlKemPublicKey: m['mlKemPublicKey'] as String?,
       joinedAt: DateTime.now().toUtc(),

@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -2515,6 +2518,94 @@ void main() {
         expect(bubble.media, isNotEmpty);
         expect(bubble.media.first.id, 'att-gm-1');
         expect(bubble.media.first.localPath, contains('media/groups/img.jpg'));
+      },
+    );
+
+    testWidgets(
+      'incremental group message blocks tampered done media in feed card',
+      (tester) async {
+        final originalOnError = FlutterError.onError;
+        FlutterError.onError = (details) {
+          if (details.toString().contains('overflowed')) return;
+          originalOnError?.call(details);
+        };
+        addTearDown(() => FlutterError.onError = originalOnError);
+
+        identityRepo.seed(testIdentity);
+
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g1',
+            name: 'Media Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/g1',
+            createdAt: DateTime(2026, 2, 1),
+            createdBy: 'admin',
+            myRole: GroupRole.member,
+          ),
+        );
+
+        final fakeGroupListener = _FakeGroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+        );
+        await tester.pumpWidget(
+          buildFeedWired(
+            groupRepository: groupRepo,
+            groupMessageRepository: groupMsgRepo,
+            groupMessageListener: fakeGroupListener,
+          ),
+        );
+        await pumpFeedFrames(tester);
+
+        const relativePath = 'media/groups/feed-tampered.jpg';
+        final absolutePath = await mediaFileManager.resolveStoredPath(
+          relativePath,
+        );
+        final file = File(absolutePath)..createSync(recursive: true);
+        file.writeAsBytesSync(utf8.encode('tampered feed bytes'));
+        final expectedHash = sha256
+            .convert(utf8.encode('original feed bytes'))
+            .toString();
+        final newMsg = GroupMessage(
+          id: 'gm-media-tampered',
+          groupId: 'g1',
+          senderPeerId: 'other-peer',
+          senderUsername: 'Hisam',
+          text: 'Check this',
+          timestamp: DateTime.now().toUtc(),
+          createdAt: DateTime.now().toUtc(),
+        );
+        await groupMsgRepo.saveMessage(newMsg);
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-gm-tampered',
+            messageId: 'gm-media-tampered',
+            mime: 'image/jpeg',
+            size: file.lengthSync(),
+            mediaType: 'image',
+            localPath: relativePath,
+            downloadStatus: 'done',
+            contentHash: expectedHash,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
+
+        fakeGroupListener.emitGroupMessage(newMsg);
+        await pumpFeedFrames(tester);
+
+        final bubble = tester
+            .widgetList<MessageBubble>(find.byType(MessageBubble))
+            .first;
+        expect(bubble.media.single.id, 'att-gm-tampered');
+        expect(
+          bubble.media.single.downloadStatus,
+          kMediaDownloadStatusIntegrityFailed,
+        );
+        expect(bubble.media.single.localPath, absolutePath);
+        expect(File(absolutePath).existsSync(), isFalse);
       },
     );
 

@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
@@ -17,8 +18,10 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
@@ -55,6 +58,7 @@ class GroupMessageListener {
   final RecentRemoteNotificationGate _remoteNotificationGate;
   final ReactionRepository? _reactionRepo;
   final DownloadGroupAvatarFn _downloadGroupAvatarFn;
+  final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
 
   StreamSubscription<Map<String, dynamic>>? _subscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
@@ -80,6 +84,7 @@ class GroupMessageListener {
     RecentRemoteNotificationGate? remoteNotificationGate,
     ReactionRepository? reactionRepo,
     DownloadGroupAvatarFn? downloadGroupAvatarFn,
+    AppendGroupEventLogEntry? appendGroupEventLogEntry,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -92,7 +97,8 @@ class GroupMessageListener {
        _remoteNotificationGate =
            remoteNotificationGate ?? recentRemoteNotificationGate,
        _reactionRepo = reactionRepo,
-       _downloadGroupAvatarFn = downloadGroupAvatarFn ?? downloadGroupAvatar;
+       _downloadGroupAvatarFn = downloadGroupAvatarFn ?? downloadGroupAvatar,
+       _appendGroupEventLogEntry = appendGroupEventLogEntry;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -103,6 +109,9 @@ class GroupMessageListener {
   /// Stream of incoming group reaction changes for the UI to listen to.
   Stream<ReactionChange> get groupReactionChangeStream =>
       _reactionChangeController.stream;
+
+  AppendGroupEventLogEntry? get appendGroupEventLogEntry =>
+      _appendGroupEventLogEntry;
 
   /// Replays one already-decoded group envelope through the live listener path.
   ///
@@ -203,6 +212,8 @@ class GroupMessageListener {
         return;
       }
 
+      final wireMessageId = data['messageId'] as String?;
+
       // Check for system message (config updates from admin)
       if (text.startsWith('{"__sys":') && _bridge != null) {
         await _handleSystemMessage(
@@ -211,13 +222,13 @@ class GroupMessageListener {
           timestamp,
           senderId: senderId,
           senderUsername: senderUsername,
+          sourceEventId: wireMessageId,
         );
         return;
       }
 
       final mediaRaw = data['media'] as List<dynamic>?;
       final media = mediaRaw?.cast<Map<String, dynamic>>();
-      final wireMessageId = data['messageId'] as String?;
       final wireQuotedMessageId = data['quotedMessageId'] as String?;
       final selfPeerId = await _resolveSelfPeerId();
 
@@ -235,10 +246,14 @@ class GroupMessageListener {
         quotedMessageId: wireQuotedMessageId,
         media: media,
         mediaAttachmentRepo: _mediaAttachmentRepo,
+        appendGroupEventLogEntry: _appendGroupEventLogEntry,
       );
 
       if (result != null) {
         _messageController.add(result);
+        final persistedAttachments = _mediaAttachmentRepo == null
+            ? <MediaAttachment>[]
+            : await _mediaAttachmentRepo.getAttachmentsForMessage(result.id);
 
         // Show notification for incoming group messages (skip own messages)
         if (senderId != selfPeerId &&
@@ -248,9 +263,6 @@ class GroupMessageListener {
           final group = await _groupRepo.getGroup(groupId);
           final isMuted = group?.isMuted ?? false;
           final groupName = group?.name ?? 'Group';
-          final notifAttachments =
-              media?.map((m) => MediaAttachment.fromJson(m)).toList() ??
-              <MediaAttachment>[];
           if (!isMuted) {
             maybeShowNotification(
               notificationService: _notificationService!,
@@ -263,7 +275,7 @@ class GroupMessageListener {
               ).toPayload(),
               senderUsername: groupName,
               messageText:
-                  '$senderUsername: ${notificationBodyForMessage(text, notifAttachments)}',
+                  '$senderUsername: ${notificationBodyForMessage(text, persistedAttachments)}',
               messageId: result.id,
               consumeRecentRemoteNotificationAnnouncement:
                   ({required payload, String? messageId}) =>
@@ -280,8 +292,7 @@ class GroupMessageListener {
         if (_bridge != null &&
             _mediaAttachmentRepo != null &&
             _mediaFileManager != null &&
-            media != null &&
-            media.isNotEmpty) {
+            persistedAttachments.isNotEmpty) {
           _autoDownloadMedia(result);
         }
       }
@@ -314,6 +325,7 @@ class GroupMessageListener {
             mediaFileManager: _mediaFileManager!,
             attachment: attachment,
             contactPeerId: message.groupId,
+            enforceGroupMediaPolicy: true,
           );
         } catch (e) {
           emitFlowEvent(
@@ -356,6 +368,7 @@ class GroupMessageListener {
     String timestamp, {
     required String senderId,
     required String senderUsername,
+    String? sourceEventId,
   }) async {
     try {
       final parsed = jsonDecode(text) as Map<String, dynamic>;
@@ -428,6 +441,31 @@ class GroupMessageListener {
         return;
       }
 
+      Future<void> appendSystemEventLog() async {
+        final append = _appendGroupEventLogEntry;
+        if (append == null || sysType == null) return;
+        final resolvedSourceEventId =
+            sourceEventId != null && sourceEventId.isNotEmpty
+            ? sourceEventId
+            : 'system:$groupId:$senderId:$sysType:$timestamp:${jsonEncode(parsed)}';
+        await append(
+          groupId: groupId,
+          eventType: sysType,
+          sourcePeerId: senderId,
+          sourceEventId: resolvedSourceEventId,
+          sourceTimestamp:
+              (eventAt ?? envelopeEventAt ?? DateTime.now().toUtc())
+                  .toIso8601String(),
+          payload: {
+            'groupId': groupId,
+            'senderId': senderId,
+            'senderUsername': senderUsername,
+            'systemType': sysType,
+            'payload': parsed,
+          },
+        );
+      }
+
       if (sysType == 'member_added') {
         await _enqueueGroupConfigWork(groupId, () async {
           if (await _shouldIgnoreStaleMembershipEvent(
@@ -437,6 +475,7 @@ class GroupMessageListener {
           )) {
             return;
           }
+          await appendSystemEventLog();
           await _handleMemberAdded(
             groupId,
             parsed,
@@ -454,6 +493,7 @@ class GroupMessageListener {
           )) {
             return;
           }
+          await appendSystemEventLog();
           await _handleMembersAdded(
             groupId,
             parsed,
@@ -471,6 +511,7 @@ class GroupMessageListener {
           )) {
             return;
           }
+          await appendSystemEventLog();
           await _handleMemberRemoved(
             groupId,
             parsed,
@@ -488,6 +529,7 @@ class GroupMessageListener {
           )) {
             return;
           }
+          await appendSystemEventLog();
           await _handleMemberRoleUpdated(
             groupId,
             parsed,
@@ -505,6 +547,7 @@ class GroupMessageListener {
           )) {
             return;
           }
+          await appendSystemEventLog();
           await _handleGroupDissolved(
             groupId,
             senderId: senderId,
@@ -521,6 +564,15 @@ class GroupMessageListener {
           )) {
             return;
           }
+          if (!await _verifyGroupMetadataActorEvent(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+          )) {
+            return;
+          }
+          await appendSystemEventLog();
           await _handleGroupMetadataUpdated(
             groupId,
             parsed,
@@ -530,8 +582,10 @@ class GroupMessageListener {
           );
         });
       } else if (sysType == 'member_joined') {
+        await appendSystemEventLog();
         await _handleMemberJoined(groupId, parsed, eventAt: eventAt);
       } else if (sysType == 'key_rotated') {
+        await appendSystemEventLog();
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_KEY_ROTATED',
@@ -587,6 +641,17 @@ class GroupMessageListener {
       return senderMember?.role == MemberRole.admin;
     }
 
+    if (sysType == 'member_role_updated') {
+      if (senderMember == null) {
+        return group.createdBy == senderId;
+      }
+      return _canApplyIncomingMemberRoleUpdate(
+        groupId: groupId,
+        actor: senderMember,
+        parsed: parsed,
+      );
+    }
+
     if (group.createdBy == senderId) {
       return true;
     }
@@ -602,6 +667,63 @@ class GroupMessageListener {
       }
     }
     return senderMember?.role == MemberRole.admin;
+  }
+
+  Future<bool> _canApplyIncomingMemberRoleUpdate({
+    required String groupId,
+    required GroupMember actor,
+    required Map<String, dynamic>? parsed,
+  }) async {
+    final memberData = parsed?['member'] as Map<String, dynamic>?;
+    if (memberData == null) {
+      return false;
+    }
+    final updatedPeerId = memberData['peerId'] as String?;
+    if (updatedPeerId == null || updatedPeerId.isEmpty) {
+      return false;
+    }
+
+    final existingMember = await _groupRepo.getMember(groupId, updatedPeerId);
+    final groupConfig = parsed?['groupConfig'] as Map<String, dynamic>?;
+    final snapshotMemberData = _findGroupConfigMember(
+      groupConfig,
+      updatedPeerId,
+    );
+    final effectiveMemberData = snapshotMemberData ?? memberData;
+
+    final roleValue = effectiveMemberData['role'] as String?;
+    final requestedRole = MemberRole.fromValue(roleValue ?? 'writer');
+    final containsPermissions = effectiveMemberData.containsKey('permissions');
+    final requestedPermissions = containsPermissions
+        ? GroupMemberPermissions.fromJson(effectiveMemberData['permissions'])
+        : null;
+
+    return canApplyGroupMemberRoleUpdate(
+      actor: actor,
+      newRole: requestedRole,
+      existingRole: existingMember?.role,
+      requestedPermissions: requestedPermissions,
+      existingPermissions: existingMember?.permissions,
+    );
+  }
+
+  Map<String, dynamic>? _findGroupConfigMember(
+    Map<String, dynamic>? groupConfig,
+    String peerId,
+  ) {
+    final members = groupConfig?['members'] as List<dynamic>?;
+    if (members == null) {
+      return null;
+    }
+    for (final rawMember in members) {
+      if (rawMember is! Map) {
+        continue;
+      }
+      if (rawMember['peerId'] == peerId) {
+        return rawMember.cast<String, dynamic>();
+      }
+    }
+    return null;
   }
 
   Future<bool> _isAuthorizedJoinEventSender(
@@ -644,6 +766,7 @@ class GroupMessageListener {
         peerId: memberData['peerId'] as String,
         username: memberData['username'] as String?,
         role: MemberRole.fromValue(memberData['role'] as String? ?? 'writer'),
+        permissions: GroupMemberPermissions.fromJson(memberData['permissions']),
         publicKey: memberData['publicKey'] as String?,
         mlKemPublicKey: memberData['mlKemPublicKey'] as String?,
         joinedAt: eventAt ?? DateTime.now().toUtc(),
@@ -707,6 +830,7 @@ class GroupMessageListener {
           peerId: data['peerId'] as String,
           username: data['username'] as String?,
           role: MemberRole.fromValue(data['role'] as String? ?? 'writer'),
+          permissions: GroupMemberPermissions.fromJson(data['permissions']),
           publicKey: data['publicKey'] as String?,
           mlKemPublicKey: data['mlKemPublicKey'] as String?,
           joinedAt: eventAt ?? DateTime.now().toUtc(),
@@ -926,6 +1050,9 @@ class GroupMessageListener {
           peerId: updatedPeerId,
           username: updatedUsername ?? existingMember?.username,
           role: newRole,
+          permissions: memberData?.containsKey('permissions') == true
+              ? GroupMemberPermissions.fromJson(memberData?['permissions'])
+              : existingMember?.permissions ?? GroupMemberPermissions.empty,
           publicKey:
               memberData?['publicKey'] as String? ?? existingMember?.publicKey,
           mlKemPublicKey:
@@ -1015,6 +1142,19 @@ class GroupMessageListener {
     if (groupConfig == null) {
       return;
     }
+    if (!isGroupConfigStateHashValid(
+      groupId: groupId,
+      groupConfig: groupConfig,
+    )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_METADATA_STATE_HASH_MISMATCH',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return;
+    }
 
     await _applyAuthoritativeGroupConfigSnapshot(groupId, groupConfig);
     final synced = await _syncGroupConfig(
@@ -1055,6 +1195,78 @@ class GroupMessageListener {
       event: 'GROUP_MESSAGE_LISTENER_GROUP_METADATA_UPDATED',
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+  }
+
+  Future<bool> _verifyGroupMetadataActorEvent(
+    String groupId,
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+  }) async {
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (groupConfig == null) {
+      return false;
+    }
+    if (!isGroupConfigStateHashValid(
+      groupId: groupId,
+      groupConfig: groupConfig,
+    )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_METADATA_STATE_HASH_MISMATCH',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return false;
+    }
+
+    final bridge = _bridge;
+    if (bridge == null) {
+      _emitMetadataSignatureRejected(groupId, reason: 'bridge_missing');
+      return false;
+    }
+
+    final senderMember = await _groupRepo.getMember(groupId, senderId);
+    final trustedActorPublicKey = senderMember?.publicKey?.trim() ?? '';
+    final verificationData = extractGroupMetadataActorEventVerificationData(
+      systemPayload: parsed,
+      groupId: groupId,
+      senderId: senderId,
+      senderUsername: senderUsername,
+      trustedActorPublicKey: trustedActorPublicKey,
+    );
+    if (verificationData == null) {
+      _emitMetadataSignatureRejected(groupId, reason: 'envelope_invalid');
+      return false;
+    }
+
+    final isValid = await callVerifyPayload(
+      bridge: bridge,
+      publicKey: verificationData.actorPublicKey,
+      data: verificationData.signedPayload,
+      signature: verificationData.signature,
+    );
+    if (!isValid) {
+      _emitMetadataSignatureRejected(groupId, reason: 'signature_invalid');
+      return false;
+    }
+
+    return true;
+  }
+
+  void _emitMetadataSignatureRejected(
+    String groupId, {
+    required String reason,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_METADATA_SIGNATURE_INVALID',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'reason': reason,
       },
     );
   }
@@ -1354,6 +1566,9 @@ class GroupMessageListener {
           username:
               memberData['username'] as String? ?? existingMember?.username,
           role: role,
+          permissions: GroupMemberPermissions.fromJson(
+            memberData['permissions'],
+          ),
           publicKey:
               memberData['publicKey'] as String? ?? existingMember?.publicKey,
           mlKemPublicKey:

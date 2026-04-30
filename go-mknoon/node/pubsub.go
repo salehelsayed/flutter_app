@@ -93,7 +93,7 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 	n.groupDiscoveryCtx[groupId] = discoveryCancel
 	go n.groupPeerDiscoveryLoop(discoveryCtx, groupId)
 
-	log.Printf("[PUBSUB] Joined group topic: %s (%s)", groupId, config.Name)
+	log.Printf("[PUBSUB] Joined group topic: %s", groupId)
 	return nil
 }
 
@@ -411,6 +411,13 @@ func decryptGroupEnvelopePayload(env *internal.GroupEnvelope, keyInfo *GroupKeyI
 	}
 }
 
+func groupEnvelopeMatchesTransportPeer(env *internal.GroupEnvelope, transportPeerId string) bool {
+	if env == nil || transportPeerId == "" {
+		return true
+	}
+	return env.SenderId == transportPeerId
+}
+
 // groupTopicValidator returns a topic validator function for a group topic.
 // It verifies the message is a valid v3 group envelope, the sender is a
 // member, and the signature is valid. For announcement groups, only
@@ -442,7 +449,13 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			return pubsub.ValidationReject
 		}
 
-		// 4. Look up group config.
+		// 4. Bind the claimed sender to the libp2p transport peer id.
+		if !groupEnvelopeMatchesTransportPeer(env, pid.String()) {
+			log.Printf("[PUBSUB] Validator: rejecting sender/transport peer mismatch: sender=%s transport=%s group=%s", env.SenderId, pid.String(), groupId)
+			return pubsub.ValidationReject
+		}
+
+		// 5. Look up group config.
 		n.mu.RLock()
 		config, ok := n.groupConfigs[groupId]
 		n.mu.RUnlock()
@@ -451,21 +464,21 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			return pubsub.ValidationReject
 		}
 
-		// 5. Find sender in members list.
+		// 6. Find sender in members list.
 		member := findMember(config, env.SenderId)
 		if member == nil {
 			log.Printf("[PUBSUB] Validator: rejecting message from non-member %s in group %s", env.SenderId, groupId)
 			return pubsub.ValidationReject
 		}
 
-		// 6. For announcement groups: only admin can publish messages.
+		// 7. For announcement groups: only admin can publish messages.
 		//    Reactions are allowed from any member (all members can react).
 		if env.Type == "group_message" && !isAllowedWriter(config, env.SenderId) {
 			log.Printf("[PUBSUB] Validator: rejecting message from non-admin %s in announcement group %s", env.SenderId, groupId)
 			return pubsub.ValidationReject
 		}
 
-		// 7. Verify signature.
+		// 8. Verify signature.
 		n.mu.RLock()
 		keyInfo, keyOk := n.groupKeys[groupId]
 		n.mu.RUnlock()

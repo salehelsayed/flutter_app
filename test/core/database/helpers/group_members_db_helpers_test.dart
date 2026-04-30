@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
+import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 
 void main() {
@@ -14,6 +15,7 @@ void main() {
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupsTablesMigration(db);
+    await runGroupMemberPermissionsMigration(db);
   });
 
   tearDown(() async {
@@ -27,6 +29,7 @@ void main() {
     String role = 'writer',
     String? publicKey = 'pk-base64',
     String? mlKemPublicKey = 'mlkem-base64',
+    String? permissionsJson,
     String joinedAt = '2026-01-15T12:00:00.000Z',
   }) {
     return {
@@ -36,6 +39,7 @@ void main() {
       'role': role,
       'public_key': publicKey,
       'ml_kem_public_key': mlKemPublicKey,
+      'permissions_json': permissionsJson,
       'joined_at': joinedAt,
     };
   }
@@ -53,14 +57,14 @@ void main() {
 
   group('dbLoadAllGroupMembers', () {
     test('returns all members for a group ordered by joined_at ASC', () async {
-      await dbInsertGroupMember(db, makeMemberRow(
-        peerId: 'peer-2',
-        joinedAt: '2026-01-16T00:00:00.000Z',
-      ));
-      await dbInsertGroupMember(db, makeMemberRow(
-        peerId: 'peer-1',
-        joinedAt: '2026-01-15T00:00:00.000Z',
-      ));
+      await dbInsertGroupMember(
+        db,
+        makeMemberRow(peerId: 'peer-2', joinedAt: '2026-01-16T00:00:00.000Z'),
+      );
+      await dbInsertGroupMember(
+        db,
+        makeMemberRow(peerId: 'peer-1', joinedAt: '2026-01-15T00:00:00.000Z'),
+      );
 
       final results = await dbLoadAllGroupMembers(db, 'group-1');
       expect(results.length, 2);
@@ -81,6 +85,17 @@ void main() {
       final result = await dbLoadGroupMember(db, 'group-1', 'peer-1');
       expect(result, isNotNull);
       expect(result!['username'], 'Alice');
+    });
+
+    test('preserves permissions_json', () async {
+      await dbInsertGroupMember(
+        db,
+        makeMemberRow(permissionsJson: '{"inviteMembers":true}'),
+      );
+
+      final result = await dbLoadGroupMember(db, 'group-1', 'peer-1');
+      expect(result, isNotNull);
+      expect(result!['permissions_json'], '{"inviteMembers":true}');
     });
   });
 
@@ -123,10 +138,10 @@ void main() {
     test('deletes all members for a group', () async {
       await dbInsertGroupMember(db, makeMemberRow(peerId: 'peer-1'));
       await dbInsertGroupMember(db, makeMemberRow(peerId: 'peer-2'));
-      await dbInsertGroupMember(db, makeMemberRow(
-        groupId: 'group-2',
-        peerId: 'peer-3',
-      ));
+      await dbInsertGroupMember(
+        db,
+        makeMemberRow(groupId: 'group-2', peerId: 'peer-3'),
+      );
 
       await dbDeleteAllGroupMembers(db, 'group-1');
 

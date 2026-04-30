@@ -139,6 +139,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
     senderPeerId: senderPeerId,
     senderUsername: senderUsername,
     timestamp: DateTime.now().toUtc().toIso8601String(),
+    recipientPeerId: recipientPeerId,
   );
 
   // 4. Encrypt inner JSON

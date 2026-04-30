@@ -35,7 +35,9 @@ import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_invite_consumptions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_invite_revocations_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
 import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
@@ -72,9 +74,16 @@ import 'package:flutter_app/core/database/migrations/051_pending_group_invites.d
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/database/migrations/054_group_reaction_replay_outbox.dart';
+import 'package:flutter_app/core/database/migrations/055_group_invite_revocations.dart';
+import 'package:flutter_app/core/database/migrations/056_group_invite_consumptions.dart';
+import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
+import 'package:flutter_app/core/database/migrations/058_media_attachment_integrity_columns.dart';
+import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
+import 'package:flutter_app/core/database/migrations/060_group_event_log.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
@@ -280,7 +289,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 54,
+    version: 60,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -336,6 +345,12 @@ void main() async {
       await runGroupsDissolveColumnsMigration(db);
       await runGroupsBacklogRetentionColumnsMigration(db);
       await runGroupReactionReplayOutboxMigration(db);
+      await runGroupInviteRevocationsMigration(db);
+      await runGroupInviteConsumptionsMigration(db);
+      await runGroupMemberPermissionsMigration(db);
+      await runMediaAttachmentIntegrityColumnsMigration(db);
+      await runMediaAttachmentEncryptionColumnsMigration(db);
+      await runGroupEventLogMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -494,6 +509,24 @@ void main() async {
       }
       if (oldVersion < 54) {
         await runGroupReactionReplayOutboxMigration(db);
+      }
+      if (oldVersion < 55) {
+        await runGroupInviteRevocationsMigration(db);
+      }
+      if (oldVersion < 56) {
+        await runGroupInviteConsumptionsMigration(db);
+      }
+      if (oldVersion < 57) {
+        await runGroupMemberPermissionsMigration(db);
+      }
+      if (oldVersion < 58) {
+        await runMediaAttachmentIntegrityColumnsMigration(db);
+      }
+      if (oldVersion < 59) {
+        await runMediaAttachmentEncryptionColumnsMigration(db);
+      }
+      if (oldVersion < 60) {
+        await runGroupEventLogMigration(db);
       }
     },
   );
@@ -839,6 +872,8 @@ void main() async {
         dbLoadGroupKeyByGeneration(db, groupId, generation),
     dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
     dbLoadAllGroupKeys: (groupId) => dbLoadAllGroupKeys(db, groupId),
+    dbDeleteGroupKeysBeforeGeneration: (groupId, minKeyGenerationToKeep) =>
+        dbDeleteGroupKeysBeforeGeneration(db, groupId, minKeyGenerationToKeep),
     pushSharedKeyStore: sharedPushKeyStore,
   );
   await groupRepository.mirrorAllKeysToSecureStore();
@@ -848,10 +883,22 @@ void main() async {
     dbLoadPendingGroupInvites: () => dbLoadPendingGroupInvites(db),
     dbLoadPendingGroupInvite: (groupId) =>
         dbLoadPendingGroupInvite(db, groupId),
+    dbUpsertGroupInviteRevocation: (row) =>
+        dbUpsertGroupInviteRevocation(db, row),
+    dbLoadGroupInviteRevocation: (inviteId) =>
+        dbLoadGroupInviteRevocation(db, inviteId),
+    dbUpsertGroupInviteConsumption: (row) =>
+        dbUpsertGroupInviteConsumption(db, row),
+    dbLoadGroupInviteConsumption: (inviteId) =>
+        dbLoadGroupInviteConsumption(db, inviteId),
     dbDeletePendingGroupInvite: (groupId) =>
         dbDeletePendingGroupInvite(db, groupId),
     dbDeleteExpiredPendingGroupInvites: (cutoff) =>
         dbDeleteExpiredPendingGroupInvites(db, cutoff),
+    dbDeleteExpiredGroupInviteRevocations: (cutoff) =>
+        dbDeleteExpiredGroupInviteRevocations(db, cutoff),
+    dbDeleteExpiredGroupInviteConsumptions: (cutoff) =>
+        dbDeleteExpiredGroupInviteConsumptions(db, cutoff),
   );
 
   // Create group message repository
@@ -1362,6 +1409,25 @@ void main() async {
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
     reactionRepo: reactionRepository,
+    appendGroupEventLogEntry:
+        ({
+          required groupId,
+          required eventType,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required payload,
+          createdAt,
+        }) => dbAppendGroupEventLogEntry(
+          db,
+          groupId: groupId,
+          eventType: eventType,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          payload: payload,
+          createdAt: createdAt,
+        ),
   );
   final groupMessageStreamController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -1387,6 +1453,25 @@ void main() async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
     },
+    appendGroupEventLogEntry:
+        ({
+          required groupId,
+          required eventType,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required payload,
+          createdAt,
+        }) => dbAppendGroupEventLogEntry(
+          db,
+          groupId: groupId,
+          eventType: eventType,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          payload: payload,
+          createdAt: createdAt,
+        ),
   );
 
   // Create group key update listener

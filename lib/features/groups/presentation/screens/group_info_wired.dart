@@ -27,6 +27,7 @@ import 'package:flutter_app/features/groups/application/set_group_muted_use_case
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -75,6 +76,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   late GroupModel _group;
   List<GroupMember> _members = [];
+  Map<String, GroupMemberIdentitySafety> _memberSafetyByPeerId = {};
   String? _ownPeerId;
   bool _didMutateGroup = false;
   bool _isUpdatingMute = false;
@@ -102,12 +104,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     try {
       final group = await widget.groupRepo.getGroup(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
+      final memberSafetyByPeerId = await _loadMemberSafety(members);
       if (!mounted) return;
       setState(() {
         if (group != null) {
           _group = group;
         }
         _members = members;
+        _memberSafetyByPeerId = memberSafetyByPeerId;
       });
     } catch (e) {
       emitFlowEvent(
@@ -116,6 +120,36 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<Map<String, GroupMemberIdentitySafety>> _loadMemberSafety(
+    List<GroupMember> members,
+  ) async {
+    final memberSafetyByPeerId = <String, GroupMemberIdentitySafety>{};
+    for (final member in members) {
+      try {
+        final contact = await widget.contactRepo.getContact(member.peerId);
+        final safety = GroupMemberIdentitySafety.compare(
+          member: member,
+          savedContact: contact,
+        );
+        if (safety != null) {
+          memberSafetyByPeerId[member.peerId] = safety;
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_INFO_FL_MEMBER_SAFETY_ERROR',
+          details: {
+            'peerId': member.peerId.length > 10
+                ? member.peerId.substring(0, 10)
+                : member.peerId,
+            'error': e.toString(),
+          },
+        );
+      }
+    }
+    return memberSafetyByPeerId;
   }
 
   Future<void> _onLeave() async {
@@ -497,6 +531,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   Future<void> _onRemoveMember(GroupMember member) async {
     try {
       final removedAt = DateTime.now().toUtc();
+      final identity = await widget.identityRepo.loadIdentity();
 
       // 1. Remove from DB + update admin's Go config
       await removeGroupMember(
@@ -504,11 +539,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         groupRepo: widget.groupRepo,
         groupId: widget.group.id,
         memberPeerId: member.peerId,
+        selfPeerId: identity?.peerId,
         eventAt: removedAt,
       );
 
       // 2. Broadcast member_removed system message to remaining members
-      final identity = await widget.identityRepo.loadIdentity();
       if (identity != null) {
         final group = await widget.groupRepo.getGroup(widget.group.id);
         final allMembers = await widget.groupRepo.getMembers(widget.group.id);
@@ -901,7 +936,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         avatarPath = groupAvatarRelativePath(_group.id);
       }
 
-      final updatedGroup = await updateGroupMetadata(
+      List<GroupMember>? refreshedMembers;
+      String? sysText;
+
+      await updateGroupMetadata(
         groupRepo: widget.groupRepo,
         groupId: _group.id,
         name: resolvedName,
@@ -910,14 +948,54 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         avatarMime: avatarMime,
         avatarPath: avatarPath,
         eventAt: changedAt,
+        beforePersist: (updatedGroup) async {
+          final membersForConfig = await widget.groupRepo.getMembers(_group.id);
+          final groupConfig = buildGroupConfigPayload(
+            updatedGroup,
+            membersForConfig,
+          );
+          final actorPayload = buildGroupMetadataActorEventPayload(
+            groupId: _group.id,
+            updatedAt: changedAt,
+            actorPeerId: identity.peerId,
+            actorUsername: identity.username ?? '',
+            actorPublicKey: identity.publicKey,
+            groupConfig: groupConfig,
+          );
+          final canonicalPayload = canonicalizeGroupMetadataActorEventPayload(
+            actorPayload,
+          );
+          final signResponse = await callSignPayload(
+            bridge: widget.bridge,
+            dataToSign: canonicalPayload,
+            privateKey: identity.privateKey,
+          );
+          final signature = signResponse['signature'];
+          if (signResponse['ok'] != true ||
+              signature is! String ||
+              signature.isEmpty) {
+            throw StateError('Failed to sign group metadata update');
+          }
+
+          refreshedMembers = membersForConfig;
+          sysText = jsonEncode({
+            '__sys': 'group_metadata_updated',
+            'updatedAt': changedAt.toIso8601String(),
+            'groupConfig': groupConfig,
+            groupMetadataActorEventEnvelopeField:
+                buildSignedGroupMetadataActorEventEnvelope(
+                  signedPayload: canonicalPayload,
+                  signature: signature,
+                ),
+          });
+        },
       );
 
-      final refreshedMembers = await widget.groupRepo.getMembers(_group.id);
-      final sysText = jsonEncode({
-        '__sys': 'group_metadata_updated',
-        'updatedAt': changedAt.toIso8601String(),
-        'groupConfig': buildGroupConfigPayload(updatedGroup, refreshedMembers),
-      });
+      final signedSysText = sysText;
+      final signedMembers = refreshedMembers;
+      if (signedSysText == null || signedMembers == null) {
+        throw StateError('Failed to sign group metadata update');
+      }
       final metadataTimelineMessage = buildGroupMetadataUpdatedTimelineMessage(
         groupId: _group.id,
         senderId: identity.peerId,
@@ -932,14 +1010,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       await callGroupPublish(
         widget.bridge,
         groupId: _group.id,
-        text: sysText,
+        text: signedSysText,
         senderPeerId: identity.peerId,
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username ?? '',
       );
 
-      final recipientPeerIds = refreshedMembers
+      final recipientPeerIds = signedMembers
           .where((member) => member.peerId != identity.peerId)
           .map((member) => member.peerId)
           .toList();
@@ -948,7 +1026,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'groupId': _group.id,
           'senderId': identity.peerId,
           'senderUsername': identity.username ?? '',
-          'text': sysText,
+          'text': signedSysText,
           'timestamp': changedAt.toIso8601String(),
         });
         await storeGroupOfflineReplayEnvelope(
@@ -1033,6 +1111,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     return GroupInfoScreen(
       group: _group,
       members: _members,
+      memberSafetyByPeerId: _memberSafetyByPeerId,
       isAdmin: isAdmin,
       ownPeerId: _ownPeerId,
       isMuted: _group.isMuted,

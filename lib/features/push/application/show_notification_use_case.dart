@@ -37,6 +37,7 @@ String notificationBodyForMessage(String text, List<MediaAttachment> media) {
 ///
 /// Suppression logic:
 ///   - App resumed AND viewing sender's conversation -> suppress
+///   - Same message was already announced by a recent remote push -> suppress
 ///   - Otherwise -> show notification
 Future<void> maybeShowNotification({
   required NotificationService notificationService,
@@ -83,9 +84,9 @@ Future<void> maybeShowNotification({
     return;
   }
 
-  if (lifecycleState != AppLifecycleState.resumed &&
-      consumeRecentRemoteNotificationAnnouncement != null) {
-    if (backgroundDuplicateGuardDelay > Duration.zero) {
+  if (consumeRecentRemoteNotificationAnnouncement != null) {
+    if (lifecycleState != AppLifecycleState.resumed &&
+        backgroundDuplicateGuardDelay > Duration.zero) {
       await Future<void>.delayed(backgroundDuplicateGuardDelay);
     }
 

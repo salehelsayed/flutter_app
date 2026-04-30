@@ -1053,7 +1053,10 @@ void main() {
         ),
       );
 
-      await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
+      final result = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+      );
 
       final joinCommands = bridge.sentMessages
           .map((m) => jsonDecode(m) as Map<String, dynamic>)
@@ -1062,6 +1065,9 @@ void main() {
 
       expect(joinCommands, hasLength(1));
       expect(joinCommands.first['payload']['groupId'], 'group-active');
+      expect(result.joinedGroupCount, 1);
+      expect(result.skippedNoKeyCount, 0);
+      expect(result.errorCount, 0);
     });
   });
 }

@@ -128,6 +128,74 @@ void main() {
     expect(stored, isEmpty);
   });
 
+  test('duplicate add reaction replay leaves one stored reaction', () async {
+    final reactionJson = makeReactionJson(id: 'r-duplicate-add');
+
+    final first = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: reactionJson,
+    );
+    final second = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: reactionJson,
+    );
+
+    expect(first.$1, HandleGroupReactionResult.success);
+    expect(second.$1, HandleGroupReactionResult.success);
+    expect(first.$2?.type, ReactionChangeType.upserted);
+    expect(second.$2?.type, ReactionChangeType.upserted);
+
+    final stored = await reactionRepo.getReactionsForMessage('msg-1');
+    expect(stored, hasLength(1));
+    expect(stored.single.id, 'r-duplicate-add');
+    expect(stored.single.senderPeerId, 'peer-sender');
+    expect(stored.single.emoji, '👍');
+  });
+
+  test('duplicate remove reaction replay leaves reaction absent', () async {
+    await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: makeReactionJson(),
+    );
+
+    final removeJson = makeReactionJson(
+      id: 'r-duplicate-remove',
+      action: 'remove',
+    );
+
+    final first = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: removeJson,
+    );
+    final second = await handleIncomingGroupReaction(
+      groupRepo: groupRepo,
+      reactionRepo: reactionRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      reactionJson: removeJson,
+    );
+
+    expect(first.$1, HandleGroupReactionResult.success);
+    expect(second.$1, HandleGroupReactionResult.success);
+    expect(first.$2?.type, ReactionChangeType.removed);
+    expect(second.$2?.type, ReactionChangeType.removed);
+
+    final stored = await reactionRepo.getReactionsForMessage('msg-1');
+    expect(stored, isEmpty);
+  });
+
   test('returns unknownGroup for nonexistent group', () async {
     final (result, change) = await handleIncomingGroupReaction(
       groupRepo: groupRepo,

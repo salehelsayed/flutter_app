@@ -36,6 +36,10 @@ void main() {
         groupMultiDeviceScopeFor(GroupMultiDeviceFacet.pendingInviteReview),
         GroupMultiDeviceScope.deviceLocal,
       );
+      expect(
+        groupMultiDeviceScopeFor(GroupMultiDeviceFacet.composerDrafts),
+        GroupMultiDeviceScope.deviceLocal,
+      );
     });
 
     test('shared and device-local helpers stay aligned with the mapping', () {
@@ -49,6 +53,10 @@ void main() {
       );
       expect(
         isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.mutePreference),
+        isTrue,
+      );
+      expect(
+        isGroupMultiDeviceDeviceLocal(GroupMultiDeviceFacet.composerDrafts),
         isTrue,
       );
       expect(

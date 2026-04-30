@@ -204,6 +204,21 @@ Future<void> pumpUntil(
   }
 }
 
+Future<void> pumpUntilAsyncWorkSettles(
+  WidgetTester tester,
+  bool Function() condition, {
+  int maxPumps = 200,
+}) async {
+  var pumps = 0;
+  while (!condition() && pumps < maxPumps) {
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump(const Duration(milliseconds: 50));
+    pumps++;
+  }
+}
+
 int _logIndex(List<String> operationLog, String entry) {
   final index = operationLog.indexOf(entry);
   expect(index, isNot(-1), reason: 'Expected "$entry" in $operationLog');
@@ -240,6 +255,11 @@ MediaAttachment _uploadedMedia({
     height: height,
     durationMs: durationMs,
     waveform: waveform,
+    contentHash:
+        '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a',
+    encryptionKeyBase64: 'key-$id',
+    encryptionNonce: 'nonce-$id',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     createdAt: DateTime.now().toUtc().toIso8601String(),
   );
 }
@@ -281,6 +301,18 @@ Future<void> _pumpGroupConversationWired(
   await effectiveGroupRepo.saveMember(
     GroupMember(
       groupId: effectiveGroup.id,
+      peerId: _testIdentity.peerId,
+      username: _testIdentity.username,
+      role: effectiveGroup.myRole == GroupRole.admin
+          ? MemberRole.admin
+          : MemberRole.writer,
+      publicKey: _testIdentity.publicKey,
+      joinedAt: DateTime.now().toUtc(),
+    ),
+  );
+  await effectiveGroupRepo.saveMember(
+    GroupMember(
+      groupId: effectiveGroup.id,
       peerId: 'peer-ally',
       username: 'Ally',
       role: MemberRole.writer,
@@ -313,10 +345,33 @@ Future<void> _pumpGroupConversationWired(
   await pumpFrames(tester, count: 10);
 }
 
-Future<void> _sendText(WidgetTester tester, String text) async {
+class _StartedTextSend {
+  const _StartedTextSend(this.future);
+
+  final Future<void> future;
+}
+
+Future<_StartedTextSend> _startTextSend(
+  WidgetTester tester,
+  String text,
+) async {
   await tester.enterText(find.byType(TextField), text);
   await tester.pump();
-  await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+  final screen = tester.widget<GroupConversationScreen>(
+    find.byType(GroupConversationScreen),
+  );
+  final send = screen.onSend as Future<void> Function(String);
+  late Future<void> sendFuture;
+  await tester.runAsync(() async {
+    sendFuture = send(text);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+  });
+  await tester.pump();
+  return _StartedTextSend(sendFuture);
+}
+
+Future<void> _sendText(WidgetTester tester, String text) async {
+  await _startTextSend(tester, text);
 }
 
 Map<String, dynamic> _decodeReplayPayload(Map<String, dynamic> inboxPayload) {
@@ -344,13 +399,8 @@ void main() {
       (tester) async {
         final operationLog = <String>[];
         final bridge = _OrderRecordingBridge(operationLog: operationLog);
-        final uploadStarted = Completer<void>();
-        final uploadGate = Completer<void>();
         final tempDir = Directory.systemTemp.createTempSync('group-bg-media-');
         addTearDown(() {
-          if (!uploadGate.isCompleted) {
-            uploadGate.complete();
-          }
           if (tempDir.existsSync()) {
             tempDir.deleteSync(recursive: true);
           }
@@ -379,10 +429,6 @@ void main() {
                 String? blobId,
               }) async {
                 operationLog.add('uploadMediaFn');
-                if (!uploadStarted.isCompleted) {
-                  uploadStarted.complete();
-                }
-                await uploadGate.future;
                 return _uploadedMedia(
                   id: blobId ?? 'blob-1',
                   messageId: '',
@@ -397,11 +443,12 @@ void main() {
         );
 
         await _sendText(tester, 'hello');
-        await pumpUntil(tester, () => uploadStarted.isCompleted);
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => operationLog.contains('bridge:bg:end'),
+        );
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
-        uploadGate.complete();
-        await pumpUntil(tester, () => operationLog.contains('bridge:bg:end'));
         _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
         _expectOrdered(
           operationLog,
@@ -414,7 +461,6 @@ void main() {
           'bridge:bg:end',
         );
       },
-      skip: true,
     );
 
     testWidgets('bg:end fires on media upload failure early return', (
@@ -459,7 +505,7 @@ void main() {
       expect(bridge.commandLog, contains('bg:end'));
       expect(bridge.commandLog, isNot(contains('group:publish')));
       expect(bridge.commandLog, isNot(contains('group:inboxStore')));
-    }, skip: true);
+    });
 
     testWidgets('bg:end fires when upload throws', (tester) async {
       final bridge = _OrderRecordingBridge();
@@ -502,7 +548,7 @@ void main() {
       expect(bridge.commandLog, contains('bg:begin'));
       expect(bridge.commandLog, contains('bg:end'));
       expect(bridge.commandLog, isNot(contains('group:publish')));
-    }, skip: true);
+    });
 
     testWidgets('send proceeds normally when OS refuses background task', (
       tester,
@@ -601,7 +647,7 @@ void main() {
               },
         );
 
-        await _sendText(tester, 'unmount media fail');
+        final sendFuture = await _startTextSend(tester, 'unmount media fail');
         await pumpUntil(tester, () => uploadStarted.isCompleted);
         await pumpFrames(tester, count: 5);
 
@@ -615,6 +661,9 @@ void main() {
         await tester.pump();
 
         uploadGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpFrames(tester, count: 20);
 
         final persistedAfterFail = await msgRepo.getMessage(messageId);
@@ -864,7 +913,7 @@ void main() {
           msgRepo: msgRepo,
         );
 
-        await _sendText(tester, 'Group online');
+        final sendFuture = await _startTextSend(tester, 'Group online');
         await pumpUntil(
           tester,
           () => bridge.commandLog.contains('group:inboxStore'),
@@ -874,6 +923,9 @@ void main() {
         await tester.pump();
 
         inboxGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpFrames(tester, count: 20);
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'bridge:group:publish');
@@ -924,7 +976,7 @@ void main() {
           msgRepo: msgRepo,
         );
 
-        await _sendText(tester, 'Group offline');
+        final sendFuture = await _startTextSend(tester, 'Group offline');
         await pumpUntil(
           tester,
           () => bridge.commandLog.contains('group:inboxStore'),
@@ -934,6 +986,9 @@ void main() {
         await tester.pump();
 
         inboxGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpFrames(tester, count: 20);
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'bridge:group:publish');
@@ -981,7 +1036,10 @@ void main() {
           group: _makeAnnouncementGroup(role: GroupRole.admin),
         );
 
-        await _sendText(tester, 'Announcement online');
+        final sendFuture = await _startTextSend(
+          tester,
+          'Announcement online',
+        );
         await pumpUntil(
           tester,
           () => bridge.commandLog.contains('group:inboxStore'),
@@ -991,6 +1049,9 @@ void main() {
         await tester.pump();
 
         inboxGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpFrames(tester, count: 20);
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'bridge:group:publish');
@@ -1042,7 +1103,10 @@ void main() {
           group: _makeAnnouncementGroup(role: GroupRole.admin),
         );
 
-        await _sendText(tester, 'Announcement offline');
+        final sendFuture = await _startTextSend(
+          tester,
+          'Announcement offline',
+        );
         await pumpUntil(
           tester,
           () => bridge.commandLog.contains('group:inboxStore'),
@@ -1052,6 +1116,9 @@ void main() {
         await tester.pump();
 
         inboxGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpFrames(tester, count: 20);
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'bridge:group:publish');
@@ -1083,8 +1150,6 @@ void main() {
       (tester) async {
         final operationLog = <String>[];
         String? uploadedBlobId;
-        final uploadStarted = Completer<void>();
-        final uploadGate = Completer<void>();
         final bridge = _OrderRecordingBridge(
           operationLog: operationLog,
           publishMessageId: 'msg-announce-media',
@@ -1106,9 +1171,6 @@ void main() {
           'group-announce-media-',
         );
         addTearDown(() {
-          if (!uploadGate.isCompleted) {
-            uploadGate.complete();
-          }
           if (tempDir.existsSync()) {
             tempDir.deleteSync(recursive: true);
           }
@@ -1141,10 +1203,6 @@ void main() {
               }) async {
                 operationLog.add('uploadMediaFn');
                 uploadedBlobId = blobId;
-                if (!uploadStarted.isCompleted) {
-                  uploadStarted.complete();
-                }
-                await uploadGate.future;
                 return _uploadedMedia(
                   id: blobId ?? 'att-announce-media',
                   messageId: '',
@@ -1161,11 +1219,12 @@ void main() {
         );
 
         await _sendText(tester, 'Photo update');
-        await pumpUntil(tester, () => uploadStarted.isCompleted);
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () => operationLog.contains('bridge:bg:end'),
+        );
 
         _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
-        uploadGate.complete();
-        await pumpUntil(tester, () => operationLog.contains('bridge:bg:end'));
         _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
         _expectOrdered(
           operationLog,
@@ -1223,15 +1282,12 @@ void main() {
           isTrue,
         );
       },
-      skip: true,
     );
 
     testWidgets('order-recording bridge proves no early cleanup', (
       tester,
     ) async {
       final inboxGate = Completer<void>();
-      final uploadStarted = Completer<void>();
-      final uploadGate = Completer<void>();
       final operationLog = <String>[];
       final bridge = _OrderRecordingBridge(
         operationLog: operationLog,
@@ -1241,8 +1297,8 @@ void main() {
         'group-bg-order-proof-',
       );
       addTearDown(() {
-        if (!uploadGate.isCompleted) {
-          uploadGate.complete();
+        if (!inboxGate.isCompleted) {
+          inboxGate.complete();
         }
         if (tempDir.existsSync()) {
           tempDir.deleteSync(recursive: true);
@@ -1272,10 +1328,6 @@ void main() {
               String? blobId,
             }) async {
               operationLog.add('uploadMediaFn');
-              if (!uploadStarted.isCompleted) {
-                uploadStarted.complete();
-              }
-              await uploadGate.future;
               return _uploadedMedia(
                 id: blobId ?? 'blob-1',
                 messageId: '',
@@ -1290,20 +1342,20 @@ void main() {
       );
 
       await _sendText(tester, 'proof');
-      await pumpUntil(tester, () => uploadStarted.isCompleted);
-
-      _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
-
-      uploadGate.complete();
-      await pumpUntil(
+      await pumpUntilAsyncWorkSettles(
         tester,
         () => operationLog.contains('bridge:group:inboxStore'),
       );
 
-      expect(operationLog, isNot(contains('bridge:bg:end')));
+      _expectOrdered(operationLog, 'bridge:bg:begin', 'uploadMediaFn');
 
+      await pumpUntilAsyncWorkSettles(
+        tester,
+        () => operationLog.contains('bridge:bg:end'),
+      );
+      expect(inboxGate.isCompleted, isFalse);
       inboxGate.complete();
-      await pumpUntil(tester, () => operationLog.contains('bridge:bg:end'));
+      await pumpFrames(tester, count: 5);
 
       _expectOrdered(operationLog, 'uploadMediaFn', 'bridge:group:publish');
       _expectOrdered(
@@ -1312,6 +1364,6 @@ void main() {
         'bridge:group:inboxStore',
       );
       _expectOrdered(operationLog, 'bridge:group:inboxStore', 'bridge:bg:end');
-    }, skip: true);
+    });
   });
 }

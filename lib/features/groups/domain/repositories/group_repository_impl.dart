@@ -42,6 +42,8 @@ class GroupRepositoryImpl implements GroupRepository {
   final Future<void> Function(String groupId) dbDeleteAllGroupKeys;
   final Future<List<Map<String, Object?>>> Function(String groupId)?
   dbLoadAllGroupKeys;
+  final Future<void> Function(String groupId, int minKeyGenerationToKeep)?
+  dbDeleteGroupKeysBeforeGeneration;
   final SecureKeyStore? pushSharedKeyStore;
 
   GroupRepositoryImpl({
@@ -64,6 +66,7 @@ class GroupRepositoryImpl implements GroupRepository {
     required this.dbLoadGroupKeyByGeneration,
     required this.dbDeleteAllGroupKeys,
     this.dbLoadAllGroupKeys,
+    this.dbDeleteGroupKeysBeforeGeneration,
     this.pushSharedKeyStore,
   });
 
@@ -183,6 +186,7 @@ class GroupRepositoryImpl implements GroupRepository {
   Future<void> saveKey(GroupKeyInfo key) async {
     await dbInsertGroupKey(key.toMap());
     await _mirrorGroupKeyForPush(key);
+    await _pruneObsoleteKeys(key.groupId);
   }
 
   @override
@@ -230,6 +234,36 @@ class GroupRepositoryImpl implements GroupRepository {
       for (final row in keyRows) {
         await _mirrorGroupKeyForPush(GroupKeyInfo.fromMap(row));
       }
+    }
+  }
+
+  Future<void> _pruneObsoleteKeys(String groupId) async {
+    final loadAllKeys = dbLoadAllGroupKeys;
+    final deleteBeforeGeneration = dbDeleteGroupKeysBeforeGeneration;
+    if (loadAllKeys == null || deleteBeforeGeneration == null) {
+      return;
+    }
+
+    final rows = await loadAllKeys(groupId);
+    if (rows.length <= 2) {
+      return;
+    }
+
+    final keys = rows.map((row) => GroupKeyInfo.fromMap(row)).toList();
+    final latestGeneration = keys
+        .map((key) => key.keyGeneration)
+        .reduce((a, b) => a > b ? a : b);
+    final minKeyGenerationToKeep = latestGeneration - 1;
+    final obsoleteKeys = keys
+        .where((key) => key.keyGeneration < minKeyGenerationToKeep)
+        .toList(growable: false);
+    if (obsoleteKeys.isEmpty) {
+      return;
+    }
+
+    await deleteBeforeGeneration(groupId, minKeyGenerationToKeep);
+    for (final key in obsoleteKeys) {
+      await _deleteGroupKeyMirror(key);
     }
   }
 

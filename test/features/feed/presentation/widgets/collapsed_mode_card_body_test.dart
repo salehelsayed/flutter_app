@@ -15,6 +15,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.da
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_image_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 /// Minimal valid 1x1 red PNG (67 bytes).
@@ -75,6 +76,9 @@ final Uint8List _tinyGif = Uint8List.fromList([
   0x00,
   0x3B,
 ]);
+
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -1034,6 +1038,7 @@ void main() {
                   mediaType: 'image',
                   localPath: imagePath,
                   downloadStatus: 'done',
+                  contentHash: _validContentHash,
                   createdAt: '2026-02-09T15:00:00Z',
                 ),
               ],
@@ -1099,6 +1104,97 @@ void main() {
       },
     );
 
+    testWidgets('group card hides hashless downloaded media thumbnail', (
+      tester,
+    ) async {
+      final groupThread = GroupThreadFeedItem(
+        id: 'g-hashless',
+        timestamp: DateTime(2026, 2, 9, 15, 0),
+        groupId: 'group-abc',
+        groupName: 'Test Group',
+        groupType: GroupType.chat,
+        messages: [
+          ThreadMessage(
+            id: 'gm-hashless',
+            text: 'hashless image',
+            time: '3:00 PM',
+            timestamp: DateTime(2026, 2, 9, 15, 0),
+            isIncoming: true,
+            senderUsername: 'Hisam',
+            senderPeerId: 'peer-hisam',
+            media: [
+              MediaAttachment(
+                id: 'hashless-image',
+                messageId: 'gm-hashless',
+                mime: 'image/jpeg',
+                size: 1000,
+                mediaType: 'image',
+                localPath: imagePath,
+                downloadStatus: 'done',
+                createdAt: '2026-02-09T15:00:00Z',
+              ),
+            ],
+          ),
+        ],
+        conversationState: ConversationState.read,
+      );
+
+      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+
+      expect(find.byIcon(Icons.camera_alt_outlined), findsOneWidget);
+      expect(find.byType(Image), findsNothing);
+    });
+
+    testWidgets(
+      'expanded group card blocks hashless downloaded media preview and viewer',
+      (tester) async {
+        final groupThread = GroupThreadFeedItem(
+          id: 'g-expanded-hashless',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          groupId: 'group-abc',
+          groupName: 'Test Group',
+          groupType: GroupType.chat,
+          messages: [
+            ThreadMessage(
+              id: 'gm-expanded-hashless',
+              text: 'hashless expanded image',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+              senderUsername: 'Hisam',
+              senderPeerId: 'peer-hisam',
+              media: [
+                MediaAttachment(
+                  id: 'hashless-expanded-image',
+                  messageId: 'gm-expanded-hashless',
+                  mime: 'image/jpeg',
+                  size: 1000,
+                  mediaType: 'image',
+                  localPath: imagePath,
+                  downloadStatus: 'done',
+                  createdAt: '2026-02-09T15:00:00Z',
+                ),
+              ],
+            ),
+          ],
+          conversationState: ConversationState.read,
+        );
+
+        await tester.pumpWidget(
+          wrap(CollapsedModeCardBody(thread: groupThread, isExpanded: true)),
+        );
+
+        expect(find.byType(ScrollableMessagePreview), findsOneWidget);
+        expect(find.byType(MediaThumbnailImage), findsNothing);
+        expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+
+        await tester.tap(find.byIcon(Icons.broken_image_outlined));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(FullScreenImageViewer), findsNothing);
+      },
+    );
+
     testWidgets('group card media-only message shows thumbnail + Photo label', (
       tester,
     ) async {
@@ -1126,6 +1222,7 @@ void main() {
                 mediaType: 'image',
                 localPath: imagePath,
                 downloadStatus: 'done',
+                contentHash: _validContentHash,
                 createdAt: '2026-02-09T15:00:00Z',
               ),
             ],
@@ -1142,46 +1239,50 @@ void main() {
       expect(find.text('Photo'), findsOneWidget);
     });
 
-    testWidgets('group card media-only GIF message shows thumbnail + GIF label', (
-      tester,
-    ) async {
-      final groupThread = GroupThreadFeedItem(
-        id: 'g-gif',
-        timestamp: DateTime(2026, 2, 9, 15, 0),
-        groupId: 'group-abc',
-        groupName: 'Test Group',
-        groupType: GroupType.chat,
-        messages: [
-          ThreadMessage(
-            id: 'gm1',
-            text: '',
-            time: '3:00 PM',
-            timestamp: DateTime(2026, 2, 9, 15, 0),
-            isIncoming: true,
-            senderUsername: 'Hisam',
-            senderPeerId: 'peer-hisam',
-            media: [
-              MediaAttachment(
-                id: 'gif-1',
-                messageId: 'gm1',
-                mime: 'image/gif',
-                size: 1000,
-                mediaType: 'image',
-                localPath: gifPath,
-                downloadStatus: 'done',
-                createdAt: '2026-02-09T15:00:00Z',
-              ),
-            ],
-          ),
-        ],
-        conversationState: ConversationState.read,
-      );
+    testWidgets(
+      'group card media-only GIF message shows thumbnail + GIF label',
+      (tester) async {
+        final groupThread = GroupThreadFeedItem(
+          id: 'g-gif',
+          timestamp: DateTime(2026, 2, 9, 15, 0),
+          groupId: 'group-abc',
+          groupName: 'Test Group',
+          groupType: GroupType.chat,
+          messages: [
+            ThreadMessage(
+              id: 'gm1',
+              text: '',
+              time: '3:00 PM',
+              timestamp: DateTime(2026, 2, 9, 15, 0),
+              isIncoming: true,
+              senderUsername: 'Hisam',
+              senderPeerId: 'peer-hisam',
+              media: [
+                MediaAttachment(
+                  id: 'gif-1',
+                  messageId: 'gm1',
+                  mime: 'image/gif',
+                  size: 1000,
+                  mediaType: 'image',
+                  localPath: gifPath,
+                  downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  createdAt: '2026-02-09T15:00:00Z',
+                ),
+              ],
+            ),
+          ],
+          conversationState: ConversationState.read,
+        );
 
-      await tester.pumpWidget(wrap(CollapsedModeCardBody(thread: groupThread)));
+        await tester.pumpWidget(
+          wrap(CollapsedModeCardBody(thread: groupThread)),
+        );
 
-      expect(find.byType(MediaThumbnailImage), findsOneWidget);
-      expect(find.text('GIF'), findsOneWidget);
-    });
+        expect(find.byType(MediaThumbnailImage), findsOneWidget);
+        expect(find.text('GIF'), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'collapsed preview matches open preview direction for Arabic-first mixed text',

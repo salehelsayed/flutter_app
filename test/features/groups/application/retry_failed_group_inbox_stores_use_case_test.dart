@@ -45,8 +45,9 @@ GroupMessage _makeRetryEligible(
   bool inboxStored = false,
   String? inboxRetryPayload,
   bool isIncoming = false,
+  DateTime? timestamp,
 }) {
-  final now = DateTime.utc(2026, 1, 15, 12, 0, 0);
+  final now = timestamp ?? DateTime.utc(2026, 1, 15, 12, 0, 0);
   return GroupMessage(
     id: id,
     groupId: 'group-1',
@@ -83,8 +84,10 @@ GroupReactionReplayOutboxEntry _makeReactionRetryEntry(
   String reactionId, {
   String action = 'add',
   String deliveryStatus = GroupReactionReplayOutboxStatus.failed,
+  DateTime? createdAt,
 }) {
-  final nowIso = DateTime.utc(2026, 1, 15, 12, 0, 0).toIso8601String();
+  final nowIso = (createdAt ?? DateTime.utc(2026, 1, 15, 12, 0, 0))
+      .toIso8601String();
   return GroupReactionReplayOutboxEntry(
     reactionId: reactionId,
     groupId: 'group-1',
@@ -121,6 +124,18 @@ GroupReactionReplayOutboxEntry _makeReactionRetryEntry(
     createdAt: nowIso,
     updatedAt: nowIso,
   );
+}
+
+List<String> _inboxStoreMessageIds(FakeBridge bridge) {
+  return bridge.sentMessages
+      .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+      .where((message) => message['cmd'] == 'group:inboxStore')
+      .map((message) {
+        final payload = (message['payload'] as Map).cast<String, dynamic>();
+        final replay = jsonDecode(payload['message'] as String) as Map;
+        return replay['messageId'] as String;
+      })
+      .toList();
 }
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
@@ -297,6 +312,69 @@ void main() {
         .length;
     expect(inboxCalls, 20);
   });
+
+  test(
+    'deterministic restart retry drains message inbox rows before reaction rows',
+    () async {
+      await msgRepo.saveMessage(
+        _makeRetryEligible(
+          'msg-later',
+          timestamp: DateTime.utc(2026, 1, 15, 12, 2),
+        ),
+      );
+      await msgRepo.saveMessage(
+        _makeRetryEligible(
+          'msg-beta',
+          timestamp: DateTime.utc(2026, 1, 15, 12, 1),
+        ),
+      );
+      await msgRepo.saveMessage(
+        _makeRetryEligible(
+          'msg-alpha',
+          timestamp: DateTime.utc(2026, 1, 15, 12, 1),
+        ),
+      );
+      await reactionReplayOutboxRepo.saveEntry(
+        _makeReactionRetryEntry(
+          'rx-later',
+          createdAt: DateTime.utc(2026, 1, 15, 12, 4),
+        ),
+      );
+      await reactionReplayOutboxRepo.saveEntry(
+        _makeReactionRetryEntry(
+          'rx-earlier',
+          createdAt: DateTime.utc(2026, 1, 15, 12, 3),
+        ),
+      );
+
+      final retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        limit: 5,
+      );
+
+      expect(retried, 5);
+      expect(_inboxStoreMessageIds(bridge), [
+        'msg-alpha',
+        'msg-beta',
+        'msg-later',
+        'rx-earlier',
+        'rx-later',
+      ]);
+      expect((await msgRepo.getMessage('msg-alpha'))!.inboxStored, isTrue);
+      expect((await msgRepo.getMessage('msg-beta'))!.inboxStored, isTrue);
+      expect((await msgRepo.getMessage('msg-later'))!.inboxStored, isTrue);
+      expect(
+        (await reactionReplayOutboxRepo.getEntry('rx-earlier'))!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.stored,
+      );
+      expect(
+        (await reactionReplayOutboxRepo.getEntry('rx-later'))!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.stored,
+      );
+    },
+  );
 
   test('retries reaction replay outbox rows and marks them stored', () async {
     await reactionReplayOutboxRepo.saveEntry(_makeReactionRetryEntry('rx-add'));

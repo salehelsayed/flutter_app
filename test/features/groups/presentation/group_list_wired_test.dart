@@ -143,6 +143,7 @@ PendingGroupInvite makePendingInvite({
   String groupId = 'grp-abc123',
   String groupName = 'Book Club',
   DateTime? receivedAt,
+  String? overrideGroupKey,
 }) {
   final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
   final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
@@ -150,7 +151,7 @@ PendingGroupInvite makePendingInvite({
   final payload = GroupInvitePayload(
     id: 'invite-$groupId',
     groupId: groupId,
-    groupKey: 'base64-key',
+    groupKey: overrideGroupKey ?? 'base64-key',
     keyEpoch: 1,
     groupConfig: {
       'name': groupName,
@@ -551,6 +552,34 @@ void main() {
         final latestMessage = await msgRepo.getLatestMessage(invite.groupId);
         expect(latestMessage, isNotNull);
         expect(latestMessage!.text, 'Admin joined the group');
+      },
+    );
+
+    testWidgets(
+      'repair-pending accept keeps the invite row and shows key-material warning',
+      (tester) async {
+        final invite = makePendingInvite(overrideGroupKey: '');
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(find.text('Invite needs fresh key material'), findsOneWidget);
+        expect(bridge.commandLog, isNot(contains('group:join')));
       },
     );
 
