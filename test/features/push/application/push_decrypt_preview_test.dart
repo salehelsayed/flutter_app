@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -9,6 +10,46 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('resolveBackgroundPushNotification', () {
+    test('fixture route data keeps plaintext preview fields encrypted', () {
+      final fixtureFiles = <File>[
+        ...Directory('test/features/push/fixtures')
+            .listSync()
+            .whereType<File>()
+            .where((file) => file.path.endsWith('.json')),
+        ...Directory(
+          'test/features/push/frozen_payloads',
+        ).listSync().whereType<File>().where(
+          (file) =>
+              file.path.endsWith('.json') &&
+              file.uri.pathSegments.last.startsWith('post_phase1_'),
+        ),
+      ];
+      const forbiddenRouteFields = <String>{
+        'title',
+        'body',
+        'pushTitle',
+        'pushBody',
+        'senderUsername',
+        'groupName',
+        'messageText',
+        'text',
+        'media',
+      };
+
+      for (final file in fixtureFiles) {
+        final decoded = jsonDecode(file.readAsStringSync());
+        final routeData = decoded is Map<String, dynamic>
+            ? decoded['routeData'] as Map<String, dynamic>?
+            : null;
+        expect(routeData, isNotNull, reason: file.path);
+        expect(
+          routeData!.keys.toSet().intersection(forbiddenRouteFields),
+          isEmpty,
+          reason: file.path,
+        );
+      }
+    });
+
     test('decrypts 1:1 ciphertext preview with sender title', () async {
       const message = RemoteMessage(
         data: {

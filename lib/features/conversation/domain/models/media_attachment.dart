@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+const kMediaAttachmentEncryptionSchemeBlobAesGcmV1 = 'blob_aes_256_gcm_v1';
+
 /// Model representing a media attachment on a conversation message.
 ///
 /// Maps to the `media_attachments` database table. Each attachment belongs
@@ -45,6 +47,21 @@ class MediaAttachment {
   /// Incremented on each transient failure. Terminal after kMaxUploadRetries.
   final int? uploadRetryCount;
 
+  /// Canonical lowercase SHA-256 digest for group media relay blob bytes.
+  final String? contentHash;
+
+  /// Canonical lowercase SHA-256 digest for a remote thumbnail blob, if any.
+  final String? thumbnailHash;
+
+  /// Base64-encoded per-object media encryption key.
+  final String? encryptionKeyBase64;
+
+  /// Base64-encoded per-object media encryption nonce.
+  final String? encryptionNonce;
+
+  /// Versioned encryption scheme for encrypted media blobs.
+  final String? encryptionScheme;
+
   const MediaAttachment({
     required this.id,
     required this.messageId,
@@ -59,9 +76,24 @@ class MediaAttachment {
     required this.createdAt,
     this.waveform,
     this.uploadRetryCount,
+    this.contentHash,
+    this.thumbnailHash,
+    this.encryptionKeyBase64,
+    this.encryptionNonce,
+    this.encryptionScheme,
   });
 
   bool get isAnimated => mime == 'image/gif';
+
+  bool get hasEncryptionMetadata =>
+      encryptionKeyBase64 != null &&
+      encryptionKeyBase64!.isNotEmpty &&
+      encryptionNonce != null &&
+      encryptionNonce!.isNotEmpty &&
+      (encryptionScheme == null ||
+          encryptionScheme == kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
+
+  bool get isEncrypted => hasEncryptionMetadata;
 
   /// Infers the logical media type from a MIME string.
   static String mediaTypeFromMime(String mime) {
@@ -94,6 +126,11 @@ class MediaAttachment {
       createdAt: map['created_at'] as String,
       waveform: waveform,
       uploadRetryCount: map['upload_retry_count'] as int?,
+      contentHash: map['content_hash'] as String?,
+      thumbnailHash: map['thumbnail_hash'] as String?,
+      encryptionKeyBase64: map['encryption_key_base64'] as String?,
+      encryptionNonce: map['encryption_nonce'] as String?,
+      encryptionScheme: map['encryption_scheme'] as String?,
     );
   }
 
@@ -113,6 +150,11 @@ class MediaAttachment {
       'created_at': createdAt,
       'waveform': waveform != null ? jsonEncode(waveform) : null,
       if (uploadRetryCount != null) 'upload_retry_count': uploadRetryCount,
+      'content_hash': contentHash,
+      'thumbnail_hash': thumbnailHash,
+      'encryption_key_base64': encryptionKeyBase64,
+      'encryption_nonce': encryptionNonce,
+      'encryption_scheme': encryptionScheme,
     };
   }
 
@@ -141,6 +183,11 @@ class MediaAttachment {
           json['createdAt'] as String? ??
           DateTime.now().toUtc().toIso8601String(),
       waveform: waveform,
+      contentHash: json['contentHash'] as String?,
+      thumbnailHash: json['thumbnailHash'] as String?,
+      encryptionKeyBase64: json['encryptionKeyBase64'] as String?,
+      encryptionNonce: json['encryptionNonce'] as String?,
+      encryptionScheme: json['encryptionScheme'] as String?,
     );
   }
 
@@ -155,6 +202,12 @@ class MediaAttachment {
       if (height != null) 'height': height,
       if (durationMs != null) 'durationMs': durationMs,
       if (waveform != null) 'waveform': waveform,
+      if (contentHash != null) 'contentHash': contentHash,
+      if (thumbnailHash != null) 'thumbnailHash': thumbnailHash,
+      if (encryptionKeyBase64 != null)
+        'encryptionKeyBase64': encryptionKeyBase64,
+      if (encryptionNonce != null) 'encryptionNonce': encryptionNonce,
+      if (encryptionScheme != null) 'encryptionScheme': encryptionScheme,
     };
   }
 
@@ -171,11 +224,22 @@ class MediaAttachment {
     int? height,
     int? durationMs,
     String? localPath,
+    bool clearLocalPath = false,
     String? downloadStatus,
     String? createdAt,
     List<double>? waveform,
     bool clearWaveform = false,
     int? uploadRetryCount,
+    String? contentHash,
+    bool clearContentHash = false,
+    String? thumbnailHash,
+    bool clearThumbnailHash = false,
+    String? encryptionKeyBase64,
+    bool clearEncryptionKeyBase64 = false,
+    String? encryptionNonce,
+    bool clearEncryptionNonce = false,
+    String? encryptionScheme,
+    bool clearEncryptionScheme = false,
   }) {
     return MediaAttachment(
       id: id ?? this.id,
@@ -186,11 +250,24 @@ class MediaAttachment {
       width: width ?? this.width,
       height: height ?? this.height,
       durationMs: durationMs ?? this.durationMs,
-      localPath: localPath ?? this.localPath,
+      localPath: clearLocalPath ? null : (localPath ?? this.localPath),
       downloadStatus: downloadStatus ?? this.downloadStatus,
       createdAt: createdAt ?? this.createdAt,
       waveform: clearWaveform ? null : (waveform ?? this.waveform),
       uploadRetryCount: uploadRetryCount ?? this.uploadRetryCount,
+      contentHash: clearContentHash ? null : (contentHash ?? this.contentHash),
+      thumbnailHash: clearThumbnailHash
+          ? null
+          : (thumbnailHash ?? this.thumbnailHash),
+      encryptionKeyBase64: clearEncryptionKeyBase64
+          ? null
+          : (encryptionKeyBase64 ?? this.encryptionKeyBase64),
+      encryptionNonce: clearEncryptionNonce
+          ? null
+          : (encryptionNonce ?? this.encryptionNonce),
+      encryptionScheme: clearEncryptionScheme
+          ? null
+          : (encryptionScheme ?? this.encryptionScheme),
     );
   }
 

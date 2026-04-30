@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
@@ -42,6 +43,7 @@ void main() {
 
   Widget buildTestWidget({
     List<GroupMember> members = const [],
+    Map<String, GroupMemberIdentitySafety> memberSafetyByPeerId = const {},
     bool isAdmin = true,
     String? ownPeerId,
     bool isMuted = false,
@@ -60,6 +62,7 @@ void main() {
       home: GroupInfoScreen(
         group: group ?? testGroup,
         members: members,
+        memberSafetyByPeerId: memberSafetyByPeerId,
         isAdmin: isAdmin,
         ownPeerId: ownPeerId,
         isMuted: isMuted,
@@ -105,6 +108,35 @@ void main() {
 
     expect(find.text('admin'), findsOneWidget);
     expect(find.text('writer'), findsOneWidget);
+  });
+
+  testWidgets('shows identity warning and safety numbers for changed member', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        members: testMembers,
+        memberSafetyByPeerId: const {
+          'peer-member': GroupMemberIdentitySafety(
+            currentSafetyNumber: '1111 2222 3333',
+            savedSafetyNumber: '4444 5555 6666',
+            identityChanged: true,
+          ),
+        },
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('group-member-identity-warning-peer-member')),
+      findsOneWidget,
+    );
+    expect(find.text('Identity changed'), findsOneWidget);
+    expect(find.text('Current safety 1111 2222 3333'), findsOneWidget);
+    expect(find.text('Saved safety 4444 5555 6666'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('group-member-identity-warning-peer-admin')),
+      findsNothing,
+    );
   });
 
   testWidgets('shows leave button', (tester) async {

@@ -3,11 +3,16 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 void main() {
@@ -17,13 +22,14 @@ void main() {
   late GroupKeyUpdateListener listener;
   late String? mlKemSecretKey;
 
-  ChatMessage _makeMessage(String content) {
+  ChatMessage _makeMessage(String content, {String? confirmNonce}) {
     return ChatMessage(
       from: 'sender-peer',
       to: 'me',
       content: content,
       timestamp: DateTime.now().toUtc().toIso8601String(),
       isIncoming: true,
+      confirmNonce: confirmNonce,
     );
   }
 
@@ -49,6 +55,31 @@ void main() {
     });
   }
 
+  Future<void> _saveActiveGroup(String groupId) async {
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'Group $groupId',
+        type: GroupType.chat,
+        topicName: '/mknoon/group/$groupId',
+        createdAt: DateTime.utc(2026, 4, 5, 12, 0),
+        createdBy: 'sender-peer',
+        myRole: GroupRole.member,
+      ),
+    );
+  }
+
+  Map<String, dynamic> _lastGroupOfflineReplayEnvelope(FakeBridge bridge) {
+    final inboxMsg = bridge.sentMessages.lastWhere(
+      (m) =>
+          (jsonDecode(m) as Map<String, dynamic>)['cmd'] == 'group:inboxStore',
+    );
+    final payload =
+        (jsonDecode(inboxMsg) as Map<String, dynamic>)['payload']
+            as Map<String, dynamic>;
+    return jsonDecode(payload['message'] as String) as Map<String, dynamic>;
+  }
+
   setUp(() {
     groupRepo = InMemoryGroupRepository();
     bridge = PassthroughCryptoBridge();
@@ -68,7 +99,202 @@ void main() {
     controller.close();
   });
 
+  test(
+    'logs key update and rejects tampered replay before replacing key',
+    () async {
+      await _saveActiveGroup('group-log');
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-log',
+            keyGeneration: 2,
+            encryptedKey: 'key-v2',
+          ),
+          confirmNonce: 'key-event-1',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(eventLog.entries, hasLength(1));
+      expect(eventLog.entries.single['eventType'], 'group_key_update');
+      expect(eventLog.entries.single['sourceEventId'], 'key-event-1');
+      expect(
+        (await groupRepo.getLatestKey('group-log'))!.encryptedKey,
+        'key-v2',
+      );
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-log',
+            keyGeneration: 2,
+            encryptedKey: 'tampered-key-v2',
+          ),
+          confirmNonce: 'key-event-1',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(eventLog.entries, hasLength(1));
+      expect(
+        (await groupRepo.getLatestKey('group-log'))!.encryptedKey,
+        'key-v2',
+      );
+    },
+  );
+
+  test(
+    'exact duplicate key update replay keeps one log entry and final key',
+    () async {
+      await _saveActiveGroup('group-exact-replay');
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final message = _makeMessage(
+        _validEnvelope(
+          groupId: 'group-exact-replay',
+          keyGeneration: 2,
+          encryptedKey: 'key-v2',
+        ),
+        confirmNonce: 'key-exact-replay-1',
+      );
+
+      controller.add(message);
+      controller.add(message);
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(eventLog.entries, hasLength(1));
+      expect(eventLog.entries.single['eventType'], 'group_key_update');
+      expect(eventLog.entries.single['sourceEventId'], 'key-exact-replay-1');
+
+      final saved = await groupRepo.getLatestKey('group-exact-replay');
+      expect(saved, isNotNull);
+      expect(saved!.keyGeneration, 2);
+      expect(saved.encryptedKey, 'key-v2');
+    },
+  );
+
+  test(
+    'direct key guard ignores missing group without bridge update, log, or key save',
+    () async {
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'missing-direct-key-group',
+            keyGeneration: 2,
+            encryptedKey: 'new-key-for-missing-group',
+          ),
+          confirmNonce: 'missing-direct-key-event',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      expect(await groupRepo.getLatestKey('missing-direct-key-group'), isNull);
+    },
+  );
+
+  test(
+    'direct key guard ignores dissolved group without bridge update, log, or key replacement',
+    () async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'dissolved-direct-key-group',
+          name: 'Dissolved Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/dissolved-direct-key-group',
+          createdAt: DateTime.utc(2026, 4, 5, 12, 0),
+          createdBy: 'sender-peer',
+          myRole: GroupRole.member,
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 4, 5, 12, 30),
+          dissolvedBy: 'sender-peer',
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'dissolved-direct-key-group',
+          keyGeneration: 1,
+          encryptedKey: 'old-dissolved-key',
+          createdAt: DateTime.utc(2026, 4, 5, 12, 1),
+        ),
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'dissolved-direct-key-group',
+            keyGeneration: 2,
+            encryptedKey: 'new-dissolved-key',
+          ),
+          confirmNonce: 'dissolved-direct-key-event',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      final latest = await groupRepo.getLatestKey('dissolved-direct-key-group');
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 1);
+      expect(latest.encryptedKey, 'old-dissolved-key');
+      expect(
+        await groupRepo.getKeyByGeneration('dissolved-direct-key-group', 2),
+        isNull,
+      );
+    },
+  );
+
   test('saves key on successful decrypt', () async {
+    await _saveActiveGroup('group-42');
     listener.start();
 
     controller.add(
@@ -95,6 +321,7 @@ void main() {
   });
 
   test('promotes key only after group:updateKey succeeds', () async {
+    await _saveActiveGroup('group-delay');
     final updateCompleter = Completer<String>();
     final delayedBridge = _DelayedUpdateKeyBridge(updateCompleter);
 
@@ -132,6 +359,128 @@ void main() {
 
     delayedListener.dispose();
   });
+
+  test(
+    'send during pending key update uses old epoch until local update commits',
+    () async {
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-pending-send',
+          name: 'Pending Send Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/group-pending-send',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-b',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-pending-send',
+          peerId: 'peer-b',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-b',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-pending-send',
+          keyGeneration: 1,
+          encryptedKey: 'old-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final updateCompleter = Completer<String>();
+      final delayedBridge = _DelayedUpdateKeyBridge(updateCompleter);
+      delayedBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'publish-ok',
+        'topicPeers': 1,
+      };
+      final delayedListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: delayedBridge,
+        getOwnMlKemSecretKey: () async => 'my-secret-key',
+      );
+      final msgRepo = InMemoryGroupMessageRepository();
+
+      delayedListener.start();
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-pending-send',
+            keyGeneration: 2,
+            encryptedKey: 'new-key',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(delayedBridge.commandLog, contains('group:updateKey'));
+      final latestWhilePending = await groupRepo.getLatestKey(
+        'group-pending-send',
+      );
+      expect(latestWhilePending, isNotNull);
+      expect(latestWhilePending!.keyGeneration, 1);
+      expect(
+        await groupRepo.getKeyByGeneration('group-pending-send', 2),
+        isNull,
+      );
+
+      final (duringResult, duringMessage) = await sendGroupMessage(
+        bridge: delayedBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-pending-send',
+        text: 'During pending key update',
+        senderPeerId: 'peer-b',
+        senderPublicKey: 'pk-b',
+        senderPrivateKey: 'sk-b',
+        senderUsername: 'Bob',
+        messageId: 'msg-pending-update-during',
+      );
+
+      expect(duringResult, SendGroupMessageResult.success);
+      expect(duringMessage, isNotNull);
+      expect(duringMessage!.keyGeneration, 1);
+      expect(_lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 1);
+
+      updateCompleter.complete(jsonEncode({'ok': true}));
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final latestAfterCommit = await groupRepo.getLatestKey(
+        'group-pending-send',
+      );
+      expect(latestAfterCommit, isNotNull);
+      expect(latestAfterCommit!.keyGeneration, 2);
+
+      final (afterResult, afterMessage) = await sendGroupMessage(
+        bridge: delayedBridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-pending-send',
+        text: 'After pending key update',
+        senderPeerId: 'peer-b',
+        senderPublicKey: 'pk-b',
+        senderPrivateKey: 'sk-b',
+        senderUsername: 'Bob',
+        messageId: 'msg-pending-update-after',
+      );
+
+      expect(afterResult, SendGroupMessageResult.success);
+      expect(afterMessage, isNotNull);
+      expect(afterMessage!.keyGeneration, 2);
+      expect(_lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 2);
+
+      delayedListener.dispose();
+    },
+  );
 
   test('returns early when encrypted field is null', () async {
     listener.start();
@@ -198,6 +547,7 @@ void main() {
   });
 
   test('saves key to DB AND updates Go via group:updateKey', () async {
+    await _saveActiveGroup('group-99');
     listener.start();
 
     controller.add(
@@ -242,6 +592,7 @@ void main() {
   test(
     'group:updateKey payload contains correct groupId, groupKey, keyEpoch',
     () async {
+      await _saveActiveGroup('group-77');
       listener.start();
 
       controller.add(
@@ -272,6 +623,7 @@ void main() {
   );
 
   test('handles sequential key updates (epoch 2 then epoch 3)', () async {
+    await _saveActiveGroup('group-seq');
     listener.start();
 
     // Send epoch 2
@@ -321,6 +673,7 @@ void main() {
   test(
     'conflicting same-generation key updates converge to one final stored key',
     () async {
+      await _saveActiveGroup('group-race');
       listener.start();
 
       controller.add(
@@ -362,6 +715,7 @@ void main() {
   );
 
   test('group:updateKey bridge failure keeps the old key active', () async {
+    await _saveActiveGroup('group-fail');
     await groupRepo.saveKey(
       GroupKeyInfo(
         groupId: 'group-fail',
@@ -446,5 +800,39 @@ class _DelayedUpdateKeyBridge extends PassthroughCryptoBridge {
       return _updateCompleter.future;
     }
     return super.send(message);
+  }
+}
+
+class _FakeEventLog {
+  final entries = <Map<String, Object?>>[];
+  final _payloadBySourceEventId = <String, String>{};
+
+  Future<Map<String, Object?>> append({
+    required String groupId,
+    required String eventType,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> payload,
+    DateTime? createdAt,
+  }) async {
+    final canonical = canonicalizeGroupEventLogPayload(payload);
+    final existing = _payloadBySourceEventId[sourceEventId];
+    if (existing != null && existing != canonical) {
+      throw GroupEventLogTamperException('conflicting replay');
+    }
+    _payloadBySourceEventId[sourceEventId] = canonical;
+    final entry = {
+      'groupId': groupId,
+      'eventType': eventType,
+      'sourcePeerId': sourcePeerId,
+      'sourceEventId': sourceEventId,
+      'sourceTimestamp': sourceTimestamp,
+      'payload': payload,
+    };
+    if (existing == null) {
+      entries.add(entry);
+    }
+    return entry;
   }
 }

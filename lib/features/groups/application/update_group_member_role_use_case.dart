@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -50,13 +51,38 @@ Future<void> updateGroupMemberRole({
     throw StateError('Group not found: $groupId');
   }
 
-  if (group.myRole != GroupRole.admin) {
+  final selfMember = await groupRepo.getMember(groupId, selfPeerId);
+  final canManageRoles = selfMember != null
+      ? selfMember.permissions.allows(
+          GroupMemberPermission.manageRoles,
+          selfMember.role,
+        )
+      : group.myRole == GroupRole.admin;
+  if (!canManageRoles) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_NOT_ADMIN',
       details: {'role': group.myRole.toValue()},
     );
-    throw StateError('Only admins can manage member roles');
+    throw StateError(
+      'Only admins can manage member roles unless role-management permission is granted',
+    );
+  }
+
+  if (selfMember != null &&
+      !canApplyGroupMemberRoleUpdate(actor: selfMember, newRole: role)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_PERMISSION_ESCALATION_BLOCKED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'peerId': memberPeerId.length > 8
+            ? memberPeerId.substring(0, 8)
+            : memberPeerId,
+        'role': role.toValue(),
+      },
+    );
+    throw StateError(permissionEscalationBlockedMessage);
   }
 
   final targetMember = await groupRepo.getMember(groupId, memberPeerId);

@@ -1,16 +1,20 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
@@ -222,6 +226,43 @@ func TestGroupTopicName(t *testing.T) {
 	got := GroupTopicPrefix + groupId
 	if got != want {
 		t.Errorf("topic name = %q, want %q", got, want)
+	}
+}
+
+func TestGroupTopicAndRendezvousNamespace_DoNotUseHumanReadableMetadata(t *testing.T) {
+	groupId := "37a73b42-b6e0-44ad-a2fb-9f17fe7ad09d"
+	config := &GroupConfig{
+		Name:        "Layoff Strategy And Diagnosis",
+		Description: "Private legal and medical planning notes",
+		GroupType:   GroupTypeChat,
+	}
+
+	topicName := GroupTopicPrefix + groupId
+	rendezvousNamespace := groupRendezvousNamespace(groupId)
+	want := "/mknoon/group/" + groupId
+	if topicName != want {
+		t.Fatalf("topic name = %q, want %q", topicName, want)
+	}
+	if rendezvousNamespace != want {
+		t.Fatalf("rendezvous namespace = %q, want %q", rendezvousNamespace, want)
+	}
+
+	for label, identifier := range map[string]string{
+		"topic":      topicName,
+		"rendezvous": rendezvousNamespace,
+	} {
+		for _, sensitive := range []string{
+			config.Name,
+			config.Description,
+			"Layoff",
+			"Diagnosis",
+			"legal",
+			"medical",
+		} {
+			if strings.Contains(identifier, sensitive) {
+				t.Fatalf("%s identifier %q leaked sensitive metadata %q", label, identifier, sensitive)
+			}
+		}
 	}
 }
 
@@ -626,6 +667,10 @@ func TestBuildGroupMessageReceivedEvent_IncludesQuotedMessageId(t *testing.T) {
 // validateGroupEnvelope is a pure-function version of the validator logic,
 // extracted for testing without needing a running libp2p host.
 func validateGroupEnvelope(data string, groupId string, config *GroupConfig, keyInfo *GroupKeyInfo) string {
+	return validateGroupEnvelopeForTransportPeer(data, groupId, config, keyInfo, "")
+}
+
+func validateGroupEnvelopeForTransportPeer(data string, groupId string, config *GroupConfig, keyInfo *GroupKeyInfo, transportPeerId string) string {
 	if !internal.IsGroupEnvelope(data) {
 		return "reject:not_v3"
 	}
@@ -637,6 +682,10 @@ func validateGroupEnvelope(data string, groupId string, config *GroupConfig, key
 
 	if env.GroupId != groupId {
 		return "reject:group_mismatch"
+	}
+
+	if !groupEnvelopeMatchesTransportPeer(env, transportPeerId) {
+		return "reject:peer_mismatch"
 	}
 
 	if config == nil {
@@ -708,6 +757,162 @@ func buildTestEnvelope(t *testing.T, groupId, senderId, privB64, pubB64, groupKe
 	return envelopeJSON
 }
 
+func buildTestEnvelopeWithPlaintext(
+	t *testing.T,
+	groupId string,
+	envelopeType string,
+	senderId string,
+	privB64 string,
+	pubB64 string,
+	groupKey string,
+	keyEpoch int,
+	plaintext string,
+) string {
+	t.Helper()
+
+	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(groupKey, plaintext)
+	if err != nil {
+		t.Fatalf("encrypt plaintext: %v", err)
+	}
+
+	sigData := mcrypto.BuildGroupSignatureData(groupId, keyEpoch, ctB64)
+	signature, err := mcrypto.SignPayload(privB64, sigData)
+	if err != nil {
+		t.Fatalf("sign envelope: %v", err)
+	}
+
+	envelope := &internal.GroupEnvelope{
+		Version:         "3",
+		Type:            envelopeType,
+		GroupId:         groupId,
+		SenderId:        senderId,
+		SenderPublicKey: pubB64,
+		Signature:       signature,
+		KeyEpoch:        keyEpoch,
+		Encrypted: internal.GroupEncryptedPayload{
+			Ciphertext: ctB64,
+			Nonce:      nonceB64,
+		},
+	}
+
+	envelopeJSON, err := internal.MarshalGroupEnvelope(envelope)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	return envelopeJSON
+}
+
+func assertRelayVisibleEnvelopeOmitsPlaintext(
+	t *testing.T,
+	envelopeJSON string,
+	groupId string,
+	wantType string,
+	memberPublicKey string,
+	keyInfo *GroupKeyInfo,
+	sensitiveFragments []string,
+) string {
+	t.Helper()
+
+	for _, fragment := range sensitiveFragments {
+		if strings.Contains(envelopeJSON, fragment) {
+			t.Fatalf("relay-visible envelope leaked plaintext fragment %q in %s", fragment, envelopeJSON)
+		}
+	}
+
+	env, err := internal.ParseGroupEnvelope(envelopeJSON)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+	if env.Type != wantType {
+		t.Fatalf("envelope type = %q, want %q", env.Type, wantType)
+	}
+	if env.GroupId != groupId {
+		t.Fatalf("groupId = %q, want %q", env.GroupId, groupId)
+	}
+	if env.Encrypted.Ciphertext == "" || env.Encrypted.Nonce == "" {
+		t.Fatalf("encrypted payload must include ciphertext and nonce: %+v", env.Encrypted)
+	}
+	if !verifyGroupEnvelopeSignature(groupId, memberPublicKey, env, keyInfo, time.Now()) {
+		t.Fatal("expected relay-visible envelope signature to verify")
+	}
+
+	plaintext, err := decryptGroupEnvelopePayload(env, keyInfo, time.Now())
+	if err != nil {
+		t.Fatalf("decrypt envelope payload: %v", err)
+	}
+	return plaintext
+}
+
+func TestGroupRelayVisibleMessageEnvelope_EncryptsContentBeforeRelay(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "group-relay-visible-message"
+	text := "relay visible secret launch phrase alpha"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 7}
+	envelopeJSON := buildTestEnvelope(t, groupId, "peer-alice", privB64, pubB64, groupKey, keyInfo.KeyEpoch, text)
+
+	plaintext := assertRelayVisibleEnvelopeOmitsPlaintext(
+		t,
+		envelopeJSON,
+		groupId,
+		"group_message",
+		pubB64,
+		keyInfo,
+		[]string{text, "launch phrase", "TestUser"},
+	)
+
+	payload, err := internal.ParseGroupPayload(plaintext)
+	if err != nil {
+		t.Fatalf("parse decrypted payload: %v", err)
+	}
+	if payload.Text != text {
+		t.Fatalf("decrypted text = %q, want %q", payload.Text, text)
+	}
+	if payload.Username != "TestUser" {
+		t.Fatalf("decrypted username = %q, want TestUser", payload.Username)
+	}
+}
+
+func TestGroupRelayVisibleReactionEnvelope_EncryptsContentBeforeRelay(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "group-relay-visible-reaction"
+	reactionJSON := `{"messageId":"msg-relay-private","action":"add","emoji":"lock","note":"relay visible reaction secret beta"}`
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 3}
+	envelopeJSON := buildTestEnvelopeWithPlaintext(
+		t,
+		groupId,
+		"group_reaction",
+		"peer-bob",
+		privB64,
+		pubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		reactionJSON,
+	)
+
+	plaintext := assertRelayVisibleEnvelopeOmitsPlaintext(
+		t,
+		envelopeJSON,
+		groupId,
+		"group_reaction",
+		pubB64,
+		keyInfo,
+		[]string{"msg-relay-private", "relay visible reaction secret beta"},
+	)
+	if plaintext != reactionJSON {
+		t.Fatalf("decrypted reaction = %q, want %q", plaintext, reactionJSON)
+	}
+}
+
 func TestGroupTopicValidator_ValidMessage(t *testing.T) {
 	privB64, pubB64 := generateEd25519KeyPair(t)
 	groupKey, _ := mcrypto.GenerateGroupKey()
@@ -728,6 +933,50 @@ func TestGroupTopicValidator_ValidMessage(t *testing.T) {
 	result := validateGroupEnvelope(envelopeJSON, groupId, config, keyInfo)
 	if result != "accept" {
 		t.Errorf("expected accept, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_TransportPeerIdMatchesEnvelopeSender(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-transport-match"
+
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-B", Role: GroupRoleWriter, PublicKey: pubB64},
+		},
+		CreatedBy: "peer-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	envelopeJSON := buildTestEnvelope(t, groupId, "peer-B", privB64, pubB64, groupKey, 1, "valid from B")
+
+	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "peer-B")
+	if result != "accept" {
+		t.Errorf("expected accept for matching transport peer id, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_RejectsTransportPeerIdMismatch(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-transport-mismatch"
+
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-B", Role: GroupRoleWriter, PublicKey: pubB64},
+		},
+		CreatedBy: "peer-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	envelopeJSON := buildTestEnvelope(t, groupId, "peer-B", privB64, pubB64, groupKey, 1, "valid key, wrong transport")
+
+	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "peer-X")
+	if result != "reject:peer_mismatch" {
+		t.Errorf("expected reject:peer_mismatch for mismatched transport peer id, got %s", result)
 	}
 }
 
@@ -955,6 +1204,193 @@ func TestGroupTopicValidator_RejectsForgedMembershipSystemEventSignature(t *test
 	}
 }
 
+func TestGroupTopicValidator_RejectsInvalidSignatureForSecurityEventFamilies(t *testing.T) {
+	adminPriv, adminPub := generateEd25519KeyPair(t)
+	attackerPriv, attackerPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "group-invalid-security-event-signatures"
+
+	config := &GroupConfig{
+		Name:      "Signature Matrix",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-admin", Role: GroupRoleAdmin, PublicKey: adminPub},
+			{PeerId: "peer-member", Role: GroupRoleWriter, PublicKey: "pk-member"},
+		},
+		CreatedBy: "peer-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	cases := []struct {
+		name         string
+		envelopeType string
+		plaintext    string
+	}{
+		{
+			name:         "message",
+			envelopeType: "group_message",
+			plaintext:    `{"text":"signed message","timestamp":"2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name:         "reaction",
+			envelopeType: "group_reaction",
+			plaintext:    `{"messageId":"msg-1","action":"add","emoji":"+1"}`,
+		},
+		{
+			name:         "member_added",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"member_added","member":{"peerId":"peer-new","role":"writer","publicKey":"pk-new"}}`,
+		},
+		{
+			name:         "members_added",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"members_added","members":[{"peerId":"peer-new","role":"writer","publicKey":"pk-new"}]}`,
+		},
+		{
+			name:         "member_removed",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"member_removed","member":{"peerId":"peer-member"},"removedAt":"2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name:         "member_role_updated",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"member_role_updated","member":{"peerId":"peer-member","role":"reader"}}`,
+		},
+		{
+			name:         "group_metadata_updated",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"group_metadata_updated","groupConfig":{"name":"renamed","metadataUpdatedAt":"2026-01-01T00:00:00Z"}}`,
+		},
+		{
+			name:         "group_dissolved",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"group_dissolved","dissolvedAt":"2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name:         "key_rotated",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"key_rotated","newKeyEpoch":2}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validEnvelope := buildTestEnvelopeWithPlaintext(
+				t,
+				groupId,
+				tc.envelopeType,
+				"peer-admin",
+				adminPriv,
+				adminPub,
+				groupKey,
+				1,
+				tc.plaintext,
+			)
+			if result := validateGroupEnvelope(validEnvelope, groupId, config, keyInfo); result != "accept" {
+				t.Fatalf("valid admin-signed envelope = %s, want accept", result)
+			}
+
+			forgedEnvelope := buildTestEnvelopeWithPlaintext(
+				t,
+				groupId,
+				tc.envelopeType,
+				"peer-admin",
+				attackerPriv,
+				attackerPub,
+				groupKey,
+				1,
+				tc.plaintext,
+			)
+			if result := validateGroupEnvelope(forgedEnvelope, groupId, config, keyInfo); result != "reject:bad_signature" {
+				t.Fatalf("forged envelope = %s, want reject:bad_signature", result)
+			}
+		})
+	}
+}
+
+func TestGroupTopicValidator_RejectsUnauthorizedEventFamiliesBeforeForward(t *testing.T) {
+	_, adminPub := generateEd25519KeyPair(t)
+	removedPriv, removedPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "group-authorization-matrix"
+
+	config := &GroupConfig{
+		Name:      "Authorization Matrix",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-admin", Role: GroupRoleAdmin, PublicKey: adminPub},
+		},
+		CreatedBy: "peer-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	n := NewNode()
+	n.groupConfigs = map[string]*GroupConfig{groupId: config}
+	n.groupKeys = map[string]*GroupKeyInfo{groupId: keyInfo}
+	validator := n.groupTopicValidator(groupId)
+
+	cases := []struct {
+		name         string
+		envelopeType string
+		plaintext    string
+	}{
+		{
+			name:         "message",
+			envelopeType: "group_message",
+			plaintext:    `{"text":"stale message","timestamp":"2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name:         "reaction",
+			envelopeType: "group_reaction",
+			plaintext:    `{"messageId":"msg-1","action":"add","emoji":"+1"}`,
+		},
+		{
+			name:         "membership",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"members_added","members":[{"peerId":"peer-new","role":"writer"}]}`,
+		},
+		{
+			name:         "metadata",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"group_metadata_updated","groupConfig":{"name":"new name"}}`,
+		},
+		{
+			name:         "key_rotation",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"key_rotated","keyEpoch":2}`,
+		},
+	}
+
+	for _, tc := range cases {
+		envelopeJSON := buildTestEnvelopeWithPlaintext(
+			t,
+			groupId,
+			tc.envelopeType,
+			"peer-removed",
+			removedPriv,
+			removedPub,
+			groupKey,
+			1,
+			tc.plaintext,
+		)
+
+		msg := &pubsub.Message{Message: &pb.Message{Data: []byte(envelopeJSON)}}
+		result := validator(context.Background(), peer.ID("peer-removed"), msg)
+		if result != pubsub.ValidationReject {
+			t.Fatalf("%s: validator result = %v, want ValidationReject", tc.name, result)
+		}
+		if pure := validateGroupEnvelope(envelopeJSON, groupId, config, keyInfo); pure != "reject:non_member" {
+			t.Fatalf("%s: pure validator = %s, want reject:non_member", tc.name, pure)
+		}
+	}
+}
+
 // --- End-to-end encrypt/decrypt round-trip ---
 
 func TestGroupMessage_EncryptDecryptRoundTrip(t *testing.T) {
@@ -1113,6 +1549,77 @@ func TestLeaveGroupTopic_CancelsDiscoveryContext(t *testing.T) {
 	n.mu.RUnlock()
 	if hasDiscoveryCtxAfter {
 		t.Error("groupDiscoveryCtx entry should be removed after LeaveGroupTopic")
+	}
+}
+
+func TestLeaveGroupTopic_RemovesPubSubStateAndBlocksFuturePublish(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	groupId := "test-group-leave-cleanup"
+	config := testGroupConfig(GroupTypeChat)
+	keyInfo := &GroupKeyInfo{Key: "dummykey", KeyEpoch: 1}
+
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	if err := n.LeaveGroupTopic(groupId); err != nil {
+		t.Fatalf("LeaveGroupTopic: %v", err)
+	}
+
+	n.mu.RLock()
+	_, hasTopic := n.groupTopics[groupId]
+	_, hasSub := n.groupSubs[groupId]
+	_, hasSubCtx := n.groupSubCtx[groupId]
+	_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	_, hasConfig := n.groupConfigs[groupId]
+	_, hasKey := n.groupKeys[groupId]
+	n.mu.RUnlock()
+
+	if hasTopic || hasSub || hasSubCtx || hasDiscoveryCtx || hasConfig || hasKey {
+		t.Fatalf(
+			"leave should remove all pubsub state, got topic=%t sub=%t subCtx=%t discoveryCtx=%t config=%t key=%t",
+			hasTopic,
+			hasSub,
+			hasSubCtx,
+			hasDiscoveryCtx,
+			hasConfig,
+			hasKey,
+		)
+	}
+
+	if _, _, err := n.PublishGroupMessage(
+		groupId,
+		"unused-private-key",
+		"peer-admin",
+		"unused-public-key",
+		"Admin",
+		"should not publish",
+		"",
+		nil,
+	); err == nil || !strings.Contains(err.Error(), "group not joined") {
+		t.Fatalf("PublishGroupMessage after leave error = %v, want group not joined", err)
+	}
+
+	if err := n.PublishGroupReaction(
+		groupId,
+		"unused-private-key",
+		"peer-admin",
+		"unused-public-key",
+		`{"messageId":"msg-1","action":"add","emoji":"+1"}`,
+	); err == nil || !strings.Contains(err.Error(), "group not joined") {
+		t.Fatalf("PublishGroupReaction after leave error = %v, want group not joined", err)
 	}
 }
 
@@ -1515,6 +2022,58 @@ func TestJoinGroupTopic_RejectsDoubleJoin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already joined") {
 		t.Errorf("expected 'already joined' error, got %q", err.Error())
+	}
+}
+
+func TestJoinGroupTopic_LogOmitsHumanReadableMetadata(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	groupId := "privacy-topic-group"
+	config := testGroupConfig(GroupTypeChat)
+	config.Name = "Sensitive Therapy And Legal Strategy"
+	config.Description = "Private diagnosis and settlement notes"
+	keyInfo := &GroupKeyInfo{Key: "dummykey", KeyEpoch: 1}
+
+	var logBuffer bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logBuffer)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	}()
+
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	output := logBuffer.String()
+	if !strings.Contains(output, "[PUBSUB] Joined group topic: "+groupId) {
+		t.Fatalf("expected join log for group id %q, got %q", groupId, output)
+	}
+	for _, sensitive := range []string{
+		config.Name,
+		config.Description,
+		"Therapy",
+		"Legal",
+		"diagnosis",
+		"settlement",
+	} {
+		if strings.Contains(output, sensitive) {
+			t.Fatalf("join log leaked sensitive group metadata %q in %q", sensitive, output)
+		}
 	}
 }
 
@@ -2142,6 +2701,50 @@ func TestKnownGroupMemberDial_PrefersExistingOrDirectPathBeforeRelay(t *testing.
 
 	if dialer.Host().Network().Connectedness(targetID) != network.Connected {
 		t.Fatalf("expected peerstore direct dial to connect to %s before relay fallback", target.PeerId())
+	}
+}
+
+func TestGroupDiscoveryCycle_NoKnownPeersUsesRendezvousFallback(t *testing.T) {
+	n := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "group-no-known-peers"
+	ns := groupRendezvousNamespace(groupId)
+
+	var registeredNamespaces []string
+	var discoveredNamespaces []string
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registeredNamespaces = append(registeredNamespaces, namespace)
+		return nil
+	}
+	n.rendezvousDiscoverHook = func(namespace string, serverAddresses []string) ([]peer.AddrInfo, error) {
+		discoveredNamespaces = append(discoveredNamespaces, namespace)
+		return nil, nil
+	}
+
+	selfPeerId := n.PeerId()
+	n.mu.Lock()
+	n.groupConfigs[groupId] = &GroupConfig{
+		Name:      "No Known Peers",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: selfPeerId, Role: GroupRoleAdmin, PublicKey: "selfPubKey"},
+		},
+		CreatedBy: selfPeerId,
+	}
+	n.mu.Unlock()
+
+	executed, registered := n.runGroupDiscoveryCycle(context.Background(), groupId, ns, true, true)
+	if !executed {
+		t.Fatal("expected discovery cycle to execute")
+	}
+	if !registered {
+		t.Fatal("expected discovery cycle to register rendezvous namespace")
+	}
+	if len(registeredNamespaces) != 1 || registeredNamespaces[0] != ns {
+		t.Fatalf("registered namespaces = %v, want [%s]", registeredNamespaces, ns)
+	}
+	if len(discoveredNamespaces) != 1 || discoveredNamespaces[0] != ns {
+		t.Fatalf("discovered namespaces = %v, want [%s]", discoveredNamespaces, ns)
 	}
 }
 

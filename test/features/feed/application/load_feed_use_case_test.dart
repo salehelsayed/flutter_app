@@ -1,4 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -661,6 +666,71 @@ void main() {
         items.first.messages.first.media.first.localPath,
         endsWith('test_docs/media/groups/img.jpg'),
       );
+    });
+
+    test('loadGroupFeedItems blocks tampered done group media', () async {
+      final groupRepo = InMemoryGroupRepository();
+      final groupMsgRepo = InMemoryGroupMessageRepository();
+      final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
+      final mediaFileManager = FakeMediaFileManager();
+      const relativePath = 'media/groups/tampered.jpg';
+      final absolutePath = await mediaFileManager.resolveStoredPath(
+        relativePath,
+      );
+      final file = File(absolutePath)..createSync(recursive: true);
+      file.writeAsBytesSync(utf8.encode('tampered bytes'));
+      final expectedHash = sha256
+          .convert(utf8.encode('original bytes'))
+          .toString();
+
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g1',
+          name: 'Media Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/g1',
+          createdAt: DateTime(2026, 2, 1),
+          createdBy: 'admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-1',
+          groupId: 'g1',
+          senderPeerId: 'p1',
+          senderUsername: 'User1',
+          text: 'Tampered',
+          timestamp: DateTime.utc(2026, 2, 9, 12, 0),
+          createdAt: DateTime.utc(2026, 2, 9, 12, 0),
+        ),
+      );
+      await mediaAttachmentRepo.saveAttachment(
+        MediaAttachment(
+          id: 'att-tampered',
+          messageId: 'gm-1',
+          mime: 'image/jpeg',
+          size: file.lengthSync(),
+          mediaType: 'image',
+          localPath: relativePath,
+          downloadStatus: 'done',
+          contentHash: expectedHash,
+          createdAt: '2026-02-09T12:00:00.000Z',
+        ),
+      );
+
+      final items = await loadGroupFeedItems(
+        groupRepo: groupRepo,
+        groupMsgRepo: groupMsgRepo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+
+      final attachment = items.single.messages.single.media.single;
+      expect(attachment.id, 'att-tampered');
+      expect(attachment.downloadStatus, kMediaDownloadStatusIntegrityFailed);
+      expect(attachment.localPath, absolutePath);
+      expect(File(absolutePath).existsSync(), isFalse);
     });
 
     test('loadFeed includes group media attachments', () async {

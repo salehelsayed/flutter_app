@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -14,10 +16,48 @@ import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 class _FakeBridge implements Bridge {
   Map<String, dynamic> uploadResponse = {'ok': true};
   Map<String, dynamic>? lastRequest;
+  final List<Map<String, dynamic>> requests = [];
+  final List<String> commandLog = [];
+  final List<String> generatedKeys = [];
+  final Map<String, String> uploadedContentHashes = {};
+  int sendCallCount = 0;
 
   @override
   Future<String> send(String message) async {
+    sendCallCount++;
     lastRequest = jsonDecode(message) as Map<String, dynamic>;
+    requests.add(lastRequest!);
+    final cmd = lastRequest!['cmd'] as String?;
+    if (cmd != null) commandLog.add(cmd);
+    if (cmd == 'blob:keygen') {
+      final key = 'group-test-key-${generatedKeys.length + 1}';
+      generatedKeys.add(key);
+      return jsonEncode({'ok': true, 'keyBase64': key});
+    }
+    if (cmd == 'blob:encrypt') {
+      final payload = lastRequest!['payload'] as Map<String, dynamic>;
+      final sourcePath = payload['filePath'] as String;
+      final keyBase64 = payload['keyBase64'] as String;
+      final encryptedPath = '$sourcePath.${generatedKeys.length}.enc';
+      final sourceBytes = await File(sourcePath).readAsBytes();
+      await File(encryptedPath).writeAsBytes([
+        ...'cipher:$keyBase64:'.codeUnits,
+        ...sourceBytes.reversed,
+      ]);
+      return jsonEncode({
+        'ok': true,
+        'encryptedPath': encryptedPath,
+        'nonce': 'nonce-${generatedKeys.length}',
+      });
+    }
+    if (cmd == 'media:upload') {
+      final payload = lastRequest!['payload'] as Map<String, dynamic>;
+      final filePath = payload['filePath'] as String?;
+      if (filePath != null && File(filePath).existsSync()) {
+        uploadedContentHashes[filePath] =
+            await GroupMediaIntegrityPolicy.computeFileSha256Hex(filePath);
+      }
+    }
     return jsonEncode(uploadResponse);
   }
 
@@ -120,6 +160,7 @@ void main() {
       expect(result.messageId, ''); // set by caller
       expect(result.id, isNotEmpty);
       expect(result.createdAt, isNotEmpty);
+      expect(result.contentHash, isNull);
     });
 
     test('sends correct command to bridge', () async {
@@ -244,22 +285,192 @@ void main() {
       expect(result.durationMs, 30000);
     });
 
-    test('uploads GIF with mime image/gif and preserves animated metadata', () async {
+    test(
+      'uploads GIF with mime image/gif and preserves animated metadata',
+      () async {
+        final result = await uploadMedia(
+          bridge: bridge,
+          localFilePath: gifFile.path,
+          mime: 'image/gif',
+          recipientPeerId: 'recipient',
+        );
+
+        expect(result, isNotNull);
+        expect(result!.mime, 'image/gif');
+        expect(result.mediaType, 'image');
+        expect(result.isAnimated, isTrue);
+
+        final payload = bridge.lastRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['mime'], 'image/gif');
+        expect(payload['filePath'], gifFile.path);
+      },
+    );
+
+    test('rejects dangerous group MIME before bridge upload', () async {
       final result = await uploadMedia(
         bridge: bridge,
-        localFilePath: gifFile.path,
-        mime: 'image/gif',
-        recipientPeerId: 'recipient',
+        localFilePath: tempFile.path,
+        mime: 'application/pdf',
+        recipientPeerId: 'group-1',
+        allowedPeers: const ['peer-2'],
+      );
+
+      expect(result, isNull);
+      expect(bridge.sendCallCount, 0);
+      expect(bridge.lastRequest, isNull);
+    });
+
+    test('group upload computes content hash for uploaded bytes', () async {
+      final validJpegFile = File('${tempDir.path}/valid_image.jpg');
+      await validJpegFile.writeAsBytes([
+        0xff,
+        0xd8,
+        0xff,
+        ...List<int>.filled(1021, 0xff),
+      ]);
+
+      final result = await uploadMedia(
+        bridge: bridge,
+        localFilePath: validJpegFile.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'group-1',
+        allowedPeers: const ['peer-2'],
       );
 
       expect(result, isNotNull);
-      expect(result!.mime, 'image/gif');
-      expect(result.mediaType, 'image');
-      expect(result.isAnimated, isTrue);
+      expect(
+        result!.contentHash,
+        isNot(
+          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+            validJpegFile.path,
+          ),
+        ),
+      );
+      final uploadRequest = bridge.requests.lastWhere(
+        (request) => request['cmd'] == 'media:upload',
+      );
+      final uploadPayload = uploadRequest['payload'] as Map<String, dynamic>;
+      expect(
+        result.contentHash,
+        bridge.uploadedContentHashes[uploadPayload['filePath'] as String],
+      );
+    });
 
-      final payload = bridge.lastRequest!['payload'] as Map<String, dynamic>;
-      expect(payload['mime'], 'image/gif');
-      expect(payload['filePath'], gifFile.path);
+    test(
+      'group uploads encrypt each media object with distinct object metadata',
+      () async {
+        final first = File('${tempDir.path}/first.jpg');
+        final second = File('${tempDir.path}/second.jpg');
+        await first.writeAsBytes([
+          0xff,
+          0xd8,
+          0xff,
+          ...List<int>.filled(32, 0x11),
+        ]);
+        await second.writeAsBytes([
+          0xff,
+          0xd8,
+          0xff,
+          ...List<int>.filled(32, 0x22),
+        ]);
+
+        final firstResult = await uploadMedia(
+          bridge: bridge,
+          localFilePath: first.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'group-1',
+          allowedPeers: const ['peer-2'],
+        );
+        final secondResult = await uploadMedia(
+          bridge: bridge,
+          localFilePath: second.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'group-1',
+          allowedPeers: const ['peer-2'],
+        );
+
+        expect(firstResult, isNotNull);
+        expect(secondResult, isNotNull);
+        expect(
+          bridge.commandLog,
+          containsAllInOrder([
+            'blob:keygen',
+            'blob:encrypt',
+            'media:upload',
+            'blob:keygen',
+            'blob:encrypt',
+            'media:upload',
+          ]),
+        );
+
+        final uploadRequests = bridge.requests
+            .where((request) => request['cmd'] == 'media:upload')
+            .toList(growable: false);
+        expect(uploadRequests, hasLength(2));
+        final firstUpload =
+            uploadRequests[0]['payload'] as Map<String, dynamic>;
+        final secondUpload =
+            uploadRequests[1]['payload'] as Map<String, dynamic>;
+        expect(firstUpload['filePath'], isNot(first.path));
+        expect(secondUpload['filePath'], isNot(second.path));
+        expect(firstUpload['filePath'], endsWith('.enc'));
+        expect(secondUpload['filePath'], endsWith('.enc'));
+        expect(firstResult!.encryptionKeyBase64, isNotNull);
+        expect(secondResult!.encryptionKeyBase64, isNotNull);
+        expect(
+          firstResult.encryptionKeyBase64,
+          isNot(secondResult.encryptionKeyBase64),
+        );
+        expect(firstResult.encryptionNonce, isNotNull);
+        expect(secondResult.encryptionNonce, isNotNull);
+        expect(
+          firstResult.encryptionNonce,
+          isNot(secondResult.encryptionNonce),
+        );
+        expect(firstResult.contentHash, isNot(secondResult.contentHash));
+      },
+    );
+
+    test('rejects spoofed group media bytes before bridge upload', () async {
+      final spoofedFile = File('${tempDir.path}/spoofed.jpg')
+        ..writeAsStringSync('<script>alert(1)</script>');
+
+      final result = await uploadMedia(
+        bridge: bridge,
+        localFilePath: spoofedFile.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'group-1',
+        allowedPeers: const ['peer-2'],
+      );
+
+      expect(result, isNull);
+      expect(bridge.sendCallCount, 0);
+      expect(bridge.lastRequest, isNull);
+    });
+
+    test('rejects oversized group upload before bridge upload', () async {
+      final oversizedFile = File('${tempDir.path}/oversized.jpg')
+        ..writeAsBytesSync(List.filled(1024, 0x01));
+
+      final result = await uploadMedia(
+        bridge: bridge,
+        localFilePath: oversizedFile.path,
+        mime: 'image/jpeg',
+        recipientPeerId: 'group-1',
+        allowedPeers: const ['peer-2'],
+        groupMediaPerAttachmentLimitBytes: 512,
+      );
+
+      expect(result, isNull);
+      expect(bridge.sendCallCount, 0);
+      expect(bridge.lastRequest, isNull);
+
+      final boundaryResult = await GroupMediaSizePolicy.validateLocalFile(
+        path: oversizedFile.path,
+        mime: 'image/jpeg',
+        perMediaLimitBytes: 1024,
+      );
+      expect(boundaryResult.isValid, isTrue);
     });
 
     test('null dimensions when not provided', () async {

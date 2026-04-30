@@ -49,6 +49,7 @@ class GroupTestUser {
   final FakeGroupPubSubNetwork _network;
   final StreamController<Map<String, dynamic>> _incomingController;
   final StreamController<Map<String, dynamic>> _incomingReactionController;
+  int _messageSequence = 0;
 
   GroupTestUser._({
     required this.peerId,
@@ -120,8 +121,7 @@ class GroupTestUser {
       groupMessageListener: listener,
       reactionRepo: reactionRepo,
       reactionReplayOutboxRepo:
-          reactionReplayOutboxRepo ??
-          FakeGroupReactionReplayOutboxRepository(),
+          reactionReplayOutboxRepo ?? FakeGroupReactionReplayOutboxRepository(),
       network: network,
       incomingController: controller,
       incomingReactionController: reactionController,
@@ -382,14 +382,16 @@ class GroupTestUser {
     required String groupId,
     required String text,
     String? quotedMessageId,
+    String? messageId,
+    DateTime? timestamp,
   }) async {
-    final now = DateTime.now().toUtc();
+    final now = (timestamp ?? DateTime.now()).toUtc();
     final latestKey = await groupRepo.getLatestKey(groupId);
     final keyEpoch = latestKey?.keyGeneration ?? 0;
-    final messageId = '${peerId}_${now.millisecondsSinceEpoch}';
+    final resolvedMessageId = messageId ?? _nextGroupMessageId(now);
 
     final message = GroupMessage(
-      id: messageId,
+      id: resolvedMessageId,
       groupId: groupId,
       senderPeerId: peerId,
       senderUsername: username,
@@ -410,6 +412,7 @@ class GroupTestUser {
       'keyEpoch': keyEpoch,
       'text': text,
       'timestamp': now.toIso8601String(),
+      'messageId': resolvedMessageId,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
     };
     await _network.publish(groupId, peerId, envelope, senderDeviceId: deviceId);
@@ -424,11 +427,13 @@ class GroupTestUser {
     required String groupId,
     required String text,
     String? quotedMessageId,
+    String? messageId,
+    DateTime? timestamp,
     List<MediaAttachment>? mediaAttachments,
     int? publishTopicPeersOverride,
   }) async {
-    final now = DateTime.now().toUtc();
-    final messageId = '${peerId}_${now.millisecondsSinceEpoch}';
+    final now = (timestamp ?? DateTime.now()).toUtc();
+    final resolvedMessageId = messageId ?? _nextGroupMessageId(now);
     final topicPeers =
         publishTopicPeersOverride ??
         _network
@@ -439,7 +444,7 @@ class GroupTestUser {
     final previousPublishResponse = bridge.responses['group:publish'];
     bridge.responses['group:publish'] = {
       'ok': true,
-      'messageId': messageId,
+      'messageId': resolvedMessageId,
       'topicPeers': topicPeers,
     };
     try {
@@ -453,7 +458,7 @@ class GroupTestUser {
         senderPublicKey: publicKey,
         senderPrivateKey: privateKey,
         senderUsername: username,
-        messageId: messageId,
+        messageId: resolvedMessageId,
         timestamp: now,
         quotedMessageId: quotedMessageId,
         mediaAttachments: mediaAttachments,
@@ -743,5 +748,10 @@ class GroupTestUser {
   void dispose() {
     groupMessageListener.dispose();
     _network.unregisterPeer(deviceId);
+  }
+
+  String _nextGroupMessageId(DateTime timestamp) {
+    final sequence = _messageSequence++;
+    return '${peerId}_${timestamp.microsecondsSinceEpoch}_$sequence';
   }
 }

@@ -39,6 +39,7 @@ const _testGroupConfig = {
 GroupInvitePayload _makePayload({
   String groupId = 'grp-abc123',
   String? overrideGroupKey,
+  String? recipientPeerId,
 }) {
   return GroupInvitePayload(
     id: 'invite-uuid-001',
@@ -49,6 +50,7 @@ GroupInvitePayload _makePayload({
     senderPeerId: '12D3KooWAlice',
     senderUsername: 'Alice',
     timestamp: '2026-03-02T12:00:00.000Z',
+    recipientPeerId: recipientPeerId,
   );
 }
 
@@ -362,6 +364,26 @@ void main() {
       expect(result, equals(HandleGroupInviteResult.invalidPayload));
     });
 
+    test(
+      'returns invalidPayload for empty groupKey before state or join',
+      () async {
+        final payload = _makePayload(overrideGroupKey: '');
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+
+        expect(result, equals(HandleGroupInviteResult.invalidPayload));
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, equals(0));
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
     // --- Cycle 4.6 ---
     test('returns invalidPayload for missing groupConfig', () async {
       final malformed = jsonEncode({
@@ -426,6 +448,26 @@ void main() {
 
         final group = await groupRepo.getGroup('grp-abc123');
         expect(group!.myRole, equals(GroupRole.member));
+      },
+    );
+
+    test(
+      'accepts bound invite when recipient peer matches local identity',
+      () async {
+        final payload = _makePayload(recipientPeerId: 'myPeerId');
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: 'myPeerId',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.success));
+        expect(groupId, equals('grp-abc123'));
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
       },
     );
 
@@ -651,6 +693,47 @@ void main() {
         expect(result, equals(HandleGroupInviteResult.invalidPayload));
         expect(groupId, isNull);
         expect(groupRepo.groupCount, equals(0));
+      },
+    );
+
+    test('rejects v1 invite bound to a different recipient peer', () async {
+      final payload = _makePayload(recipientPeerId: 'otherPeerId');
+
+      final (result, groupId) = await handleIncomingGroupInvite(
+        message: _makeV1Message(payload: payload),
+        groupRepo: groupRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownPeerId: 'myPeerId',
+      );
+
+      expect(result, equals(HandleGroupInviteResult.invalidPayload));
+      expect(groupId, isNull);
+      expect(groupRepo.groupCount, equals(0));
+      expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+      expect(bridge.lastCommand, isNull);
+    });
+
+    test(
+      'rejects v2 encrypted invite bound to a different recipient peer',
+      () async {
+        final cryptoBridge = PassthroughCryptoBridge();
+        final payload = _makePayload(recipientPeerId: 'otherPeerId');
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeV2Message(payload: payload, bridge: cryptoBridge),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: cryptoBridge,
+          ownMlKemSecretKey: 'mySecretKey',
+          ownPeerId: 'myPeerId',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.invalidPayload));
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, equals(0));
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(cryptoBridge.commandLog, isNot(contains('group:join')));
       },
     );
 

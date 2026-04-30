@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'media_display_helpers.dart';
@@ -9,8 +10,15 @@ import 'waveform_seek_bar.dart';
 /// Inline audio player with play/pause button, progress bar, and duration.
 class AudioPlayerWidget extends StatefulWidget {
   final MediaAttachment attachment;
+  final bool requireVerifiedContentHash;
+  final VoidCallback? onRetryUnavailableMedia;
 
-  const AudioPlayerWidget({super.key, required this.attachment});
+  const AudioPlayerWidget({
+    super.key,
+    required this.attachment,
+    this.requireVerifiedContentHash = false,
+    this.onRetryUnavailableMedia,
+  });
 
   @override
   State<AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
@@ -27,7 +35,21 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   bool get _isAvailable =>
       widget.attachment.localPath != null &&
-      widget.attachment.downloadStatus == 'done';
+      widget.attachment.downloadStatus == kMediaDownloadStatusDone &&
+      (!widget.requireVerifiedContentHash ||
+          GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(
+            widget.attachment,
+          ));
+
+  bool get _showsUnavailableMedia =>
+      GroupMediaIntegrityPolicy.isUnavailableMedia(
+        widget.attachment,
+        requireVerifiedContentHash: widget.requireVerifiedContentHash,
+      );
+
+  bool get _canRetryUnavailableMedia =>
+      widget.onRetryUnavailableMedia != null &&
+      GroupMediaIntegrityPolicy.isRetryableDownloadFailure(widget.attachment);
 
   @override
   void initState() {
@@ -154,6 +176,10 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   @override
   Widget build(BuildContext context) {
+    if (_showsUnavailableMedia) {
+      return _buildUnavailableAudio();
+    }
+
     final totalMs = _duration.inMilliseconds > 0
         ? _duration.inMilliseconds
         : widget.attachment.durationMs ?? 0;
@@ -237,6 +263,57 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildUnavailableAudio() {
+    return Container(
+      key: ValueKey('unavailable-media-audio-${widget.attachment.id}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color.fromRGBO(255, 255, 255, 0.04),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color.fromRGBO(255, 255, 255, 0.08)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.volume_off_rounded,
+            size: 18,
+            color: Color.fromRGBO(255, 255, 255, 0.42),
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Media unavailable',
+              style: TextStyle(
+                color: Color.fromRGBO(255, 255, 255, 0.66),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (_canRetryUnavailableMedia)
+            Semantics(
+              container: true,
+              label: 'Retry unavailable media',
+              button: true,
+              child: IconButton(
+                key: ValueKey(
+                  'unavailable-media-retry-${widget.attachment.messageId}-${widget.attachment.id}',
+                ),
+                visualDensity: VisualDensity.compact,
+                iconSize: 18,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                color: const Color(0xFF4ecdc4),
+                onPressed: widget.onRetryUnavailableMedia,
+                tooltip: 'Retry unavailable media',
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

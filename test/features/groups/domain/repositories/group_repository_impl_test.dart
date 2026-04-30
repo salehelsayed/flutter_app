@@ -8,6 +8,7 @@ import 'package:flutter_app/core/database/migrations/049_groups_metadata_columns
 import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart';
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
+import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -37,6 +38,7 @@ void main() {
     await runGroupsMuteColumnMigration(db);
     await runGroupsDissolveColumnsMigration(db);
     await runGroupsBacklogRetentionColumnsMigration(db);
+    await runGroupMemberPermissionsMigration(db);
     sharedPushKeyStore = FakeSecureKeyStore();
 
     repo = GroupRepositoryImpl(
@@ -64,6 +66,12 @@ void main() {
           dbLoadGroupKeyByGeneration(db, groupId, gen),
       dbDeleteAllGroupKeys: (groupId) => dbDeleteAllGroupKeys(db, groupId),
       dbLoadAllGroupKeys: (groupId) => dbLoadAllGroupKeys(db, groupId),
+      dbDeleteGroupKeysBeforeGeneration: (groupId, minKeyGenerationToKeep) =>
+          dbDeleteGroupKeysBeforeGeneration(
+            db,
+            groupId,
+            minKeyGenerationToKeep,
+          ),
       pushSharedKeyStore: sharedPushKeyStore,
     );
   });
@@ -311,6 +319,40 @@ void main() {
       expect(result.role, MemberRole.writer);
     });
 
+    test('saveMember and getMember preserve permission overrides', () async {
+      await repo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-permissions',
+          username: 'Pat',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(
+            inviteMembers: true,
+            removeMembers: false,
+          ),
+          publicKey: 'pk',
+          joinedAt: now,
+        ),
+      );
+
+      final result = await repo.getMember('group-1', 'peer-permissions');
+      expect(result, isNotNull);
+      expect(
+        result!.permissions.allows(
+          GroupMemberPermission.inviteMembers,
+          result.role,
+        ),
+        isTrue,
+      );
+      expect(
+        result.permissions.allows(
+          GroupMemberPermission.removeMembers,
+          result.role,
+        ),
+        isFalse,
+      );
+    });
+
     test('getMembers returns all members for group', () async {
       await repo.saveMember(makeMember(peerId: 'peer-1'));
       await repo.saveMember(makeMember(peerId: 'peer-2'));
@@ -371,6 +413,33 @@ void main() {
       expect(key!.keyGeneration, 1);
       expect(key.encryptedKey, 'base64-key-1');
     });
+
+    test(
+      'saveKey prunes obsolete generations from DB and shared push storage',
+      () async {
+        await repo.saveKey(makeKey(keyGeneration: 1));
+        await repo.saveKey(makeKey(keyGeneration: 2));
+        await repo.saveKey(makeKey(keyGeneration: 3));
+
+        expect(await repo.getKeyByGeneration('group-1', 1), isNull);
+        expect(await repo.getKeyByGeneration('group-1', 2), isNotNull);
+        expect(await repo.getKeyByGeneration('group-1', 3), isNotNull);
+        expect(
+          await sharedPushKeyStore.containsKey(
+            sharedGroupPushKeyName('group-1', 1),
+          ),
+          isFalse,
+        );
+        expect(
+          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 2)),
+          'base64-key-2',
+        );
+        expect(
+          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 3)),
+          'base64-key-3',
+        );
+      },
+    );
 
     test('removeAllKeys clears all keys for group', () async {
       await repo.saveKey(makeKey(keyGeneration: 1));

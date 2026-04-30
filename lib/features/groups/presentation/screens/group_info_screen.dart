@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
@@ -16,6 +17,7 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 class GroupInfoScreen extends StatelessWidget {
   final GroupModel group;
   final List<GroupMember> members;
+  final Map<String, GroupMemberIdentitySafety> memberSafetyByPeerId;
   final bool isAdmin;
   final String? ownPeerId;
   final bool isMuted;
@@ -35,6 +37,7 @@ class GroupInfoScreen extends StatelessWidget {
     super.key,
     required this.group,
     required this.members,
+    this.memberSafetyByPeerId = const {},
     required this.isAdmin,
     this.ownPeerId,
     this.isMuted = false,
@@ -361,6 +364,7 @@ class GroupInfoScreen extends StatelessWidget {
           final isSelf = ownPeerId != null && member.peerId == ownPeerId;
           return GroupMemberRow(
             member: member,
+            identitySafety: memberSafetyByPeerId[member.peerId],
             isAdmin: isAdmin,
             isSelf: isSelf,
             onToggleAdminRole:

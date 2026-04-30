@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -20,6 +21,9 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
+
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 /// Bridge that simulates cursor-based group inbox retrieval.
 ///
@@ -1008,6 +1012,10 @@ void main() {
               'size': 1024,
               'mediaType': 'image',
               'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'key-fixture',
+              'encryptionNonce': 'nonce-fixture',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
               'createdAt': ts,
             },
           ],
@@ -1610,6 +1618,10 @@ void main() {
           'size': 12345,
           'mediaType': 'image',
           'downloadStatus': 'pending',
+          'contentHash': _validContentHash,
+          'encryptionKeyBase64': 'key-fixture',
+          'encryptionNonce': 'nonce-fixture',
+          'encryptionScheme': 'blob_aes_256_gcm_v1',
           'createdAt': DateTime.now().toUtc().toIso8601String(),
         },
       ],
@@ -1635,7 +1647,7 @@ void main() {
   });
 
   test(
-    'drains encrypted replay with quote plus image, video, gif/file, and voice attachments',
+    'drains encrypted replay with quote plus image, video, GIF, and voice attachments',
     () async {
       final mediaRepo = InMemoryMediaAttachmentRepository();
       await groupRepo.saveKey(
@@ -1663,6 +1675,10 @@ void main() {
             'size': 12345,
             'mediaType': 'image',
             'downloadStatus': 'pending',
+            'contentHash': _validContentHash,
+            'encryptionKeyBase64': 'key-fixture',
+            'encryptionNonce': 'nonce-fixture',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
             'createdAt': DateTime.now().toUtc().toIso8601String(),
           },
           {
@@ -1672,6 +1688,10 @@ void main() {
             'mediaType': 'video',
             'durationMs': 9876,
             'downloadStatus': 'pending',
+            'contentHash': _validContentHash,
+            'encryptionKeyBase64': 'key-fixture',
+            'encryptionNonce': 'nonce-fixture',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
             'createdAt': DateTime.now().toUtc().toIso8601String(),
           },
           {
@@ -1680,14 +1700,10 @@ void main() {
             'size': 4567,
             'mediaType': 'image',
             'downloadStatus': 'pending',
-            'createdAt': DateTime.now().toUtc().toIso8601String(),
-          },
-          {
-            'id': 'blob-file-1',
-            'mime': 'application/pdf',
-            'size': 8910,
-            'mediaType': 'file',
-            'downloadStatus': 'pending',
+            'contentHash': _validContentHash,
+            'encryptionKeyBase64': 'key-fixture',
+            'encryptionNonce': 'nonce-fixture',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
             'createdAt': DateTime.now().toUtc().toIso8601String(),
           },
           {
@@ -1698,6 +1714,10 @@ void main() {
             'durationMs': 4321,
             'waveform': [0.2, 0.8],
             'downloadStatus': 'pending',
+            'contentHash': _validContentHash,
+            'encryptionKeyBase64': 'key-fixture',
+            'encryptionNonce': 'nonce-fixture',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
             'createdAt': DateTime.now().toUtc().toIso8601String(),
           },
         ],
@@ -1730,19 +1750,482 @@ void main() {
       expect(saved!.quotedMessageId, 'msg-parent-1');
 
       final attachments = await mediaRepo.getAttachmentsForMessage(saved.id);
-      expect(attachments, hasLength(5));
+      expect(attachments, hasLength(4));
 
-      final byId = {for (final attachment in attachments) attachment.id: attachment};
+      final byId = {
+        for (final attachment in attachments) attachment.id: attachment,
+      };
       expect(byId['blob-image-1']!.mime, 'image/jpeg');
       expect(byId['blob-image-1']!.mediaType, 'image');
       expect(byId['blob-video-1']!.mime, 'video/mp4');
       expect(byId['blob-video-1']!.mediaType, 'video');
       expect(byId['blob-gif-1']!.mime, 'image/gif');
       expect(byId['blob-gif-1']!.mediaType, 'image');
-      expect(byId['blob-file-1']!.mime, 'application/pdf');
-      expect(byId['blob-file-1']!.mediaType, 'file');
       expect(byId['blob-audio-1']!.mime, 'audio/mp4');
       expect(byId['blob-audio-1']!.mediaType, 'audio');
+    },
+  );
+
+  test(
+    'skips encrypted replay with hashless media before message or attachment storage',
+    () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final plaintext = jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'Encrypted hashless media replay',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-encrypted-hashless-media',
+        'media': [
+          {
+            'id': 'blob-hashless-replay',
+            'mime': 'image/jpeg',
+            'size': 8910,
+            'mediaType': 'image',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ],
+      });
+
+      final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: plaintext,
+        messageId: 'msg-encrypted-hashless-media',
+      );
+
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 123},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(bridge.commandLog, contains('group.decrypt'));
+      expect(await msgRepo.getMessage('msg-encrypted-hashless-media'), isNull);
+      expect(msgRepo.count, 0);
+      expect(mediaRepo.count, 0);
+    },
+  );
+
+  test(
+    'skips encrypted replay with dangerous media before message or attachment storage',
+    () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final plaintext = jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'Encrypted dangerous media replay',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-encrypted-dangerous-media',
+        'media': [
+          {
+            'id': 'blob-dangerous-1',
+            'mime': 'application/pdf',
+            'size': 8910,
+            'mediaType': 'file',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ],
+      });
+
+      final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: plaintext,
+        messageId: 'msg-encrypted-dangerous-media',
+      );
+
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 123},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(bridge.commandLog, contains('group.decrypt'));
+      expect(await msgRepo.getMessage('msg-encrypted-dangerous-media'), isNull);
+      expect(msgRepo.count, 0);
+      expect(mediaRepo.count, 0);
+    },
+  );
+
+  test(
+    'skips encrypted replay with oversized media before message or attachment storage',
+    () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final plaintext = jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 1,
+        'text': 'Encrypted oversized media replay',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-encrypted-oversized-media',
+        'media': [
+          {
+            'id': 'blob-oversized-replay',
+            'mime': 'image/jpeg',
+            'size': kGroupMediaPerAttachmentLimitBytes + 1,
+            'mediaType': 'image',
+            'downloadStatus': 'pending',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        ],
+      });
+
+      final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: plaintext,
+        messageId: 'msg-encrypted-oversized-media',
+      );
+
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 123},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(bridge.commandLog, contains('group.decrypt'));
+      expect(await msgRepo.getMessage('msg-encrypted-oversized-media'), isNull);
+      expect(msgRepo.count, 0);
+      expect(mediaRepo.count, 0);
+    },
+  );
+
+  test(
+    'drains mixed epoch encrypted replay out of order without rewriting epochs',
+    () async {
+      final epoch1Key = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 1,
+        encryptedKey: 'replay-key-1',
+        createdAt: DateTime.now().toUtc(),
+      );
+      final epoch2Key = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 2,
+        encryptedKey: 'replay-key-2',
+        createdAt: DateTime.now().toUtc(),
+      );
+      await groupRepo.saveKey(epoch1Key);
+      await groupRepo.saveKey(epoch2Key);
+
+      final epoch1Replay = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        keyInfo: epoch1Key,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 1,
+          'text': 'Older epoch replay',
+          'timestamp': '2026-04-29T10:00:00.000Z',
+          'messageId': 'msg-ms018-epoch-1',
+        }),
+        messageId: 'msg-ms018-epoch-1',
+      );
+      final epoch2Replay = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        keyInfo: epoch2Key,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 2,
+          'text': 'Newer epoch replay delivered first',
+          'timestamp': '2026-04-29T10:01:00.000Z',
+          'messageId': 'msg-ms018-epoch-2',
+        }),
+        messageId: 'msg-ms018-epoch-2',
+      );
+
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': epoch2Replay, 'timestamp': 2},
+      ], 'older-page');
+      bridge.addPage('group-1', 'older-page', [
+        {'from': 'peer-sender', 'message': epoch1Replay, 'timestamp': 1},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      final epoch2Message = await msgRepo.getMessage('msg-ms018-epoch-2');
+      final epoch1Message = await msgRepo.getMessage('msg-ms018-epoch-1');
+      expect(epoch2Message, isNotNull);
+      expect(epoch1Message, isNotNull);
+      expect(epoch2Message!.keyGeneration, 2);
+      expect(epoch1Message!.keyGeneration, 1);
+      expect(epoch2Message.text, 'Newer epoch replay delivered first');
+      expect(epoch1Message.text, 'Older epoch replay');
+
+      final decryptCount = bridge.commandLog
+          .where((command) => command == 'group.decrypt')
+          .length;
+      expect(decryptCount, greaterThanOrEqualTo(2));
+    },
+  );
+
+  test(
+    'future epoch encrypted replay creates one undecryptable placeholder without decrypting',
+    () async {
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      final futureEpochKey = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 2,
+        encryptedKey: 'replay-key-2',
+        createdAt: DateTime.now().toUtc(),
+      );
+      final futureReplay = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        keyInfo: futureEpochKey,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 2,
+          'text': 'Future epoch replay',
+          'timestamp': '2026-04-29T10:02:00.000Z',
+          'messageId': 'msg-ms018-future-epoch',
+        }),
+        messageId: 'msg-ms018-future-epoch',
+      );
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': futureReplay, 'timestamp': 2},
+        {'from': 'peer-sender', 'message': futureReplay, 'timestamp': 3},
+      ], '');
+
+      final output = <String>[];
+      final previousLogging = flowEventLoggingEnabled;
+      final originalDebugPrint = debugPrint;
+      flowEventLoggingEnabled = true;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) output.add(message);
+      };
+      addTearDown(() {
+        debugPrint = originalDebugPrint;
+        flowEventLoggingEnabled = previousLogging;
+      });
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+      );
+
+      final placeholder = await msgRepo.getMessage('msg-ms018-future-epoch');
+      expect(placeholder, isNotNull);
+      expect(placeholder!.text, groupUndecryptablePlaceholderText);
+      expect(placeholder.text, isNot(contains('Future epoch replay')));
+      expect(placeholder.senderPeerId, 'peer-sender');
+      expect(placeholder.keyGeneration, 2);
+      expect(placeholder.status, 'undecryptable');
+      expect(placeholder.isIncoming, isTrue);
+      expect(msgRepo.count, 1);
+      expect(bridge.commandLog, isNot(contains('group.decrypt')));
+
+      final events = output
+          .where((line) => line.startsWith('[FLOW] '))
+          .map(
+            (line) =>
+                jsonDecode(line.substring('[FLOW] '.length))
+                    as Map<String, dynamic>,
+          )
+          .toList();
+      final skipped = events.firstWhere(
+        (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
+      );
+      expect(skipped['details']['error'], contains('Missing group replay key'));
+      expect(skipped['details']['error'], contains('epoch 2'));
+      expect(skipped['details']['placeholderSaved'], isTrue);
+      expect(
+        events,
+        contains(
+          isA<Map<String, dynamic>>().having(
+            (event) => event['event'],
+            'event',
+            'GROUP_DRAIN_OFFLINE_INBOX_UNDECRYPTABLE_PLACEHOLDER_SAVED',
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'MD-011 removed member cannot decode future media replay with only the old epoch',
+    () async {
+      final mediaRepo = InMemoryMediaAttachmentRepository();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-removed',
+          username: 'Removed',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-epoch-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      final futureEpochKey = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 2,
+        encryptedKey: 'replay-key-epoch-2',
+        createdAt: DateTime.now().toUtc(),
+      );
+      final futureReplay = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        keyInfo: futureEpochKey,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 2,
+          'text': 'MD-011 future media replay',
+          'timestamp': '2026-04-29T12:00:00.000Z',
+          'messageId': 'msg-md011-future-media-replay',
+          'media': [
+            {
+              'id': 'blob-md011-future-replay',
+              'mime': 'image/jpeg',
+              'size': 4,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'key-md011-future-replay',
+              'encryptionNonce': 'nonce-md011-future-replay',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'createdAt': '2026-04-29T12:00:00.000Z',
+            },
+          ],
+        }),
+        messageId: 'msg-md011-future-media-replay',
+      );
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': futureReplay, 'timestamp': 2},
+      ], '');
+
+      final output = <String>[];
+      final previousLogging = flowEventLoggingEnabled;
+      final originalDebugPrint = debugPrint;
+      flowEventLoggingEnabled = true;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) output.add(message);
+      };
+      addTearDown(() {
+        debugPrint = originalDebugPrint;
+        flowEventLoggingEnabled = previousLogging;
+      });
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(await msgRepo.getMessage('msg-md011-future-media-replay'), isNull);
+      expect(msgRepo.count, 0);
+      expect(mediaRepo.count, 0);
+      expect(await mediaRepo.getPendingDownloads(), isEmpty);
+      expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
+      expect(bridge.commandLog, isNot(contains('group.decrypt')));
+      expect(bridge.commandLog, isNot(contains('media:download')));
+      expect(bridge.commandLog, isNot(contains('blob:decrypt')));
+
+      final events = output
+          .where((line) => line.startsWith('[FLOW] '))
+          .map(
+            (line) =>
+                jsonDecode(line.substring('[FLOW] '.length))
+                    as Map<String, dynamic>,
+          )
+          .toList();
+      final skipped = events.firstWhere(
+        (event) => event['event'] == 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
+      );
+      expect(skipped['details']['error'], contains('Missing group replay key'));
+      expect(skipped['details']['error'], contains('epoch 2'));
     },
   );
 
@@ -1950,88 +2433,92 @@ void main() {
     expect(msgRepo.count, 0);
   });
 
-  test('ignores replayed group_reaction items with mismatched sender identity',
-      () async {
-    final reactionRepo = FakeReactionRepository();
+  test(
+    'ignores replayed group_reaction items with mismatched sender identity',
+    () async {
+      final reactionRepo = FakeReactionRepository();
 
-    final innerReaction = jsonEncode({
-      'id': 'rxn-mismatch-1',
-      'messageId': 'msg-mismatch-1',
-      'emoji': '\u{1F44D}',
-      'action': 'add',
-      'senderPeerId': 'peer-other',
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
-    });
+      final innerReaction = jsonEncode({
+        'id': 'rxn-mismatch-1',
+        'messageId': 'msg-mismatch-1',
+        'emoji': '\u{1F44D}',
+        'action': 'add',
+        'senderPeerId': 'peer-other',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
 
-    final inboxMessage = jsonEncode({
-      'type': 'group_reaction',
-      'senderId': 'peer-sender',
-      'reaction': innerReaction,
-    });
+      final inboxMessage = jsonEncode({
+        'type': 'group_reaction',
+        'senderId': 'peer-sender',
+        'reaction': innerReaction,
+      });
 
-    bridge.addPage('group-1', '', [
-      {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
-    ], '');
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+      ], '');
 
-    await drainGroupOfflineInbox(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      reactionRepo: reactionRepo,
-    );
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+      );
 
-    expect(reactionRepo.saveReactionCallCount, 0);
-    expect(
-      await reactionRepo.getReactionsForMessage('msg-mismatch-1'),
-      isEmpty,
-    );
-    expect(msgRepo.count, 0);
-  });
+      expect(reactionRepo.saveReactionCallCount, 0);
+      expect(
+        await reactionRepo.getReactionsForMessage('msg-mismatch-1'),
+        isEmpty,
+      );
+      expect(msgRepo.count, 0);
+    },
+  );
 
-  test('replayed system messages trust the outer sender over payload sender',
-      () async {
-    final listener = GroupMessageListener(
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      bridge: bridge,
-    );
-    await groupRepo.saveMember(
-      GroupMember(
-        groupId: 'group-1',
-        peerId: 'peer-admin',
-        username: 'Admin',
-        role: MemberRole.admin,
-        joinedAt: DateTime.now().toUtc(),
-      ),
-    );
+  test(
+    'replayed system messages trust the outer sender over payload sender',
+    () async {
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
 
-    final inboxMessage = jsonEncode({
-      'senderId': 'peer-admin',
-      'senderUsername': 'Admin',
-      'keyEpoch': 0,
-      'text': jsonEncode({
-        '__sys': 'group_dissolved',
-        'dissolvedAt': '2026-04-05T12:00:00.000Z',
-        'dissolvedBy': 'peer-admin',
-      }),
-      'timestamp': '2026-04-05T12:00:00.000Z',
-    });
+      final inboxMessage = jsonEncode({
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': jsonEncode({
+          '__sys': 'group_dissolved',
+          'dissolvedAt': '2026-04-05T12:00:00.000Z',
+          'dissolvedBy': 'peer-admin',
+        }),
+        'timestamp': '2026-04-05T12:00:00.000Z',
+      });
 
-    bridge.addPage('group-1', '', [
-      {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
-    ], '');
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': inboxMessage, 'timestamp': 123},
+      ], '');
 
-    await drainGroupOfflineInbox(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      groupMessageListener: listener,
-    );
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
 
-    final group = await groupRepo.getGroup('group-1');
-    expect(group, isNotNull);
-    expect(group!.isDissolved, isFalse);
-    expect(await msgRepo.getLatestMessage('group-1'), isNull);
-    expect(bridge.commandLog, isNot(contains('group:leave')));
-  });
+      final group = await groupRepo.getGroup('group-1');
+      expect(group, isNotNull);
+      expect(group!.isDissolved, isFalse);
+      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+      expect(bridge.commandLog, isNot(contains('group:leave')));
+    },
+  );
 }

@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -76,12 +79,31 @@ GroupMember makeMember({
   required String peerId,
   required String username,
   MemberRole role = MemberRole.writer,
+  String? publicKey,
+  String? mlKemPublicKey,
 }) => GroupMember(
   groupId: 'group-1',
   peerId: peerId,
   username: username,
   role: role,
+  publicKey: publicKey,
+  mlKemPublicKey: mlKemPublicKey,
   joinedAt: DateTime.now().toUtc(),
+);
+
+ContactModel makeContact({
+  required String peerId,
+  required String username,
+  required String publicKey,
+  String? mlKemPublicKey,
+}) => ContactModel(
+  peerId: peerId,
+  publicKey: publicKey,
+  rendezvous: '/ip4/127.0.0.1/tcp/4001',
+  username: username,
+  signature: 'sig-$peerId',
+  scannedAt: DateTime.utc(2026, 4, 30).toIso8601String(),
+  mlKemPublicKey: mlKemPublicKey,
 );
 
 // --- Helpers ---
@@ -221,6 +243,112 @@ void main() {
       expect(find.text('You'), findsOneWidget); // self member shows "You"
       expect(find.text('Alice'), findsOneWidget);
       expect(find.text('Bob'), findsOneWidget);
+    });
+
+    testWidgets('shows identity warning when member keys differ from contact', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final contactRepo = InMemoryContactRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice-current',
+          mlKemPublicKey: 'mlkem-alice-current',
+        ),
+      );
+      await contactRepo.addContact(
+        makeContact(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice-saved',
+          mlKemPublicKey: 'mlkem-alice-saved',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      final currentSafety = ContactSafetyNumber.build(
+        peerId: 'peer-alice',
+        publicKey: 'pk-alice-current',
+        mlKemPublicKey: 'mlkem-alice-current',
+      );
+      final savedSafety = ContactSafetyNumber.build(
+        peerId: 'peer-alice',
+        publicKey: 'pk-alice-saved',
+        mlKemPublicKey: 'mlkem-alice-saved',
+      );
+
+      expect(
+        find.byKey(const ValueKey('group-member-identity-warning-peer-alice')),
+        findsOneWidget,
+      );
+      expect(find.text('Identity changed'), findsOneWidget);
+      expect(find.text('Current safety $currentSafety'), findsOneWidget);
+      expect(find.text('Saved safety $savedSafety'), findsOneWidget);
+    });
+
+    testWidgets('does not show identity warning when contact keys match', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final contactRepo = InMemoryContactRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+      await contactRepo.addContact(
+        makeContact(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Alice'), findsOneWidget);
+      expect(find.text('Identity changed'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('group-member-identity-warning-peer-alice')),
+        findsNothing,
+      );
     });
 
     testWidgets('shows Add Member button for admin role', (tester) async {
@@ -579,6 +707,10 @@ void main() {
         );
 
         final bridge = FakeBridge();
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'sig-metadata',
+        };
 
         await tester.pumpWidget(
           MaterialApp(
@@ -632,6 +764,12 @@ void main() {
 
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
+        final signIndex = bridge.commandLog.indexOf('payload.sign');
+        final publishIndex = bridge.commandLog.indexOf('group:publish');
+        final inboxStoreIndex = bridge.commandLog.indexOf('group:inboxStore');
+        expect(signIndex, isNonNegative);
+        expect(signIndex, lessThan(publishIndex));
+        expect(signIndex, lessThan(inboxStoreIndex));
 
         final publishMsg = bridge.sentMessages.firstWhere((message) {
           final parsed = jsonDecode(message) as Map<String, dynamic>;
@@ -645,8 +783,81 @@ void main() {
                 as Map<String, dynamic>;
 
         expect(sysText['__sys'], 'group_metadata_updated');
+        expect(publishPayload['senderPeerId'], testIdentity.peerId);
+        expect(publishPayload['senderPublicKey'], testIdentity.publicKey);
+        expect(publishPayload['senderPrivateKey'], testIdentity.privateKey);
         expect(sysText['groupConfig']['name'], 'Renamed Group');
         expect(sysText['groupConfig']['description'], 'Fresh description');
+        expect(
+          sysText['groupConfig'][groupConfigVersionField],
+          updatedGroup.lastMetadataEventAt!.toUtc().toIso8601String(),
+        );
+        expect(sysText['groupConfig'][groupConfigStateHashField], isNotEmpty);
+        expect(
+          isGroupConfigStateHashValid(
+            groupId: 'group-1',
+            groupConfig: (sysText['groupConfig'] as Map)
+                .cast<String, dynamic>(),
+          ),
+          isTrue,
+        );
+        final actorEvent =
+            (sysText[groupMetadataActorEventEnvelopeField] as Map)
+                .cast<String, dynamic>();
+        expect(
+          actorEvent[groupMetadataActorEventSignatureField],
+          'sig-metadata',
+        );
+        expect(
+          actorEvent[groupMetadataActorEventSignatureAlgorithmField],
+          groupMetadataActorEventSignatureAlgorithm,
+        );
+
+        final signMsg = bridge.sentMessages.firstWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == 'payload.sign';
+        });
+        final signPayload =
+            (jsonDecode(signMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(signPayload['privateKey'], testIdentity.privateKey);
+        expect(
+          signPayload['data'],
+          actorEvent[groupMetadataActorEventSignedPayloadField],
+        );
+
+        final signedPayload =
+            jsonDecode(
+                  actorEvent[groupMetadataActorEventSignedPayloadField]
+                      as String,
+                )
+                as Map<String, dynamic>;
+        expect(signedPayload['eventType'], 'group_metadata_updated');
+        expect(signedPayload['groupId'], 'group-1');
+        expect(signedPayload['updatedAt'], sysText['updatedAt']);
+        expect(signedPayload['groupConfig'], sysText['groupConfig']);
+        expect(
+          signedPayload['groupConfigVersion'],
+          sysText['groupConfig'][groupConfigVersionField],
+        );
+        expect(
+          signedPayload['groupConfigStateHash'],
+          sysText['groupConfig'][groupConfigStateHashField],
+        );
+        final actor = (signedPayload['actor'] as Map).cast<String, dynamic>();
+        expect(actor['peerId'], testIdentity.peerId);
+        expect(actor['username'], testIdentity.username);
+        expect(actor['publicKey'], testIdentity.publicKey);
+        expect(jsonEncode(sysText), isNot(contains(testIdentity.privateKey)));
+        expect(
+          jsonEncode(actorEvent),
+          isNot(contains(testIdentity.privateKey)),
+        );
+        expect(
+          actorEvent[groupMetadataActorEventSignedPayloadField] as String,
+          isNot(contains(testIdentity.privateKey)),
+        );
+        expect(jsonEncode(sysText), isNot(contains('senderPrivateKey')));
 
         final inboxStoreMsg = bridge.sentMessages.firstWhere((message) {
           final parsed = jsonDecode(message) as Map<String, dynamic>;
@@ -656,12 +867,99 @@ void main() {
             (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
         expect(inboxStorePayload['recipientPeerIds'], ['peer-bob']);
+        final inboxEnvelope = _decodedGroupReplayPayload(
+          inboxStorePayload['message'] as String,
+        );
+        expect(inboxEnvelope['text'], publishPayload['text']);
+        final inboxSysText =
+            jsonDecode(inboxEnvelope['text'] as String) as Map<String, dynamic>;
+        expect(
+          inboxSysText[groupMetadataActorEventEnvelopeField],
+          sysText[groupMetadataActorEventEnvelopeField],
+        );
 
         final latestTimeline = await msgRepo.getLatestMessage('group-1');
         expect(latestTimeline, isNotNull);
         expect(
           latestTimeline!.text,
           buildGroupMetadataUpdatedTimelineText('Admin'),
+        );
+      },
+    );
+
+    testWidgets(
+      'admin metadata edit signing failure aborts before persist, timeline, publish, and inbox store',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = FakeBridge();
+        bridge.responses['payload.sign'] = {'ok': false};
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(const ValueKey('group-edit-details-button')),
+        );
+        await pumpFrames(tester);
+        await tester.enterText(
+          find.descendant(
+            of: find.byKey(const ValueKey('group-edit-name-field')),
+            matching: find.byType(TextField),
+          ),
+          'Renamed Group',
+        );
+        await tester.tap(find.byKey(const ValueKey('group-edit-save')));
+        await pumpFrames(tester, count: 30);
+
+        final unchangedGroup = await groupRepo.getGroup('group-1');
+        expect(unchangedGroup, isNotNull);
+        expect(unchangedGroup!.name, 'Test Group');
+        expect(unchangedGroup.description, 'A test group');
+        expect(unchangedGroup.lastMetadataEventAt, isNull);
+        expect(msgRepo.count, 0);
+        expect(bridge.commandLog, contains('payload.sign'));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        expect(
+          find.text('Failed to sign group metadata update'),
+          findsOneWidget,
         );
       },
     );
@@ -1339,6 +1637,7 @@ void main() {
             peerId: 'peer-bob',
             username: 'Bob',
             role: MemberRole.writer,
+            permissions: const GroupMemberPermissions(rotateKeys: true),
             publicKey: 'pk-bob',
             mlKemPublicKey: 'mlkem-pk-bob',
             joinedAt: DateTime.now().toUtc(),

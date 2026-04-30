@@ -5,6 +5,9 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_mime_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -12,9 +15,12 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+typedef GroupMessageIdFactory = String Function();
 
 /// Result of sending a group message.
 enum SendGroupMessageResult {
@@ -31,17 +37,98 @@ enum SendGroupMessageResult {
   successNoPeers,
 }
 
-Future<List<String>> _loadGroupPushRecipients({
+Future<({List<GroupMember> members, List<String> recipientPeerIds})>
+_loadGroupSendMembership({
   required GroupRepository groupRepo,
   required String groupId,
   required String senderPeerId,
 }) async {
   final members = await groupRepo.getMembers(groupId);
-  return members
+  final recipientPeerIds = members
       .map((member) => member.peerId)
       .where((peerId) => peerId.isNotEmpty && peerId != senderPeerId)
       .toSet()
       .toList();
+  return (members: members, recipientPeerIds: recipientPeerIds);
+}
+
+String _defaultGroupMessageIdFactory() => const Uuid().v4();
+
+bool _sameOptionalString(String? left, String? right) =>
+    (left == null || left.isEmpty ? null : left) ==
+    (right == null || right.isEmpty ? null : right);
+
+bool _canReuseOutgoingMessageId({
+  required GroupMessage existing,
+  required String groupId,
+  required String senderPeerId,
+  required String text,
+  required DateTime timestamp,
+  String? quotedMessageId,
+}) {
+  if (existing.isIncoming) return false;
+  if (existing.status != 'sending' && existing.status != 'failed') {
+    return false;
+  }
+  if (existing.groupId != groupId || existing.senderPeerId != senderPeerId) {
+    return false;
+  }
+  if (existing.text != text) return false;
+  if (!_sameOptionalString(existing.quotedMessageId, quotedMessageId)) {
+    return false;
+  }
+  return existing.timestamp.toUtc().isAtSameMomentAs(timestamp.toUtc());
+}
+
+Future<String?> _resolveOutgoingMessageId({
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required String senderPeerId,
+  required String text,
+  required DateTime timestamp,
+  required GroupMessageIdFactory messageIdFactory,
+  String? requestedMessageId,
+  String? quotedMessageId,
+}) async {
+  String nextCandidate() => messageIdFactory().trim();
+  var candidate = requestedMessageId?.trim().isNotEmpty == true
+      ? requestedMessageId!.trim()
+      : nextCandidate();
+
+  for (var attempt = 0; attempt < 8; attempt++) {
+    if (candidate.isEmpty) {
+      candidate = nextCandidate();
+      continue;
+    }
+
+    final existing = await msgRepo.getMessage(candidate);
+    if (existing == null) return candidate;
+
+    if (_canReuseOutgoingMessageId(
+      existing: existing,
+      groupId: groupId,
+      senderPeerId: senderPeerId,
+      text: text,
+      timestamp: timestamp,
+      quotedMessageId: quotedMessageId,
+    )) {
+      return candidate;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_ID_COLLISION',
+      details: {
+        'messageId': candidate.length > 8
+            ? candidate.substring(0, 8)
+            : candidate,
+        'attempt': attempt + 1,
+      },
+    );
+    candidate = nextCandidate();
+  }
+
+  return null;
 }
 
 /// Wraps [callGroupInboxStore] in try/catch — returns true on success.
@@ -106,6 +193,99 @@ Future<void> _persistOutgoingMedia({
   }
 }
 
+List<MediaAttachment>? _sanitizeGroupMediaAttachments(
+  List<MediaAttachment>? attachments,
+) {
+  if (attachments == null || attachments.isEmpty) return attachments;
+  final sanitized = <MediaAttachment>[];
+  for (final attachment in attachments) {
+    try {
+      final mimeSanitized = GroupMediaMimePolicy.sanitizeAttachment(attachment);
+      final contentHashValidation =
+          GroupMediaIntegrityPolicy.validateRequiredContentHash(
+            mimeSanitized.contentHash,
+          );
+      if (!contentHashValidation.isValid) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_SEND_MSG_REJECTED_INVALID_MEDIA',
+          details: {
+            'blobId': attachment.id.length > 8
+                ? attachment.id.substring(0, 8)
+                : attachment.id,
+            'reason': contentHashValidation.reason,
+          },
+        );
+        return null;
+      }
+      if (!mimeSanitized.hasEncryptionMetadata) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_SEND_MSG_REJECTED_INVALID_MEDIA',
+          details: {
+            'blobId': attachment.id.length > 8
+                ? attachment.id.substring(0, 8)
+                : attachment.id,
+            'reason': 'missing_media_encryption_metadata',
+          },
+        );
+        return null;
+      }
+      final thumbnailHashValidation =
+          GroupMediaIntegrityPolicy.validateOptionalThumbnailHash(
+            mimeSanitized.thumbnailHash,
+          );
+      if (!thumbnailHashValidation.isValid) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_SEND_MSG_REJECTED_INVALID_MEDIA',
+          details: {
+            'blobId': attachment.id.length > 8
+                ? attachment.id.substring(0, 8)
+                : attachment.id,
+            'reason': thumbnailHashValidation.reason,
+          },
+        );
+        return null;
+      }
+      sanitized.add(
+        mimeSanitized.copyWith(
+          contentHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+            mimeSanitized.contentHash,
+          ),
+          thumbnailHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+            mimeSanitized.thumbnailHash,
+          ),
+        ),
+      );
+    } catch (_) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_REJECTED_INVALID_MEDIA',
+        details: {
+          'blobId': attachment.id.length > 8
+              ? attachment.id.substring(0, 8)
+              : attachment.id,
+          'mime': attachment.mime,
+          'mediaType': attachment.mediaType,
+        },
+      );
+      return null;
+    }
+  }
+
+  final sizeValidation = GroupMediaSizePolicy.validateAttachments(sanitized);
+  if (!sizeValidation.isValid) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_REJECTED_INVALID_MEDIA',
+      details: {'reason': sizeValidation.reason},
+    );
+    return null;
+  }
+  return sanitized;
+}
+
 void _finalizeSuccessfulPublishInboxStoreInBackground({
   required Future<bool> inboxFuture,
   required GroupMessageRepository msgRepo,
@@ -167,6 +347,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   required String senderPrivateKey,
   required String senderUsername,
   String? messageId,
+  GroupMessageIdFactory? messageIdFactory,
   DateTime? timestamp,
   String? quotedMessageId,
   List<MediaAttachment>? mediaAttachments,
@@ -276,11 +457,19 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.error, null);
   }
 
+  final groupMediaAttachments = _sanitizeGroupMediaAttachments(
+    mediaAttachments,
+  );
+  if (hasMedia && groupMediaAttachments == null) {
+    emitGroupSendTiming(outcome: 'invalid_media');
+    return (SendGroupMessageResult.error, null);
+  }
+
   // 3. Prepare all parameters
   final prepareStopwatch = Stopwatch()..start();
   final now = timestamp ?? DateTime.now().toUtc();
   final latestKeyFuture = groupRepo.getLatestKey(groupId);
-  final recipientPeerIdsFuture = _loadGroupPushRecipients(
+  final sendMembershipFuture = _loadGroupSendMembership(
     groupRepo: groupRepo,
     groupId: groupId,
     senderPeerId: senderPeerId,
@@ -301,11 +490,46 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     return (SendGroupMessageResult.error, null);
   }
-  final resolvedMessageId = messageId ?? const Uuid().v4();
+  final resolvedMessageId = await _resolveOutgoingMessageId(
+    msgRepo: msgRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    text: sanitizedText,
+    timestamp: now,
+    quotedMessageId: quotedMessageId,
+    requestedMessageId: messageId,
+    messageIdFactory: messageIdFactory ?? _defaultGroupMessageIdFactory,
+  );
+  if (resolvedMessageId == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_ID_COLLISION_UNRESOLVED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    emitGroupSendTiming(outcome: 'message_id_collision');
+    return (SendGroupMessageResult.error, null);
+  }
   final keyEpoch = latestKey?.keyGeneration ?? 0;
 
-  final mediaJson = mediaAttachments?.map((a) => a.toJson()).toList();
-  final recipientPeerIds = await recipientPeerIdsFuture;
+  final mediaJson = groupMediaAttachments?.map((a) => a.toJson()).toList();
+  final sendMembership = await sendMembershipFuture;
+  final members = sendMembership.members;
+  if (members.isNotEmpty &&
+      !members.any((member) => member.peerId == senderPeerId)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_UNAUTHORIZED',
+      details: {'reason': 'sender_not_member'},
+    );
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'sender_not_member'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final recipientPeerIds = sendMembership.recipientPeerIds;
   // 3b. Build wireEnvelope (plaintext publish params for retry — NO senderPrivateKey)
   final wireEnvelope = jsonEncode({
     'groupId': groupId,
@@ -473,7 +697,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
       await _persistOutgoingMedia(
         mediaAttachmentRepo: mediaAttachmentRepo,
-        attachments: mediaAttachments
+        attachments: groupMediaAttachments
             ?.map(
               (attachment) => attachment.copyWith(messageId: resolvedMessageId),
             )
@@ -551,7 +775,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
-      attachments: mediaAttachments
+      attachments: groupMediaAttachments
           ?.map(
             (attachment) => attachment.copyWith(messageId: resolvedMessageId),
           )
@@ -606,7 +830,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
     await _persistOutgoingMedia(
       mediaAttachmentRepo: mediaAttachmentRepo,
-      attachments: mediaAttachments
+      attachments: groupMediaAttachments
           ?.map(
             (attachment) => attachment.copyWith(messageId: resolvedMessageId),
           )
@@ -660,8 +884,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     await msgRepo.saveMessage(sentMessage);
 
     // Save media attachments
-    if (mediaAttachments != null && mediaAttachmentRepo != null) {
-      for (final a in mediaAttachments) {
+    if (groupMediaAttachments != null && mediaAttachmentRepo != null) {
+      for (final a in groupMediaAttachments) {
         await mediaAttachmentRepo.saveAttachment(
           a.copyWith(messageId: resolvedMessageId),
         );

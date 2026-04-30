@@ -49,13 +49,22 @@ Future<void> addGroupMember({
     throw StateError('Group not found: $groupId');
   }
 
-  if (group.myRole != GroupRole.admin) {
+  final selfMember = await groupRepo.getMember(groupId, selfPeerId);
+  final canInvite = selfMember != null
+      ? selfMember.permissions.allows(
+          GroupMemberPermission.inviteMembers,
+          selfMember.role,
+        )
+      : group.myRole == GroupRole.admin;
+  if (!canInvite) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_ADD_MEMBER_USE_CASE_NOT_ADMIN',
       details: {'role': group.myRole.toValue()},
     );
-    throw StateError('Only admins can add members');
+    throw StateError(
+      'Only admins can add members unless invite permission is granted',
+    );
   }
 
   final existingMember = await groupRepo.getMember(groupId, newMember.peerId);

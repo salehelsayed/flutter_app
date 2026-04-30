@@ -12,6 +12,9 @@ import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/group_test_user.dart';
 
+const _downloadedBytesHash =
+    '55e5509f8052998294266ee5b50cb592938191fb5d67f73cac2e60b0276b1bdd';
+
 class _DownloadWritingBridge extends FakeBridge {
   @override
   Future<String> send(String message) async {
@@ -53,6 +56,7 @@ void main() {
     int? height,
     int? durationMs,
     List<double>? waveform,
+    String contentHash = _downloadedBytesHash,
   }) {
     return MediaAttachment(
       id: id,
@@ -65,6 +69,10 @@ void main() {
       durationMs: durationMs,
       localPath: 'pending_uploads/$id',
       downloadStatus: 'done',
+      contentHash: contentHash,
+      encryptionKeyBase64: 'key-$id',
+      encryptionNonce: 'nonce-$id',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       createdAt: '2026-04-29T00:00:00.000Z',
       waveform: waveform,
     );
@@ -72,6 +80,7 @@ void main() {
 
   Future<void> waitForDownloads({
     required GroupTestUser user,
+    required String groupId,
     required int expectedCount,
   }) async {
     final deadline = DateTime.now().add(const Duration(seconds: 3));
@@ -79,10 +88,21 @@ void main() {
       final downloadCount = user.bridge.commandLog
           .where((cmd) => cmd == 'media:download')
           .length;
-      if (downloadCount >= expectedCount) return;
+      final messages = await user.loadGroupMessages(groupId);
+      var doneCount = 0;
+      for (final message in messages) {
+        final attachments = await user.mediaAttachmentRepo
+            .getAttachmentsForMessage(message.id);
+        doneCount += attachments
+            .where((attachment) => attachment.downloadStatus == 'done')
+            .length;
+      }
+      if (downloadCount >= expectedCount && doneCount >= expectedCount) {
+        return;
+      }
       await pump();
     }
-    fail('Expected $expectedCount media download attempts');
+    fail('Expected $expectedCount completed media downloads');
   }
 
   group('Announcement new-reader onboarding', () {
@@ -123,7 +143,7 @@ void main() {
         final image = attachment(
           id: 'blob-announcement-image',
           mime: 'image/jpeg',
-          size: 2048,
+          size: 4,
           width: 640,
           height: 480,
         );
@@ -137,7 +157,7 @@ void main() {
         final video = attachment(
           id: 'blob-announcement-video',
           mime: 'video/mp4',
-          size: 4096,
+          size: 4,
           width: 1280,
           height: 720,
           durationMs: 12_000,
@@ -152,7 +172,7 @@ void main() {
         final voice = attachment(
           id: 'blob-announcement-voice',
           mime: 'audio/mp4',
-          size: 1024,
+          size: 4,
           durationMs: 3500,
           waveform: const <double>[0.2, 0.6, 0.3],
         );
@@ -163,7 +183,11 @@ void main() {
         );
         expect(voiceResult, group_send.SendGroupMessageResult.success);
 
-        await waitForDownloads(user: reader, expectedCount: 3);
+        await waitForDownloads(
+          user: reader,
+          groupId: groupId,
+          expectedCount: 3,
+        );
 
         final readerIncoming = (await reader.loadGroupMessages(
           groupId,

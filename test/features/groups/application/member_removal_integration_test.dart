@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
@@ -139,6 +140,16 @@ void main() {
       groupRepo: groupRepo,
       groupId: groupId,
       memberPeerId: 'peer-alice',
+    );
+
+    final remainingMembers = await groupRepo.getMembers(groupId);
+    expect(
+      remainingMembers.map((member) => member.peerId),
+      containsAll(<String>[adminPeerId, 'peer-bob']),
+    );
+    expect(
+      remainingMembers.map((member) => member.peerId),
+      isNot(contains('peer-alice')),
     );
 
     // Collect who receives the P2P key update
@@ -328,4 +339,210 @@ void main() {
             as Map<String, dynamic>;
     expect(lastPublishPayload['text'], 'After removal');
   });
+
+  test(
+    'voluntary leave rotation excludes leaver and remaining members send on rotated epoch',
+    () async {
+      const leaverPeerId = 'peer-alice';
+      final createdAt = DateTime.now().toUtc();
+      final adminRepo = InMemoryGroupRepository();
+      final bobRepo = InMemoryGroupRepository();
+      final adminBridge = PassthroughCryptoBridge();
+      final bobBridge = PassthroughCryptoBridge();
+      final adminController = StreamController<ChatMessage>.broadcast();
+      final bobController = StreamController<ChatMessage>.broadcast();
+      final adminMsgRepo = InMemoryGroupMessageRepository();
+
+      Future<void> seedRemainingRepo({
+        required InMemoryGroupRepository repo,
+        required GroupRole myRole,
+      }) async {
+        await repo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Test Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdAt: createdAt,
+            createdBy: adminPeerId,
+            myRole: myRole,
+          ),
+        );
+        await repo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: adminPeerId,
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+            joinedAt: createdAt,
+          ),
+        );
+        await repo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+            joinedAt: createdAt.add(const Duration(seconds: 2)),
+          ),
+        );
+      }
+
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdAt: createdAt,
+          createdBy: adminPeerId,
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: leaverPeerId,
+          username: 'Alice',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(rotateKeys: true),
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-pk-alice',
+          joinedAt: createdAt.add(const Duration(seconds: 1)),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'initial-key-epoch-1',
+          createdAt: createdAt,
+        ),
+      );
+      await seedRemainingRepo(repo: adminRepo, myRole: GroupRole.admin);
+      await seedRemainingRepo(repo: bobRepo, myRole: GroupRole.member);
+
+      final adminListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: adminController.stream,
+        groupRepo: adminRepo,
+        bridge: adminBridge,
+        getOwnMlKemSecretKey: () async => 'admin-mlkem-secret',
+      )..start();
+      final bobListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: bobController.stream,
+        groupRepo: bobRepo,
+        bridge: bobBridge,
+        getOwnMlKemSecretKey: () async => 'bob-mlkem-secret',
+      )..start();
+      addTearDown(() async {
+        adminListener.dispose();
+        bobListener.dispose();
+        await adminController.close();
+        await bobController.close();
+      });
+
+      bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'rotated-leave-key-abc',
+        'keyEpoch': 2,
+      };
+      final keyUpdates = <(String, String)>[];
+
+      final rotatedKey = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: leaverPeerId,
+        senderPublicKey: 'pk-alice',
+        senderPrivateKey: 'sk-alice',
+        senderUsername: 'Alice',
+        sendP2PMessage: (peerId, message) async {
+          keyUpdates.add((peerId, message));
+          return true;
+        },
+      );
+
+      expect(rotatedKey, isNotNull);
+      expect(rotatedKey!.keyGeneration, 2);
+      expect(
+        keyUpdates.map((entry) => entry.$1),
+        unorderedEquals(<String>[adminPeerId, 'peer-bob']),
+      );
+      expect(
+        keyUpdates.map((entry) => entry.$1),
+        isNot(contains(leaverPeerId)),
+      );
+
+      for (final update in keyUpdates) {
+        final controller = update.$1 == adminPeerId
+            ? adminController
+            : bobController;
+        controller.add(
+          ChatMessage(
+            from: leaverPeerId,
+            to: update.$1,
+            content: update.$2,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+      }
+      await Future<void>.delayed(Duration.zero);
+
+      final adminKey = await adminRepo.getLatestKey(groupId);
+      final bobKey = await bobRepo.getLatestKey(groupId);
+      expect(adminKey, isNotNull);
+      expect(adminKey!.keyGeneration, 2);
+      expect(adminKey.encryptedKey, 'rotated-leave-key-abc');
+      expect(bobKey, isNotNull);
+      expect(bobKey!.keyGeneration, 2);
+      expect(bobKey.encryptedKey, 'rotated-leave-key-abc');
+      expect(adminBridge.commandLog, contains('group:updateKey'));
+      expect(bobBridge.commandLog, contains('group:updateKey'));
+
+      await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: groupId);
+
+      expect(await groupRepo.getGroup(groupId), isNull);
+      expect(await groupRepo.getMembers(groupId), isEmpty);
+      expect(await groupRepo.getLatestKey(groupId), isNull);
+      expect(bridge.commandLog, contains('group:leave'));
+
+      adminBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-post-voluntary-leave',
+        'topicPeers': 1,
+      };
+      final (result, message) = await group_send.sendGroupMessage(
+        bridge: adminBridge,
+        groupRepo: adminRepo,
+        msgRepo: adminMsgRepo,
+        groupId: groupId,
+        text: 'After voluntary leave',
+        senderPeerId: adminPeerId,
+        senderPublicKey: 'pk-admin',
+        senderPrivateKey: 'sk-admin',
+        senderUsername: 'Admin',
+        messageId: 'msg-post-voluntary-leave',
+      );
+
+      expect(result, group_send.SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.keyGeneration, 2);
+      expect(message.status, 'sent');
+
+      final inboxPayload = _lastGroupInboxStorePayload(adminBridge);
+      expect(
+        inboxPayload['recipientPeerIds'],
+        unorderedEquals(<String>['peer-bob']),
+      );
+      final inboxEnvelope =
+          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      expect(inboxEnvelope['keyEpoch'], 2);
+      expect(inboxEnvelope['messageId'], 'msg-post-voluntary-leave');
+    },
+  );
 }

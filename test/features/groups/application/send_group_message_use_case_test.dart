@@ -4,9 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -17,6 +19,9 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
@@ -109,6 +114,34 @@ class _InboxStoreFailBridge extends FakeBridge {
   }
 }
 
+/// A bridge that keeps group replay encryption opaque while forcing durable
+/// inbox custody to fail so the retry payload remains persisted for inspection.
+class _OpaqueReplayInboxStoreFailBridge extends _InboxStoreFailBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group.encrypt') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final plaintext = payload['plaintext'] as String? ?? '';
+      return jsonEncode({
+        'ok': true,
+        'ciphertext': 'sealed:${base64Url.encode(utf8.encode(plaintext))}',
+        'nonce': 'opaque-replay-nonce',
+      });
+    }
+
+    return super.send(message);
+  }
+}
+
 /// A bridge that returns ok:false on group:inboxStore.
 class _InboxStoreOkFalseBridge extends FakeBridge {
   _InboxStoreOkFalseBridge() {
@@ -191,6 +224,24 @@ Map<String, dynamic> _decodedGroupInboxReplayPayload(FakeBridge bridge) {
   return envelope;
 }
 
+Map<String, dynamic> _lastGroupOfflineReplayEnvelope(FakeBridge bridge) {
+  final inboxPayload = _lastGroupInboxStorePayload(bridge);
+  return jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+}
+
+Map<String, dynamic> _offlineReplayEnvelopeFromRetryPayload(
+  String inboxRetryPayload,
+) {
+  final retryPayload = jsonDecode(inboxRetryPayload) as Map<String, dynamic>;
+  return jsonDecode(retryPayload['message'] as String) as Map<String, dynamic>;
+}
+
+void _expectNoProtectedFragments(String raw, Iterable<String> fragments) {
+  for (final fragment in fragments) {
+    expect(raw, isNot(contains(fragment)));
+  }
+}
+
 Future<void> _saveGroupKey(
   InMemoryGroupRepository groupRepo,
   String groupId, {
@@ -228,6 +279,16 @@ void main() {
     groupRecoveryGate.resetForTest();
 
     await groupRepo.saveGroup(testGroup);
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: testGroup.id,
+        peerId: 'peer-1',
+        username: 'Alice',
+        role: MemberRole.admin,
+        publicKey: 'pk-1',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
     await _saveGroupKey(groupRepo, testGroup.id);
 
     bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-123'};
@@ -695,6 +756,10 @@ void main() {
         localPath: '/tmp/voice.m4a',
         durationMs: 3000,
         waveform: [0.1, 0.5, 0.8, 0.3],
+        contentHash: _validContentHash,
+        encryptionKeyBase64: 'key-att-voice',
+        encryptionNonce: 'nonce-att-voice',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       );
 
       await sendGroupMessage(
@@ -736,6 +801,40 @@ void main() {
 
       final inboxPayload = _lastGroupInboxStorePayload(bridge);
       expect(inboxPayload.containsKey('recipientPeerIds'), isFalse);
+    },
+  );
+
+  test(
+    'rejects stale send after local membership removal before persistence',
+    () async {
+      await groupRepo.removeMember('group-1', 'peer-1');
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          joinedAt: DateTime.utc(2026, 1, 2),
+        ),
+      );
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Queued stale send',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(result, SendGroupMessageResult.unauthorized);
+      expect(message, isNull);
+      expect(msgRepo.count, 0);
+      expect(bridge.commandLog, isEmpty);
     },
   );
 
@@ -964,6 +1063,10 @@ void main() {
       downloadStatus: 'done',
       createdAt: DateTime.now().toUtc().toIso8601String(),
       localPath: '/tmp/photo.jpg',
+      contentHash: _validContentHash,
+      encryptionKeyBase64: 'key-att-1',
+      encryptionNonce: 'nonce-att-1',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     );
 
     setUp(() {
@@ -995,6 +1098,15 @@ void main() {
           (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
       expect(payload['media'], isNotNull);
       expect((payload['media'] as List).length, 1);
+      final mediaJson =
+          (payload['media'] as List).single as Map<String, dynamic>;
+      expect(mediaJson['contentHash'], _validContentHash);
+      expect(mediaJson['encryptionKeyBase64'], 'key-att-1');
+      expect(mediaJson['encryptionNonce'], 'nonce-att-1');
+      expect(
+        mediaJson['encryptionScheme'],
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
     });
 
     test('includes media in inbox payload', () async {
@@ -1016,6 +1128,15 @@ void main() {
       final innerPayload = _decodedGroupInboxReplayPayload(bridge);
       expect(innerPayload['media'], isNotNull);
       expect((innerPayload['media'] as List).length, 1);
+      final mediaJson =
+          (innerPayload['media'] as List).single as Map<String, dynamic>;
+      expect(mediaJson['contentHash'], _validContentHash);
+      expect(mediaJson['encryptionKeyBase64'], 'key-att-1');
+      expect(mediaJson['encryptionNonce'], 'nonce-att-1');
+      expect(
+        mediaJson['encryptionScheme'],
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
     });
 
     test('saves attachments to MediaAttachmentRepository', () async {
@@ -1080,6 +1201,215 @@ void main() {
     });
 
     test(
+      'rejects dangerous media MIME before persistence, publish, or inbox store',
+      () async {
+        final dangerousAttachment = testAttachment.copyWith(
+          id: 'bad-att-1',
+          mime: 'application/pdf',
+          mediaType: 'file',
+          localPath: '/tmp/bad.pdf',
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'blocked media',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          mediaAttachments: [dangerousAttachment],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(mediaRepo.count, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+      },
+    );
+
+    test(
+      'rejects oversized single media before persistence, publish, or inbox store',
+      () async {
+        final oversizedAttachment = testAttachment.copyWith(
+          id: 'oversized-att-1',
+          size: kGroupMediaPerAttachmentLimitBytes + 1,
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'blocked oversized media',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          mediaAttachments: [oversizedAttachment],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(mediaRepo.count, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+      },
+    );
+
+    test(
+      'rejects oversized total media list before persistence, publish, or inbox store',
+      () async {
+        final first = testAttachment.copyWith(
+          id: 'total-att-1',
+          size: kGroupMediaTotalMessageLimitBytes,
+        );
+        final second = testAttachment.copyWith(id: 'total-att-2', size: 1);
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'blocked oversized total',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          mediaAttachments: [first, second],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.error);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(mediaRepo.count, 0);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+      },
+    );
+
+    test('accepts media at the configured size boundary', () async {
+      final boundaryAttachment = testAttachment.copyWith(
+        id: 'boundary-att-1',
+        size: kGroupMediaPerAttachmentLimitBytes,
+      );
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: '',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [boundaryAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(bridge.commandLog, contains('group:publish'));
+      expect(bridge.commandLog, contains('group:inboxStore'));
+      expect(mediaRepo.count, 1);
+    });
+
+    test('rejects mediaType mismatch before group publish', () async {
+      final mismatchedAttachment = testAttachment.copyWith(
+        id: 'bad-att-2',
+        mime: 'image/jpeg',
+        mediaType: 'video',
+      );
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'blocked mismatch',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [mismatchedAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.error);
+      expect(message, isNull);
+      expect(msgRepo.count, 0);
+      expect(mediaRepo.count, 0);
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+    });
+
+    test('rejects hashless media before persistence or publish', () async {
+      final hashlessAttachment = testAttachment.copyWith(
+        id: 'hashless-att',
+        clearContentHash: true,
+      );
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'blocked hashless',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [hashlessAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.error);
+      expect(message, isNull);
+      expect(msgRepo.count, 0);
+      expect(mediaRepo.count, 0);
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    });
+
+    test('rejects media without encryption metadata before publish', () async {
+      final unencryptedAttachment = testAttachment.copyWith(
+        id: 'unencrypted-att',
+        clearEncryptionKeyBase64: true,
+        clearEncryptionNonce: true,
+        clearEncryptionScheme: true,
+      );
+
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'blocked unencrypted media',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        mediaAttachments: [unencryptedAttachment],
+        mediaAttachmentRepo: mediaRepo,
+      );
+
+      expect(result, SendGroupMessageResult.error);
+      expect(message, isNull);
+      expect(msgRepo.count, 0);
+      expect(mediaRepo.count, 0);
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    });
+
+    test(
       'removes stale upload_pending placeholders before saving final attachments',
       () async {
         const messageId = 'group-media-stable-id';
@@ -1093,6 +1423,10 @@ void main() {
             localPath: 'pending_uploads/$messageId/pending-placeholder.jpg',
             downloadStatus: 'upload_pending',
             createdAt: DateTime.now().toUtc().toIso8601String(),
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
         );
 
@@ -1184,6 +1518,151 @@ void main() {
       expect(message.id, isNot('pre-created-id'));
     });
 
+    test(
+      'message id collision from generator uses a fresh id without overwriting trusted row',
+      () async {
+        const collidingId = 'generated-collision-id';
+        const resolvedId = 'generated-resolved-id';
+        final trustedTimestamp = DateTime.utc(2026, 4, 5, 10);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: collidingId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: 'Trusted original',
+            timestamp: trustedTimestamp,
+            keyGeneration: 1,
+            status: 'sent',
+            isIncoming: false,
+            createdAt: trustedTimestamp,
+          ),
+        );
+
+        var factoryCallCount = 0;
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'New generated collision send',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          timestamp: DateTime.utc(2026, 4, 5, 10, 1),
+          messageIdFactory: () {
+            factoryCallCount++;
+            return factoryCallCount == 1 ? collidingId : resolvedId;
+          },
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message!.id, resolvedId);
+
+        final trusted = await msgRepo.getMessage(collidingId);
+        expect(trusted, isNotNull);
+        expect(trusted!.text, 'Trusted original');
+        expect(trusted.status, 'sent');
+
+        final resolved = await msgRepo.getMessage(resolvedId);
+        expect(resolved, isNotNull);
+        expect(resolved!.text, 'New generated collision send');
+      },
+    );
+
+    test(
+      'message id collision from explicit id resolves without overwriting trusted row',
+      () async {
+        const collidingId = 'explicit-collision-id';
+        const resolvedId = 'explicit-resolved-id';
+        final trustedTimestamp = DateTime.utc(2026, 4, 5, 11);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: collidingId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: 'Already sent',
+            timestamp: trustedTimestamp,
+            keyGeneration: 1,
+            status: 'sent',
+            isIncoming: false,
+            createdAt: trustedTimestamp,
+          ),
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Second send with colliding id',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: collidingId,
+          timestamp: DateTime.utc(2026, 4, 5, 11, 1),
+          messageIdFactory: () => resolvedId,
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message!.id, resolvedId);
+        expect((await msgRepo.getMessage(collidingId))!.text, 'Already sent');
+        expect(
+          (await msgRepo.getMessage(resolvedId))!.text,
+          'Second send with colliding id',
+        );
+      },
+    );
+
+    test(
+      'message id collision guard still allows failed retry in place',
+      () async {
+        const retryId = 'retry-same-id';
+        final retryTimestamp = DateTime.utc(2026, 4, 5, 12);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: retryId,
+            groupId: 'group-1',
+            senderPeerId: 'peer-1',
+            senderUsername: 'Alice',
+            text: 'Retry same row',
+            timestamp: retryTimestamp,
+            keyGeneration: 1,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: retryTimestamp,
+            wireEnvelope: '{}',
+            inboxRetryPayload: '{}',
+          ),
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Retry same row',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: retryId,
+          timestamp: retryTimestamp,
+          messageIdFactory: () => 'should-not-be-used',
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message!.id, retryId);
+        final saved = await msgRepo.getMessage(retryId);
+        expect(saved, isNotNull);
+        expect(saved!.text, 'Retry same row');
+        expect(saved.status, anyOf('sent', 'pending'));
+      },
+    );
+
     test('sends message with empty text and media (voice note)', () async {
       final voiceAttachment = MediaAttachment(
         id: 'att-voice',
@@ -1196,6 +1675,10 @@ void main() {
         localPath: '/tmp/voice.m4a',
         durationMs: 3000,
         waveform: [0.1, 0.5, 0.8, 0.3],
+        contentHash: _validContentHash,
+        encryptionKeyBase64: 'key-att-voice',
+        encryptionNonce: 'nonce-att-voice',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       );
 
       final (result, message) = await sendGroupMessage(
@@ -1264,6 +1747,10 @@ void main() {
           localPath: '/tmp/announce-voice.m4a',
           durationMs: 1800,
           waveform: [0.2, 0.4, 0.8],
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'key-att-announce-voice',
+          encryptionNonce: 'nonce-att-announce-voice',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
         );
 
         final (result, message) = await sendGroupMessage(
@@ -1535,6 +2022,191 @@ void main() {
     });
   });
 
+  group('MS-018: key rotation epoch binding', () {
+    test(
+      'send snapshots current epoch for row and replay envelope before publish completes',
+      () async {
+        final gatedBridge = _GatedPublishBridge();
+        gatedBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-ms018-snapshot',
+          'topicPeers': 1,
+        };
+        final trackingRepo = _SaveTrackingGroupMessageRepository();
+        final fixedTime = DateTime.utc(2026, 4, 29, 10, 0);
+
+        final sendFuture = sendGroupMessage(
+          bridge: gatedBridge,
+          groupRepo: groupRepo,
+          msgRepo: trackingRepo,
+          groupId: 'group-1',
+          text: 'Created before epoch commit',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-ms018-snapshot',
+          timestamp: fixedTime,
+        );
+
+        final firstSaved = await trackingRepo.firstSave.future;
+        expect(firstSaved.keyGeneration, 1);
+        expect(firstSaved.inboxRetryPayload, isNotNull);
+
+        final prePersistEnvelope = _offlineReplayEnvelopeFromRetryPayload(
+          firstSaved.inboxRetryPayload!,
+        );
+        expect(prePersistEnvelope['keyEpoch'], 1);
+        expect(prePersistEnvelope['messageId'], 'msg-ms018-snapshot');
+
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 2,
+            encryptedKey: 'test-group-key-2',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        gatedBridge.publishGate.complete();
+        final (result, message) = await sendFuture;
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.keyGeneration, 1);
+
+        final saved = await trackingRepo.getMessage('msg-ms018-snapshot');
+        expect(saved, isNotNull);
+        expect(saved!.keyGeneration, 1);
+
+        final storedEnvelope = _lastGroupOfflineReplayEnvelope(gatedBridge);
+        expect(storedEnvelope['keyEpoch'], 1);
+        expect(storedEnvelope['messageId'], 'msg-ms018-snapshot');
+      },
+    );
+
+    test(
+      'messages before during and after rotation bind to the locally committed epoch',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-bob',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'test-group-key-2',
+          'keyEpoch': 2,
+        };
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'publish-ok',
+          'topicPeers': 1,
+        };
+
+        final (beforeResult, beforeMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Before rotation commit',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-ms018-before',
+        );
+        expect(beforeResult, SendGroupMessageResult.success);
+        expect(beforeMessage, isNotNull);
+        expect(beforeMessage!.keyGeneration, 1);
+        expect(_lastGroupOfflineReplayEnvelope(bridge)['keyEpoch'], 1);
+
+        final distributionStarted = Completer<void>();
+        final distributionGate = Completer<bool>();
+        final rotationFuture = rotateAndDistributeGroupKey(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          selfPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          perRecipientTimeout: const Duration(seconds: 5),
+          distributionTimeout: const Duration(seconds: 5),
+          sendP2PMessage: (peerId, message) {
+            if (!distributionStarted.isCompleted) {
+              distributionStarted.complete();
+            }
+            return distributionGate.future;
+          },
+        );
+        await distributionStarted.future;
+
+        final latestDuringRotation = await groupRepo.getLatestKey('group-1');
+        expect(latestDuringRotation, isNotNull);
+        expect(latestDuringRotation!.keyGeneration, 1);
+        expect(await groupRepo.getKeyByGeneration('group-1', 2), isNull);
+        expect(bridge.commandLog, isNot(contains('group:updateKey')));
+
+        final (duringResult, duringMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'During rotation distribution',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-ms018-during',
+        );
+        expect(duringResult, SendGroupMessageResult.success);
+        expect(duringMessage, isNotNull);
+        expect(duringMessage!.keyGeneration, 1);
+        expect(_lastGroupOfflineReplayEnvelope(bridge)['keyEpoch'], 1);
+
+        distributionGate.complete(true);
+        final rotatedKey = await rotationFuture;
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+
+        final latestAfterRotation = await groupRepo.getLatestKey('group-1');
+        expect(latestAfterRotation, isNotNull);
+        expect(latestAfterRotation!.keyGeneration, 2);
+
+        final (afterResult, afterMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'After rotation commit',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-ms018-after',
+        );
+        expect(afterResult, SendGroupMessageResult.success);
+        expect(afterMessage, isNotNull);
+        expect(afterMessage!.keyGeneration, 2);
+        expect(_lastGroupOfflineReplayEnvelope(bridge)['keyEpoch'], 2);
+
+        final beforeSaved = await msgRepo.getMessage('msg-ms018-before');
+        final duringSaved = await msgRepo.getMessage('msg-ms018-during');
+        final afterSaved = await msgRepo.getMessage('msg-ms018-after');
+        expect(beforeSaved!.keyGeneration, 1);
+        expect(duringSaved!.keyGeneration, 1);
+        expect(afterSaved!.keyGeneration, 2);
+      },
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // WU-3: Pre-persist, _tryInboxStore, topicPeers, 4-way result matrix
   // ---------------------------------------------------------------------------
@@ -1795,6 +2467,97 @@ void main() {
         expect(saved!.status, 'pending');
         expect(saved.wireEnvelope, isNull);
         expect(saved.inboxRetryPayload, isNotNull);
+      },
+    );
+
+    test(
+      'EK-002 pending inbox retry stores encrypted replay without protected plaintext',
+      () async {
+        final privacyBridge = _OpaqueReplayInboxStoreFailBridge();
+        privacyBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-ek002-privacy',
+          'topicPeers': 2,
+        };
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 1, 2),
+          ),
+        );
+
+        const protectedText = 'EK002 secret message body alpha';
+        const inviteSecret = 'invite-token-secret-ek002-beta';
+        const privateState = 'private-state-secret-ek002-gamma';
+        const mediaKey = 'media-key-secret-ek002-delta';
+        final protectedFragments = [
+          protectedText,
+          inviteSecret,
+          privateState,
+          mediaKey,
+        ];
+        final mediaAttachment = MediaAttachment(
+          id: 'att-ek002-private',
+          messageId: '',
+          mime: 'image/png',
+          size: 1200,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: DateTime.utc(2026, 1, 2).toIso8601String(),
+          contentHash: _validContentHash,
+          encryptionKeyBase64: mediaKey,
+          encryptionNonce: 'media-nonce-secret-ek002',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: privacyBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: '$protectedText $inviteSecret $privateState',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'msg-ek002-privacy',
+          mediaAttachments: [mediaAttachment],
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'pending');
+        expect(message.inboxRetryPayload, isNotNull);
+
+        final saved = await msgRepo.getMessage('msg-ek002-privacy');
+        expect(saved, isNotNull);
+        expect(saved!.inboxRetryPayload, isNotNull);
+
+        final retryRaw = saved.inboxRetryPayload!;
+        _expectNoProtectedFragments(retryRaw, protectedFragments);
+        final retryPayload = jsonDecode(retryRaw) as Map<String, dynamic>;
+        expect(retryPayload['recipientPeerIds'], ['peer-2']);
+
+        final retryEnvelope = _offlineReplayEnvelopeFromRetryPayload(retryRaw);
+        expect(retryEnvelope['kind'], 'group_offline_replay');
+        expect(retryEnvelope['payloadType'], 'group_message');
+        expect(retryEnvelope['keyEpoch'], 1);
+        expect(retryEnvelope['messageId'], 'msg-ek002-privacy');
+        expect(retryEnvelope['ciphertext'], startsWith('sealed:'));
+        expect(retryEnvelope['nonce'], 'opaque-replay-nonce');
+
+        final inboxStoreCommand = privacyBridge.sentMessages.lastWhere(
+          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        _expectNoProtectedFragments(inboxStoreCommand, protectedFragments);
+        final inboxPayload = _lastGroupInboxStorePayload(privacyBridge);
+        expect(inboxPayload['message'], retryPayload['message']);
+        expect(inboxPayload.containsKey('pushTitle'), isFalse);
+        expect(inboxPayload.containsKey('pushBody'), isFalse);
       },
     );
 

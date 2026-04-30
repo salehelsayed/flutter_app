@@ -951,6 +951,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         case AcceptPendingGroupInviteResult.expired:
           _showSnackBar('Invite expired');
           break;
+        case AcceptPendingGroupInviteResult.revoked:
+          _showSnackBar('Invite was revoked');
+          break;
+        case AcceptPendingGroupInviteResult.alreadyUsed:
+          _showSnackBar('Invite already used');
+          break;
         case AcceptPendingGroupInviteResult.invalidPayload:
           _showSnackBar('Invite is no longer valid');
           break;

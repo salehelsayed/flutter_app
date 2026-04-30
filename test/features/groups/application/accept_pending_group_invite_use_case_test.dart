@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 
@@ -20,14 +22,17 @@ void main() {
   late InMemoryGroupMessageRepository msgRepo;
   late FakeBridge bridge;
 
-  PendingGroupInvite makeInvite({DateTime? receivedAt}) {
+  PendingGroupInvite makeInvite({
+    DateTime? receivedAt,
+    String? overrideGroupKey,
+  }) {
     final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
     final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
     final inviteTimestamp = createdAt.add(const Duration(minutes: 5));
     final payload = GroupInvitePayload(
       id: 'invite-1',
       groupId: 'grp-abc123',
-      groupKey: 'base64-key',
+      groupKey: overrideGroupKey ?? 'base64-key',
       keyEpoch: 1,
       groupConfig: {
         'name': 'Book Club',
@@ -99,6 +104,9 @@ void main() {
       expect(group, isNotNull);
       expect(group!.name, 'Book Club');
       expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+      final consumption = await pendingInviteRepo.getConsumedInvite('invite-1');
+      expect(consumption, isNotNull);
+      expect(consumption!.groupId, 'grp-abc123');
       expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
       expect(msgRepo.count, 1);
       expect(bridge.commandLog, contains('group:join'));
@@ -258,6 +266,10 @@ void main() {
         expect(group, isNotNull);
         expect(group!.id, 'grp-abc123');
         expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
         expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
         expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
         expect(msgRepo.count, 1);
@@ -267,6 +279,35 @@ void main() {
         final latestMessage = await msgRepo.getLatestMessage('grp-abc123');
         expect(latestMessage, isNotNull);
         expect(latestMessage!.text, 'Receiver joined the group');
+      },
+    );
+
+    test(
+      'missing join material stays pending for repair without creating group state',
+      () async {
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(overrideGroupKey: ''),
+        );
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.repairPending);
+        expect(group, isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await pendingInviteRepo.getConsumedInvite('invite-1'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(msgRepo.count, 0);
       },
     );
 
@@ -289,6 +330,77 @@ void main() {
       expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
       expect(await groupRepo.getGroup('grp-abc123'), isNull);
     });
+
+    test(
+      'returns revoked and removes stale pending row without joining',
+      () async {
+        final revokedAt = DateTime.utc(2026, 4, 29, 12);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: revokedAt),
+        );
+        await pendingInviteRepo.saveRevokedInvite(
+          GroupInviteRevocation(
+            inviteId: 'invite-1',
+            groupId: 'grp-abc123',
+            revokedAt: revokedAt,
+            expiresAt: revokedAt.add(const Duration(days: 7)),
+            revokedBy: '12D3KooWAlice',
+          ),
+        );
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: revokedAt.add(const Duration(minutes: 10)),
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.revoked);
+        expect(group, isNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(msgRepo.count, 0);
+      },
+    );
+
+    test(
+      'returns alreadyUsed and removes stale pending row without joining',
+      () async {
+        final consumedAt = DateTime.utc(2026, 4, 29, 12);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: consumedAt),
+        );
+        await pendingInviteRepo.saveConsumedInvite(
+          GroupInviteConsumption(
+            inviteId: 'invite-1',
+            groupId: 'grp-abc123',
+            consumedAt: consumedAt,
+            expiresAt: consumedAt.add(const Duration(days: 7)),
+          ),
+        );
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: consumedAt.add(const Duration(minutes: 10)),
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.alreadyUsed);
+        expect(group, isNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(msgRepo.count, 0);
+      },
+    );
 
     test(
       'returns duplicateGroup and removes pending row when group already exists',

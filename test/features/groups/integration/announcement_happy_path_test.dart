@@ -19,6 +19,9 @@ import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/group_test_user.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
+const _validContentHash =
+    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
+
 Widget _buildConversation({
   required GroupModel group,
   required List<GroupMessage> messages,
@@ -350,6 +353,10 @@ void main() {
             mediaType: 'image',
             localPath: '/tmp/announcement.gif',
             downloadStatus: 'done',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-ann-gif-1',
+            encryptionNonce: 'nonce-ann-gif-1',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-04-09T09:00:00.000Z',
           ),
         ],

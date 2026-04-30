@@ -52,6 +52,9 @@ import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/helpers/lifecycle_helpers.dart';
 
+const _validContentHash =
+    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
+
 /// A bridge that simulates cursor-based inbox retrieval for integration tests.
 class _CursorInboxBridge extends FakeBridge {
   final Map<String, _InboxPage> pages = {};
@@ -472,6 +475,7 @@ MediaAttachment _uploadedMedia({
   int? height,
   int? durationMs,
   List<double>? waveform,
+  String contentHash = _validContentHash,
 }) {
   return MediaAttachment(
     id: id,
@@ -485,6 +489,10 @@ MediaAttachment _uploadedMedia({
     height: height,
     durationMs: durationMs,
     waveform: waveform,
+    contentHash: contentHash,
+    encryptionKeyBase64: 'key-$id',
+    encryptionNonce: 'nonce-$id',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
     createdAt: DateTime.now().toUtc().toIso8601String(),
   );
 }
@@ -1360,7 +1368,7 @@ void main() {
             'senderId': 'alice-peer',
             'senderUsername': 'Alice',
             'keyEpoch': 0,
-            'text': 'Dedup test msg',
+            'text': 'Tampered inbox copy',
             'timestamp': ts.toIso8601String(),
             'messageId': sharedMessageId,
           },
@@ -1378,6 +1386,11 @@ void main() {
           bobMessages.where((m) => m.isIncoming).length,
           1,
           reason: 'Message should not be duplicated by inbox drain',
+        );
+        expect(
+          bobMessages.singleWhere((m) => m.id == sharedMessageId).text,
+          'Dedup test msg',
+          reason: 'Conflicting replay content must not overwrite live content',
         );
 
         pubsubController.close();
@@ -1909,6 +1922,183 @@ void main() {
     );
 
     test(
+      'removed offline member does not retry queued failed sends after replayed removal',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'admin-offline-remove-retry-peer',
+          username: 'Admin',
+          network: network,
+        );
+        final bobBridge = _CursorInboxBridge();
+        final bob = GroupTestUser.create(
+          peerId: 'bob-offline-remove-retry-peer',
+          username: 'Bob',
+          network: network,
+          bridge: bobBridge,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-offline-remove-retry-peer',
+          username: 'Charlie',
+          network: network,
+        );
+
+        const groupId = 'group-offline-remove-retry';
+        await admin.createGroup(groupId: groupId, name: 'Offline Retry Block');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.addMember(groupId: groupId, invitee: charlie);
+        await _saveKey(admin, groupId, 1, 'k1');
+        await _saveKey(bob, groupId, 1, 'k1');
+        await _saveKey(charlie, groupId, 1, 'k1');
+
+        admin.start();
+        bob.start();
+        charlie.start();
+
+        network.unsubscribe(groupId, bob.peerId);
+        bobBridge.responses['group:publish'] = {
+          'ok': false,
+          'errorCode': 'OFFLINE',
+        };
+        bobBridge.responses['group:inboxStore'] = {
+          'ok': false,
+          'errorCode': 'OFFLINE',
+        };
+
+        final (queuedResult, queuedMessage) = await sendGroupMessage(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          groupId: groupId,
+          text: 'Queued before remote removal',
+          senderPeerId: bob.peerId,
+          senderPublicKey: bob.publicKey,
+          senderPrivateKey: bob.privateKey,
+          senderUsername: bob.username,
+        );
+
+        expect(queuedResult, SendGroupMessageResult.error);
+        expect(queuedMessage, isNotNull);
+        expect(queuedMessage!.status, 'failed');
+        expect(
+          bobBridge.commandLog.where((command) => command == 'group:publish'),
+          hasLength(1),
+        );
+        expect(
+          bobBridge.commandLog.where(
+            (command) => command == 'group:inboxStore',
+          ),
+          hasLength(1),
+        );
+
+        final removedGroups = <String>[];
+        final removedSub = bob.groupMessageListener.groupRemovedStream.listen(
+          removedGroups.add,
+        );
+
+        await admin.removeMember(
+          groupId: groupId,
+          memberPeerId: bob.peerId,
+          memberUsername: 'Bob',
+        );
+        await _saveKey(admin, groupId, 2, 'k2');
+        await _saveKey(charlie, groupId, 2, 'k2');
+        await pump();
+
+        final group = await admin.groupRepo.getGroup(groupId);
+        final remainingMembers = await admin.groupRepo.getMembers(groupId);
+        final removalSystemMessage = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': bob.peerId, 'username': 'Bob'},
+          'groupConfig': {
+            'name': group!.name,
+            'groupType': group.type.toValue(),
+            if (group.description != null) 'description': group.description,
+            'members': remainingMembers
+                .map(
+                  (member) => {
+                    'peerId': member.peerId,
+                    'username': member.username,
+                    'role': member.role.toValue(),
+                    'publicKey': member.publicKey,
+                  },
+                )
+                .toList(),
+            'createdBy': group.createdBy,
+            'createdAt': group.createdAt.toUtc().toIso8601String(),
+          },
+        });
+
+        await callGroupInboxStore(
+          admin.bridge,
+          groupId,
+          jsonEncode({
+            'groupId': groupId,
+            'senderId': admin.peerId,
+            'senderUsername': admin.username,
+            'keyEpoch': 0,
+            'text': removalSystemMessage,
+            'timestamp': DateTime.now().toUtc().toIso8601String(),
+          }),
+          recipientPeerIds: [bob.peerId],
+        );
+
+        _injectInboxMessageFromLatestStore(
+          senderBridge: admin.bridge,
+          receiverBridge: bobBridge,
+          receiverPeerId: bob.peerId,
+          groupId: groupId,
+        );
+
+        await drainGroupOfflineInbox(
+          bridge: bob.bridge,
+          groupRepo: bob.groupRepo,
+          msgRepo: bob.msgRepo,
+          groupMessageListener: bob.groupMessageListener,
+        );
+
+        expect(removedGroups, contains(groupId));
+        expect(await bob.groupRepo.getGroup(groupId), isNull);
+        expect(bobBridge.commandLog, contains('group:leave'));
+
+        final publishCountBeforeRetry = bobBridge.commandLog
+            .where((command) => command == 'group:publish')
+            .length;
+        final inboxStoreCountBeforeRetry = bobBridge.commandLog
+            .where((command) => command == 'group:inboxStore')
+            .length;
+
+        final retried = await retryFailedGroupMessages(
+          groupMsgRepo: bob.msgRepo,
+          groupRepo: bob.groupRepo,
+          identityRepo: _Section10IdentityRepository(_identityForUser(bob)),
+          bridge: bob.bridge,
+          mediaAttachmentRepo: bob.mediaAttachmentRepo,
+        );
+
+        expect(retried, 0);
+        expect(
+          bobBridge.commandLog.where((command) => command == 'group:publish'),
+          hasLength(publishCountBeforeRetry),
+        );
+        expect(
+          bobBridge.commandLog.where(
+            (command) => command == 'group:inboxStore',
+          ),
+          hasLength(inboxStoreCountBeforeRetry),
+        );
+
+        final staleQueued = await bob.msgRepo.getMessage(queuedMessage.id);
+        expect(staleQueued, isNotNull);
+        expect(staleQueued!.status, 'failed');
+
+        await removedSub.cancel();
+        admin.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
       'offline remaining member drains remove-vs-send backlog and keeps the same before-cutoff outcome after resume',
       () async {
         final admin = GroupTestUser.create(
@@ -2313,6 +2503,10 @@ void main() {
           height: 720,
           localPath: 'media/group-announce-media-resume/att-proof-1.jpg',
           downloadStatus: 'done',
+          contentHash: _validContentHash,
+          encryptionKeyBase64: 'key-att-proof-1',
+          encryptionNonce: 'nonce-att-proof-1',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           createdAt: DateTime.now().toUtc().toIso8601String(),
         );
 
@@ -3957,6 +4151,161 @@ void main() {
         },
       );
 
+      test(
+        'partition replay preserves quoted parent ids and deterministic order',
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-ms004-partition-peer',
+            username: 'Alice',
+            network: network,
+          );
+          final onlineReader = GroupTestUser.create(
+            peerId: 'reader-ms004-online-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final partitionedReader = GroupTestUser.create(
+            peerId: 'reader-ms004-offline-peer',
+            username: 'Carol',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final partitionBridge =
+              partitionedReader.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-ms004-partition-replay';
+          await admin.createGroup(groupId: groupId, name: 'MS-004 Replay');
+          await admin.addMember(groupId: groupId, invitee: onlineReader);
+          await admin.addMember(groupId: groupId, invitee: partitionedReader);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(onlineReader, groupId, 1, 'k1');
+          await _saveKey(partitionedReader, groupId, 1, 'k1');
+
+          final members = await admin.groupRepo.getMembers(groupId);
+          for (final member in members) {
+            await onlineReader.groupRepo.saveMember(member);
+          }
+
+          admin.start();
+          onlineReader.start();
+          partitionedReader.start();
+
+          network.unsubscribe(groupId, partitionedReader.peerId);
+          expect(
+            network.isSubscribed(groupId, partitionedReader.peerId),
+            isFalse,
+          );
+
+          final sentAt = DateTime.utc(2026, 4, 29, 12);
+          final (parentResult, parent) = await admin.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: 'Partition parent',
+            messageId: 'ms004-partition-parent',
+            timestamp: sentAt,
+          );
+          expect(parentResult, SendGroupMessageResult.success);
+          expect(parent, isNotNull);
+          await pumpUntilAsync(() async {
+            final messages = await onlineReader.loadGroupMessages(groupId);
+            return messages.any(
+              (message) => message.id == 'ms004-partition-parent',
+            );
+          }, maxPumps: 120);
+
+          final (replyResult, reply) = await onlineReader
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'Partition reply',
+                quotedMessageId: parent!.id,
+                messageId: 'ms004-partition-reply',
+                timestamp: sentAt,
+              );
+          expect(replyResult, SendGroupMessageResult.success);
+          expect(reply, isNotNull);
+          await pumpUntilAsync(() async {
+            final messages = await admin.loadGroupMessages(groupId);
+            return messages.any(
+              (message) => message.id == 'ms004-partition-reply',
+            );
+          }, maxPumps: 120);
+
+          final parentInbox = bridgePayloads(
+            admin.bridge,
+            'group:inboxStore',
+          ).single;
+          final replyInbox = bridgePayloads(
+            onlineReader.bridge,
+            'group:inboxStore',
+          ).single;
+          expect(
+            (parentInbox['recipientPeerIds'] as List<dynamic>).cast<String>(),
+            contains(partitionedReader.peerId),
+          );
+          expect(
+            (replyInbox['recipientPeerIds'] as List<dynamic>).cast<String>(),
+            contains(partitionedReader.peerId),
+          );
+
+          _addRelayStoredMessagePage(
+            receiverBridge: partitionBridge,
+            groupId: groupId,
+            fromPeerId: admin.peerId,
+            storedMessage: parentInbox['message'] as String,
+            nextCursor: 'cursor-ms004-reply',
+          );
+          _addRelayStoredMessagePage(
+            receiverBridge: partitionBridge,
+            groupId: groupId,
+            fromPeerId: onlineReader.peerId,
+            storedMessage: replyInbox['message'] as String,
+            cursor: 'cursor-ms004-reply',
+          );
+
+          await rejoinGroupTopics(
+            bridge: partitionedReader.bridge,
+            groupRepo: partitionedReader.groupRepo,
+          );
+          await drainGroupOfflineInbox(
+            bridge: partitionedReader.bridge,
+            groupRepo: partitionedReader.groupRepo,
+            msgRepo: partitionedReader.msgRepo,
+          );
+          network.subscribe(groupId, partitionedReader.peerId);
+
+          Future<void> expectTimeline(GroupTestUser user) async {
+            final messages = (await user.loadGroupMessages(groupId))
+                .where(
+                  (message) =>
+                      message.id == 'ms004-partition-parent' ||
+                      message.id == 'ms004-partition-reply',
+                )
+                .toList(growable: false);
+            expect(
+              messages.map((message) => message.id).toList(),
+              ['ms004-partition-parent', 'ms004-partition-reply'],
+              reason:
+                  '${user.username} should keep the replayed parent/reply order',
+            );
+            expect(
+              messages
+                  .singleWhere(
+                    (message) => message.id == 'ms004-partition-reply',
+                  )
+                  .quotedMessageId,
+              'ms004-partition-parent',
+            );
+          }
+
+          await expectTimeline(admin);
+          await expectTimeline(onlineReader);
+          await expectTimeline(partitionedReader);
+
+          admin.dispose();
+          onlineReader.dispose();
+          partitionedReader.dispose();
+        },
+      );
+
       test('full lifecycle round-trip', () async {
         final admin = GroupTestUser.create(
           peerId: 'admin-round-trip-peer',
@@ -4439,6 +4788,15 @@ void main() {
             network: network,
           );
           final bobBridge = bob.bridge as _CursorInboxBridge;
+          admin.bridge.responses['payload.sign'] = {
+            'ok': true,
+            'signature': 'sig-metadata-converge',
+          };
+          bob.bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+          charlie.bridge.responses['payload.verify'] = {
+            'ok': true,
+            'valid': true,
+          };
 
           const groupId = 'group-metadata-converge-011';
           await admin.createGroup(
@@ -4469,10 +4827,39 @@ void main() {
               eventAt: eventAt,
             );
             final members = await admin.groupRepo.getMembers(groupId);
+            final groupConfig = buildGroupConfigPayload(updatedGroup, members);
+            final actorPayload = buildGroupMetadataActorEventPayload(
+              groupId: groupId,
+              updatedAt: eventAt,
+              actorPeerId: admin.peerId,
+              actorUsername: admin.username,
+              actorPublicKey: admin.publicKey,
+              groupConfig: groupConfig,
+            );
+            final canonicalPayload = canonicalizeGroupMetadataActorEventPayload(
+              actorPayload,
+            );
+            final signResponse = await callSignPayload(
+              bridge: admin.bridge,
+              dataToSign: canonicalPayload,
+              privateKey: admin.privateKey,
+            );
+            final signature = signResponse['signature'];
+            if (signResponse['ok'] != true ||
+                signature is! String ||
+                signature.isEmpty) {
+              throw StateError('Failed to sign group metadata update fixture');
+            }
+            final updatedAtIso = eventAt.toUtc().toIso8601String();
             final sysText = jsonEncode({
               '__sys': 'group_metadata_updated',
-              'updatedAt': eventAt.toIso8601String(),
-              'groupConfig': buildGroupConfigPayload(updatedGroup, members),
+              'updatedAt': updatedAtIso,
+              'groupConfig': groupConfig,
+              groupMetadataActorEventEnvelopeField:
+                  buildSignedGroupMetadataActorEventEnvelope(
+                    signedPayload: canonicalPayload,
+                    signature: signature,
+                  ),
             });
             final envelope = <String, dynamic>{
               'groupId': groupId,
@@ -4480,7 +4867,7 @@ void main() {
               'senderUsername': admin.username,
               'keyEpoch': 0,
               'text': sysText,
-              'timestamp': eventAt.toIso8601String(),
+              'timestamp': updatedAtIso,
               'messageId': messageId,
             };
             await network.publish(groupId, admin.peerId, envelope);

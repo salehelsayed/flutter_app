@@ -48,6 +48,7 @@ import 'package:flutter_app/features/conversation/presentation/navigation/conver
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/feed/application/feed_reaction_store.dart';
 import 'package:flutter_app/features/feed/application/feed_store.dart';
+import 'package:flutter_app/features/feed/application/group_feed_media_verification.dart';
 import 'package:flutter_app/features/feed/application/load_contact_feed_snapshot_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_feed_use_case.dart';
 import 'package:flutter_app/features/feed/application/load_group_feed_snapshot_use_case.dart';
@@ -858,11 +859,19 @@ class _FeedWiredState extends State<FeedWired>
   }
 
   Future<List<MediaAttachment>> _loadResolvedAttachmentsForMessage(
-    String messageId,
-  ) async {
+    String messageId, {
+    bool requireGroupMediaIntegrity = false,
+  }) async {
     final attachments = await widget.mediaAttachmentRepository
         .getAttachmentsForMessage(messageId);
     if (attachments.isEmpty) return const <MediaAttachment>[];
+
+    if (requireGroupMediaIntegrity) {
+      return resolveGroupFeedMediaForDisplay(
+        attachments: attachments,
+        mediaFileManager: widget.mediaFileManager,
+      );
+    }
 
     final resolved = <MediaAttachment>[];
     for (final attachment in attachments) {
@@ -1116,7 +1125,10 @@ class _FeedWiredState extends State<FeedWired>
       }
 
       final displayMessage = message.copyWith(
-        media: await _loadResolvedAttachmentsForMessage(message.id),
+        media: await _loadResolvedAttachmentsForMessage(
+          message.id,
+          requireGroupMediaIntegrity: true,
+        ),
       );
       final currentThread = _threadForGroup(group.id);
       final nextMessages = _mergeThreadMessages(

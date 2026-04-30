@@ -143,6 +143,226 @@ void main() {
     );
   });
 
+  test(
+    'allows writer with remove permission override to remove member',
+    () async {
+      const groupId = 'group-custom-remove';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Moderated Group',
+          type: GroupType.chat,
+          topicName: 'group-topic-moderated',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-moderator',
+          username: 'Moderator',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(removeMembers: true),
+          publicKey: 'pk-moderator',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-target',
+          username: 'Target',
+          role: MemberRole.reader,
+          publicKey: 'pk-target',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        memberPeerId: 'peer-target',
+        selfPeerId: 'peer-moderator',
+      );
+
+      expect(await groupRepo.getMember(groupId, 'peer-target'), isNull);
+      expect(bridge.commandLog, contains('group:updateConfig'));
+
+      final updateConfigMessage = bridge.sentMessages.firstWhere((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final payload =
+          (jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      final members = (groupConfig['members'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final moderatorEntry = members.firstWhere(
+        (member) => member['peerId'] == 'peer-moderator',
+      );
+      expect(moderatorEntry['role'], 'writer');
+      expect(moderatorEntry['permissions'], {'removeMembers': true});
+    },
+  );
+
+  test(
+    'rechecks revoked remove permission before removing a queued target',
+    () async {
+      const groupId = 'group-stale-remove';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Stale Remove Group',
+          type: GroupType.chat,
+          topicName: 'group-topic-stale-remove',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-moderator',
+          username: 'Moderator',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(removeMembers: true),
+          publicKey: 'pk-moderator',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-moderator',
+          username: 'Moderator',
+          role: MemberRole.writer,
+          publicKey: 'pk-moderator',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-target',
+          username: 'Target',
+          role: MemberRole.reader,
+          publicKey: 'pk-target',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await expectLater(
+        removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          memberPeerId: 'peer-target',
+          selfPeerId: 'peer-moderator',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Only admins can remove members'),
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getMember(groupId, 'peer-target'), isNotNull);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
+
+  test('denies admin whose remove permission override is false', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        permissions: const GroupMemberPermissions(removeMembers: false),
+        publicKey: 'pk-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('Only admins can remove members'),
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+    expect(bridge.commandLog, isEmpty);
+  });
+
+  test(
+    'blocks removing the last admin before local or bridge changes',
+    () async {
+      await expectLater(
+        removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-admin',
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains(lastAdminRemovalBlockedMessage),
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
+
+  test('allows removing an admin when another admin remains', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-other-admin',
+        username: 'Other Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-other-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    await removeGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      memberPeerId: 'peer-other-admin',
+      selfPeerId: 'peer-admin',
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-other-admin'), isNull);
+    expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+    expect(bridge.commandLog, contains('group:updateConfig'));
+  });
+
   test('rejects while group recovery is in progress', () async {
     groupRecoveryGate.begin();
     try {
@@ -170,29 +390,31 @@ void main() {
     expect(bridge.commandLog, isEmpty);
   });
 
-  test('rejects non-member before sync and preserves existing members',
-      () async {
-    await expectLater(
-      removeGroupMember(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        groupId: 'group-1',
-        memberPeerId: 'peer-absent',
-      ),
-      throwsA(
-        isA<StateError>().having(
-          (e) => e.message,
-          'message',
-          contains('Member not found'),
+  test(
+    'rejects non-member before sync and preserves existing members',
+    () async {
+      await expectLater(
+        removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-absent',
         ),
-      ),
-    );
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('Member not found'),
+          ),
+        ),
+      );
 
-    expect(bridge.commandLog, isEmpty);
-    expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
-    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
-    expect(await groupRepo.getMember('group-1', 'peer-bystander'), isNotNull);
-  });
+      expect(bridge.commandLog, isEmpty);
+      expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-bystander'), isNotNull);
+    },
+  );
 
   test('removes member from DB before calling bridge', () async {
     await removeGroupMember(

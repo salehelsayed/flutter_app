@@ -120,6 +120,69 @@ void main() {
     );
 
     test(
+      'same-user sibling devices can send concurrently without id collision loss',
+      () async {
+        final network = FakeGroupPubSubNetwork();
+        final phone = GroupTestUser.create(
+          peerId: 'peer-shared',
+          deviceId: 'peer-shared-phone',
+          username: 'Alice',
+          network: network,
+        );
+        final tablet = GroupTestUser.create(
+          peerId: 'peer-shared',
+          deviceId: 'peer-shared-tablet',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        addTearDown(() {
+          phone.dispose();
+          tablet.dispose();
+          bob.dispose();
+        });
+
+        phone.start();
+        tablet.start();
+        bob.start();
+
+        const groupId = 'group-multi-device-concurrent-send';
+        await phone.createGroup(groupId: groupId, name: 'Shared Sends');
+        await phone.addMember(groupId: groupId, invitee: bob);
+        await mirrorJoinedGroupState(
+          source: phone,
+          target: tablet,
+          groupId: groupId,
+        );
+
+        await Future.wait([
+          phone.sendGroupMessage(groupId: groupId, text: 'From phone'),
+          tablet.sendGroupMessage(groupId: groupId, text: 'From tablet'),
+        ]);
+
+        await waitForCondition(
+          () async => await bob.msgRepo.getMessageCount(groupId) == 2,
+        );
+
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        expect(bobMessages.map((message) => message.text).toSet(), {
+          'From phone',
+          'From tablet',
+        });
+        expect(bobMessages.map((message) => message.id).toSet(), hasLength(2));
+        expect(
+          bobMessages.every((message) => message.senderPeerId == 'peer-shared'),
+          isTrue,
+        );
+      },
+    );
+
+    test(
       'joined sibling device converges membership updates without duplicate local membership',
       () async {
         final network = FakeGroupPubSubNetwork();
@@ -185,6 +248,200 @@ void main() {
           tabletMembers.where((member) => member.peerId == 'peer-shared'),
           hasLength(1),
         );
+      },
+    );
+
+    test(
+      'sibling device stays one member while new human admission adds a distinct member',
+      () async {
+        final network = FakeGroupPubSubNetwork();
+        final phone = GroupTestUser.create(
+          peerId: 'peer-shared',
+          deviceId: 'peer-shared-phone',
+          username: 'Alice',
+          network: network,
+        );
+        final tablet = GroupTestUser.create(
+          peerId: 'peer-shared',
+          deviceId: 'peer-shared-tablet',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final diana = GroupTestUser.create(
+          peerId: 'peer-diana',
+          username: 'Diana',
+          network: network,
+        );
+
+        addTearDown(() {
+          phone.dispose();
+          tablet.dispose();
+          bob.dispose();
+          diana.dispose();
+        });
+
+        phone.start();
+        tablet.start();
+        bob.start();
+        diana.start();
+
+        const groupId = 'group-multi-device-admission-distinction';
+        await phone.createGroup(groupId: groupId, name: 'Admission Scope');
+        await phone.addMember(groupId: groupId, invitee: bob);
+        await mirrorJoinedGroupState(
+          source: phone,
+          target: tablet,
+          groupId: groupId,
+        );
+
+        final phoneMembersAfterSibling = await phone.groupRepo.getMembers(
+          groupId,
+        );
+        final tabletMembersAfterSibling = await tablet.groupRepo.getMembers(
+          groupId,
+        );
+        expect(
+          phoneMembersAfterSibling.where(
+            (member) => member.peerId == 'peer-shared',
+          ),
+          hasLength(1),
+        );
+        expect(
+          tabletMembersAfterSibling.where(
+            (member) => member.peerId == 'peer-shared',
+          ),
+          hasLength(1),
+        );
+        final subscribersAfterSibling = network.getSubscribers(groupId);
+        expect(
+          subscribersAfterSibling.where((peerId) => peerId == 'peer-shared'),
+          hasLength(2),
+        );
+
+        await phone.addMember(groupId: groupId, invitee: diana);
+        await phone.broadcastMemberAdded(groupId: groupId, newMember: diana);
+
+        await waitForCondition(() async {
+          final members = await tablet.groupRepo.getMembers(groupId);
+          return members.any((member) => member.peerId == 'peer-diana');
+        });
+
+        for (final user in [phone, tablet, bob, diana]) {
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            'peer-shared',
+            'peer-bob',
+            'peer-diana',
+          }, reason: user.deviceId);
+          expect(
+            members.where((member) => member.peerId == 'peer-shared'),
+            hasLength(1),
+            reason: user.deviceId,
+          );
+          expect(
+            members.where((member) => member.peerId == 'peer-diana'),
+            hasLength(1),
+            reason: user.deviceId,
+          );
+        }
+
+        await diana.sendGroupMessage(
+          groupId: groupId,
+          text: 'Diana can send after human-member admission',
+        );
+
+        await waitForCondition(() async {
+          final messages = await tablet.loadGroupMessages(groupId);
+          return messages.any(
+            (message) =>
+                message.text == 'Diana can send after human-member admission',
+          );
+        });
+        final tabletMessage = (await tablet.loadGroupMessages(groupId))
+            .singleWhere(
+              (message) =>
+                  message.text == 'Diana can send after human-member admission',
+            );
+        expect(tabletMessage.senderPeerId, 'peer-diana');
+      },
+    );
+
+    test(
+      'device-local unsubscribe preserves member account and sibling delivery',
+      () async {
+        final network = FakeGroupPubSubNetwork();
+        final phone = GroupTestUser.create(
+          peerId: 'peer-shared',
+          deviceId: 'peer-shared-phone',
+          username: 'Alice',
+          network: network,
+        );
+        final tablet = GroupTestUser.create(
+          peerId: 'peer-shared',
+          deviceId: 'peer-shared-tablet',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        addTearDown(() {
+          phone.dispose();
+          tablet.dispose();
+          bob.dispose();
+        });
+
+        phone.start();
+        tablet.start();
+        bob.start();
+
+        const groupId = 'group-device-local-unsubscribe';
+        await phone.createGroup(groupId: groupId, name: 'Device Scope');
+        await phone.addMember(groupId: groupId, invitee: bob);
+        await mirrorJoinedGroupState(
+          source: phone,
+          target: tablet,
+          groupId: groupId,
+        );
+
+        expect(network.isSubscribed(groupId, 'peer-shared-phone'), isTrue);
+        expect(network.isSubscribed(groupId, 'peer-shared-tablet'), isTrue);
+
+        tablet.unsubscribeFromGroup(groupId);
+
+        expect(network.isSubscribed(groupId, 'peer-shared-phone'), isTrue);
+        expect(network.isSubscribed(groupId, 'peer-shared-tablet'), isFalse);
+
+        for (final user in [phone, tablet, bob]) {
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(
+            members.where((member) => member.peerId == 'peer-shared'),
+            hasLength(1),
+            reason: user.deviceId,
+          );
+        }
+
+        network.resetCounters();
+        await bob.sendGroupMessage(
+          groupId: groupId,
+          text: 'Only the still-joined sibling should receive this',
+        );
+
+        await waitForCondition(
+          () async => await phone.msgRepo.getMessageCount(groupId) == 1,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(await tablet.msgRepo.getMessageCount(groupId), 0);
+        expect(network.totalDeliveries, 1);
       },
     );
 

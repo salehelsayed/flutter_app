@@ -79,10 +79,14 @@ void main() {
       expect(group!.isDissolved, isTrue);
       expect(group.dissolvedAt, now.add(const Duration(minutes: 5)));
       expect(group.dissolvedBy, 'peer-admin');
+      expect(group.lastMembershipEventAt, now.add(const Duration(minutes: 5)));
 
       final stored = await groupRepo.getGroup('group-1');
       expect(stored, isNotNull);
       expect(stored!.isDissolved, isTrue);
+      expect(stored.dissolvedAt, now.add(const Duration(minutes: 5)));
+      expect(stored.dissolvedBy, 'peer-admin');
+      expect(stored.lastMembershipEventAt, now.add(const Duration(minutes: 5)));
 
       final latest = await msgRepo.getLatestMessage('group-1');
       expect(latest, isNotNull);
@@ -116,35 +120,37 @@ void main() {
     expect(bridge.commandLog, isEmpty);
   });
 
-  test('former creator who is no longer admin cannot dissolve the group',
-      () async {
-    await groupRepo.updateGroup(baseGroup.copyWith(myRole: GroupRole.member));
-    await groupRepo.saveMember(
-      GroupMember(
+  test(
+    'former creator who is no longer admin cannot dissolve the group',
+    () async {
+      await groupRepo.updateGroup(baseGroup.copyWith(myRole: GroupRole.member));
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.writer,
+          joinedAt: now,
+        ),
+      );
+
+      final (result, group) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
         groupId: 'group-1',
-        peerId: 'peer-admin',
-        username: 'Admin',
-        role: MemberRole.writer,
-        joinedAt: now,
-      ),
-    );
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+      );
 
-    final (result, group) = await dissolveGroup(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      groupId: 'group-1',
-      actorPeerId: 'peer-admin',
-      actorUsername: 'Admin',
-      actorPublicKey: 'pk-admin',
-      actorPrivateKey: 'sk-admin',
-    );
-
-    expect(result, DissolveGroupResult.unauthorized);
-    expect(group, isNotNull);
-    expect(group!.isDissolved, isFalse);
-    expect(bridge.commandLog, isEmpty);
-  });
+      expect(result, DissolveGroupResult.unauthorized);
+      expect(group, isNotNull);
+      expect(group!.isDissolved, isFalse);
+      expect(bridge.commandLog, isEmpty);
+    },
+  );
 
   test('returns alreadyDissolved when the group is already closed', () async {
     await groupRepo.updateGroup(
@@ -152,6 +158,7 @@ void main() {
         isDissolved: true,
         dissolvedAt: now,
         dissolvedBy: 'peer-admin',
+        lastMembershipEventAt: now,
       ),
     );
 
@@ -169,8 +176,71 @@ void main() {
     expect(result, DissolveGroupResult.alreadyDissolved);
     expect(group, isNotNull);
     expect(group!.isDissolved, isTrue);
+    expect(group.dissolvedAt, now);
+    expect(group.dissolvedBy, 'peer-admin');
+    expect(group.lastMembershipEventAt, now);
     expect(bridge.commandLog, isEmpty);
   });
+
+  test(
+    'repeated dissolve preserves closure state and does not publish again',
+    () async {
+      final firstDissolvedAt = now.add(const Duration(minutes: 5));
+      final secondDissolvedAt = now.add(const Duration(minutes: 30));
+
+      final (firstResult, firstGroup) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        dissolvedAt: firstDissolvedAt,
+      );
+
+      expect(firstResult, DissolveGroupResult.success);
+      expect(firstGroup, isNotNull);
+      expect(firstGroup!.isDissolved, isTrue);
+
+      bridge.commandLog.clear();
+      bridge.sentMessages.clear();
+
+      final (secondResult, secondGroup) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin Again',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        dissolvedAt: secondDissolvedAt,
+      );
+
+      expect(secondResult, DissolveGroupResult.alreadyDissolved);
+      expect(secondGroup, isNotNull);
+      expect(secondGroup!.isDissolved, isTrue);
+      expect(secondGroup.dissolvedAt, firstDissolvedAt);
+      expect(secondGroup.dissolvedBy, 'peer-admin');
+      expect(secondGroup.lastMembershipEventAt, firstDissolvedAt);
+      expect(bridge.commandLog, isEmpty);
+      expect(bridge.sentMessages, isEmpty);
+
+      final stored = await groupRepo.getGroup('group-1');
+      expect(stored, isNotNull);
+      expect(stored!.isDissolved, isTrue);
+      expect(stored.dissolvedAt, firstDissolvedAt);
+      expect(stored.dissolvedBy, 'peer-admin');
+      expect(stored.lastMembershipEventAt, firstDissolvedAt);
+
+      final dissolvedMessages = (await msgRepo.getMessagesPage('group-1'))
+          .where((message) => message.id.startsWith('sys-group_dissolved:'))
+          .toList();
+      expect(dissolvedMessages, hasLength(1));
+    },
+  );
 
   test(
     'returns bridgeError when inbox fallback fails but still marks the group dissolved',

@@ -7,6 +7,8 @@ import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 
+import '../../../../shared/fakes/in_memory_group_message_repository.dart';
+
 void main() {
   late Database db;
   late GroupMessageRepositoryImpl repo;
@@ -123,34 +125,36 @@ void main() {
   });
 
   group('pause recovery', () {
-    test('transitionSendingToFailed transitions outgoing sending rows',
-        () async {
-      final ts = DateTime.utc(2026, 1, 1, 0, 0, 0);
-      await repo.saveMessage(
-        makeMessage(
-          id: 'sending-1',
-          status: 'sending',
-          isIncoming: false,
-          timestamp: ts,
-          createdAt: ts,
-        ),
-      );
-      await repo.saveMessage(
-        makeMessage(
-          id: 'sent-1',
-          status: 'sent',
-          isIncoming: false,
-          timestamp: ts,
-          createdAt: ts,
-        ),
-      );
+    test(
+      'transitionSendingToFailed transitions outgoing sending rows',
+      () async {
+        final ts = DateTime.utc(2026, 1, 1, 0, 0, 0);
+        await repo.saveMessage(
+          makeMessage(
+            id: 'sending-1',
+            status: 'sending',
+            isIncoming: false,
+            timestamp: ts,
+            createdAt: ts,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'sent-1',
+            status: 'sent',
+            isIncoming: false,
+            timestamp: ts,
+            createdAt: ts,
+          ),
+        );
 
-      final count = await repo.transitionSendingToFailed();
+        final count = await repo.transitionSendingToFailed();
 
-      expect(count, 1);
-      expect((await repo.getMessage('sending-1'))!.status, 'failed');
-      expect((await repo.getMessage('sent-1'))!.status, 'sent');
-    });
+        expect(count, 1);
+        expect((await repo.getMessage('sending-1'))!.status, 'failed');
+        expect((await repo.getMessage('sent-1'))!.status, 'sent');
+      },
+    );
   });
 
   group('getMessagesPage', () {
@@ -182,6 +186,44 @@ void main() {
       final page = await repo.getMessagesPage('group-1', limit: 3);
       expect(page.length, 3);
     });
+
+    test('orders equal-timestamp messages by id', () async {
+      final sharedTimestamp = DateTime.utc(2026, 1, 2);
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-c',
+          timestamp: sharedTimestamp,
+          createdAt: sharedTimestamp.add(const Duration(seconds: 3)),
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-a',
+          timestamp: sharedTimestamp,
+          createdAt: sharedTimestamp.add(const Duration(seconds: 1)),
+        ),
+      );
+      await repo.saveMessage(
+        makeMessage(
+          id: 'msg-b',
+          timestamp: sharedTimestamp,
+          createdAt: sharedTimestamp.add(const Duration(seconds: 2)),
+        ),
+      );
+
+      final page = await repo.getMessagesPage('group-1');
+      expect(page.map((message) => message.id).toList(), [
+        'msg-a',
+        'msg-b',
+        'msg-c',
+      ]);
+
+      final latestPage = await repo.getMessagesPage('group-1', limit: 2);
+      expect(latestPage.map((message) => message.id).toList(), [
+        'msg-b',
+        'msg-c',
+      ]);
+    });
   });
 
   group('getLatestMessage', () {
@@ -201,6 +243,39 @@ void main() {
       final result = await repo.getLatestMessage('group-1');
       expect(result!.id, 'msg-new');
     });
+
+    test(
+      'uses message id as latest tie-breaker for equal timestamps',
+      () async {
+        final sharedTimestamp = DateTime.utc(2026, 1, 2);
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-c',
+            timestamp: sharedTimestamp,
+            quotedMessageId: 'msg-parent',
+            createdAt: sharedTimestamp.add(const Duration(seconds: 1)),
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'msg-a',
+            timestamp: sharedTimestamp,
+            createdAt: sharedTimestamp.add(const Duration(seconds: 3)),
+          ),
+        );
+
+        final latest = await repo.getLatestMessage('group-1');
+        expect(latest!.id, 'msg-c');
+        expect(latest.quotedMessageId, 'msg-parent');
+
+        final summaries = await repo.getGroupThreadSummaries(['group-1']);
+        expect(summaries['group-1']!.latestMessage!.id, 'msg-c');
+        expect(
+          summaries['group-1']!.latestMessage!.quotedMessageId,
+          'msg-parent',
+        );
+      },
+    );
 
     test(
       'getGroupThreadSummaries returns latest rows and zero defaults',
@@ -259,6 +334,56 @@ void main() {
     });
   });
 
+  group('InMemoryGroupMessageRepository ordering parity', () {
+    test('orders equal-timestamp pages and latest selection by id', () async {
+      final fakeRepo = InMemoryGroupMessageRepository();
+      final sharedTimestamp = DateTime.utc(2026, 1, 2);
+      await fakeRepo.saveMessage(
+        makeMessage(
+          id: 'msg-c',
+          timestamp: sharedTimestamp,
+          quotedMessageId: 'msg-parent',
+          createdAt: sharedTimestamp.add(const Duration(seconds: 3)),
+        ),
+      );
+      await fakeRepo.saveMessage(
+        makeMessage(
+          id: 'msg-a',
+          timestamp: sharedTimestamp,
+          createdAt: sharedTimestamp.add(const Duration(seconds: 1)),
+        ),
+      );
+      await fakeRepo.saveMessage(
+        makeMessage(
+          id: 'msg-b',
+          timestamp: sharedTimestamp,
+          createdAt: sharedTimestamp.add(const Duration(seconds: 2)),
+        ),
+      );
+
+      final page = await fakeRepo.getMessagesPage('group-1');
+      expect(page.map((message) => message.id).toList(), [
+        'msg-a',
+        'msg-b',
+        'msg-c',
+      ]);
+
+      final latestPage = await fakeRepo.getMessagesPage('group-1', limit: 2);
+      expect(latestPage.map((message) => message.id).toList(), [
+        'msg-b',
+        'msg-c',
+      ]);
+
+      final latest = await fakeRepo.getLatestMessage('group-1');
+      expect(latest!.id, 'msg-c');
+      expect(latest.quotedMessageId, 'msg-parent');
+
+      final summary = await fakeRepo.getGroupThreadSummary('group-1');
+      expect(summary.latestMessage!.id, 'msg-c');
+      expect(summary.latestMessage!.quotedMessageId, 'msg-parent');
+    });
+  });
+
   group('updateMessageStatus', () {
     test('updates the status field', () async {
       await repo.saveMessage(makeMessage(status: 'sent'));
@@ -273,18 +398,10 @@ void main() {
   group('Section 1 recovery methods', () {
     test('loads failed outgoing group messages', () async {
       await repo.saveMessage(
-        makeMessage(
-          id: 'failed-outgoing',
-          status: 'failed',
-          isIncoming: false,
-        ),
+        makeMessage(id: 'failed-outgoing', status: 'failed', isIncoming: false),
       );
       await repo.saveMessage(
-        makeMessage(
-          id: 'failed-incoming',
-          status: 'failed',
-          isIncoming: true,
-        ),
+        makeMessage(id: 'failed-incoming', status: 'failed', isIncoming: true),
       );
 
       final failed = await repo.getFailedOutgoingMessages();

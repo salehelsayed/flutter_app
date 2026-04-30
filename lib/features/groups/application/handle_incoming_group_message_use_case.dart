@@ -1,5 +1,9 @@
 import 'package:uuid/uuid.dart';
 
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_mime_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -8,6 +12,8 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+
+const _maxIncomingMessageFutureClockSkew = Duration(minutes: 5);
 
 /// Handles an incoming group message.
 ///
@@ -28,6 +34,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  AppendGroupEventLogEntry? appendGroupEventLogEntry,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -39,11 +46,27 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   );
 
   final sanitizedText = sanitizeMessageText(text);
+  final mediaValidation = _validateIncomingMediaDescriptors(media);
+  if (!mediaValidation.isValid) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_HANDLE_INCOMING_MSG_REJECTED_INVALID_MEDIA',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        'messageId': messageId,
+        'reason': mediaValidation.reason,
+      },
+    );
+    return null;
+  }
 
-  // Prefer messageId-based dedupe before any group/member lookups. Replay
-  // batches can contain large numbers of already-processed messages, and we do
-  // not need to re-check membership or group state just to ignore a duplicate.
-  if (messageId != null && messageId.isNotEmpty) {
+  // Prefer messageId-based dedupe before any group/member lookups when event-log
+  // tamper gating is not installed. If DB-002 logging is installed, the log
+  // checks replay/tamper before dedupe can silently ignore a changed duplicate.
+  if (appendGroupEventLogEntry == null &&
+      messageId != null &&
+      messageId.isNotEmpty) {
     final existsById = await msgRepo.existsByMessageId(messageId);
     if (existsById) {
       await _enrichExistingDuplicateMessage(
@@ -80,13 +103,12 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   // Parse timestamp before applying membership-boundary checks.
   final now = DateTime.now().toUtc();
 
-  DateTime parsedTimestamp;
-  try {
-    parsedTimestamp = DateTime.parse(timestamp);
-  } catch (_) {
-    parsedTimestamp = now;
-  }
-  final normalizedTimestamp = parsedTimestamp.toUtc();
+  final normalizedTimestamp = _normalizeIncomingMessageTimestamp(
+    timestamp: timestamp,
+    receivedAt: now,
+    groupId: groupId,
+    senderId: senderId,
+  );
 
   final dissolvedAt = group.dissolvedAt?.toUtc();
   if (group.isDissolved &&
@@ -136,6 +158,54 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     // crossed the accepted removal boundary before the persisted cutoff.
   }
   final sanitizedSenderUsername = sanitizeUsername(senderUsername).trim();
+
+  if (appendGroupEventLogEntry != null) {
+    final sourceEventId = messageId != null && messageId.isNotEmpty
+        ? messageId
+        : 'message:$groupId:$senderId:${normalizedTimestamp.toIso8601String()}:$sanitizedText';
+    await appendGroupEventLogEntry(
+      groupId: groupId,
+      eventType: 'message',
+      sourcePeerId: senderId,
+      sourceEventId: sourceEventId,
+      sourceTimestamp: normalizedTimestamp.toIso8601String(),
+      payload: {
+        'messageId': messageId,
+        'groupId': groupId,
+        'senderId': senderId,
+        'senderUsername': sanitizedSenderUsername,
+        'text': sanitizedText,
+        'timestamp': normalizedTimestamp.toIso8601String(),
+        'keyEpoch': keyEpoch,
+        'quotedMessageId': quotedMessageId,
+        'media': media ?? const <Map<String, dynamic>>[],
+      },
+    );
+  }
+
+  if (messageId != null && messageId.isNotEmpty) {
+    final existsById = await msgRepo.existsByMessageId(messageId);
+    if (existsById) {
+      await _enrichExistingDuplicateMessage(
+        msgRepo: msgRepo,
+        messageId: messageId,
+        quotedMessageId: quotedMessageId,
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_DUPLICATE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'dedupeBy': 'messageId',
+        },
+      );
+      return null;
+    }
+  }
+
   if (member != null &&
       sanitizedSenderUsername.isNotEmpty &&
       member.username?.trim() != sanitizedSenderUsername) {
@@ -157,7 +227,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     groupId,
     senderId,
     sanitizedText,
-    parsedTimestamp,
+    normalizedTimestamp,
   );
   if (isDuplicate) {
     emitFlowEvent(
@@ -185,7 +255,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     senderPeerId: senderId,
     senderUsername: sanitizedSenderUsername,
     text: sanitizedText,
-    timestamp: parsedTimestamp,
+    timestamp: normalizedTimestamp,
     quotedMessageId: quotedMessageId,
     keyGeneration: keyEpoch,
     status: isSelfDelivery ? 'sent' : 'delivered',
@@ -214,6 +284,34 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   );
 
   return message;
+}
+
+DateTime _normalizeIncomingMessageTimestamp({
+  required String timestamp,
+  required DateTime receivedAt,
+  required String groupId,
+  required String senderId,
+}) {
+  final parsedTimestamp = DateTime.tryParse(timestamp)?.toUtc();
+  if (parsedTimestamp == null) {
+    return receivedAt;
+  }
+
+  final latestAllowed = receivedAt.add(_maxIncomingMessageFutureClockSkew);
+  if (!parsedTimestamp.isAfter(latestAllowed)) {
+    return parsedTimestamp;
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_HANDLE_INCOMING_MSG_FUTURE_TIMESTAMP_CLAMPED',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+      'timestamp': parsedTimestamp.toIso8601String(),
+    },
+  );
+  return receivedAt;
 }
 
 Future<void> _enrichExistingDuplicateMessage({
@@ -254,10 +352,129 @@ Future<void> _saveIncomingMediaAttachments({
       .toSet();
 
   for (final rawAttachment in media) {
-    final attachment = MediaAttachment.fromJson(
-      rawAttachment,
-    ).copyWith(messageId: messageId);
+    final attachment =
+        GroupMediaMimePolicy.sanitizeWireAttachment(
+          rawAttachment,
+          messageId: messageId,
+        ).copyWith(
+          contentHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+            _optionalString(rawAttachment, 'contentHash'),
+          ),
+          thumbnailHash: GroupMediaIntegrityPolicy.normalizeSha256Hex(
+            _optionalString(rawAttachment, 'thumbnailHash'),
+          ),
+        );
     if (!existingIds.add(attachment.id)) continue;
     await mediaAttachmentRepo.saveAttachment(attachment);
   }
+}
+
+GroupMediaValidationResult _validateIncomingMediaDescriptors(
+  List<Map<String, dynamic>>? media,
+) {
+  if (media == null || media.isEmpty) {
+    return const GroupMediaValidationResult.valid();
+  }
+
+  for (final rawAttachment in media) {
+    final rawMime = rawAttachment['mime'];
+    final rawMediaType = rawAttachment['mediaType'];
+    final mime = rawMime is String ? rawMime : null;
+    final mediaType = rawMediaType is String ? rawMediaType : null;
+    final validation = GroupMediaMimePolicy.validateDescriptor(
+      mime: mime,
+      mediaType: mediaType,
+    );
+    if (!validation.isValid) return validation;
+
+    final contentHashValidation = _validateRequiredStringDigestField(
+      rawAttachment,
+      'contentHash',
+      malformedReason: 'malformed_content_hash',
+    );
+    if (!contentHashValidation.isValid) return contentHashValidation;
+
+    final encryptionKeyValidation = _validateRequiredStringField(
+      rawAttachment,
+      'encryptionKeyBase64',
+      missingReason: 'missing_media_encryption_metadata',
+      malformedReason: 'malformed_media_encryption_metadata',
+    );
+    if (!encryptionKeyValidation.isValid) return encryptionKeyValidation;
+
+    final encryptionNonceValidation = _validateRequiredStringField(
+      rawAttachment,
+      'encryptionNonce',
+      missingReason: 'missing_media_encryption_metadata',
+      malformedReason: 'malformed_media_encryption_metadata',
+    );
+    if (!encryptionNonceValidation.isValid) return encryptionNonceValidation;
+
+    final rawEncryptionScheme = rawAttachment['encryptionScheme'];
+    if (rawEncryptionScheme != null &&
+        rawEncryptionScheme != kMediaAttachmentEncryptionSchemeBlobAesGcmV1) {
+      return const GroupMediaValidationResult.invalid(
+        'unsupported_media_encryption_scheme',
+      );
+    }
+
+    final thumbnailHashValidation = _validateOptionalStringDigestField(
+      rawAttachment,
+      'thumbnailHash',
+      malformedReason: 'malformed_thumbnail_hash',
+    );
+    if (!thumbnailHashValidation.isValid) return thumbnailHashValidation;
+  }
+
+  final sizeValidation = GroupMediaSizePolicy.validateRawDescriptors(media);
+  if (!sizeValidation.isValid) return sizeValidation;
+
+  return const GroupMediaValidationResult.valid();
+}
+
+String? _optionalString(Map<String, dynamic> value, String key) {
+  final raw = value[key];
+  return raw is String ? raw : null;
+}
+
+GroupMediaValidationResult _validateRequiredStringDigestField(
+  Map<String, dynamic> value,
+  String key, {
+  required String malformedReason,
+}) {
+  final raw = value[key];
+  if (raw != null && raw is! String) {
+    return GroupMediaValidationResult.invalid(malformedReason);
+  }
+  return GroupMediaIntegrityPolicy.validateRequiredContentHash(raw as String?);
+}
+
+GroupMediaValidationResult _validateRequiredStringField(
+  Map<String, dynamic> value,
+  String key, {
+  required String missingReason,
+  required String malformedReason,
+}) {
+  final raw = value[key];
+  if (raw == null) {
+    return GroupMediaValidationResult.invalid(missingReason);
+  }
+  if (raw is! String || raw.trim().isEmpty) {
+    return GroupMediaValidationResult.invalid(malformedReason);
+  }
+  return const GroupMediaValidationResult.valid();
+}
+
+GroupMediaValidationResult _validateOptionalStringDigestField(
+  Map<String, dynamic> value,
+  String key, {
+  required String malformedReason,
+}) {
+  final raw = value[key];
+  if (raw != null && raw is! String) {
+    return GroupMediaValidationResult.invalid(malformedReason);
+  }
+  return GroupMediaIntegrityPolicy.validateOptionalThumbnailHash(
+    raw as String?,
+  );
 }

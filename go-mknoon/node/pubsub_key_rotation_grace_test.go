@@ -122,6 +122,91 @@ func TestGroupTopicValidator_AcceptsCurrentEpochDuringGrace(t *testing.T) {
 	}
 }
 
+func TestGroupTopicValidator_RejectsRemovedSenderPreviousEpochDuringGrace(t *testing.T) {
+	_, adminPub := generateEd25519KeyPair(t)
+	removedPriv, removedPub := generateEd25519KeyPair(t)
+	currentKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate current key: %v", err)
+	}
+	prevKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate previous key: %v", err)
+	}
+
+	groupId := "group-removed-prev-epoch-grace"
+	config := &GroupConfig{
+		Name:      "Removed Previous Epoch Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-admin", Role: GroupRoleAdmin, PublicKey: adminPub},
+		},
+		CreatedBy: "peer-admin",
+	}
+
+	envelope := buildTestEnvelope(
+		t,
+		groupId,
+		"peer-removed",
+		removedPriv,
+		removedPub,
+		prevKey,
+		1,
+		"removed sender old epoch",
+	)
+	keyInfo := buildGroupKeyInfoWithGrace(
+		currentKey,
+		2,
+		prevKey,
+		1,
+		time.Now().Add(KeyRotationGracePeriod),
+	)
+
+	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
+	if result != "reject:non_member" {
+		t.Fatalf("expected reject:non_member for removed sender during grace, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_RejectsUnknownFutureEpochBeforeDelivery(t *testing.T) {
+	priv, pub := generateEd25519KeyPair(t)
+	currentKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate current key: %v", err)
+	}
+	futureKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate future key: %v", err)
+	}
+
+	groupId := "group-future-epoch-reject"
+	config := &GroupConfig{
+		Name:      "Future Epoch Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-1", Role: GroupRoleAdmin, PublicKey: pub},
+		},
+		CreatedBy: "peer-1",
+	}
+
+	envelope := buildTestEnvelope(
+		t,
+		groupId,
+		"peer-1",
+		priv,
+		pub,
+		futureKey,
+		2,
+		"future epoch message",
+	)
+	keyInfo := &GroupKeyInfo{Key: currentKey, KeyEpoch: 1}
+
+	result := validateGroupEnvelope(envelope, groupId, config, keyInfo)
+	if result != "reject:bad_signature" {
+		t.Fatalf("expected reject:bad_signature for unknown future epoch, got %s", result)
+	}
+}
+
 func TestUpdateGroupKey_PreservesPreviousKeyAndGraceDeadline(t *testing.T) {
 	hexKey := generateTestKey(t)
 

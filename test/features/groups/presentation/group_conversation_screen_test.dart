@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
@@ -20,9 +22,15 @@ import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart'
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 import 'package:flutter_app/shared/widgets/media/video_thumbnail_overlay.dart';
 
 import '../../../shared/helpers/readability_test_helpers.dart';
+
+const _validContentHash =
+    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
+const _validEncryptionKey = 'test-encryption-key';
+const _validEncryptionNonce = 'test-encryption-nonce';
 
 void main() {
   final testGroup = GroupModel(
@@ -63,6 +71,9 @@ void main() {
     ValueChanged<String>? onQuoteReply,
     ValueChanged<String>? onRetryFailedMedia,
     ValueChanged<String>? onDeleteFailedMedia,
+    void Function(String messageId, String attachmentId)?
+    onRetryUnavailableMedia,
+    void Function(String messageId, int index)? onMediaTap,
     Map<String, List<MediaAttachment>> mediaMap = const {},
     Map<String, List<MessageReaction>> reactions = const {},
     void Function(String messageId, String emoji)? onReactionSelected,
@@ -95,6 +106,8 @@ void main() {
           onQuoteReply: onQuoteReply,
           onRetryFailedMedia: onRetryFailedMedia,
           onDeleteFailedMedia: onDeleteFailedMedia,
+          onRetryUnavailableMedia: onRetryUnavailableMedia,
+          onMediaTap: onMediaTap,
           mediaMap: mediaMap,
           reactions: reactions,
           onReactionSelected: onReactionSelected,
@@ -119,6 +132,36 @@ void main() {
 
     expect(find.text('Hello everyone!'), findsOneWidget);
     expect(find.text('Alice'), findsOneWidget);
+  });
+
+  testWidgets('renders undecryptable epoch placeholders as safe text', (
+    tester,
+  ) async {
+    final placeholder = GroupMessage(
+      id: 'msg-undecryptable',
+      groupId: 'group-1',
+      senderPeerId: 'peer-2',
+      senderUsername: 'Alice',
+      text: groupUndecryptablePlaceholderText,
+      timestamp: DateTime.now().toUtc(),
+      keyGeneration: 7,
+      status: 'undecryptable',
+      isIncoming: true,
+      createdAt: DateTime.now().toUtc(),
+    );
+
+    await tester.pumpWidget(buildTestWidget(messages: [placeholder]));
+
+    expect(find.text(groupUndecryptablePlaceholderText), findsOneWidget);
+    expect(find.textContaining('Future epoch replay'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('failed-media-retry-msg-undecryptable')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('failed-media-delete-msg-undecryptable')),
+      findsNothing,
+    );
   });
 
   testWidgets('renders sender identity with UserAvatar in conversation rows', (
@@ -306,6 +349,10 @@ void main() {
       mediaType: 'image',
       localPath: localPath,
       downloadStatus: downloadStatus,
+      contentHash: _validContentHash,
+      encryptionKeyBase64: _validEncryptionKey,
+      encryptionNonce: _validEncryptionNonce,
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       createdAt: '2026-02-09T15:30:00.000Z',
     );
   }
@@ -325,6 +372,10 @@ void main() {
       height: 720,
       durationMs: 12_000,
       downloadStatus: downloadStatus,
+      contentHash: _validContentHash,
+      encryptionKeyBase64: _validEncryptionKey,
+      encryptionNonce: _validEncryptionNonce,
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       createdAt: '2026-02-09T15:31:00.000Z',
     );
   }
@@ -342,6 +393,10 @@ void main() {
       mediaType: 'audio',
       durationMs: 4200,
       downloadStatus: downloadStatus,
+      contentHash: _validContentHash,
+      encryptionKeyBase64: _validEncryptionKey,
+      encryptionNonce: _validEncryptionNonce,
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       createdAt: '2026-02-09T15:32:00.000Z',
       waveform: const <double>[0.2, 0.6, 0.3],
     );
@@ -964,6 +1019,167 @@ void main() {
       expect(
         find.byKey(const ValueKey('failed-media-delete-failed-reader-media')),
         findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'MD-012 quarantined visual media shows unavailable placeholder and retry control',
+    (tester) async {
+      var opened = false;
+      String? retriedMessageId;
+      String? retriedAttachmentId;
+      final message = GroupMessage(
+        id: 'msg-quarantined-media',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: '',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+        isIncoming: true,
+        media: const [
+          MediaAttachment(
+            id: 'att-quarantined-media',
+            messageId: 'msg-quarantined-media',
+            mime: 'image/jpeg',
+            size: 42,
+            mediaType: 'image',
+            localPath: '/tmp/quarantined.jpg',
+            downloadStatus: kMediaDownloadStatusIntegrityFailed,
+            contentHash:
+                '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a',
+            encryptionKeyBase64: 'key-quarantined',
+            encryptionNonce: 'nonce-quarantined',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-04-29T12:00:00.000Z',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [message],
+          initialLoadDone: true,
+          onMediaTap: (_, __) => opened = true,
+          onRetryUnavailableMedia: (messageId, attachmentId) {
+            retriedMessageId = messageId;
+            retriedAttachmentId = attachmentId;
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Media unavailable'), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey(
+            'unavailable-media-retry-msg-quarantined-media-att-quarantined-media',
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(find.bySemanticsLabel('Retry unavailable media'), findsOneWidget);
+
+      await tester.tap(find.byType(MediaGridCell));
+      await tester.pump();
+      expect(opened, isFalse);
+
+      await tester.tap(
+        find.byKey(
+          const ValueKey(
+            'unavailable-media-retry-msg-quarantined-media-att-quarantined-media',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(retriedMessageId, 'msg-quarantined-media');
+      expect(retriedAttachmentId, 'att-quarantined-media');
+    },
+  );
+
+  testWidgets(
+    'MD-012 read-only group rows can retry unavailable incoming media without resend controls',
+    (tester) async {
+      final retried = <String>[];
+      final failed = makeImageAttachment(
+        id: 'att-download-failed',
+        messageId: 'msg-readonly-unavailable',
+        downloadStatus: 'failed',
+      );
+      final quarantined = makeImageAttachment(
+        id: 'att-download-quarantined',
+        messageId: 'msg-readonly-unavailable',
+        downloadStatus: kMediaDownloadStatusIntegrityFailed,
+      );
+      final message = GroupMessage(
+        id: 'msg-readonly-unavailable',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: '',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+        isIncoming: true,
+        media: [failed, quarantined],
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [message],
+          canWrite: false,
+          initialLoadDone: true,
+          onRetryFailedMedia: (_) {},
+          onDeleteFailedMedia: (_) {},
+          onRetryUnavailableMedia: (messageId, attachmentId) {
+            retried.add('$messageId/$attachmentId');
+          },
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+        find.byKey(
+          const ValueKey(
+            'unavailable-media-retry-msg-readonly-unavailable-att-download-failed',
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey(
+            'unavailable-media-retry-msg-readonly-unavailable-att-download-quarantined',
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-retry-msg-readonly-unavailable'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-delete-msg-readonly-unavailable'),
+        ),
+        findsNothing,
+      );
+
+      await tester.tap(
+        find.byKey(
+          const ValueKey(
+            'unavailable-media-retry-msg-readonly-unavailable-att-download-quarantined',
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        retried,
+        equals(['msg-readonly-unavailable/att-download-quarantined']),
       );
     },
   );

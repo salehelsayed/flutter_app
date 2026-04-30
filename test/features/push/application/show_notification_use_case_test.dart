@@ -78,6 +78,31 @@ void main() {
       },
     );
 
+    test(
+      'suppresses resumed local notification when a recent remote push already announced the same group message',
+      () async {
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'group:group-123',
+          routePayload: 'group:group-123|message:msg-123',
+          senderUsername: 'Team Chat',
+          messageText: 'Alice: Hello group!',
+          messageId: 'msg-123',
+          consumeRecentRemoteNotificationAnnouncement:
+              ({required payload, String? messageId}) async {
+                expect(payload, 'group:group-123|message:msg-123');
+                expect(messageId, 'msg-123');
+                return true;
+              },
+          backgroundDuplicateGuardDelay: const Duration(minutes: 5),
+        );
+
+        expect(notificationService.shown, isEmpty);
+      },
+    );
+
     test('suppresses notification during recovery replay', () async {
       await maybeShowNotification(
         notificationService: notificationService,
@@ -121,35 +146,32 @@ void main() {
       },
     );
 
-    test(
-      'uses route payload for remote suppression when present',
-      () async {
-        var capturedPayload = '';
-        String? capturedMessageId;
+    test('uses route payload for remote suppression when present', () async {
+      var capturedPayload = '';
+      String? capturedMessageId;
 
-        await maybeShowNotification(
-          notificationService: notificationService,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
-          contactPeerId: 'group:group-123',
-          routePayload: 'group:group-123|message:msg-123',
-          senderUsername: 'Team Chat',
-          messageText: 'Alice: Hello group!',
-          messageId: 'msg-123',
-          consumeRecentRemoteNotificationAnnouncement:
-              ({required payload, String? messageId}) async {
-                capturedPayload = payload;
-                capturedMessageId = messageId;
-                return true;
-              },
-          backgroundDuplicateGuardDelay: Duration.zero,
-        );
+      await maybeShowNotification(
+        notificationService: notificationService,
+        conversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        contactPeerId: 'group:group-123',
+        routePayload: 'group:group-123|message:msg-123',
+        senderUsername: 'Team Chat',
+        messageText: 'Alice: Hello group!',
+        messageId: 'msg-123',
+        consumeRecentRemoteNotificationAnnouncement:
+            ({required payload, String? messageId}) async {
+              capturedPayload = payload;
+              capturedMessageId = messageId;
+              return true;
+            },
+        backgroundDuplicateGuardDelay: Duration.zero,
+      );
 
-        expect(notificationService.shown, isEmpty);
-        expect(capturedPayload, 'group:group-123|message:msg-123');
-        expect(capturedMessageId, 'msg-123');
-      },
-    );
+      expect(notificationService.shown, isEmpty);
+      expect(capturedPayload, 'group:group-123|message:msg-123');
+      expect(capturedMessageId, 'msg-123');
+    });
 
     test(
       'preserves mixed-script sender and body when forwarding notification text',

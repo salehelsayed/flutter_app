@@ -1,4 +1,6 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 
 import 'pending_group_invite_repository.dart';
@@ -9,15 +11,33 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   final Future<List<Map<String, Object?>>> Function() dbLoadPendingGroupInvites;
   final Future<Map<String, Object?>?> Function(String groupId)
   dbLoadPendingGroupInvite;
+  final Future<void> Function(Map<String, Object?> row)
+  dbUpsertGroupInviteRevocation;
+  final Future<Map<String, Object?>?> Function(String inviteId)
+  dbLoadGroupInviteRevocation;
+  final Future<void> Function(Map<String, Object?> row)
+  dbUpsertGroupInviteConsumption;
+  final Future<Map<String, Object?>?> Function(String inviteId)
+  dbLoadGroupInviteConsumption;
   final Future<void> Function(String groupId) dbDeletePendingGroupInvite;
   final Future<int> Function(String cutoff) dbDeleteExpiredPendingGroupInvites;
+  final Future<int> Function(String cutoff)
+  dbDeleteExpiredGroupInviteRevocations;
+  final Future<int> Function(String cutoff)
+  dbDeleteExpiredGroupInviteConsumptions;
 
   PendingGroupInviteRepositoryImpl({
     required this.dbUpsertPendingGroupInvite,
     required this.dbLoadPendingGroupInvites,
     required this.dbLoadPendingGroupInvite,
+    required this.dbUpsertGroupInviteRevocation,
+    required this.dbLoadGroupInviteRevocation,
+    required this.dbUpsertGroupInviteConsumption,
+    required this.dbLoadGroupInviteConsumption,
     required this.dbDeletePendingGroupInvite,
     required this.dbDeleteExpiredPendingGroupInvites,
+    required this.dbDeleteExpiredGroupInviteRevocations,
+    required this.dbDeleteExpiredGroupInviteConsumptions,
   });
 
   @override
@@ -46,6 +66,56 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   }
 
   @override
+  Future<void> saveRevokedInvite(GroupInviteRevocation revocation) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_REPO_SAVE_START',
+      details: {
+        'inviteId': revocation.inviteId.length > 8
+            ? revocation.inviteId.substring(0, 8)
+            : revocation.inviteId,
+      },
+    );
+
+    await dbUpsertGroupInviteRevocation(revocation.toMap());
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_REPO_SAVE_SUCCESS',
+      details: {
+        'inviteId': revocation.inviteId.length > 8
+            ? revocation.inviteId.substring(0, 8)
+            : revocation.inviteId,
+      },
+    );
+  }
+
+  @override
+  Future<void> saveConsumedInvite(GroupInviteConsumption consumption) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_CONSUMPTION_REPO_SAVE_START',
+      details: {
+        'inviteId': consumption.inviteId.length > 8
+            ? consumption.inviteId.substring(0, 8)
+            : consumption.inviteId,
+      },
+    );
+
+    await dbUpsertGroupInviteConsumption(consumption.toMap());
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_CONSUMPTION_REPO_SAVE_SUCCESS',
+      details: {
+        'inviteId': consumption.inviteId.length > 8
+            ? consumption.inviteId.substring(0, 8)
+            : consumption.inviteId,
+      },
+    );
+  }
+
+  @override
   Future<List<PendingGroupInvite>> getPendingInvites() async {
     final rows = await dbLoadPendingGroupInvites();
     return rows.map((row) => PendingGroupInvite.fromMap(row)).toList();
@@ -61,6 +131,24 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   }
 
   @override
+  Future<GroupInviteRevocation?> getRevokedInvite(String inviteId) async {
+    final row = await dbLoadGroupInviteRevocation(inviteId);
+    if (row == null) {
+      return null;
+    }
+    return GroupInviteRevocation.fromMap(row);
+  }
+
+  @override
+  Future<GroupInviteConsumption?> getConsumedInvite(String inviteId) async {
+    final row = await dbLoadGroupInviteConsumption(inviteId);
+    if (row == null) {
+      return null;
+    }
+    return GroupInviteConsumption.fromMap(row);
+  }
+
+  @override
   Future<void> deletePendingInvite(String groupId) async {
     await dbDeletePendingGroupInvite(groupId);
   }
@@ -69,5 +157,17 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   Future<int> deleteExpiredPendingInvites(DateTime now) async {
     final cutoff = now.toUtc().toIso8601String();
     return dbDeleteExpiredPendingGroupInvites(cutoff);
+  }
+
+  @override
+  Future<int> deleteExpiredRevokedInvites(DateTime now) async {
+    final cutoff = now.toUtc().toIso8601String();
+    return dbDeleteExpiredGroupInviteRevocations(cutoff);
+  }
+
+  @override
+  Future<int> deleteExpiredConsumedInvites(DateTime now) async {
+    final cutoff = now.toUtc().toIso8601String();
+    return dbDeleteExpiredGroupInviteConsumptions(cutoff);
   }
 }

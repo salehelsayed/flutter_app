@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -19,6 +20,7 @@ class GroupKeyUpdateListener {
   final GroupRepository _groupRepo;
   final Bridge _bridge;
   final Future<String?> Function() _getOwnMlKemSecretKey;
+  final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
 
   StreamSubscription<ChatMessage>? _subscription;
 
@@ -27,10 +29,12 @@ class GroupKeyUpdateListener {
     required GroupRepository groupRepo,
     required Bridge bridge,
     required Future<String?> Function() getOwnMlKemSecretKey,
+    AppendGroupEventLogEntry? appendGroupEventLogEntry,
   }) : _stream = groupKeyUpdateStream,
        _groupRepo = groupRepo,
        _bridge = bridge,
-       _getOwnMlKemSecretKey = getOwnMlKemSecretKey;
+       _getOwnMlKemSecretKey = getOwnMlKemSecretKey,
+       _appendGroupEventLogEntry = appendGroupEventLogEntry;
 
   void start() {
     if (_subscription != null) return;
@@ -96,6 +100,31 @@ class GroupKeyUpdateListener {
       final keyGeneration = keyData['keyGeneration'] as int;
       final encryptedKey = keyData['encryptedKey'] as String;
 
+      final group = await _groupRepo.getGroup(groupId);
+      if (group == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_UPDATE_LISTENER_GROUP_NOT_FOUND',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGeneration,
+          },
+        );
+        return;
+      }
+
+      if (group.isDissolved) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_UPDATE_LISTENER_GROUP_DISSOLVED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGeneration,
+          },
+        );
+        return;
+      }
+
       try {
         await callGroupUpdateKey(
           _bridge,
@@ -114,6 +143,25 @@ class GroupKeyUpdateListener {
           },
         );
         return;
+      }
+
+      final append = _appendGroupEventLogEntry;
+      if (append != null) {
+        await append(
+          groupId: groupId,
+          eventType: 'group_key_update',
+          sourcePeerId: message.from,
+          sourceEventId:
+              message.confirmNonce ??
+              'group_key_update:$groupId:${message.from}:${message.timestamp}:$keyGeneration',
+          sourceTimestamp: message.timestamp,
+          payload: {
+            'groupId': groupId,
+            'sourcePeerId': message.from,
+            'keyGeneration': keyGeneration,
+            'encryptedKey': encryptedKey,
+          },
+        );
       }
 
       final keyInfo = GroupKeyInfo(

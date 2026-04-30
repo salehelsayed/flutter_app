@@ -37,6 +37,36 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
     },
   );
 
+  final group = await groupRepo.getGroup(groupId);
+  if (group == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_GROUP_NOT_FOUND',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    return null;
+  }
+
+  final selfMember = await groupRepo.getMember(groupId, selfPeerId);
+  final canRotate = selfMember != null
+      ? selfMember.permissions.allows(
+          GroupMemberPermission.rotateKeys,
+          selfMember.role,
+        )
+      : false;
+  if (!canRotate) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    return null;
+  }
+
   // 1. Generate the next key without updating Go state yet.
   final generateResult = await callGroupGenerateNextKey(bridge, groupId);
   if (generateResult['ok'] != true) {

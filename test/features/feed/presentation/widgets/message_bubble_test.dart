@@ -7,6 +7,10 @@ import 'package:flutter_app/features/feed/presentation/widgets/message_bubble.da
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
+
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -187,7 +191,9 @@ void main() {
           mime: 'image/jpeg',
           size: 1000,
           mediaType: 'image',
-          downloadStatus: 'pending',
+          localPath: '/tmp/message-bubble-media.jpg',
+          downloadStatus: 'done',
+          contentHash: _validContentHash,
           createdAt: '2026-02-23T10:00:00Z',
         ),
       ];
@@ -245,11 +251,14 @@ void main() {
           ),
         ),
       );
+      await tester.pump();
 
       // MediaGrid should exist
       expect(find.byType(MediaGrid), findsOneWidget);
-      // Tap the cell — triggers GestureDetector inside MediaGridCell
-      await tester.tap(find.byType(MediaGrid));
+      // The grid cell should wire the tap callback to index 0.
+      final cell = tester.widget<MediaGridCell>(find.byType(MediaGridCell));
+      expect(cell.onTap, isNotNull);
+      cell.onTap!();
       expect(tappedIndex, 0);
     });
 

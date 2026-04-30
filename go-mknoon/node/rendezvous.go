@@ -17,6 +17,10 @@ import (
 // RendezvousRegister registers this node on a rendezvous namespace.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) error {
+	if n.rendezvousRegisterHook != nil {
+		return n.rendezvousRegisterHook(namespace, serverAddresses)
+	}
+
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -108,6 +112,10 @@ func (n *Node) RendezvousRegister(namespace string, serverAddresses []string) er
 // DiscoverTimeout is used.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) RendezvousDiscoverWithTimeout(namespace string, serverAddresses []string, timeoutMs int) ([]peer.AddrInfo, error) {
+	if n.rendezvousDiscoverHook != nil {
+		return n.rendezvousDiscoverHook(namespace, serverAddresses)
+	}
+
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()

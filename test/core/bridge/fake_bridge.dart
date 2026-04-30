@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -19,6 +20,7 @@ class FakeBridge implements Bridge {
   int initializeCallCount = 0;
   int checkHealthCallCount = 0;
   int reinitializeCallCount = 0;
+  int _blobKeygenCount = 0;
 
   /// Ordered log of all command names sent to the bridge.
   final List<String> commandLog = [];
@@ -95,6 +97,44 @@ class FakeBridge implements Bridge {
     if (cmd == 'group.decrypt' && !responses.containsKey(cmd)) {
       final payload = parsed['payload'] as Map<String, dynamic>;
       return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
+    }
+
+    if (cmd == 'blob:keygen' && !responses.containsKey(cmd)) {
+      _blobKeygenCount++;
+      return jsonEncode({
+        'ok': true,
+        'keyBase64': 'fake-blob-key-$_blobKeygenCount',
+      });
+    }
+
+    if (cmd == 'blob:encrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final filePath = payload['filePath'] as String;
+      final encryptedPath = '$filePath.enc';
+      final source = File(filePath);
+      if (await source.exists()) {
+        await source.copy(encryptedPath);
+      } else {
+        await File(encryptedPath).writeAsBytes(<int>[1, 2, 3, 4]);
+      }
+      return jsonEncode({
+        'ok': true,
+        'encryptedPath': encryptedPath,
+        'nonce': 'fake-blob-nonce-$_blobKeygenCount',
+      });
+    }
+
+    if (cmd == 'blob:decrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final filePath = payload['filePath'] as String;
+      final decryptedPath = '$filePath.dec';
+      final encrypted = File(filePath);
+      if (await encrypted.exists()) {
+        await encrypted.copy(decryptedPath);
+      } else {
+        await File(decryptedPath).writeAsBytes(<int>[1, 2, 3, 4]);
+      }
+      return jsonEncode({'ok': true, 'decryptedPath': decryptedPath});
     }
 
     // Return pre-canned response or default success

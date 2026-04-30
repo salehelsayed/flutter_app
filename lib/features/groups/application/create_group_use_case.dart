@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -21,6 +24,8 @@ Future<GroupModel> createGroup({
   required String creatorPublicKey,
   required String creatorMlKemPublicKey,
   String? creatorUsername,
+  String? creatorPrivateKey,
+  AppendGroupEventLogEntry? appendGroupEventLogEntry,
   String? description,
 }) async {
   emitFlowEvent(
@@ -57,8 +62,7 @@ Future<GroupModel> createGroup({
 
   // 2. Parse result
   final groupId = result['groupId'] as String? ?? const Uuid().v4();
-  final topicName =
-      result['topicName'] as String? ?? '/mknoon/group/$groupId';
+  final topicName = result['topicName'] as String? ?? '/mknoon/group/$groupId';
   final now = DateTime.now().toUtc();
 
   // 3. Create GroupModel
@@ -91,10 +95,11 @@ Future<GroupModel> createGroup({
   // 6. Save group key returned by GroupCreateTopic (Go already generates it)
   final groupKey = result['groupKey'] as String?;
   final keyEpoch = result['keyEpoch'] as int? ?? 0;
+  final resolvedKeyEpoch = groupKey != null ? keyEpoch : 0;
   if (groupKey != null) {
     final keyInfo = GroupKeyInfo(
       groupId: groupId,
-      keyGeneration: keyEpoch,
+      keyGeneration: resolvedKeyEpoch,
       encryptedKey: groupKey,
       createdAt: now,
     );
@@ -123,6 +128,31 @@ Future<GroupModel> createGroup({
     }
   }
 
+  if (creatorPrivateKey != null &&
+      creatorPrivateKey.isNotEmpty &&
+      appendGroupEventLogEntry != null) {
+    try {
+      await _appendSignedCreateEvent(
+        bridge: bridge,
+        appendGroupEventLogEntry: appendGroupEventLogEntry,
+        group: group,
+        creatorMember: selfMember,
+        initialKeyEpoch: resolvedKeyEpoch,
+        creatorPrivateKey: creatorPrivateKey,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CREATE_USE_CASE_INITIAL_EVENT_ERROR',
+        details: {'groupId': groupId, 'error': e.toString()},
+      );
+      await _rollbackCreatedGroup(groupRepo, groupId);
+      throw StateError(
+        'Group creation did not finish because the initial membership event could not be signed.',
+      );
+    }
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_CREATE_USE_CASE_SUCCESS',
@@ -132,6 +162,63 @@ Future<GroupModel> createGroup({
   );
 
   return group;
+}
+
+Future<void> _appendSignedCreateEvent({
+  required Bridge bridge,
+  required AppendGroupEventLogEntry appendGroupEventLogEntry,
+  required GroupModel group,
+  required GroupMember creatorMember,
+  required int initialKeyEpoch,
+  required String creatorPrivateKey,
+}) async {
+  final unsignedPayload = <String, Object?>{
+    'schemaVersion': 1,
+    'eventType': 'group_created',
+    'groupId': group.id,
+    'topicName': group.topicName,
+    'groupName': group.name,
+    'groupType': group.type.toValue(),
+    'createdAt': group.createdAt.toUtc().toIso8601String(),
+    'createdBy': group.createdBy,
+    'creator': <String, Object?>{
+      'peerId': creatorMember.peerId,
+      'username': creatorMember.username,
+      'role': creatorMember.role.toValue(),
+      'publicKey': creatorMember.publicKey,
+      'mlKemPublicKey': creatorMember.mlKemPublicKey,
+      'joinedAt': creatorMember.joinedAt.toUtc().toIso8601String(),
+    },
+    'initialKeyEpoch': initialKeyEpoch,
+  };
+  final canonicalPayload = canonicalizeGroupEventLogPayload(unsignedPayload);
+  final signResponse = await callSignPayload(
+    bridge: bridge,
+    dataToSign: canonicalPayload,
+    privateKey: creatorPrivateKey,
+  );
+  final signature = signResponse['signature'];
+  if (signResponse['ok'] != true || signature is! String || signature.isEmpty) {
+    throw StateError(
+      signResponse['errorMessage']?.toString() ??
+          'Initial membership event signing failed',
+    );
+  }
+
+  await appendGroupEventLogEntry(
+    groupId: group.id,
+    eventType: 'group_created',
+    sourcePeerId: creatorMember.peerId,
+    sourceEventId: 'group_created:${group.id}',
+    sourceTimestamp: group.createdAt.toUtc().toIso8601String(),
+    createdAt: group.createdAt,
+    payload: {
+      ...unsignedPayload,
+      'signedPayload': jsonDecode(canonicalPayload),
+      'signature': signature,
+      'signatureAlgorithm': 'ed25519',
+    },
+  );
 }
 
 Future<void> _rollbackCreatedGroup(

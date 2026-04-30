@@ -22,7 +22,8 @@ flutter test --no-pub \
   test/core/database/helpers/group_messages_db_helpers_sending_test.dart \
   test/core/database/helpers/group_messages_db_helpers_reliability_test.dart \
   test/core/database/helpers/group_members_db_helpers_test.dart \
-  test/core/database/helpers/group_keys_db_helpers_test.dart
+  test/core/database/helpers/group_keys_db_helpers_test.dart \
+  test/core/database/helpers/group_event_log_db_helpers_test.dart
 ```
 
 **Background task protection only:**
@@ -78,22 +79,22 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 
 ---
 
-## Summary (2026-04-11 Baseline)
+## Summary (2026-04-29 Tracked Inventory)
 
 ### Dart Tests
 
 | Category | Files | Test Cases |
 |----------|------:|-----------:|
-| Domain (models, repo impl) | 14 | 100 |
-| Data (DB helpers) | 6 | 83 |
-| Data (DB migrations) | 7 | 27 |
-| Application (use cases, listeners) | 36 | 376 |
-| Presentation (widgets, screens) | 20 | 252 |
-| Integration (smoke, round-trip, recovery) | 9 | 93 |
+| Domain (models, repo impl) | 14 | 105 |
+| Data (DB helpers) | 7 | 88 |
+| Data (DB migrations) | 12 | 38 |
+| Application (use cases, listeners) | 37 | 420 |
+| Presentation (widgets, screens) | 20 | 253 |
+| Integration (smoke, round-trip, recovery) | 9 | 98 |
 | Core (lifecycle, bridge) | 6 | 74 |
 | Cross-feature (feed, orbit, push, intro, share, resilience, services, notifications) | 32 | 182 |
 | E2E / Device (`integration_test/`) | 2 | 5 |
-| **Dart Total** | **132** | **1192** |
+| **Dart Total** | **139** | **1263** |
 
 ### Go Tests
 
@@ -101,30 +102,85 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |----------|------:|--------------------:|
 | Crypto (`crypto/`) | 1 | 14 |
 | Envelope / Wire Format (`internal/`) | 1 | 11 |
-| PubSub Core (`node/pubsub*.go`) | 4 | 93 |
+| PubSub Core (`node/pubsub*.go`) | 4 | 99 |
 | Shared Security Harness (`node/group_security_harness_test.go`) | 1 | 1 |
-| Group Inbox (`node/group_inbox*.go`) | 1 | 8 |
+| Group Inbox (`node/group_inbox*.go`) | 1 | 9 |
 | Multi-Relay (`node/multi_relay*.go`) | 1 | 3 |
 | Rendezvous (`node/rendezvous*.go`) | 1 | 2 |
 | Config (`node/config*.go`) | 1 | 1 |
+| Protocol Version (`node/protocol_version_test.go`) | 1 | 4 |
 | Node / Relay Session / Stream (`node/node*.go`, `node/relay_session*.go`, `node/stream_timeout*.go`) | 3 | 3 |
 | Bridge API (`bridge/`) | 2 | 57 |
 | CLI Test Peer (`cmd/testpeer/`) | 1 | 4 |
 | Integration (`integration/`) | 2 | 3 |
-| **Go Total** | **19** | **200** |
+| **Go Total** | **20** | **211** |
 
 ### Grand Total
 
 | | Files | Tests |
 |-|------:|------:|
-| **All (Dart + Go)** | **151** | **1392** |
+| **All (Dart + Go)** | **159** | **1474** |
 
-> **Note:** Dart file counts reflect distinct `_test.dart` files. Some inventory sections cover multiple files (e.g., 4.9 covers `archive_group_use_case_test.dart` + `unarchive_group_use_case_test.dart`; 4.30 covers three reaction test files). Dart test counts are `grep`-verified against `test()`/`testWidgets()` declarations in each file. Cross-feature test counts include only the group-relevant subset from shared test files. Go test counts reflect only group-related `func Test*` functions in files that may also contain non-group tests; counts are `grep`-verified against `func Test.*[Gg]roup` patterns and manual review for files with indirect group test names. Aggregate totals are the 2026-04-11 baseline; the Report 85 addendum and detailed sections below record the 2026-04-29 additions without a full inventory recount.
+> **Note:** Dart file counts reflect distinct `_test.dart` files. Some inventory sections cover multiple files (e.g., 4.9 covers `archive_group_use_case_test.dart` + `unarchive_group_use_case_test.dart`; 4.30 covers three reaction test files). Dart test counts are `grep`-verified against `test()`/`testWidgets()` declarations in each file. Cross-feature test counts include only the group-relevant subset from shared test files. Go test counts reflect only group-related `func Test*` functions in files that may also contain non-group tests; counts are `grep`-verified against `func Test.*[Gg]roup` patterns and manual review for files with indirect group test names. Aggregate totals reflect the tracked 2026-04-29 inventory updates plus the 2026-04-30 DB-001 closure recorded below; DB-002 is reset to not-yet-worked and is not counted as closed.
 
 ## 0. Row Closure Crosswalk (2026-04-11)
 
 | Row | Closure state | Concrete repo evidence |
 |-----|---------------|------------------------|
+| `GL-001` | Covered | `test/features/groups/application/create_group_use_case_test.dart` now includes `duplicate bridge group id converges to one canonical local create state`, proving two `group:create` bridge calls with the same returned group id/topic/key/epoch converge to one group row, one creator membership, canonical topic persistence, and the latest canonical key. |
+| `GL-002` | Covered | GL-002 covered on 2026-04-30 by `libp2p_group_chat_missing_test_matrix_full_with_rules-session-GL-002-plan.md`: `create_group_use_case.dart` signs a canonical `group_created` initial membership payload with creator identity, admin role, joined timestamp, public keys, topic, and initial key epoch, appends it through the group event-log callback, and rolls back group/member/key state if signing or append fails. `create_group_with_members_use_case.dart`, `create_group_picker_wired.dart`, `group_message_listener.dart`, and `main.dart` wire creator private key plus `dbAppendGroupEventLogEntry`; `group_event_log_db_helpers.dart` supplies deterministic canonical payload and durable hash-chain append/load/verify behavior. `create_group_use_case_test.dart` proves persisted creator identity/initial epoch, signed payload/signature evidence, no private-key leakage in the event payload, and rollback on signing or append failure; `group_event_log_db_helpers_test.dart` proves canonical ordering, hash-chain append, idempotent replay, conflict detection, and tamper detection. Verified during closure with `flutter test --no-pub test/features/groups/application/create_group_use_case_test.dart test/core/database/helpers/group_event_log_db_helpers_test.dart` passing `+17`. Execution evidence also records `group_message_listener_test.dart` `+72`, update metadata `+6`, dissolve `+6`, membership smoke `+23`, `./scripts/run_test_gates.sh completeness-check` `697/697`, `./scripts/run_test_gates.sh groups` `+94`, and `git diff --check` passing. The broad application-suite `flutter test --no-pub test/features/groups/application` failure remains non-blocking for GL-002 because it is the preexisting unrelated MD-011 future-media replay case already scoped outside this row. |
+| `GL-008` | Covered | GL-008 covered on 2026-04-30 by `libp2p_group_chat_missing_test_matrix_full_with_rules-session-GL-008-plan.md`. `group_key_update_listener.dart` now returns for missing groups with `GROUP_KEY_UPDATE_LISTENER_GROUP_NOT_FOUND` and dissolved groups with `GROUP_KEY_UPDATE_LISTENER_GROUP_DISSOLVED` before `group:updateKey`, event-log append, or key save; `group_key_update_listener_test.dart` proves those missing/dissolved direct key-update paths keep bridge state, event-log state, and stored keys unchanged. `group_message_listener_test.dart` proves old `group_metadata_updated`, `member_added`, `member_role_updated`, and `key_rotated` replay after `group_dissolved` cannot mutate metadata, members, keys, or visible messages, and old system events after local delete do not recreate group/member/key/message rows. Existing dissolve/delete/rejoin/smoke coverage still proves durable dissolve fields, repeated dissolve idempotency, dissolved local cleanup, and dissolved-topic rejoin suppression. Plan-recorded gates passed: `group_key_update_listener_test.dart` `+16`, `group_message_listener_test.dart` `+74`, `dissolve_group_use_case_test.dart` `+6`, `delete_group_and_messages_use_case_test.dart` `+3`, `rejoin_group_topics_use_case_test.dart` `+18`, `group_membership_smoke_test.dart` `+23`, `./scripts/run_test_gates.sh groups` `+94`, `./scripts/run_test_gates.sh completeness-check` `697/697`, and `git diff --check`. |
+| `GL-009` | Covered | GL-009 covered on 2026-04-30 by `libp2p_group_chat_missing_test_matrix_full_with_rules-session-GL-009-plan.md`. `group_config_payload.dart` owns the canonical metadata actor-event payload, signed-envelope fields, and equivalence checks; `group_info_wired.dart` signs admin metadata edits with `payload.sign` before local persistence, publish, or inbox-store and embeds `actorEvent` without leaking private keys; `group_message_listener.dart` verifies `actorEvent` with `payload.verify` before event-log append, metadata mutation, bridge config sync, or timeline insertion. `group_message_listener_test.dart` proves unsigned, signed-payload mismatch, invalid signature, stale/state-hash tamper, and valid signed metadata paths; `group_info_wired_test.dart` proves signed publish payloads, canonical signed content, no private-key leakage, and signing-failure abort; `update_group_metadata_use_case_test.dart` keeps deterministic `configVersion` and canonical `stateHash` proof; `group_resume_recovery_test.dart` now signs the repeated-metadata recovery fixture and proves final metadata convergence with stale replay ignored. Passed evidence: listener `+77`, wired `+28`, update metadata `+6`, create group `+13`, dissolve `+6`, membership smoke `+23`, full migration chain `+6`, focused metadata convergence `+1` with `payload.sign` and Bob/Charlie `payload.verify`, `./scripts/run_test_gates.sh completeness-check` `697/697`, `./scripts/run_test_gates.sh groups` `+94`, `flutter test --no-pub test/features/groups/integration` `+116`, and scoped `git diff --check`. The plan-recorded broad application failure is unrelated MD-011 future-media replay and non-blocking for GL-009. |
+| `LP-001` | Covered | `go-mknoon/node/pubsub_test.go` now includes `TestGroupTopicAndRendezvousNamespace_DoNotUseHumanReadableMetadata`, proving topic names and rendezvous namespaces equal `/mknoon/group/<groupId>` and omit sensitive group name/description strings. `TestJoinGroupTopic_LogOmitsHumanReadableMetadata` proves the join log omits sensitive human-readable metadata after `go-mknoon/node/pubsub.go` removed the prior `config.Name` log field. |
+| `LP-002` | Partial | `go-mknoon/node/pubsub_test.go` now includes `TestGroupTopicValidator_RejectsUnauthorizedEventFamiliesBeforeForward`, proving the real Go `groupTopicValidator` returns `pubsub.ValidationReject` for a removed/non-member sender across message, reaction, membership, metadata, and key-rotation payload shapes before decrypted payload handling. The row remains partial because live three-peer forward-path suppression, peer-score behavior, and rate-limited privacy-safe diagnostics are not directly proven. |
+| `LP-003` | Partial | `go-mknoon/node/pubsub_test.go` now includes `TestLeaveGroupTopic_RemovesPubSubStateAndBlocksFuturePublish`, proving `LeaveGroupTopic` removes topic, subscription, subscription context, discovery context, config, and key state, then blocks future message and reaction publishes with `group not joined`. Existing `group_message_listener_test.dart`, `drain_group_offline_inbox_use_case_test.dart`, and membership integration coverage prove self-removal and dissolved replay call `group:leave`. The row remains partial because ban behavior, local-only deletion unsubscribe semantics, and full live-delivery proof across every exit path are not directly pinned. |
+| `LP-006` | Partial | `go-mknoon/node/pubsub_test.go` includes `TestGroupDiscoveryCycle_NoKnownPeersUsesRendezvousFallback`, and the 2026-04-30 targeted proof rerun passed that part of the direct gate. The same direct LP-006 gate now fails `TestPublishGroupMessage_ReturnsPeerCountZero_WhenNoPeers` with `publish to topic: validation failed` after a sender/transport peer mismatch rejection for `sender=sender-zero`. The row remains partial and is implementation-ready/needs code-and-test repair for the zero-peer safe-send proof, plus real bootstrap relay/device-lab fallback proof for rejoin/send from no useful known peers and the failed-fallback user-safe state. |
+| `LP-007` | Partial | `go-mknoon/node/pubsub_test.go` now includes `TestGroupRelayVisibleMessageEnvelope_EncryptsContentBeforeRelay` and `TestGroupRelayVisibleReactionEnvelope_EncryptsContentBeforeRelay`, proving relay-visible raw group message and reaction envelopes omit plaintext while decrypting with the group key. `go-mknoon/node/group_inbox_test.go` extends `TestBuildGroupInboxStoreRequest_PreservesOpaqueReplayEnvelope` to prove offline inbox relay requests preserve an encrypted replay envelope without exposing message body, media key, invite token, or history text when the notification preview is safe. The row remains partial because live relay-only delivery convergence plus media metadata, invite, key-update, sync-traffic, and relay-visible capture proof are not directly proven. |
+| `LP-011` | Partial | `go-mknoon/node/protocol_version_test.go` now proves chat, inbox/group inbox, rendezvous, and media protocol constants use semver-like `/.../1.0.0` IDs, current chat stream negotiation opens only `ChatProtocol` while an unsupported chat protocol ID is rejected, and group inbox store opens a local relay stream on `InboxProtocol`. Existing `TestGroupTopicValidator_NotV3Envelope` proves non-v3 group PubSub envelopes are rejected. The row remains partial because there is still no full compatible/incompatible negotiation matrix for group sync, invites, media metadata, receipts, and key-exchange streams before state mutation. |
+| `LP-013` | Partial | `go-mknoon/node/pubsub_delivery_test.go` now includes `TestPublishGroupMessage_DuplicateProvidedMessageIdRemainsVisibleAfterDecrypt`, proving duplicate live PubSub publishes with the same provided `messageId` decrypt at the receiver with that same application ID. Existing Dart tests in `handle_incoming_group_message_use_case_test.dart`, `group_message_listener_test.dart`, `group_resume_recovery_test.dart`, `group_edge_cases_smoke_test.dart`, and `group_notification_dedupe_integration_test.dart` prove DB/media/notification dedupe across direct duplicate delivery and PubSub plus inbox replay paths. The row remains partial because live GossipSub hash/sequence collision behavior, conflicting duplicate payload handling, receipts, and full UI/notification matrix proof remain broader. |
+| `IJ-001` | Partial | `send_group_invite_use_case_test.dart` now includes `keeps join material and policy details inside encrypted invite payload`, proving both direct and inbox-fallback v2 invite envelopes expose only preview/routing fields outside `encrypted`, while decrypted inner payloads preserve `groupKey`, `keyEpoch`, full member key material, and caller-supplied `allowedDevices`, `invitePermissions`, and `joinMaterialRef` values inside `groupConfig`. Existing `group_invite_payload_test.dart`, `pending_group_invite_test.dart`, `handle_incoming_group_invite_use_case_test.dart`, and `accept_pending_group_invite_use_case_test.dart` cover required-field guards, pending expiry, decrypted materialization, and bridge join payloads. The row remains partial because allowed-device, permission, and join-material reference fields are not first-class invite policy with missing/contradictory rejection rules. |
+| `IJ-002` | Partial | Existing `handle_incoming_group_invite_use_case_test.dart` and `group_invite_listener_test.dart` reject sender mismatch, unknown sender, and blocked-contact invites before pending storage. `add_group_member_use_case_test.dart` now proves non-admin add-member attempts leave no member row and issue no bridge config call, while `create_group_with_members_use_case_test.dart` proves config-sync rollback emits no P2P invite fan-out. The row remains partial because invite payloads are unsigned, receive-side invite handling does not validate inviter authorization against current or historical group state, and stale/removed inviter rejection before pending storage or accept is not implemented or proven. |
+| `IJ-003` | Partial | Migration 055 adds durable `group_invite_revocations` tombstones keyed by `invite_id`; `revoke_pending_group_invite_use_case_test.dart` proves revocation removes the pending surface and records a tombstone; `store_pending_group_invite_use_case_test.dart` proves delayed invite copies with a revoked invite id are ignored; `accept_pending_group_invite_use_case_test.dart` proves revoked pending rows fail before group/key state or bridge join. The row remains partial because sender-side revocation delivery/API, authorized signed revocation envelopes, and 3-party direct plus mailbox revocation proof are not implemented. |
+| `IJ-005` | Partial | Migration 056 adds durable receiver-local `group_invite_consumptions` tombstones keyed by `invite_id`; `pending_group_invite_repository_impl_test.dart` proves consumption persistence and expiry cleanup; `accept_pending_group_invite_use_case_test.dart` proves successful and bridge-degraded accepts record consumption and stale already-used pending rows fail before group/key state or bridge join; `store_pending_group_invite_use_case_test.dart` proves delayed copies of a consumed invite do not recreate a pending row. The row remains partial because invite payloads do not carry configurable single-use versus multi-use policy, invite links remain unsupported, and consumption is local to one receiver device rather than shared cross-device enforcement. |
+| `IJ-010` | Partial | `invite_round_trip_test.dart` now includes `concurrent pending accepts converge members, key epoch, and sendability`, proving two distinct pending invite accepts can run concurrently, converge on identical member peer IDs and roles, preserve the latest key generation/material, avoid duplicate local membership, clear pending rows, record consumed invite tombstones, and keep both new members able to send after convergence. The row remains partial because live 3-party/device simultaneous welcome delivery, divergent-config or epoch-conflict handling, and cross-peer allowed-history convergence under partition/heal timing are not directly proven. |
+| `IJ-011` | Partial | `group_new_member_onboarding_test.dart` now includes `new member receives current metadata and roles without pre-join history`, proving a newly added member receives the latest metadata, membership, and role snapshot after pre-join metadata and role changes, still excludes pre-join message history, and receives post-join messages. Existing onboarding and invite round-trip tests cover future-only history, post-join media descriptors, reactions, quoted pre-join parent fallback, and post-join replay. The row remains partial because pinned-item sync is not a first-class shipped surface, custom permissions beyond role state are not fully matrixed, and live 3-party/device full-state sync proof is absent. |
+| `IJ-012` | Partial | `group_multi_device_convergence_test.dart` now includes `sibling device stays one member while new human admission adds a distinct member`, proving same-peer sibling devices share joined group state without a duplicate human membership row, while a separately invited peer becomes a distinct member across phone, sibling device, existing member, and new member repos and can send after admission. Existing policy and invite tests prove membership/metadata/history are shared only after joined-device materialization and pending invite review is device-local. The row remains partial because self-authenticated sibling-device admission, admin device approval, first-class per-device key packages, and live 3-party/device proof are absent. |
+| `IJ-013` | Partial | `GroupInvitePayload` now carries `recipientPeerId`; `send_group_invite_use_case_test.dart` proves encrypted invite payloads bind the inner payload to the target peer; and `handle_incoming_group_invite_use_case_test.dart` now includes `accepts bound invite when recipient peer matches local identity`, `rejects v1 invite bound to a different recipient peer`, and `rejects v2 encrypted invite bound to a different recipient peer`, proving wrong-recipient accepts fail before group/key state or `group:join`. The row remains partial because legacy/unbound invite compatibility, device-specific binding, mailbox/sync replay of a wrong-recipient invite, and live 3-party/device proof are absent. |
+| `IJ-014` | Partial | `handle_incoming_group_invite_use_case_test.dart` now includes `returns invalidPayload for empty groupKey before state or join`, proving unusable key material fails before group/key state or `group:join`. `accept_pending_group_invite_use_case_test.dart` now includes `missing join material stays pending for repair without creating group state`, proving the pending invite remains retryable without consumption, group/key state, messages, or bridge join. `group_list_wired_test.dart` now includes `repair-pending accept keeps the invite row and shows key-material warning`, proving the shipped surface shows a clear repair state. The row remains partial because stale and undecryptable welcome/key-package variants, explicit repair-sync mechanics, mailbox replay, and live 3-party/device proof are absent. |
+| `RP-002` | Partial | Migration 057 adds durable `permissions_json` storage for group members. `group_members_db_helpers_test.dart`, `057_group_member_permissions_test.dart`, and `group_repository_impl_test.dart` prove helper, migration, and repository persistence of permission overrides. `add_group_member_use_case_test.dart`, `remove_group_member_use_case_test.dart`, `update_group_member_role_use_case_test.dart`, and `rotate_and_distribute_group_key_use_case_test.dart` prove writer-role overrides can grant invite, remove, manage-role, and rotate capabilities while explicit false overrides deny admins. The row remains partial because pin/delete capabilities, receive-side remote enforcement, stale permission races, escalation protection, and live 3-party/device coverage are not directly proven. |
+| `RP-003` | Partial | `leave_group_use_case_test.dart` proves a sole admin cannot leave while admin leave succeeds when another admin remains; `update_group_member_role_use_case_test.dart` proves the last admin cannot be demoted while self-demotion succeeds with another admin; `remove_group_member_use_case_test.dart` now proves last-admin removal is blocked before member deletion or bridge sync while removing an admin succeeds when another admin remains. The row remains partial because owner roles, ownership handoff APIs, simultaneous owner-transfer conflict handling, receive-side owner enforcement, and live 3-party/device proof are absent. |
+| `RP-004` | Partial | `group_message_listener_test.dart` now includes `unauthorized mutation system events leave local state and bridge unchanged`, proving writer-originated receive-side mutation events for `member_added`, `members_added`, `member_removed`, `member_role_updated`, `group_metadata_updated`, and `group_dissolved` leave group/member state unchanged and create no persisted timeline/message or bridge side effects. The row remains partial because the full product-wide local plus receive authorization matrix, pin/edit/delete/ban surfaces, stale permission races, signature proof, and live 3-party/device proof are absent. |
+| `RP-005` | Partial | `add_group_member_use_case_test.dart`, `remove_group_member_use_case_test.dart`, `update_group_member_role_use_case_test.dart`, `rotate_and_distribute_group_key_use_case_test.dart`, and `update_group_metadata_use_case_test.dart` now prove stale queued add, remove, role, key-rotation, and metadata actions re-read current permission or role state before mutation or bridge sync. `send_group_message_use_case_test.dart` proves locally removed senders are rejected before persistence or bridge publish, and `retry_failed_group_messages_use_case_test.dart` proves failed-message replay cannot bypass that removed-sender check. The row remains partial because receive-side stale signed events, true offline queue publish races, live 3-party/device proof, and full invite/metadata/role/key/send queue coverage across real transport are absent. |
+| `RP-006` | Partial | `group_role_update_authorization.dart` now centralizes role/permission escalation checks. `update_group_member_role_use_case_test.dart` proves a writer with `manageRoles: true` cannot promote another member to admin while the bounded reader-to-writer override path still works. `group_message_listener_test.dart` proves replayed `member_role_updated` events from a limited manager cannot promote a member to admin or grant an unheld `deleteMessages` permission, and rejected events leave member state, timeline rows, and bridge config sync untouched. The row remains partial because cryptographic actor binding, forged-signature proof, live 3-party/device replay, first-class permission-edit UI/API, and pin/delete product surfaces are absent. |
+| `RP-010` | Partial | `group_multi_device_convergence_test.dart` now includes `device-local unsubscribe preserves member account and sibling delivery`, proving the existing fake-network device hook can unsubscribe one same-peer sibling device while the shared `peerId` member row remains in every repo and the still-joined sibling continues receiving group traffic. The row remains partial because production membership remains keyed by `(groupId, peerId)`, group members have one ML-KEM key instead of per-device key packages, `rotateAndDistributeGroupKey` distributes by member peer id, and there is no device-removal UI/API, future-key exclusion proof, or live/equivalent 3-party device proof. |
+| `RP-011` | Partial | `member_removal_integration_test.dart` proves removal updates the local member set before key rotation and the rotated key is distributed only to remaining members, excluding the removed peer. `invite_round_trip_test.dart` already proves a removed peer can return only through an explicit remove -> rotate -> re-invite flow and then sends on the rotated epoch. The row remains partial because true ban/unban is not implemented: there is no group ban tombstone, ban/unban use case, receive-side ban event, unban policy or surface, banned-invite rejection, or live/equivalent proof that banned identities cannot rejoin or receive future keys. |
+| `RP-014` | Partial | `member_removal_integration_test.dart` now includes `voluntary leave rotation excludes leaver and remaining members send on rotated epoch`, proving an explicitly rotated voluntary-leave path sends future key material only to remaining members, remaining members save/promote epoch 2, the leaver's local group/member/key state is removed by `leaveGroup`, and the first post-leave send plus inbox replay uses epoch 2 with recipients excluding the leaver. Existing membership smoke coverage proves voluntary leave delivery exclusion. The row remains partial because rotate-on-leave is not a first-class group policy and no live/equivalent replay/decrypt-failure proof exists for a departed peer. |
+| `RP-016` | Partial | `invite_round_trip_test.dart` proves a removed peer can rejoin only through explicit direct or inbox-fallback re-invite carrying the rotated epoch, while `group_membership_smoke_test.dart` proves a removed member loses active group/subscription state, misses removed-period traffic and notifications, and resumes only after re-add with current member/key state. The row remains partial because this is removal/re-add policy, not ban policy: no first-class group ban tombstone, ban/unban use case, banned member role, receive-side ban event, unban surface, banned-invite rejection, or live/equivalent ban proof exists. |
+| `RP-017` | Partial | `send_group_message_use_case_test.dart` and `retry_failed_group_messages_use_case_test.dart` prove locally removed senders cannot persist, publish, inbox-store, or retry group messages; `drain_group_offline_inbox_use_case_test.dart` proves post-removal queued inbox traffic is not persisted for the removed peer; `group_message_listener_test.dart` proves unauthorized mutation events leave local and bridge state unchanged; `member_removal_integration_test.dart` proves future key material excludes removed peers; and `go-mknoon/node/pubsub_test.go` rejects removed/non-member message, reaction, membership, metadata, and key-rotation payloads before forwarding. The row remains partial because peer disconnect/block/downscore policy, media/sync isolation, and live/equivalent removed-peer publish/dial proof are not implemented or proven. |
+| `RP-018` | Partial | `group_membership_smoke_test.dart` proves fake-network convergence for concurrent admin changes and for a later removal winning over an earlier role promotion of the same member. `group_message_listener_test.dart` proves stale membership remove and role events cannot roll back newer add, role, or remove watermarks across restart, `group_resume_recovery_test.dart` proves offline remove/add churn replay converges to the final member-role map, and `group_key_update_listener_test.dart` keeps adjacent same-generation key conflict convergence covered. The row remains partial because the full add/remove/promote/demote partition-heal matrix, full permission conflict convergence, live/equivalent multi-peer proof, and clear conflict diagnostics contract are not implemented or proven. |
+| `MS-001` | Covered | `send_group_message_use_case.dart` resolves generated and explicit outgoing message ID collisions before pre-persist, allows only matching local failed/sending retry rows to reuse an ID, treats empty requested IDs as generated, and emits collision flow events. `send_group_message_use_case_test.dart` proves generated collision recovery, explicit collision recovery, and legitimate retry reuse; `handle_incoming_group_message_use_case_test.dart` proves conflicting same-ID replay cannot overwrite trusted content; `group_resume_recovery_test.dart` proves pubsub plus inbox replay preserves the live row under conflicting content; `group_messaging_smoke_test.dart` keeps rapid simultaneous sends covered; and `group_multi_device_convergence_test.dart` proves same-user sibling devices can send concurrently without message loss or ID collapse. Live GossipSub hash/sequence collision and receipt behavior remain tracked by LP-013, not MS-001. |
+| `MS-002` | Partial | `go-mknoon/node/pubsub.go` now rejects group envelopes whose claimed `senderId` differs from the libp2p transport peer id before member lookup, authorization, signature verification, decrypt, or forwarding. `go-mknoon/node/pubsub_test.go` proves matching transport peer ids accept and mismatched transport peer ids reject, while existing validator tests prove member-public-key signature binding, spoofed public key rejection, bad-signature rejection, non-member rejection, and system-event forgery rejection. `handle_incoming_group_message_use_case_test.dart` proves decoded events persist the validated `senderId` as `senderPeerId`, and smoke coverage proves Go join config carries member public keys. The row remains partial because first-class device identity fields, per-device key package/member binding, offline inbox transport-origin proof, and live/equivalent valid-device versus invalid-device proof are absent. |
+| `MS-003` | Partial | `handle_incoming_group_message_use_case.dart` now clamps incoming message timestamps beyond the five-minute future-skew window to receive time before persistence and ordering can consume them. `handle_incoming_group_message_use_case_test.dart` proves far-future timestamps are not stored as impossible future values and that past/current/near-future timestamps retain chronological ordering and latest-message selection. Existing `group_messaging_smoke_test.dart` keeps live sequential ordering covered, and `group_resume_recovery_test.dart` keeps inbox replay timestamp-tamper dedupe covered. The row remains partial because a full live plus inbox past/normal/future skew matrix, UI day-boundary/latest-message assertion, deterministic tie-breaker/causal ordering proof for equal timestamps, and live/equivalent 3-party proof are absent. |
+| `MS-004` | Partial | `group_messages_db_helpers.dart` now orders group-message page/all reads by `timestamp ASC, id ASC` and latest/removal/thread-summary reads by `timestamp DESC, id DESC`, avoiding local `created_at` as a cross-peer summary tie-breaker. `InMemoryGroupMessageRepository` mirrors that contract, and `GroupTestUser` preserves wire message IDs with collision-safe generated fake IDs. `group_messages_db_helpers_test.dart` and `group_message_repository_impl_test.dart` prove equal-timestamp page, all-message, latest, thread-summary, and fake repository ordering. `group_messaging_smoke_test.dart` proves concurrent A/B/C equal-timestamp sends plus quoted replies converge to the same ordered IDs and parent references on all fake-network peers. `group_resume_recovery_test.dart` proves partition replay keeps an equal-timestamp parent/reply pair ordered and preserves the reply `quotedMessageId`. The row remains partial because shipped messages still have only `quotedMessageId` rather than previous-state causal references, arbitrary IDs do not guarantee parent-before-child ordering, and there is no true A/B/C partition-heal/live-device proof. |
+| `MS-018` | Partial | `send_group_message_use_case_test.dart` now includes `send snapshots current epoch for row and replay envelope before publish completes` and `messages before during and after rotation bind to the locally committed epoch`, proving `sendGroupMessage` snapshots the latest local key into both `GroupMessage.keyGeneration` and encrypted replay `keyEpoch`, keeps epoch 1 when epoch 2 is saved before publish returns, and binds before/during/after rotation sends to epochs 1/1/2. `group_key_update_listener_test.dart` now includes `send during pending key update uses old epoch until local update commits`, proving receive-side key promotion does not affect local sends until `group:updateKey` resolves and the key is saved. `drain_group_offline_inbox_use_case_test.dart` now includes `drains mixed epoch encrypted replay out of order without rewriting epochs` and `future epoch encrypted replay creates one undecryptable placeholder without decrypting`, proving epoch 2 then epoch 1 encrypted replay persists each row under its envelope epoch and unknown future-epoch replay does not call `group.decrypt` or silently persist under epoch 1/0; it stores a safe `undecryptable` placeholder under the envelope epoch. The row remains partial because the repo still lacks a combined true/equivalent 3-party proof where A rotates, B sends before/during/after B's commit boundary, C receives out of order, and transport-level epoch binding is proven across all peers. |
+| `OS-001` | Covered | `retry_failed_group_messages_use_case_test.dart` now proves restart-style failed outgoing text, quote, and done-media rows inserted out of order republish in deterministic persisted `timestamp ASC, id ASC` order while preserving original message IDs, timestamps, quote IDs, text, and media attachment state. `retry_failed_group_inbox_stores_use_case_test.dart` proves failed message inbox-store rows drain before reaction replay rows, with each owner ordered deterministically by persisted timestamp/id. Focused deterministic tests, both full retry test files, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check` passed. |
+| `OS-003` | Open | OS-003 remains prerequisite-blocked by `missing_direct_peer_sync_protocol_primitives`. Evidence on 2026-04-30 found only adjacent relay inbox cursor replay, PubSub validation, topic rejoin, and watchdog recovery paths; no direct group peer sync command, request/response schema for ranges or known heads, hash-chain/state-head owner, signed or hash-verified direct response path, or tampered-response fail-closed direct-sync tests exist in the current repo. Focused drain cursor/tamper/future/replay/dedupe tests, focused group resume recovery partition/replay/resume/dedupe/gap tests, the Go node/bridge group inbox/recovery/PubSub evidence slice, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check` passed. `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were unset, so live direct-peer proof was unavailable. |
+| `OS-005` | Covered | OS-005 accepted with explicit follow-up on 2026-04-30. Go node/bridge tests prove group inbox-store request JSON preserves opaque encrypted replay envelopes, uses the versioned inbox protocol, and omits protected plaintext fragments. Flutter send, retry, drain, invite, and resume recovery tests prove pending retry storage, `group:inboxStore`, invite inbox fallback, encrypted replay drain, media descriptors, reactions, dedupe, and recipient-side authorization keep store-and-forward content encrypted or metadata-minimized. Go relay-server tests prove in-memory and Redis group inbox backends preserve opaque replay envelopes across store/retrieve and reject forbidden preview canaries. No production group receipt mailbox payload is shipped; receipt hits are routing-smoke criteria or legacy 1:1 delivery-receipt handling. Live relay/device packet-capture proof remains supplemental and fixture-blocked because `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were unset. |
+| `OS-006` | Partial | OS-006 remains prerequisite-blocked by `missing_multi_peer_gap_repair_primitives`, `missing_direct_peer_history_repair_protocol`, `missing_partial_history_gap_marker_and_repair_lifecycle`, and `missing_gap_repair_clearance_proof`. Evidence on 2026-04-30 proves adjacent partial-history honesty through relay inbox cursor continuation, first-page incomplete-drain telemetry, timeout error telemetry, duplicate replay dedupe, retained/expired backlog state, and list/conversation backlog-retention notices for fully expired and mixed-window history. Focused drain tests, group resume recovery integration tests, and Go node/bridge cursor/recovery/watchdog/inbox tests passed. The row remains partial because no direct peer history range/head/hash protocol, anti-entropy or known-head owner, multi-peer repair source selection, durable repair lifecycle, or repair-clearance proof exists. `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were unset, so live device/relay proof was unavailable. |
+| `OS-008` | Covered | OS-008 accepted on 2026-04-30. `group_resume_recovery_test.dart` proves a removed offline member with a queued failed outgoing row drains the replayed self-removal, leaves/deletes local group state, then `retryFailedGroupMessages` returns zero without issuing any additional `group:publish` or `group:inboxStore` for the stale row; the stale row remains failed. Existing focused send, retry, drain, and resume-recovery tests prove local removed-sender sends are rejected before persistence/bridge calls, failed-message retry reuses that authorization check, replayed self-removal stops later cursor pages, and post-resume send attempts return group-not-found. Go PubSub validator tests prove removed/unauthorized sender traffic is rejected before forwarding. Live device/relay proof remains supplemental and fixture-blocked because `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were unset. |
+| `OS-009` | Covered | OS-009 accepted on 2026-04-30. `drain_group_offline_inbox_use_case.dart` now persists a safe incoming `undecryptable` placeholder when an encrypted offline replay envelope carries a message id and key epoch but the local replay key is missing. The placeholder uses generic text only (`Message could not be decrypted.`), records the missing `keyGeneration`, preserves the replay `messageId` for dedupe/replacement, and does not call `group.decrypt` without a key. `drain_group_offline_inbox_use_case_test.dart` proves duplicate future-epoch replay creates one placeholder with no plaintext fallback, while mixed known-epoch replay still decrypts and persists under each envelope epoch. `group_conversation_screen_test.dart` proves the placeholder renders safe text without failed-media controls or guessed plaintext. Go PubSub tests still reject unknown/wrong live epochs before delivery. Live device/relay proof remains supplemental and fixture-blocked because `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were unset. |
+| `OS-010` | Partial | OS-010 closure attempt on 2026-04-30 is fixture/prerequisite-blocked by missing fresh real same-account device-lab evidence. Host fake-network proof remains green: `group_multi_device_convergence_test.dart` covers same-peer sibling sent history, concurrent sends, membership convergence without duplicate local membership, sibling-device versus new-human distinction, device-local unsubscribe, and mute/unread/local notification locality. `group_multi_device_policy_test.dart` now pins composer drafts as device-local state alongside mute, unread counters, local notifications, and pending invite review, while membership, metadata, and message history stay shared across joined devices. The key-update listener slice keeps adjacent member-scoped key convergence/order behavior green. The row remains Partial because `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were unset and no fresh real/equivalent B1/B2 run proves messages, read state, key updates, drafts, and membership together. |
+| `OS-012` | Partial | OS-012 closure audit on 2026-04-30 keeps this row Partial. Host/fake-network anchor passed: `flutter test --no-pub test/features/groups/integration/group_resume_recovery_test.dart --plain-name "temporary partition replays missed backlog in cursor order and resumes live delivery after heal"` returned `00:00 +1: All tests passed!`, proving deterministic fake-network partition replay and post-heal live delivery. Configured real-network gate passed with supplied `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` and relay addresses: `./scripts/run_test_gates.sh group-real-network-nightly` returned `00:02 +4: All tests passed!`, but the output reported `No CLI peer fixture` and `No CLI peer — running self-contained scenarios only`; the real CLI peer group recovery path returned early instead of proving real bridge/GossipSub partition-heal backlog plus post-heal live delivery. Exact missing evidence: a configured real bridge/GossipSub or equivalent simulator/device-lab proof where B is actually partitioned from live group delivery while A/C continue, the split-window backlog is stored and replayed to B in order after heal, and post-heal live delivery resumes without duplicate visible rows. Blocker class: `missing_real_bridge_gossipsub_partition_heal_proof`; no production code/tests changed. |
+| `NT-001` | Covered | NT-001 accepted on 2026-04-30. `background_push_notification_fallback.dart` now ignores push-visible `title` and `body` for protected data-only `new_message` and `group_message` pushes, keeping generic fallback copy until local decrypt resolves an on-device preview; visible `RemoteMessage.notification` payloads still suppress local fallback, and non-message fallbacks keep their explicit copy path. `background_push_notification_fallback_test.dart` and `background_message_handler_test.dart` prove protected chat and group data-only fallback privacy on Android-style and iOS data-only paths. `push_decrypt_preview_test.dart` proves current push fixtures plus post-phase1 frozen payload route data omit plaintext preview fields (`title`, `body`, `pushTitle`, `pushBody`, `senderUsername`, `groupName`, `messageText`, `text`, and `media`) while decrypted local previews still render 1:1 and group sender/body text after local decrypt. Supporting direct gates passed: `push_preview_telemetry_gate_test.dart`, `handle_foreground_remote_message_use_case_test.dart`, `chat_and_group_push_open_flow_test.dart`, `resolve_group_notification_route_target_use_case_test.dart`, `set_group_muted_use_case_test.dart`, and `group_notification_dedupe_integration_test.dart`. `./scripts/run_test_gates.sh completeness-check` and `git diff --check` passed. |
+| `NT-006` | Covered | NT-006 accepted on 2026-04-30. `show_notification_use_case.dart` now checks the recent remote-push announcement gate before showing local notifications even when the app is resumed, while preserving active-conversation suppression and avoiding a foreground delay. `foreground_group_push_drain_test.dart` proves live-plus-foreground-push dedupe and background-announced-plus-foreground-drain dedupe: the same group `messageId` persists one incoming row, unread count stays at one, duplicate local notification is suppressed, unrelated gate entries remain consumable, and a distinct later group message increments unread and notifies normally. `group_notification_dedupe_integration_test.dart` and `group_message_listener_test.dart` prove background push announcements suppress later local PubSub/listener notifications for the same group message. Focused direct push/listener tests, focused drain replay tests, simulator foreground drain, groups integration, canonical `groups` gate, and completeness check passed. The broad ad hoc `flutter test --no-pub test/features/groups` folder sweep still fails one unrelated MD-011 media/epoch replay assertion in `drain_group_offline_inbox_use_case_test.dart`; the canonical `./scripts/run_test_gates.sh groups` command is green. |
+| `DB-001` | Covered | DB-001 closed on 2026-04-30. `test/core/database/migrations/017_018_group_original_tables_test.dart` proves migrations 017/018 create the original group tables (`groups`, `group_members`, `group_keys`, and `group_messages`), expose expected baseline columns/defaults/indexes, support baseline group/member/key/message insert and query before migration 026, enforce original type, role, unique-topic, member primary-key, and key primary-key constraints, and rerun idempotently. Direct gate `flutter test --no-pub test/core/database/migrations/017_018_group_original_tables_test.dart` passed with 3 tests. No production migration code changed. |
+| `DB-002` | Open | Reset on 2026-04-30 after the prior DB-002 plan artifact was deleted; treat DB-002 as not yet worked in this rollout. Future closure requires a fresh plan, implementation, and direct tests for signed append-only or tamper-evident local event logging across accepted incoming messages, membership/metadata/role events, key updates, tamper detection, and replay behavior. |
+| `DB-004` | Partial | DB-004 execution on 2026-04-30 is prerequisite-blocked by `missing_durable_group_sync_cursor_owner`, `missing_group_receipt_owner`, and `missing_transactional_apply_boundary_for_message_receipt_cursor`. Evidence found only group `read_at` fields/helpers and transient relay inbox cursor variables/tests; there is no durable group sync/inbox cursor table or helper, no first-class group read/delivery receipt table/helper, and no production transaction owner for message insert plus receipt/read-state plus cursor advancement. Adjacent exact drain slices passed for cursor continuation, cursor timeout logging, replay enrichment/dedupe, and resume cursor continuation; `group_messages_db_helpers_test.dart`, `group_messages_db_helpers_reliability_test.dart`, and `group_event_log_db_helpers_test.dart` passed with 65 tests; `completeness-check` passed with 697/697 classified; `git diff --check` passed. The broad regex drain command still hits the known unrelated MD-011 future-media replay assertion, so it is not counted as DB-004 closure evidence. |
+| `DB-006` | Partial | DB-006 execution on 2026-04-30 is prerequisite-blocked by `missing_first_class_secure_group_media_key_storage_owner`, `plaintext_media_attachment_key_column`, and `unproven_group_key_wrapping_for_sql_group_keys`. Identity secret coverage is green: nullify/check migrations, secure-storage migration, identity helper checks, and full migration chain passed. The row remains Partial because `media_attachments.encryption_key_base64` stores raw per-object media key material in an ordinary media table and existing media tests assert persistence of `key-1`; `group_keys.encrypted_key` stores bridge/invite `groupKey` fixture values in SQL without proof they are wrapped or non-plaintext, and the secure-store mirror does not remove the SQL copy. Focused identity tests passed with 25 tests, media evidence tests passed with 57 tests but prove the blocker, `full_migration_chain_test.dart` passed with 6 tests, `completeness-check` passed with 697/697 classified, and `git diff --check` passed. |
+| `MD-001` | Covered | `group_media_mime_policy_test.dart` proves the exact group media MIME allowlist, declared-MIME rejection, mediaType mismatch rejection, dangerous signature rejection, and known signature mismatch rejection. Upload, send, retry, live receive, encrypted replay, listener, download, and display tests prove invalid declared MIME and spoofed bytes fail before bridge upload, publish/inbox payload creation, local message/media storage, notification preview, auto-download, done-state marking, or thumbnail render. `group_media_fanout_test.dart` preserves existing allowed image/video/voice fan-out. `SMOKE-GAP-05` is satisfied by the focused direct suites plus the group media fanout, broad groups, groups integration, `groups` gate, and `completeness-check` gate; it is not a shell command. No Go/relay MD-001 tests were required because MD-001 changed only Flutter group boundaries. |
+| `MD-002` | Covered | `group_media_size_policy_test.dart` proves exact boundary acceptance, per-media overage, total-message overage, malformed/missing/zero/negative/non-integer remote sizes, oversized integer rejection, GIF cap preservation, and MIME-policy separation. Upload, wired composer, voice, send, retry, live receive, encrypted replay, listener, foreground push drain, download, display, and fake-network fan-out tests prove oversized group media is rejected before bridge upload, durable pending-row storage, publish/inbox payload creation, retry resend, local message/media storage, notification preview, auto-download, `media:download`, done-state marking, or thumbnail render. The unqualified foreground integration command was not runnable as written because Flutter detected multiple devices and required `-d`; the same test passed with `-d macos`. `SMOKE-GAP-05` is satisfied by the focused direct suites plus group media fanout, broad groups, groups integration, `groups` gate, and `completeness-check` gate; it is not a shell command. No Go/relay MD-002 tests were required because MD-002 changed only Flutter group boundaries. |
+| `MD-003` | Covered | `group_media_integrity_policy_test.dart` anchors SHA-256 normalization, malformed digest rejection, file hash verification, and display eligibility. Model, migration, DB helper, upload, download, send, retry, live receive, encrypted replay, listener, foreground push, feed, group conversation, media-grid, audio, fake-network fan-out, and hydration tests prove group media content hashes are first-class, sent in live/replay descriptors, required before storage, verified before `downloadStatus: done`, and required before display. Tampered downloads are deleted and marked `integrity_failed`; legacy hashless `done` group media renders unavailable instead of media bytes. Thumbnail closure is by absence of any production remote thumbnail display path plus generated thumbnails deriving only from verified content; optional `thumbnailHash` metadata still validates when present. `SMOKE-GAP-05` is satisfied by the focused direct suite, group media fanout, macOS foreground push drain, broad groups, groups integration, `groups` gate, `completeness-check`, and `git diff --check`; it is not a shell command. One plan-listed `feed_wired_test.dart` focus target remains blocked by an unrelated dirty-tree `orbit_wired.dart` switch exhaustiveness error for `AcceptPendingGroupInviteResult.repairPending`; narrower feed application/widget MD-003 tests passed. No Go/relay MD-003 tests were required because MD-003 did not change Go protocol structs or media responses. |
+| `MD-004` | Covered | Proof-first upload regression failed on the previous contract because group media had no per-object encryption key/nonce metadata and uploaded the selected file path directly. `MediaAttachment`, DB migration 059, helper/model tests, upload/download use-case tests, send/receive/retry/listener tests, wired tests, fake-network media fanout, new-member onboarding, announcement onboarding, resume recovery, and foreground push drain now prove each group media object is encrypted before relay upload with fresh object key/nonce metadata, encrypted blob hashes are verified before decrypt, plaintext MIME/size is validated after decrypt, live publish plus encrypted replay preserve protected metadata, and cross-object wrong-key decrypt attempts fail without display. Focused suites passed, `flutter test --no-pub -d macos integration_test/foreground_group_push_drain_test.dart` passed, `flutter test --no-pub test/features/groups` passed with `+993`, `flutter test --no-pub test/features/groups/integration` passed with `+114`, `./scripts/run_test_gates.sh groups` passed with `+93`, `./scripts/run_test_gates.sh completeness-check` passed with `693/693` classified, and `git diff --check` passed. `SMOKE-GAP-05` is this evidence bundle, not a shell command. No Go/relay MD-004 tests were required because no Go or relay protocol code changed. |
 | `CB-004` | Accepted | `create_group_with_members_use_case_test.dart` now pins mixed invite degradation; `create_group_picker_wired_test.dart` proves the create flow surfaces an explicit warning instead of implying full invite success. |
 | `CB-005` | Accepted | `create_group_with_members_use_case_test.dart` now proves config-sync rollback and publish-warning truth; `contact_picker_wired_test.dart` keeps the add-member picker truthful under the same degraded branches. |
 | `CB-006` | Accepted | `group_name_panel_test.dart` now proves the shipped create surface exposes only the name field, `create_group_picker_wired_test.dart` proves the create payload omits `description`, and `group_info_wired_test.dart` keeps later edit-time description handling explicit. |
@@ -172,7 +228,23 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 | `RY-014` | Accepted | `drain_group_offline_inbox_use_case_test.dart` now proves encrypted replay preserves quoted replies plus image, video, GIF, file, and audio attachments through the real drain path, while `group_resume_recovery_test.dart` keeps missed announcement replay, voice delivery, and post-rotation delivery readable after resume. |
 | `RY-015` | Accepted | `group_resume_recovery_test.dart` now proves removed offline members drain the replayed removal, lose group access, and cannot send after resume while remaining members keep only the before-cutoff backlog, `group_info_wired_test.dart` proves voluntary leave persists a durable left-the-group event before cleanup, and `invite_round_trip_test.dart` proves rejoined members recover on the rotated epoch only. |
 | `RY-016` | Accepted | `drain_group_offline_inbox_use_case_test.dart`, `group_resume_recovery_test.dart`, `rejoin_group_topics_use_case_test.dart`, `retry_failed_group_inbox_stores_use_case_test.dart`, `pending_message_retrier_upload_ordering_test.dart`, and the resume lifecycle tests now prove encrypted replay survives cursor continuation, multi-page drain, watchdog resume, sender-owned reaction add/remove replay retry, partition heal, and same-message dedupe without creating a degraded recovery owner. |
-| `MD-005` | Accepted | `orbit_wired_test.dart` and `feed_wired_test.dart` already pin Orbit and Feed message-level parity, while `group_conversation_wired_test.dart` now pins notification-anchor reaction inspection and `app_root_notification_open_test.dart`, `resolve_group_notification_route_target_use_case_test.dart`, and `chat_and_group_push_open_flow_test.dart` keep the push-entry route contract aligned with that shared surface. |
+| `MD-005` | Partial | Executor evidence from 2026-04-30 confirms current repo behavior does not cover chunked media resume. `p2p_bridge_client.dart` sends whole-object `media:upload` payloads with `id`, `to`, `mime`, `filePath`, and optional `allowedPeers`, and whole-object `media:download` payloads with `id` and `outputPath` only. `upload_media_use_case.dart` encrypts and uploads one full file path; `download_media_use_case.dart` downloads one full blob, validates the completed encrypted hash/decrypt/plaintext, and deletes invalid or partial local files; `retry_incomplete_group_uploads_use_case.dart` retries whole `upload_pending` attachments by blob id. `go-mknoon/node/media.go` streams whole uploads with `io.Copy` and whole downloads with `io.CopyN`; `go-relay-server/media.go` stores only complete uploads and removes incomplete upload files. Passed adjacent whole-object/progress/integrity gates: `cd go-mknoon && go test ./node -run 'MediaUploadProgressReader\|IdleTimeoutReader' -v`; `cd go-relay-server && go test ./... -run 'Media\|GroupMedia' -v`; `flutter test --no-pub test/features/conversation/application/upload_media_use_case_test.dart`; `flutter test --no-pub test/features/conversation/application/download_media_use_case_test.dart`; `flutter test --no-pub test/features/groups/application/retry_incomplete_group_uploads_use_case_test.dart`; `flutter test --no-pub test/features/groups/integration/group_media_fanout_test.dart`. No current proof covers chunk manifests, per-chunk hashes, verified chunk reuse, same-peer or other-peer resume, progress without duplicated completed bytes, or corrupted-chunk redownload. `group-real-network-nightly` was fixture-blocked locally because `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` were unset. |
+| `MD-011` | Covered | Tests-only closure on 2026-04-30. `group_media_fanout_test.dart` proves the post-removal future-media path: after C is removed and A/B advance to epoch 2, B receives and downloads A's future media while C has no message, descriptor/media row, pending download, `media:download`, `blob:decrypt`, epoch-2 key, subscription, or local content. `retry_incomplete_group_uploads_use_case_test.dart` proves retry upload `allowedPeers` and `group:inboxStore` `recipientPeerIds` are rebuilt from the post-removal member set and exclude C. `drain_group_offline_inbox_use_case_test.dart` proves a removed peer with only epoch 1 skips an epoch-2 future media replay before message/media/download/decrypt persistence. Go relay media ACL tests prove a peer omitted from `allowedPeers` cannot download a group blob. Focused Dart files, adjacent removal/UI tests, the tagged Go integration command, Go relay media ACL command, groups integration, `groups`, `completeness-check`, and `git diff --check` passed in the execution evidence. The untagged Go integration command is invalid because integration tests require `-tags integration`; `flutter test --no-pub test/features/groups` still has an unrelated `group_conversation_wired_test.dart:4114` failure; device/real-relay proof is supplemental and fixture-blocked until `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` are set. |
+| `MD-012` | Covered | MD-012 closure on 2026-04-30. `group_media_integrity_policy_test.dart` pins the quarantine status helpers and keeps quarantine, download retry, and upload retry ownership separate. `download_media_use_case_test.dart` proves unsafe descriptor, relay MIME, content hash, encryption/decrypt, missing decrypted file, plaintext size, and plaintext MIME/signature failures become `integrity_failed` without displayable local paths, while bridge-level blob-not-found remains `failed`. `group_conversation_screen_test.dart`, `media_grid_cell_test.dart`, and `audio_player_widget_test.dart` prove visual and voice rows show explicit `Media unavailable` UI, stable `Retry unavailable media` semantics, and no thumbnail/open/play affordance until verified. `letter_card_test.dart`, `group_conversation_wired_test.dart`, and `retry_incomplete_group_uploads_use_case_test.dart` prove incoming/read-only retry is a per-attachment `downloadMedia(... enforceGroupMediaPolicy: true)` repair path, not failed-message resend or incomplete-upload retry, and never calls `retryFailedGroupMessage`, `retryIncompleteGroupUploads`, `group:publish`, or `group:inboxStore` for download-only repair. `group_conversation_wired_test.dart` proves targeted repaired retry becomes `done` only after verification and failed repair stays quarantined, clears the unsafe local path, deletes the stale file, and does not open full-screen media. `group_media_fanout_test.dart` keeps tampered fake-network downloads quarantined before `done`. Focused MD-012 suites, groups integration, broad `test/features/groups`, `./scripts/run_test_gates.sh groups`, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check` passed. Device/real-relay proof is supplemental for this row and was unavailable in the host-side session. |
+| `MD-014` | Partial | MD-014 targeted proof rerun on 2026-04-30 used configured `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` and the supplied relay addresses. `./scripts/run_test_gates.sh group-real-network-nightly` passed, including the real CLI peer group recovery test, so the row is no longer blocked only by absent device/relay fixtures. The next required simulator media proof failed: `flutter test --no-pub -d 347FB118-10D0-40C8-A05B-B0C3BD6B8CCD integration_test/group_new_member_media_simulator_proof_test.dart` expected exactly two `VideoThumbnailOverlay` widgets and found zero. Historical Report 89 Android/iOS simulator media proof remains supporting evidence only. Missing closure evidence: fixed/green configured simulator media rendering proof, current full discussion and announcement media/recovery matrix proof, relay outage/recovery and duplicate-prevention breadth, OS-state breadth, and a decision on the file dimension while MD-013 remains unsupported. This row is now implementation-ready/needs code-and-test follow-up for the configured simulator media proof failure. |
+| `EK-001` | Covered | EK-001 closure on 2026-04-30. `go-mknoon/node/protocol_version_test.go` now includes `TestSecureLibp2pChannelRequiredBeforeMknoonProtocols`, proving a deliberately insecure `libp2p.NoSecurity` host cannot connect to a production mknoon node over the raw TCP address, cannot open `ChatProtocol`, and leaves no connected insecure peer on either side. The test is payload-free, so invite, sync, media, group key, and publish payloads are never handed to mknoon protocol handlers over the insecure channel. Existing protocol tests keep secure mknoon nodes negotiating current chat protocol, rejecting unsupported chat protocol versions, and using `InboxProtocol` for group inbox store. Focused EK-001 protocol suite and broader adjacent Go node security/protocol slice passed. App-layer encryption, signatures, and storage-path privacy remain separate rows. |
+| `EK-002` | Covered | EK-002 closure on 2026-04-30. `go-mknoon/node/pubsub_test.go` proves relay-visible group message and reaction envelopes omit protected plaintext while carrying encrypted ciphertext/nonce, `go-mknoon/node/group_inbox_test.go` proves group inbox-store request JSON preserves an opaque encrypted replay envelope and omits sensitive plaintext fragments, and `send_group_message_use_case_test.dart` now includes `EK-002 pending inbox retry stores encrypted replay without protected plaintext`, proving persisted pending inbox retry JSON plus the attempted `group:inboxStore` command carry a `group_offline_replay` encrypted envelope and omit protected message body, invite/private-state fragments, media encryption keys, and plaintext push previews. Focused Go, focused Flutter, broader storage-path Dart bundle, `./scripts/run_test_gates.sh groups`, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check` passed. EK-001 transport security, EK-004 signatures, EK-005 future epochs, EK-012 replay protection, and EK-013 secure-storage deletion remain separate rows. |
+| `EK-003` | Partial | EK-003 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_first_class_device_identity_model`. `go-mknoon/node/pubsub.go` and focused validator tests prove live member-level binding for transport Peer ID, stored member public key, signature validation, spoofed public-key rejection, and bad-signature rejection. `group_multi_device_convergence_test.dart` keeps current same-peer sibling-device versus separate-human evidence green, and `group_key_update_listener_test.dart` keeps adjacent key-update decrypt/promote/persist ordering green. The row remains partial because `GroupMember`, `GroupInvitePayload`, and Go v3 `GroupEnvelope` have no first-class device identity or device key-package fields; key rotation distributes by member peer ID/ML-KEM key; `GroupKeyUpdateListener` applies decrypted key updates without sender/device validation before key use; offline replay lacks an equivalent transport-origin/device proof; and no valid-device versus invalid-device live/equivalent matrix exists. |
+| `EK-004` | Partial | EK-004 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_signature_proof_for_non_pubsub_event_surfaces`. `go-mknoon/node/pubsub_test.go` now includes `TestGroupTopicValidator_RejectsInvalidSignatureForSecurityEventFamilies`, proving valid admin-signed v3 PubSub envelopes accept and forged envelopes reject with `reject:bad_signature` for message, reaction, `member_added`, `members_added`, `member_removed`, `member_role_updated`, `group_metadata_updated`, `group_dissolved`, and `key_rotated`. The row remains Partial because direct invites, direct `group_key_update` delivery, audit/event-log surfaces, and complete offline replay signature equivalence still lack explicit signature verification proof before local mutation, key use, or accepted replay. Focused Go and adjacent Flutter evidence suites passed during local execution fallback; closure gates are recorded in the EK-004 plan and breakdown ledger. |
+| `EK-005` | Partial | EK-005 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_future_epoch_queue_repair_primitives`. `go-mknoon/node/pubsub_key_rotation_grace_test.go` now includes `TestGroupTopicValidator_RejectsUnknownFutureEpochBeforeDelivery`, proving a live envelope signed/encrypted for unknown future epoch 2 is rejected as `reject:bad_signature` while local key info is still epoch 1. Existing offline replay coverage proves future encrypted replay without the matching local key does not call `group.decrypt` and persists a safe `undecryptable` placeholder rather than plaintext fallback or wrong-epoch content. The row remains Partial because this is fail-closed/placeholder behavior only: there is no durable future-epoch pending queue, key-sync repair trigger, retry after key arrival, or UI/state pending-key-repair semantics. |
+| `EK-006` | Partial | EK-006 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_three_party_stale_invalid_sender_proof`. `go-mknoon/node/pubsub_key_rotation_grace_test.go` now includes `TestGroupTopicValidator_RejectsRemovedSenderPreviousEpochDuringGrace`, proving previous-epoch grace does not bypass current membership: a removed/non-member sender's valid previous-epoch envelope rejects as `reject:non_member`. Existing Go grace tests prove authorized previous-epoch traffic is accepted during grace and rejected after grace expiry. Flutter send/retry/offline-inbox/listener/member-removal gates prove locally removed or unauthorized app-layer sends and replay paths do not persist normal delivered content and future key material excludes removed members. The row remains Partial because a full app-level stale-epoch UI outcome and true/equivalent three-party live/replay proof where A removes C, rotates keys, C sends old/grace/stale traffic, and B rejects are absent. |
+| `EK-007` | Partial | EK-007 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_scheduled_rotation_primitives`. Manual/app-triggered rotation continuity is proven by Go `TestGroupRotateKey_IncrementsEpoch` and `TestGroupGenerateNextKey_DoesNotMutateStoredKeyState`, Flutter `rotate_group_key_use_case_test.dart`, `rotate_and_distribute_group_key_use_case_test.dart`, `group_key_update_listener_test.dart`, `send_group_message_use_case_test.dart`, `member_removal_integration_test.dart`, `invite_round_trip_test.dart`, and `group_resume_recovery_test.dart`. The row remains Partial because searches found no scheduled/periodic key rotation service, timer, policy, configuration, or background owner; therefore there is no row-specific scheduled-rotation proof that scheduled and manual rotations share the same monotonic distribution/promotion/send-binding contract. |
+| `EK-008` | Open | EK-008 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_first_class_device_identity_model`, `missing_device_compromise_recovery_primitives`, and `missing_per_device_key_package_and_future_key_exclusion`. Adjacent evidence proves only fake-network same-peer device-local unsubscribe while preserving sibling delivery, member-scoped key rotation/distribution, member removal/leave future-key exclusion, key-update save/promotion ordering, and Go member-level sender/transport/public-key/signature binding. The row remains Open because no production model can identify or revoke only B2, no per-device key package or distribution roster exists, and no live/equivalent proof shows B2 excluded from future epoch updates/content while B1 and other members continue. |
+| `EK-010` | Open | EK-010 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_signed_commit_transition_model`, `missing_group_transition_event_log`, `missing_commit_replay_and_fork_protection`, and `missing_independent_state_verification_from_commits`. Adjacent evidence proves PubSub security-family signatures fail closed, metadata `configVersion`/`stateHash` tamper checks reject invalid updates, membership watermarks block stale rollback after restart, and rotation/key-update ordering remains green. The row remains Open because there is no durable signed commit or transition-event model for create/add/remove/role/metadata/key-rotation/recovery changes, no previous-state dependency or commit-chain hash, no local append-only/tamper-evident group event log, and no replay/fork protection over signed transition history. |
+| `EK-011` | Partial | EK-011 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_first_class_welcome_key_package_model`, `missing_key_package_validation_before_admission`, `missing_wrong_recipient_or_stale_welcome_rejection`, `missing_weak_mlkem_key_validation`, and `missing_signed_welcome_admission_proof`. Adjacent invite/key-material evidence proves required invite fields reject before state creation, empty `groupKey` fails before group/key state or `group:join`, v2 decrypt failure and missing local ML-KEM secret reject without persistence, sender transport mismatch and recipient mismatch reject without persistence, missing join material stays repair-pending, and valid direct group-key onboarding/re-invite remains green. The row remains Partial because no repo-owned first-class welcome/key-package model or test surface exists, direct group-key invites are not full MLS-like welcome/key-package support, and app-level stale/wrong-recipient/weak/signed welcome admission proof is absent. |
+| `EK-012` | Partial | EK-012 closure attempt on 2026-04-30 is prerequisite-blocked by `missing_signed_commit_replay_protection`, `missing_first_class_key_package_replay_model`, `missing_cross_surface_replay_diagnostics`, `missing_commit_transition_event_log`, and `missing_key_package_tombstone_or_freshness_contract`. Adjacent replay evidence proves offline inbox message replay drains idempotently, pubsub plus inbox duplicate delivery dedupes by message ID, resumed reaction replay converges to one truthful stored reaction, membership and metadata replays use watermarks/state hashes, pending invite replay is blocked or idempotent through duplicate-group/revoked/consumed/expired handling, malformed or decrypt-failed key updates do not mutate local key state, and Go PubSub validator/decryption tests fail closed for unauthorized, bad-signature, wrong/future-epoch, tampered-nonce, duplicate-delivery, and removed-sender paths. The row remains Partial because no repo-owned first-class signed commit/transition replay model, transition event log, key-package replay/freshness/tombstone model, or cross-surface replay diagnostics exist. |
+| `EK-013` | Covered | EK-013 closed on 2026-04-30. `GroupRepositoryImpl.saveKey` now enforces a latest-plus-previous group-key retention policy: saving generation 3 after generations 1 and 2 keeps generations 2 and 3, removes generation 1 from SQLCipher `group_keys`, and deletes the matching shared push `SecureKeyStore` mirror. `removeAllKeys` still clears all group keys and secure-store mirrors, `mirrorAllKeysToSecureStore` still mirrors approved persisted rows, and `InMemoryGroupRepository` follows the same bounded retention behavior for fake-backed group tests. Focused repository, rotation/key-update, and Go bridge/node validator gates passed. SQLCipher `group_keys` remains the approved app-local encrypted store for current/previous group-operation keys, while backup/export product policy, per-device key packages, debug export redaction, and memory wiping remain separate rows. |
+| `EK-014` | Covered | EK-014 closed on 2026-04-30. `contact_safety_number.dart` builds stable grouped safety numbers from peer id plus Ed25519 and optional ML-KEM identity keys, and `group_member_identity_safety.dart` compares current group-member keys with the saved contact keys. `group_info_wired.dart`, `group_info_screen.dart`, and `group_member_row.dart` now surface `Identity changed`, `Current safety`, and `Saved safety` in the member list when saved and current identity keys differ. `contact_safety_number_test.dart`, `group_info_screen_test.dart`, and `group_info_wired_test.dart` prove deterministic/change-sensitive safety numbers, changed-key warnings, current/saved safety-number display, matching-key no-warning behavior, and no false warning without comparable saved contact/current key material. Focused and combined EK-014 gates, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check` passed. First-class per-device verification remains EK-003/EK-008 scope. |
 | `ID-003` | Covered | `group_messaging_smoke_test.dart` proves non-friend members can exchange discussion traffic once they share membership, and the `group_test_user.dart` harness avoids contact-repo shortcuts. |
 | `ID-008` | Covered | `group_membership_smoke_test.dart`, `invite_round_trip_test.dart`, and `group_message_listener_test.dart` together cover duplicate re-add, duplicate invite, and stale membership replay de-duplication. |
 | `ID-009` | Covered | `handle_incoming_group_invite_use_case_test.dart` proves avatar metadata persistence, and the accept path reuses the same payload materialization contract before the feed refresh assertions consume it. |
@@ -226,8 +298,49 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Retry/media recovery host safety net | Revalidated host-side; simulator UI residual remains | `retry_incomplete_group_uploads_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `group_conversation_screen_test.dart` cover incomplete-upload retry, failed-message retry, and failed-media row retry/delete controls. |
 | Relay fixture closure guard | Gate wiring covered; configured relay run required for pass | `multi_relay_failover_test.dart` now supports `MKNOON_REQUIRE_MULTI_RELAY=true`; `./scripts/run_test_gates.sh group-real-network-nightly` requires `FLUTTER_DEVICE_ID` and at least two relay addresses. |
 | Partition/heal durable inbox recovery | Covered for fake-network durable-inbox contract; real network residual remains | `group_resume_recovery_test.dart` now stages three missed split-window messages across cursor-ordered durable inbox pages and proves post-heal live delivery resumes. |
-| Same-account host convergence | Covered at host fake-network layer; real device residual remains | `group_multi_device_convergence_test.dart` remains the same-account oracle for sent history, membership, mute, unread, and notification locality. |
+| Same-account host convergence | Covered at host fake-network layer; real device residual remains | `group_multi_device_convergence_test.dart` remains the same-account oracle for sent history, membership, mute, unread, and notification locality; `group_multi_device_policy_test.dart` pins composer drafts as device-local state. |
 | Go membership-event signature guard | Covered at Go envelope-validator layer | `pubsub_test.go` adds forged `members_added` signature rejection while accepting the same payload when signed by the real admin. |
+
+## 0C. MD-001 Media MIME Safety Closure (2026-04-30)
+
+MD-001 adds `test/core/media/group_media_mime_policy_test.dart` as the policy anchor and extends the existing upload, download, send, retry, live receive, replay, listener, and media-grid tests named in the row crosswalk. The focused MD-001 direct suite passed with `+243`, `group_media_fanout_test.dart` passed with `+2`, `flutter test --no-pub test/features/groups` passed with `+973`, `flutter test --no-pub test/features/groups/integration` passed with `+112`, `./scripts/run_test_gates.sh groups` passed with `+93`, and `./scripts/run_test_gates.sh completeness-check` passed. `SMOKE-GAP-05` maps to that evidence bundle; it is not a shell target.
+
+## 0D. MD-002 Media Size Safety Closure (2026-04-30)
+
+MD-002 adds `test/core/media/group_media_size_policy_test.dart` as the policy anchor and extends the existing upload, send, retry, live receive, encrypted replay, listener, foreground push, download, media-grid, wired composer, and fake-network fanout tests named in the row crosswalk. Focused direct suites passed, `flutter test --no-pub test/features/groups/integration/group_media_fanout_test.dart` passed, `flutter test --no-pub -d macos integration_test/foreground_group_push_drain_test.dart` passed after the unqualified command required device selection, `flutter test --no-pub test/features/groups` passed with `+985`, `flutter test --no-pub test/features/groups/integration` passed with `+113`, `./scripts/run_test_gates.sh groups` passed with `+93`, `./scripts/run_test_gates.sh completeness-check` passed with `690/690` classified, and `git diff --check` passed. `SMOKE-GAP-05` maps to that evidence bundle; it is not a shell target.
+
+## 0E. MD-003 Media Integrity Closure (2026-04-30)
+
+MD-003 adds `test/core/media/group_media_integrity_policy_test.dart` and extends the model, migration, DB helper, upload, download, send, retry, live receive, encrypted replay, listener, foreground push, feed, group conversation, media-grid, audio, and fake-network fanout tests named in the row crosswalk. Focused direct suites passed with `+435`, `flutter test --no-pub test/features/groups/integration/group_media_fanout_test.dart` passed with `+4`, `flutter test --no-pub -d macos integration_test/foreground_group_push_drain_test.dart` passed with `+7`, `flutter test --no-pub test/features/groups` passed with `+991`, `flutter test --no-pub test/features/groups/integration` passed with `+114`, `./scripts/run_test_gates.sh groups` passed with `+93`, and `./scripts/run_test_gates.sh completeness-check` passed with `692/692` classified. The plan-listed `feed_wired_test.dart` focus target is not a valid MD-003 signal in this dirty tree because it fails to compile in unrelated `orbit_wired.dart` missing a `repairPending` switch case; narrower feed application/widget MD-003 tests passed. Thumbnail closure is explicit: group code has no remote thumbnail blob/path display surface, optional thumbnail hashes validate when present, and generated thumbnails derive only from verified content. `SMOKE-GAP-05` maps to this evidence bundle; it is not a shell target.
+
+## 0F. MD-004 Media Key Separation Closure (2026-04-30)
+
+MD-004 adds per-object group media encryption metadata to `MediaAttachment`, migration 059, DB helpers, upload and download use cases, send/receive/retry/listener paths, foreground push drain, fake-network fanout, and onboarding/resume integrations. The proof-first regression failed before implementation because group media lacked `encryptionKeyBase64`/`encryptionNonce` and did not encrypt before relay upload. The final contract generates a fresh key/nonce per group media object, uploads encrypted bytes, computes `contentHash` over the encrypted blob, carries decrypt metadata inside the encrypted group message/replay descriptor, verifies encrypted hash before decrypt, validates plaintext MIME/size after decrypt, and rejects wrong-key/cross-object decrypt attempts before display. Focused MD-004 suites passed, required fanout/onboarding/resume/foreground integrations passed, `flutter test --no-pub test/features/groups` passed with `+993`, `flutter test --no-pub test/features/groups/integration` passed with `+114`, `./scripts/run_test_gates.sh groups` passed with `+93`, `./scripts/run_test_gates.sh completeness-check` passed with `693/693` classified, and `git diff --check` passed. `SMOKE-GAP-05` maps to this evidence bundle; it is not a shell target.
+
+## 0G. MD-011 Removed-Member Future Media Closure (2026-04-30)
+
+MD-011 is a tests-only closure. `group_media_fanout_test.dart` proves live post-removal future media reaches remaining B and not removed C after rotation to epoch 2; C has no descriptor, message, media row, pending download, `media:download`, `blob:decrypt`, epoch-2 key, subscription, or local decrypted content. `retry_incomplete_group_uploads_use_case_test.dart` proves retry media `allowedPeers` and inbox `recipientPeerIds` exclude removed C, while `drain_group_offline_inbox_use_case_test.dart` proves C with only epoch 1 cannot decode or persist epoch-2 future media replay. Go relay media ACL coverage proves omitted peers cannot download group blobs. The invalid untagged Go integration command is accepted as a plan-command defect because the test file is tagged `//go:build integration` and the tagged command passed. `flutter test --no-pub test/features/groups` still fails in unrelated `group_conversation_wired_test.dart:4114`; the named `groups` gate passed. Device/real-relay proof is supplemental and remains fixture-blocked until `FLUTTER_DEVICE_ID` and `MKNOON_RELAY_ADDRESSES` are configured.
+
+## 0H. MD-012 Unsafe Media Quarantine And Retry UI Closure (2026-04-30)
+
+MD-012 closes the unsafe media quarantine UI path. `integrity_failed` is the accepted quarantine status for unsafe group media, while bridge-level missing blobs stay `failed`. Download policy now quarantines unsafe descriptor, relay MIME, content hash, encryption/decrypt, missing decrypted file, plaintext size, and plaintext MIME/signature failures without leaving displayable local bytes. Visual and voice rows render explicit `Media unavailable` UI with stable `Retry unavailable media` semantics and no thumbnail/open/play affordance until verification succeeds. Incoming/read-only retry is scoped to per-attachment `downloadMedia(... enforceGroupMediaPolicy: true)` repair and does not call failed-message resend, incomplete-upload retry, `group:publish`, or `group:inboxStore`. Focused MD-012 suites, `group_media_fanout_test.dart`, `test/features/groups/integration`, broad `test/features/groups`, `./scripts/run_test_gates.sh groups`, `./scripts/run_test_gates.sh completeness-check`, and `git diff --check` passed. Device/real-relay proof is supplemental and remains outside this host-side row closure.
+
+## 0I. MD-014 Simulator Media Matrix Targeted Recheck (2026-04-30)
+
+MD-014 remains Partial. The targeted recheck used `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` and the supplied `MKNOON_RELAY_ADDRESSES`; `./scripts/run_test_gates.sh group-real-network-nightly` passed, including the real CLI peer group recovery test. The next row-required simulator media proof failed: `flutter test --no-pub -d 347FB118-10D0-40C8-A05B-B0C3BD6B8CCD integration_test/group_new_member_media_simulator_proof_test.dart` expected exactly two `VideoThumbnailOverlay` widgets and found zero. This is no longer only a fixture blocker; the row is implementation-ready/needs code-and-test follow-up for the configured simulator video/voice media rendering proof. Remaining closure evidence still includes the full discussion/announcement image/video/GIF/voice/file matrix, OS-state breadth, relay outage/recovery and duplicate-prevention breadth, and MD-013 file-dimension scope reconciliation.
+
+## 0I-a. Targeted Evidence/Gate Recheck Summary (2026-04-30)
+
+Rows rechecked at this earlier evidence-gate pass: GL-008, LP-002, LP-006, LP-007, LP-011, LP-013, IJ-010, EK-006, and MD-014. No target row moved to Covered during that pass; GL-008 moved to Covered later on 2026-04-30 through the GL-008 session plan evidence recorded in the row-closure crosswalk above.
+The remaining rows LP-002, LP-007, LP-011, LP-013, IJ-010, and EK-006 kept their existing Partial evidence with focused direct gates passing and exact live/raw/device proof still missing. LP-006 is reclassified to implementation-ready/needs code-and-test follow-up because its direct zero-peer publish proof is red. MD-014 is reclassified to implementation-ready/needs code-and-test follow-up because configured real-network proof passed but configured simulator media rendering proof failed.
+
+## 0J. EK-001 Secure Libp2p Channel Closure (2026-04-30)
+
+EK-001 closes with a Go host-level transport-security proof. `TestSecureLibp2pChannelRequiredBeforeMknoonProtocols` starts a production mknoon node through `Node.Start`, starts a `libp2p.NoSecurity` host, restricts the attempt to the mknoon node's raw TCP address, and proves the insecure host cannot connect or open `ChatProtocol`; both peers also report no retained insecure connection. The test sends no group payload or secret, so failure occurs before invite, sync, media, or publish handling. The focused EK-001 protocol command and broader adjacent Go node security/protocol slice passed. EK-002, EK-004, EK-005, and other app-layer cryptographic rows remain separate.
+
+## 0K. EK-002 Storage-Path Privacy Closure (2026-04-30)
+
+EK-002 closes with infrastructure-visible payload proof across live relay, mailbox/inbox-store, and persisted retry storage paths. Go PubSub tests prove live group message and reaction envelopes expose only encrypted ciphertext/nonce while protected plaintext remains decryptable only with the group key. Go inbox-store tests prove mailbox request JSON preserves an opaque encrypted replay envelope and omits sensitive plaintext. The new Flutter retry test keeps `group.encrypt` opaque, forces inbox-store failure, and proves both persisted pending retry JSON and the attempted `group:inboxStore` command omit protected message body, invite/private-state fragments, media encryption key material, and plaintext push previews while carrying a `group_offline_replay` envelope. Focused Go, focused Flutter, broader storage-path Dart bundle, `groups`, `completeness-check`, and `git diff --check` passed. Signature, future-epoch, replay-protection, transport-security, and secure-storage rows remain separate.
 
 ---
 
@@ -348,7 +461,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `group multi-device policy` | shares only joined-device group-authoritative state | Shared state scope |
-| | keeps local installation state device-specific | Local state scope |
+| | keeps local installation state device-specific | Local state scope, including composer drafts |
 | | shared and device-local helpers stay aligned with the mapping | Helper alignment |
 
 ### 1.12 GroupRepositoryImpl
@@ -369,6 +482,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | archiveGroup and unarchiveGroup work | Archive toggle |
 | | getActiveGroups excludes archived | Active filter |
 | `Members` | saveMember and getMember round-trip | Member persistence |
+| | saveMember and getMember preserve permission overrides | Permission override persistence |
 | | getMembers returns all members for group | Member list |
 | | updateMemberRole changes the role | Role update |
 | | removeMember and removeAllMembers work | Member deletion |
@@ -416,6 +530,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | `PendingGroupInviteRepositoryImpl` | savePendingInvite and getPendingInvite round-trip | Persistence round-trip |
 | | getPendingInvites orders newest first | Sort order |
 | | deleteExpiredPendingInvites removes expired rows only | Expiry cleanup |
+| | saveRevokedInvite and getRevokedInvite round-trip | Revocation tombstone persistence |
+| | deleteExpiredRevokedInvites removes expired revocations only | Revocation cleanup |
+| | saveConsumedInvite and getConsumedInvite round-trip | Consumption tombstone persistence |
+| | deleteExpiredConsumedInvites removes expired consumptions only | Consumption cleanup |
 
 ---
 
@@ -522,6 +640,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | `dbLoadAllGroupMembers` | returns all members for a group ordered by joined_at ASC | List + sort |
 | `dbLoadGroupMember` | returns null for non-existent member | Missing record |
 | | returns member when it exists | Lookup |
+| | preserves permissions_json | Permission override persistence |
 | `dbUpdateGroupMemberRole` | updates the role field | Role update |
 | `dbDeleteGroupMember` | deletes a single member | Deletion |
 | `dbCountGroupMembers` | returns correct count | Count |
@@ -540,11 +659,30 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | `dbLoadAllGroupKeys` | returns all keys ordered by generation ASC | List + sort |
 | `dbDeleteAllGroupKeys` | deletes all keys for a group | Bulk deletion |
 
+### 2.7 Group Event Log DB Helpers
+**File:** `test/core/database/helpers/group_event_log_db_helpers_test.dart`
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `canonicalizeGroupEventLogPayload` | canonical payload ordering is deterministic | Stable canonical JSON for tamper-evident hashing |
+| `dbAppendGroupEventLogEntry` | appends entries with per-group hash chain | Sequence, previous hash, and entry hash linkage |
+| | exact duplicate source event is idempotent but changed replay is rejected | Replay idempotence and tamper rejection |
+| `dbVerifyGroupEventLogChain` | chain verification detects row tampering | Manual DB tamper detection |
+
 ---
 
 ## 3. Data Layer (DB Migrations)
 
-### 3.1 Migration 026: group_messages.quoted_message_id
+### 3.1 Migrations 017/018: original group tables
+**File:** `test/core/database/migrations/017_018_group_original_tables_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| create baseline group tables, columns, defaults, and indexes | Original `groups`, `group_members`, `group_keys`, and `group_messages` table creation plus baseline indexes and defaults |
+| stores and reads baseline member, key, and message rows | Pre-026 group/member/key/message insert and query behavior |
+| enforces original constraints and remains idempotent | Type/role/unique/primary-key constraints plus rerunnable migrations 017/018 |
+
+### 3.2 Migration 026: group_messages.quoted_message_id
 **File:** `test/core/database/migrations/026_group_quoted_message_id_test.dart`
 
 | Test | What it covers |
@@ -554,7 +692,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | can store a quoted parent id after migration | Write after migration |
 | is idempotent | Migration safety |
 
-### 3.2 Migration 048: groups.last_membership_event_at
+### 3.3 Migration 048: groups.last_membership_event_at
 **File:** `test/core/database/migrations/048_groups_last_membership_event_at_test.dart`
 
 | Test | What it covers |
@@ -564,7 +702,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | can store a membership-event watermark after migration | Write after migration |
 | is idempotent | Migration safety |
 
-### 3.3 Migration 049: groups metadata columns
+### 3.4 Migration 049: groups metadata columns
 **File:** `test/core/database/migrations/049_groups_metadata_columns_test.dart`
 
 | Test | What it covers |
@@ -574,7 +712,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | can store metadata fields after migration | Write after migration |
 | is idempotent | Migration safety |
 
-### 3.4 Migration 050: groups.is_muted
+### 3.5 Migration 050: groups.is_muted
 **File:** `test/core/database/migrations/050_groups_mute_column_test.dart`
 
 | Test | What it covers |
@@ -584,7 +722,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | can store muted state after migration | Write after migration |
 | is idempotent | Migration safety |
 
-### 3.5 Migration 051: pending_group_invites
+### 3.6 Migration 051: pending_group_invites
 **File:** `test/core/database/migrations/051_pending_group_invites_test.dart`
 
 | Test | What it covers |
@@ -593,7 +731,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | stores and loads pending invite rows | Read/write |
 | is idempotent | Migration safety |
 
-### 3.6 Migration 052: groups dissolve columns
+### 3.7 Migration 052: groups dissolve columns
 **File:** `test/core/database/migrations/052_groups_dissolve_columns_test.dart`
 
 | Test | What it covers |
@@ -603,7 +741,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | can store dissolved state after migration | Write after migration |
 | is idempotent | Migration safety |
 
-### 3.7 Migration 053: groups backlog retention columns
+### 3.8 Migration 053: groups backlog retention columns
 **File:** `test/core/database/migrations/053_groups_backlog_retention_columns_test.dart`
 
 | Test | What it covers |
@@ -612,6 +750,38 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | existing rows get null backlog retention defaults on upgrade | Default value |
 | can store backlog retention state after migration | Write after migration |
 | is idempotent | Migration safety |
+
+### 3.9 Migration 055: group_invite_revocations
+**File:** `test/core/database/migrations/055_group_invite_revocations_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| creates revocation table and indexes | Table and index creation |
+| can store a revoked invite row after migration | Write after migration |
+| is idempotent | Migration safety |
+
+### 3.10 Migration 056: group_invite_consumptions
+**File:** `test/core/database/migrations/056_group_invite_consumptions_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| creates consumption table and indexes | Table and index creation |
+| can store a consumed invite row after migration | Write after migration |
+| is idempotent | Migration safety |
+
+### 3.11 Migration 057: group_member_permissions
+**File:** `test/core/database/migrations/057_group_member_permissions_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| adds permissions_json to group_members idempotently | Permission override schema addition and write/read after migration |
+
+### 3.12 Migration 060: group_event_log
+**File:** `test/core/database/migrations/060_group_event_log_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| creates group event log table and indexes idempotently | Durable `group_event_log` table, uniqueness constraints, indexes, and insertability |
 
 ---
 
@@ -626,6 +796,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | throws on empty name | Validation |
 | throws on bridge error | Error handling |
 | saves group, member, and key to repo | Persistence |
+| persists creator identity and initial bridge epoch on create | Creator identity and initial key epoch persistence |
 | persists the creator username on the admin membership row | Creator identity persistence |
 | fails honestly and rolls back when no usable group key is available | Keyless-create rollback |
 | creates announcement group with announcement bridge payload and admin metadata | Announcement type |
@@ -642,7 +813,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | calls callGroupUpdateConfig once with full member list including self | Bridge config sync |
 | | broadcasts members_added system message via callGroupPublish | System message |
 | | sends individual encrypted P2P invites to each contact | Invite delivery |
-| | rolls back staged members when `group:updateConfig` fails after local adds | Config rollback |
+| | rolls back staged members when `group:updateConfig` fails after local adds | Config rollback and no invite fan-out |
 | | reports mixed or failed invite delivery as an explicit warning result | Invite-degradation truth |
 | | reports missing latest key as explicit invite-delivery degradation | Missing-key truth |
 | | reports `members_added` publish failure without pretending full invite success | Publish-warning truth |
@@ -663,6 +834,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | returns groupNotFound for unknown group | Guard |
 | | returns groupDissolved for a dissolved group | Dissolve guard |
 | | returns unauthorized for non-admin in announcement group | Announcement guard |
+| | rejects stale send after local membership removal before persistence | Removed-sender stale send guard |
 | | rejects message when group recovery is in progress | Recovery guard |
 | | rejects unauthorized on announcement when recovery pending | Combined guard |
 | | allows discussion send while group recovery is in progress | Discussion recovery contract |
@@ -689,6 +861,9 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | uses provided messageId when given | Explicit ID |
 | | uses provided timestamp when given | Explicit timestamp |
 | | generates messageId when not provided | Auto ID |
+| | message id collision from generator uses a fresh id without overwriting trusted row | Generated collision resolution |
+| | message id collision from explicit id resolves without overwriting trusted row | Explicit collision resolution |
+| | message id collision guard still allows failed retry in place | Retry reuse |
 | | sends message with empty text and media (voice note) | Voice note |
 | | rejects message with empty text and no media | Empty guard |
 | | rejects message with whitespace-only text and no media | Whitespace guard |
@@ -696,6 +871,8 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | handles message with multiple media attachments | Multi-media |
 | | handles message without media (backward compat) | Backward compat |
 | | text-only message without media -- no media in payload | No-media path |
+| `MS-018: key rotation epoch binding` | send snapshots current epoch for row and replay envelope before publish completes | Send-time epoch snapshot |
+| | messages before during and after rotation bind to the locally committed epoch | Before/during/after rotation commit |
 | `WU-3: pre-persist and send contract` | pre-persist: message saved with sending status + wireEnvelope + inboxRetryPayload BEFORE bridge call | Crash-window durability |
 | | pre-persist: unauthorized caller does NOT persist a row | Auth guard |
 | | pre-persist: group-not-found does NOT persist a row | Not-found guard |
@@ -715,13 +892,14 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 
 | Group | Test | What it covers |
 |-------|------|----------------|
-| `sendGroupInvite` | encrypts invite payload and sends to recipient via p2pService | Happy path |
+| `sendGroupInvite` | encrypts invite payload with recipient binding and sends to recipient via p2pService | Happy path |
 | | returns encryptionRequired when recipientMlKemPublicKey is null | Key guard |
 | | returns nodeNotRunning when p2pService is not started | Node guard |
 | | returns sendFailed when bridge encrypt returns ok=false | Encrypt failure |
 | | returns sendFailed when p2pService returns false and inbox fails | Send + inbox failure |
 | | stores invite in inbox when direct send fails | Inbox fallback |
 | | invite payload includes full groupConfig with members array | Payload shape |
+| | keeps join material and policy details inside encrypted invite payload | Direct + inbox invite privacy |
 | `sendGroupInvitesInParallel` | sends invites to all recipients and returns per-recipient outcomes | Batch send |
 | | runs invites concurrently | Concurrency |
 | | counts only successful invites when some fail | Partial failure |
@@ -734,6 +912,8 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Group | Test | What it covers |
 |-------|------|----------------|
 | (top) | handles incoming message successfully | Happy path |
+| | records incoming message in tamper-evident event log | Event-log append coverage; not counted as DB-002 closure until that row is replanned |
+| | event log rejects tampered duplicate before stored message changes | Event-log replay/tamper guard; not counted as DB-002 closure until that row is replanned |
 | | persists same-self delivery as local sent history | Multi-device |
 | | strips dangerous bidi controls and preserves safe markers on incoming save | Bidi sanitization |
 | | ignores message for unknown group | Unknown group guard |
@@ -749,9 +929,12 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | deduplicates identical incoming messages | Content dedup |
 | | deduplicates messages after sanitizing invisible bidi controls | Sanitized dedup |
 | | allows messages with different text or timestamp | False-positive guard |
+| | far future incoming timestamp is clamped to receive time | Future-skew clamp |
+| | past current and near future timestamps retain chronological order | Clock-skew ordering |
 | | deduplicates by messageId when pubsub and group inbox deliver same message | Cross-path dedup |
 | | duplicate replay enriches a missing quotedMessageId | Quote enrichment |
 | | duplicate replay with the same messageId ignores a tampered timestamp | Replay tamper dedup |
+| | duplicate replay with the same messageId ignores conflicting content | Replay content tamper dedup |
 | | duplicate group inbox replay does not resave media | Media dedup |
 | | replayed removed-sender message after cutoff does not overwrite the accepted pre-cutoff row | Replay + removal cutoff |
 | | replayed message after dissolve cutoff does not overwrite the accepted pre-dissolve row | Replay + dissolve cutoff |
@@ -767,7 +950,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 |------|----------------|
 | adds member successfully when caller is admin | Happy path |
 | allows adding the 50th member under the shared contract | Limit boundary |
-| rejects when caller is not admin | Auth guard |
+| rejects when caller is not admin | Auth guard and no local/bridge side effects |
+| allows writer with invite permission override to add a member | Permission override grant |
+| denies admin whose invite permission override is false | Permission override deny |
+| rechecks revoked invite permission before adding a queued member | Stale permission recheck |
 | rejects while group recovery is in progress | Recovery guard |
 | throws when group not found | Not-found guard |
 | rejects duplicate member before sync and preserves original row | Duplicate guard |
@@ -785,6 +971,11 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | calls group:updateConfig to update Go validator | Bridge sync |
 | does NOT call group:rotateKey | No legacy rotate |
 | throws when caller is not admin | Auth guard |
+| allows writer with remove permission override to remove member | Permission override grant |
+| denies admin whose remove permission override is false | Permission override deny |
+| rechecks revoked remove permission before removing a queued target | Stale permission recheck |
+| blocks removing the last admin before local or bridge changes | Last-admin guard |
+| allows removing an admin when another admin remains | Multi-admin removal |
 | rejects while group recovery is in progress | Recovery guard |
 | rejects non-member before sync and preserves existing members | Non-member guard |
 | removes member from DB before calling bridge | Order of operations |
@@ -799,6 +990,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 |------|----------------|
 | promotes member to admin and syncs bridge config | Happy path |
 | rejects non-admin caller | Auth guard |
+| allows writer with manage-roles permission override to update role | Permission override grant |
+| writer with manage-roles permission cannot promote a member to admin | Permission escalation guard |
+| denies admin whose manage-roles permission override is false | Permission override deny |
+| rechecks revoked manage-roles permission before applying queued role update | Stale permission recheck |
 | rejects non-member target before sync | Non-member guard |
 | blocks removing the last admin from the group | Last-admin guard |
 | allows self demotion when another admin remains and updates myRole | Self-demotion |
@@ -853,9 +1048,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 
 | Test | What it covers |
 |------|----------------|
-| dissolves a group, stores a timeline event, and leaves the topic | Happy path |
+| dissolves a group, stores a timeline event, and leaves the topic | Happy path + durable closure fields |
 | returns unauthorized for non-admin users | Auth guard |
-| returns alreadyDissolved when the group is already closed | Idempotency guard |
+| returns alreadyDissolved when the group is already closed | Idempotency guard preserving closure fields |
+| repeated dissolve preserves closure state and does not publish again | Repeated dissolve idempotency + duplicate publish guard |
 | returns bridgeError when inbox fallback fails but still marks the group dissolved | Partial failure |
 
 ### 4.14 updateGroupMetadata
@@ -864,8 +1060,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `updateGroupMetadata` | updates name, description, avatar metadata, and watermark | Happy path |
+| | builds stable version and canonical state hash for settings | Settings version + canonical hash |
 | | clears blank description and avatar fields explicitly | Blank field clearing |
 | | rejects non-admin edits | Auth guard |
+| | rechecks demoted local role before applying queued metadata edit | Stale role recheck |
 | | rejects empty names | Validation |
 
 ### 4.15 setGroupMuted
@@ -890,6 +1088,9 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 
 | Test | What it covers |
 |------|----------------|
+| allows writer with rotate permission override to rotate keys | Permission override grant |
+| denies admin whose rotate permission override is false | Permission override deny |
+| rechecks revoked rotate permission before generating a queued key | Stale permission recheck |
 | promotes generated key only after distribution completes | Ordering |
 | distribution completes before admin update and broadcast | Ordering |
 | calls bridge to encrypt key for each non-self member | Per-member encrypt |
@@ -913,6 +1114,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | returns duplicateGroup when group already exists | Duplicate guard |
 | | returns invalidPayload for missing groupId | Missing field guard |
 | | returns invalidPayload for missing groupKey | Missing field guard |
+| | returns invalidPayload for empty groupKey before state or join | Missing join material guard |
 | | returns invalidPayload for missing groupConfig | Missing field guard |
 | | returns unknownSender for invite from non-contact | Unknown sender guard |
 | | joining user gets myRole=member in the persisted GroupModel | Role assignment |
@@ -924,6 +1126,9 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | persists all members from groupConfig, not just sender | Multi-member persistence |
 | | rejects v1 invite where transport sender != payload sender | Sender mismatch guard |
 | | rejects v2 encrypted invite where transport sender != payload sender | v2 sender mismatch guard |
+| | accepts bound invite when recipient peer matches local identity | Recipient binding happy path |
+| | rejects v1 invite bound to a different recipient peer | Wrong recipient guard |
+| | rejects v2 encrypted invite bound to a different recipient peer | v2 wrong recipient guard |
 | | handles bridge group:join timeout without losing persisted data | Timeout data safety |
 
 ### 4.19 storePendingGroupInvite
@@ -932,6 +1137,8 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `storeIncomingPendingGroupInvite` | stores validated invite as pending without creating group state | Happy path |
+| | ignores delayed invite copy when invite was revoked | Revocation replay guard |
+| | ignores delayed invite copy when invite was already used | Consumption replay guard |
 | | returns duplicateGroup when group already exists | Duplicate guard |
 | | returns unknownSender when contact is missing | Unknown sender guard |
 
@@ -944,9 +1151,20 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | accept replays backlog reactions when reactionRepo is provided | Invite-accept immediate reaction catch-up |
 | | successful accept publishes a durable join event for the group | Durable join history |
 | | bridgeError keeps the persisted group and clears the pending invite row | Accepted-but-degraded persistence |
+| | missing join material stays pending for repair without creating group state | Missing join material repair state |
 | | returns expired and removes stale invite | Expiry guard |
+| | returns revoked and removes stale pending row without joining | Revoked-accept guard |
+| | returns alreadyUsed and removes stale pending row without joining | Consumption replay guard |
 | | returns duplicateGroup and removes pending row when group already exists | Duplicate guard |
 | | accepting on one device does not clear the sibling device pending invite | Multi-device |
+
+### 4.20a revokePendingGroupInvite
+**File:** `test/features/groups/application/revoke_pending_group_invite_use_case_test.dart`
+
+| Group | Test | What it covers |
+|-------|------|----------------|
+| `revokePendingGroupInvite` | removes pending row and records a revocation tombstone | Revocation happy path |
+| | returns notFound without writing a tombstone | Missing invite guard |
 
 ### 4.21 declinePendingGroupInvite
 **File:** `test/features/groups/application/decline_pending_group_invite_use_case_test.dart`
@@ -984,6 +1202,9 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | handles cursor null on empty inbox | Null cursor |
 | | drains inbox for archived groups too | Archived inclusion |
 | | drains inbox message with media -- saves media attachments | Media drain |
+| | drains mixed epoch encrypted replay out of order without rewriting epochs | MS-018 mixed-epoch replay |
+| | future epoch encrypted replay creates one undecryptable placeholder without decrypting | MS-018/OS-009 future-epoch placeholder |
+| | MD-011 removed member cannot decode future media replay with only the old epoch | Removed peer with only epoch 1 skips epoch-2 future media before message, media, download, or decrypt persistence |
 | | drains group_reaction items when reactionRepo is provided | Reaction drain |
 | `drainGroupOfflineInbox use case` | resume drains all groups concurrently | Batch drain |
 | | watchdog restart drains missed group messages exactly once | Watchdog idempotency |
@@ -1026,6 +1247,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | skips rows whose persisted media attachments are still upload_pending | Upload-pending skip + skipped-reason flow event |
 | | skips media retry rows when no resendable persisted attachments exist | No-attachment skip |
 | | continues after a per-message publish error | Error isolation |
+| | does not replay a failed text row after sender was removed locally | Removed-sender retry guard |
 | | retryFailedGroupMessage only retries the requested failed media row | Targeted retry |
 
 ### 4.26 retryIncompleteGroupUploads
@@ -1034,12 +1256,13 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `retryIncompleteGroupUploads` | returns 0 when no upload_pending attachments exist | Empty state |
-| | reuploads only group upload_pending attachments and uses blobId | Upload retry |
+| | reuploads only group upload_pending attachments and uses blobId | Upload retry + recipient-only upload ACL |
 | | reuploads only pending GIF attachments while preserving done JPEG siblings | GIF retry |
 | | emits RETRY_INCOMPLETE_GROUP_UPLOADS_TIMING with attachment and message counts | Flow event |
 | | transient failure increments retry count and terminal state at max | Retry exhaustion |
 | | skips retry work when upload_pending attachments have no parent group message row | Orphan skip |
 | | skips the final group send when the parent row is deleted after uploads complete | Deleted parent skip |
+| | MD-011 retry excludes a removed member from media ACLs and inbox recipients | Post-removal retry upload `allowedPeers` and group inbox recipients exclude removed C |
 
 ### 4.27 GroupMessageListener
 **File:** `test/features/groups/application/group_message_listener_test.dart`
@@ -1057,6 +1280,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | member_added emits readable timeline event on groupMessageStream | Durable add timeline |
 | | unauthorized member_added is ignored | Auth guard |
 | | group_metadata_updated refreshes group metadata and stores a timeline event | Metadata update |
+| | tampered group_metadata_updated state hash is ignored without mutating group state | Metadata hash tamper guard |
 | | unauthorized group_metadata_updated is ignored | Auth guard |
 | | members_added saves all members and calls updateConfig | Batch member-add |
 | | member_joined saves a durable join timeline event | Durable join timeline |
@@ -1066,7 +1290,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | handles key_rotated system message without error | Key rotation |
 | | removal of other member does NOT call leaveGroup | Non-self removal |
 | | member_role_updated changes role and calls updateConfig | Role update |
+| | member_role_updated logs event and rejects tampered replay before mutation | System event-log replay/tamper guard; not counted as DB-002 closure until that row is replanned |
 | | unauthorized member_role_updated is ignored | Auth guard |
+| | limited manager member_role_updated cannot promote a member to admin | Permission escalation guard |
+| | limited manager member_role_updated cannot grant unheld permissions | Permission escalation guard |
 | `media forwarding` | handles event without media field (backward compat) | Backward compat |
 | `group notifications` | shows notification for incoming group message | Notification display |
 | | suppresses notification when viewing group conversation | Active view suppression |
@@ -1079,6 +1306,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | ignores malformed reaction data | Malformed data guard |
 | `group_dissolved system messages` | replayed group_dissolved is idempotent | Dissolve replay |
 | | unauthorized group_dissolved is ignored | Auth guard |
+| `system messages` | unauthorized mutation system events leave local state and bridge unchanged | Receive-side authorization matrix |
 
 ### 4.28 GroupInviteListener
 **File:** `test/features/groups/application/group_invite_listener_test.dart`
@@ -1100,6 +1328,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 
 | Test | What it covers |
 |------|----------------|
+| logs key update and rejects tampered replay before replacing key | Key-update event-log replay/tamper guard; not counted as DB-002 closure until that row is replanned |
 | saves key on successful decrypt | Happy path |
 | promotes key only after group:updateKey succeeds | Ordering |
 | returns early when encrypted field is null | Null guard |
@@ -1108,6 +1337,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | saves key to DB AND updates Go via group:updateKey | Dual persistence |
 | does not crash on malformed JSON | Error resilience |
 | group:updateKey payload contains correct groupId, groupKey, keyEpoch | Payload shape |
+| send during pending key update uses old epoch until local update commits | MS-018 pending update send |
 | handles sequential key updates (epoch 2 then epoch 3) | Higher-epoch convergence |
 | conflicting same-generation key updates converge to one final stored key | Same-epoch convergence |
 | group:updateKey bridge failure keeps the old key active | Bridge failure guard |
@@ -1173,7 +1403,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | groups without key material are skipped | Key guard |
 | | error in one group does not prevent other groups from being rejoined | Error isolation + per-group error flow events |
 | | rejoins archived groups | Archived inclusion |
-| | skips dissolved groups | Dissolved exclusion |
+| | skips dissolved groups | Dissolved exclusion + rejoin result counts |
 
 ### 4.32 groupAvatarStorage
 **File:** `test/features/groups/application/group_avatar_storage_test.dart`
@@ -1188,9 +1418,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Test | What it covers |
 |------|----------------|
 | complete admin removal flow produces correct bridge command sequence | Command order |
-| rotated key is NOT distributed to removed member | Removed member exclusion |
+| rotated key is NOT distributed to removed member | Removed member future-key exclusion |
 | receiver processes key update and syncs Go validator | Key update receipt |
 | first post-removal send uses the rotated epoch | Epoch advancement |
+| voluntary leave rotation excludes leaver and remaining members send on rotated epoch | Voluntary leave rotation baseline |
 
 ---
 
@@ -1233,6 +1464,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | refreshes pending invite list when pending invite stream emits | Invite stream |
 | | accepting a pending invite joins the group and removes the row | Accept flow + immediate replay catch-up |
 | | bridgeError accept keeps the joined group and shows recovery warning | Honest degraded state |
+| | repair-pending accept keeps the invite row and shows key-material warning | Pending repair state |
 | | declining a pending invite removes the row without joining | Decline flow |
 | | tapping group navigates to conversation | Navigation |
 | | shows unread counts | Unread badge |
@@ -1377,9 +1609,9 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 
 | Group | Test | What it covers | Notes |
 |-------|------|----------------|-------|
-| `GroupConversationWired Section 3 background-task protection` | bg:begin happens before media upload and bg:end happens after publish and inbox store | Background task lifecycle | skip: true |
-| | bg:end fires on media upload failure early return | Upload failure cleanup | skip: true |
-| | bg:end fires when upload throws | Upload throw cleanup | skip: true |
+| `GroupConversationWired Section 3 background-task protection` | bg:begin happens before media upload and bg:end happens after publish and inbox store | Background task lifecycle | Active; AN-008 direct evidence; `group:inboxStore` command issuance/started-before-cleanup only, not durable completion-before-cleanup |
+| | bg:end fires on media upload failure early return | Upload failure cleanup | Active; AN-008 direct evidence |
+| | bg:end fires when upload throws | Upload throw cleanup | Active; AN-008 direct evidence |
 | | send proceeds normally when OS refuses background task | OS refusal resilience | |
 | | bg:end fires when widget unmounts mid-send | Unmount cleanup | |
 | | ordinary media upload failure after unmount still persists failed parent status | Unmount failure persistence | |
@@ -1390,8 +1622,8 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | ordinary group text send returns sent after lock/unmount when topic peers are zero | Text send zero-peer | |
 | | announcement admin text send stays bg-task protected across lock/unmount with peers | Announcement text lock/unmount | |
 | | announcement admin text send returns sent after lock/unmount when topic peers are zero | Announcement text zero-peer | |
-| | announcement media send preserves messageId, key epoch, and media metadata through wired path | Announcement media metadata | skip: true |
-| | order-recording bridge proves no early cleanup | Bridge ordering | skip: true |
+| | announcement media send preserves messageId, key epoch, and media metadata through wired path | Announcement media metadata | Active; AN-008 direct evidence |
+| | order-recording bridge proves no early cleanup | Bridge ordering | Active; AN-008 direct evidence; live-peer inbox response may finalize after `bg:end`, but `group:inboxStore` command issuance starts before cleanup |
 
 ### 5.10 GroupInfoScreen
 **File:** `test/features/groups/presentation/group_info_screen_test.dart`
@@ -1427,7 +1659,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | toggles mute state and persists it to the repository | Mute toggle |
 | | hides member remove controls for non-admin role | Remove guard |
 | | uses repo myRole instead of stale navigation role on load | Fresh role |
-| | admin metadata edit updates repo state, timeline, and bridge payloads | Metadata edit |
+| | admin metadata edit updates repo state, timeline, and bridge payloads | Metadata edit + actor keys + config hash |
 | | promote member shows confirmation, updates badge, and emits member_role_updated payload | Promote flow |
 | | demote admin shows confirmation, updates badge, and emits success feedback | Demote flow |
 | | dissolved local delete clears local state without publishing group leave and pops to the first route | Local-only cleanup flow |
@@ -1671,7 +1903,10 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `same-user multi-device convergence` | joined sibling device stores same-user live publish as local sent history | Multi-device sent history |
+| | same-user sibling devices can send concurrently without id collision loss | Same-user concurrent send identity |
 | | joined sibling device converges membership updates without duplicate local membership | Membership convergence |
+| | sibling device stays one member while new human admission adds a distinct member | IJ-012 sibling-device versus new-human admission distinction |
+| | device-local unsubscribe preserves member account and sibling delivery | RP-010 fake-network device-local unsubscribe |
 | | mute, unread, and local notifications stay device-local across joined sibling devices | Device-local state |
 
 ### 6.7 Group Resume Recovery
@@ -1680,7 +1915,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `Group resume recovery integration tests` | member backgrounded during send receives missed group messages after resume | Background resume |
-| | same message is not duplicated if both pubsub and group inbox deliver it | Cross-path dedup |
+| | same message is not duplicated if both pubsub and group inbox deliver it | Cross-path dedup + content preservation |
 | | live reaction replay on resume keeps a single truthful stored reaction after rejoin | Reaction replay dedupe after resume |
 | | post-rotation reaction replay after rejoin keeps the truthful reactor on the rotated message | Post-rotation reaction recovery |
 | | removed offline member drains replayed removal, loses group access, and cannot send after resume | Offline removal |
@@ -1732,6 +1967,7 @@ Report 85 (`Test-Flight-Improv/85-group-onboarding-and-crypto-test-coverage.md`)
 | | GroupInviteListener stores pending invite and explicit accept completes the join flow | Pending accept flow |
 | | accept publishes a durable join event that existing members can render | Durable join timeline |
 | | bridgeError accept later rejoin and drain converge without the pending invite row | Accepted-but-degraded later recovery |
+| | concurrent pending accepts converge members, key epoch, and sendability | IJ-010 concurrent accept convergence |
 
 ### 6.9 Announcement Happy Path
 **File:** `test/features/groups/integration/announcement_happy_path_test.dart`
@@ -1750,6 +1986,7 @@ Added for Report 85.
 |-------|------|----------------|
 | `Group new-member onboarding` | new member receives only post-join text and media with descriptors | Discussion post-join text/image/video/voice, no pre-join backfill, descriptor persistence, media-download trigger |
 | | multiple newly-added members converge on latest epoch and receive the same post-add message | Multi-add same-epoch convergence |
+| | new member receives current metadata and roles without pre-join history | IJ-011 current metadata, role snapshot, and future-only history |
 | | add-send boundary delivers only after the new member is subscribed | Deterministic add/send boundary |
 | | new member receives post-join reactions without pre-join reaction state | Reaction fan-out to newly-added member |
 | | quoted reply to pre-join parent keeps missing-parent fallback for new member | Post-join quote with unavailable pre-join parent |
@@ -1771,6 +2008,7 @@ Added for Report 85.
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `Existing-member group media fan-out` | discussion members receive image, video, and voice descriptors | Existing Bob/Charlie receive image/video/voice descriptors from Alice; one receiver also exercises media download |
+| | MD-011 removed member is excluded from future media descriptors and downloads | After removal and epoch-2 rotation, remaining B receives/downloads future media while removed C has no descriptor, message, media row, pending download, download/decrypt bridge call, subscription, or future key |
 
 ---
 
@@ -2324,29 +2562,28 @@ The group test infrastructure includes the following shared fakes:
 Areas of the group chat feature that have **no dedicated test coverage** or only indirect coverage:
 
 ### 10.1 Data Layer
-- **Group DB migrations before 026**: No tests for the original groups/group_messages/group_members/group_keys table creation migrations.
 - **Group message full-text search**: No tests for any search/query by content.
 
 ### 10.2 Application Layer
-- **GroupMessageListener**: Has 56 tests (the largest single test file) covering system messages, notifications, reactions, and media forwarding. System message handler coverage includes member_added, member_removed, members_added, group_dissolved, member_role_updated, group_metadata_updated, and key_rotated.
+- **GroupMessageListener**: Has 64 tests (the largest single test file) covering system messages, notifications, reactions, media forwarding, and event-log replay/tamper protection that is not counted as DB-002 closure until that row is replanned. System message handler coverage includes member_added, member_removed, members_added, group_dissolved, member_role_updated, group_metadata_updated, and key_rotated.
 - **Flow-event contract inventory**: No dedicated tests pin group-specific event family names or validate their structured payloads.
 - **Concurrent key rotation during member removal**: Only tested through the member_removal_integration_test; no isolated concurrency stress test.
 
 ### 10.3 Presentation Layer
-- **GroupConversationWired background task skipped tests**: `group_conversation_wired_bg_task_test.dart` exists with 15 tests, but 5 are marked `skip: true` (bg:begin/bg:end lifecycle, announcement media metadata, order-recording bridge). These represent untested background-task coverage holes.
+- **GroupConversationWired background task AN-008 coverage**: `group_conversation_wired_bg_task_test.dart` keeps all 15 background-task tests active, including the former 5 skipped bg:begin/bg:end lifecycle, upload cleanup, announcement media metadata, and order-recording bridge rows. Direct suite and adjacent announcement media gates passed; no AN-008 skipped rows remain.
 
 ### 10.4 Integration / E2E
-- **True multi-device E2E**: Multi-device tests use in-memory fakes in the repo-owned suite. Earlier 2026-04-12 spare iOS proof remains in `/tmp/md004_group_multi_device_real_rerun8_20260412.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/group_multi_device_real_primary_ios.log`. Report 85 revalidated `group_multi_device_convergence_test.dart` as the host oracle, but a fresh same-account two-device run remains device-lab evidence.
+- **True multi-device E2E**: Multi-device tests use in-memory fakes in the repo-owned suite. OS-010 evidence on 2026-04-30 revalidated `group_multi_device_convergence_test.dart` as the host oracle, extended `group_multi_device_policy_test.dart` so composer drafts are explicitly device-local, and found `FLUTTER_DEVICE_ID` plus `MKNOON_RELAY_ADDRESSES` unset. Earlier 2026-04-12 spare iOS proof remains in `/tmp/md004_group_multi_device_real_rerun8_20260412.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/group_multi_device_real_primary_ios.log`; a fresh same-account two-device run covering messages, read state, keys, drafts, and membership remains device-lab evidence.
 - **Push notification trigger path**: Group push routing is tested. Earlier 2026-04-12 spare iOS proof remains in `/tmp/ux009_notification_open_ui_smoke_20260412_rerun16e_drive.log`, and the final 2026-04-12 deployed-relay rerun on the primary iOS pair is recorded in `/private/tmp/acceptance_20260412/notification_open_ui_primary_ios.log`.
 - **Network partition healing**: Report 85 tightened `temporary partition replays missed backlog` in `group_resume_recovery_test.dart` to three missed split-window messages across cursor-ordered durable inbox pages plus post-heal live delivery. A real bridge/GossipSub partition-heal simulator proof remains device-lab residual evidence.
-- **Full simulator media and recovery matrix**: Report 85 added host/app-layer media onboarding, media fan-out, retry, foreground-drain, and strict paired-run criteria coverage. Full Discussion/Announcement simulator media journeys, OS-state group notification matrix, relay outage replay, and failure/recovery UI breadth still require configured device-lab runs.
+- **Full simulator media and recovery matrix**: Report 85 added host/app-layer media onboarding, media fan-out, retry, foreground-drain, and strict paired-run criteria coverage. MD-014 targeted recheck on 2026-04-30 used configured `FLUTTER_DEVICE_ID=347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` plus supplied relay addresses; `group-real-network-nightly` passed, but `integration_test/group_new_member_media_simulator_proof_test.dart` failed because it expected two `VideoThumbnailOverlay` widgets and found zero. Full Discussion/Announcement simulator media journeys, OS-state group notification matrix, relay outage replay and duplicate-prevention breadth, failure/recovery UI breadth, and the file dimension while MD-013 is unsupported still require code/test follow-up plus configured device-lab runs or an explicit scope decision.
 
 ### 10.5 Security
 - **Replay attack on group messages**: Now covered by `handle_incoming_group_message_use_case_test.dart` and `group_resume_recovery_test.dart`, which pin timestamp-tampered replay dedup plus remove/dissolve cutoff enforcement on the Flutter-visible receive path.
 - **Tampered group message payload**: Now covered by `pubsub_decryption_failure_test.go`, which pins wrong-key, tampered-nonce, tampered-ciphertext, and malformed-payload rejection without any `group_message:received` event, and `go_bridge_client_test.dart`, which keeps the owned Flutter diagnostics route pinned.
 - **Real-crypto onboarding and re-add**: Now covered at the real Go-bridge app boundary by `integration_test/group_real_crypto_onboarding_test.dart`. Live GossipSub two-node delivery remains separate device-lab evidence.
 - **Membership-event signature forgery**: Now covered at the Go envelope-validator layer by `TestGroupTopicValidator_RejectsForgedMembershipSystemEventSignature` in `pubsub_test.go`; app-layer authorization remains covered by `group_message_listener_test.dart`.
-- **Key rotation race conditions**: Now covered at the repo-owned convergence seam by `group_key_update_listener_test.dart`, which collapses same-generation conflicts to one stored key and keeps higher-epoch convergence explicit, while `send_group_message_use_case_test.dart` and `group_resume_recovery_test.dart` keep the winning epoch sendable.
+- **Key rotation race conditions**: MS-018 now has direct app-layer proof in `send_group_message_use_case_test.dart`, `group_key_update_listener_test.dart`, and `drain_group_offline_inbox_use_case_test.dart` for send-time epoch snapshots, before/during/after local rotation commit sends, pending receive-side key update sends, mixed old/new encrypted replay, and safe future-epoch undecryptable placeholder creation without wrong-epoch decrypt or plaintext fallback. The remaining gap is a combined true/equivalent 3-party or live proof where A rotates, B sends around B's commit boundary, and C receives out of order over the transport path.
 - **Group observability contract drift**: Now covered by `send_group_message_use_case_test.dart`, `rejoin_group_topics_use_case_test.dart`, `drain_group_offline_inbox_use_case_test.dart`, `retry_failed_group_messages_use_case_test.dart`, and `retry_failed_group_inbox_stores_use_case_test.dart`, which pin stable begin/success/skip/error/timing flow-event names and required detail keys on the shipped Flutter-owned group send/recovery/retry paths.
 
 ### 10.6 Go / Dart Boundary
@@ -2461,30 +2698,30 @@ Group-related tests in `go-mknoon/`. Counts reflect only `func Test*` functions 
 | TestGroupMessagePayloadWithQuotedMessageIdExtra | Quoted reply support |
 
 ### 12.3 PubSub Core
-**File:** `go-mknoon/node/pubsub_test.go` (73 tests)
+**File:** `go-mknoon/node/pubsub_test.go` (82 tests)
 
 Covers topic creation, validator logic, config updates, discovery, and publish operations:
 
 | Category | Key Tests |
 |----------|-----------|
-| Topic & Config | TestGroupTopicName, TestGroupConfig_Serialization, TestGroupKeyInfo_Serialization, TestGroupMember_Serialization, TestGroupMember_OmitEmpty |
+| Topic & Config | TestGroupTopicName, TestGroupTopicAndRendezvousNamespace_DoNotUseHumanReadableMetadata, TestJoinGroupTopic_LogOmitsHumanReadableMetadata, TestGroupConfig_Serialization, TestGroupKeyInfo_Serialization, TestGroupMember_Serialization, TestGroupMember_OmitEmpty |
 | Writer Authorization | TestIsAllowedWriter_ChatAnyMember, _AnnouncementAdminOnly, _AnnouncementMemberBlocked, _QAAnyMember, _NonMember |
 | Member Lookup | TestFindMember_Found, _NotFound, _DuplicatePeerId_ReturnsFirst |
-| Validator | TestGroupTopicValidator_ValidMessage, _InvalidJSON, _UnknownGroup, _UnauthorizedSender, _AnnouncementNonAdminRejected, _BadSignature, _SpoofedPublicKey, _RejectsForgedMembershipSystemEventSignature, _NotV3Envelope, _WrongKeyEpoch, _EmptyMembersList, _ConcurrentValidation |
-| Join / Leave | TestJoinGroupTopic_WithMultiMemberConfig, _ValidatorAcceptsAllListedMembers, _FailsWithoutPubSub, _RejectsDoubleJoin, TestLeaveGroupTopic_CancelsDiscoveryContext |
+| Validator | TestGroupTopicValidator_ValidMessage, _TransportPeerIdMatchesEnvelopeSender, _RejectsTransportPeerIdMismatch, _InvalidJSON, _UnknownGroup, _UnauthorizedSender, _RejectsUnauthorizedEventFamiliesBeforeForward, _AnnouncementNonAdminRejected, _BadSignature, _SpoofedPublicKey, _RejectsForgedMembershipSystemEventSignature, _NotV3Envelope, _WrongKeyEpoch, _EmptyMembersList, _ConcurrentValidation |
+| Join / Leave | TestJoinGroupTopic_WithMultiMemberConfig, _ValidatorAcceptsAllListedMembers, _FailsWithoutPubSub, _RejectsDoubleJoin, TestLeaveGroupTopic_CancelsDiscoveryContext, TestLeaveGroupTopic_RemovesPubSubStateAndBlocksFuturePublish |
 | Config Update | TestUpdateGroupConfig_ReplacesConfigAtomically, _NonExistentGroup, _PreservesDiscoveryLoop, _ConcurrentUpdates |
 | Invite Lifecycle | TestInviteLifecycle_AdminAddsNewMember_ValidatorAcceptsNewMember, _AnnouncementGroup_NewWriterCannotPublish |
-| Discovery | TestGroupRendezvousNamespace, _MatchesTopicName, _EmptyGroupId, TestFilterDiscoveredPeers_*, TestFilterDiscoveredGroupMembers_*, TestGroupDiscoveryInterval, _WarmInterval, TestGroupDiscoveryConcurrency, TestGroupRecoveryLimiter_*, TestGroupDiscoveryLoop_BacksOff*, _DedupesConcurrentPeerDials |
+| Discovery | TestGroupRendezvousNamespace, _MatchesTopicName, _EmptyGroupId, TestFilterDiscoveredPeers_*, TestFilterDiscoveredGroupMembers_*, TestGroupDiscoveryInterval, _WarmInterval, TestGroupDiscoveryConcurrency, TestGroupRecoveryLimiter_*, TestGroupDiscoveryLoop_BacksOff*, _DedupesConcurrentPeerDials, TestGroupDiscoveryCycle_NoKnownPeersUsesRendezvousFallback |
 | Recovery | TestGroupRecovery_PreservesTopicStateAcrossInPlaceRefresh |
 | Publish | TestPublishGroupMessage_BuildsCorrectEnvelope, TestBuildGroupMessageExtra_PreservesQuotedMessageId, TestBuildGroupMessageReceivedEvent_IncludesQuotedMessageId |
-| Encrypt Round-Trip | TestGroupMessage_EncryptDecryptRoundTrip |
+| Encrypt / Relay Visibility | TestGroupMessage_EncryptDecryptRoundTrip, TestGroupRelayVisibleMessageEnvelope_EncryptsContentBeforeRelay, TestGroupRelayVisibleReactionEnvelope_EncryptsContentBeforeRelay |
 | Diagnostics | TestAnnouncementGroup_AdminPublishWithZeroPeersStillUsesDurableFallback, TestPublishGroupMessage_EmitsLiveFanoutDiagnosticWithoutFailingDurableSend |
 | Peer Preference | TestGroupDiscovery_UsesDiscoveredAddressesBeforeRelayFallback, TestKnownGroupMemberDial_PrefersExistingOrDirectPathBeforeRelay |
 | Key Lookup | TestGetGroupKeyInfo_ReturnsCurrentKey, _ReturnsNilForUnknownGroup |
 | Node Lifecycle | TestStopNode_CancelsAllDiscoveryContexts, TestGroupDiscoveryCtx_InitializedByInitPubSub, TestCountConnectedGroupMembers_UnknownGroup |
 
 ### 12.4 PubSub Delivery
-**File:** `go-mknoon/node/pubsub_delivery_test.go` (8 tests)
+**File:** `go-mknoon/node/pubsub_delivery_test.go` (9 tests)
 
 | Test | What it covers |
 |------|----------------|
@@ -2492,19 +2729,22 @@ Covers topic creation, validator logic, config updates, discovery, and publish o
 | TestPublishGroupMessage_ReturnsPeerCountPositive_WhenPeersConnected | Positive peer count |
 | TestPublishGroupMessage_RefreshesMissingKnownTopicPeersBeforePublish | Peer refresh before publish |
 | TestPublishGroupMessage_ReturnsErrorForUnjoinedGroup | Unjoined group error |
+| TestPublishGroupMessage_DuplicateProvidedMessageIdRemainsVisibleAfterDecrypt | Duplicate live PubSub publishes preserve the same application messageId after decrypt |
 | TestGroupPeerDiscoveryLoop_DialsKnownMembersBeforeCircuitAddressWait | Pre-circuit member dial |
 | TestGroupPeerDiscoveryLoop_DialsKnownMembersBeforeRelayReadyWhenDirectAddrsKnown | Direct address preference |
 | TestGroupPeerDiscoveryLoop_RetriesMissingThirdPeerDuringWarmWindow | Warm window retry |
 | TestGroupPeerDiscoveryLoop_UsesWarmRetryImmediatelyAfterPartialInitialRecovery | Warm retry timing |
 
 ### 12.5 Key Rotation Grace Period
-**File:** `go-mknoon/node/pubsub_key_rotation_grace_test.go` (7 tests)
+**File:** `go-mknoon/node/pubsub_key_rotation_grace_test.go` (9 tests)
 
 | Test | What it covers |
 |------|----------------|
 | TestGroupTopicValidator_AcceptsPreviousEpochDuringGrace | Old key during grace |
 | TestGroupTopicValidator_RejectsPreviousEpochAfterGraceExpires | Old key after grace |
 | TestGroupTopicValidator_AcceptsCurrentEpochDuringGrace | Current key during grace |
+| TestGroupTopicValidator_RejectsRemovedSenderPreviousEpochDuringGrace | Removed sender cannot use previous-epoch grace |
+| TestGroupTopicValidator_RejectsUnknownFutureEpochBeforeDelivery | Unknown future epoch rejects before delivery |
 | TestUpdateGroupKey_PreservesPreviousKeyAndGraceDeadline | Grace state preservation |
 | TestJoinGroupTopic_InitialKeyHasNoGraceState | Initial key no grace |
 | TestHandleGroupSubscription_DecryptsPreviousEpochDuringGrace | Decrypt with old key |
@@ -2532,13 +2772,14 @@ key-rotation suites.
 | TestMutateGroupEnvelope_RewritesEncryptedFieldsWithoutChangingRoutingMetadata | Raw envelope mutation helper preserves routing metadata while tampering encrypted fields for later security-row proofs |
 
 ### 12.7 Group Inbox
-**File:** `go-mknoon/node/group_inbox_test.go` (8 tests)
+**File:** `go-mknoon/node/group_inbox_test.go` (9 tests)
 
 | Test | What it covers |
 |------|----------------|
 | TestBuildGroupInboxStoreRequest_MarshalsRecipientPeerIds | Recipient list marshaling |
 | TestBuildGroupInboxStoreRequest_MarshalsPushTitle | Push title |
 | TestBuildGroupInboxStoreRequest_MarshalsPushBody | Push body |
+| TestBuildGroupInboxStoreRequest_PreservesOpaqueReplayEnvelope | Opaque encrypted replay envelope stays in the relay request message field without plaintext body, media key, invite token, or history text when notification preview text is safe |
 | TestGroupInboxRetrieveCursor_DefaultsLimitWhenZero | Default limit |
 | TestGroupInboxRetrieveCursor_StableAcrossPages | Cursor stability |
 | TestGroupInboxRetrieveCursor_NoDuplicateOnContinuation | No duplicate on continue |
@@ -2573,6 +2814,16 @@ key-rotation suites.
 | Test | What it covers |
 |------|----------------|
 | TestGroupPublishPeerSettleWindows_StayShortForForegroundSend | Peer settle timing |
+
+### 12.10A Protocol Version
+**File:** `go-mknoon/node/protocol_version_test.go` (4 tests)
+
+| Test | What it covers |
+|------|----------------|
+| TestGroupProtocolIDs_AreVersionedCurrentContracts | Current chat, inbox/group inbox, rendezvous, and media protocol IDs remain semver-like `/.../1.0.0` contracts |
+| TestGroupProtocolChatStreamNegotiatesCurrentVersionOnly | Current chat protocol opens successfully and an unsupported chat protocol ID is rejected |
+| TestSecureLibp2pChannelRequiredBeforeMknoonProtocols | Insecure `libp2p.NoSecurity` host cannot connect to the raw TCP mknoon node address or open `ChatProtocol`, and no insecure peer connection is retained |
+| TestGroupProtocolInboxStoreUsesVersionedInboxProtocol | Group inbox store opens relay streams on `InboxProtocol` |
 
 ### 12.11 Node / Relay Session / Stream Timeout (group-relevant subset)
 **Files:** `go-mknoon/node/node_test.go` (1 of 49 tests), `go-mknoon/node/relay_session_test.go` (1 of 17 tests), `go-mknoon/node/stream_timeout_test.go` (1 of 3 tests)

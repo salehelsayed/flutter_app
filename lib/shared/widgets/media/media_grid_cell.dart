@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_mime_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'media_display_helpers.dart';
 import 'media_thumbnail_image.dart';
@@ -11,6 +14,8 @@ class MediaGridCell extends StatelessWidget {
   final bool showOverlayCount;
   final int overlayCount;
   final VoidCallback? onTap;
+  final VoidCallback? onRetryUnavailableMedia;
+  final bool requireVerifiedContentHash;
 
   const MediaGridCell({
     super.key,
@@ -19,19 +24,21 @@ class MediaGridCell extends StatelessWidget {
     this.showOverlayCount = false,
     this.overlayCount = 0,
     this.onTap,
+    this.onRetryUnavailableMedia,
+    this.requireVerifiedContentHash = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: _canOpen ? onTap : null,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(borderRadius),
         child: Stack(
           fit: StackFit.expand,
           children: [
             _buildContent(),
-            if (attachment.mediaType == 'video')
+            if (_canShowVideoOverlay)
               VideoThumbnailOverlay(durationMs: attachment.durationMs),
             if (_showsGifBadge) _buildGifBadge(),
             if (showOverlayCount && overlayCount > 0) _buildOverlayCount(),
@@ -41,16 +48,59 @@ class MediaGridCell extends StatelessWidget {
     );
   }
 
-  bool get _showsGifBadge =>
-      attachment.isAnimated && attachment.downloadStatus == 'done';
+  bool get _showsGifBadge => attachment.isAnimated && _isDisplayableDoneMedia;
+
+  bool get _isDisplayableDoneMedia {
+    if (requireVerifiedContentHash) {
+      return GroupMediaIntegrityPolicy.canDisplayVerifiedGroupMedia(attachment);
+    }
+    return attachment.downloadStatus == 'done' && attachment.localPath != null;
+  }
+
+  bool get _canOpen => onTap != null && _isDisplayableDoneMedia;
+
+  bool get _hasAllowedDescriptor => GroupMediaMimePolicy.isValidDescriptor(
+    mime: attachment.mime,
+    mediaType: attachment.mediaType,
+  );
+
+  bool get _hasAllowedSize =>
+      GroupMediaSizePolicy.validateAttachments([attachment]).isValid;
+
+  bool get _hasRequiredGroupMetadata =>
+      !requireVerifiedContentHash ||
+      (GroupMediaIntegrityPolicy.hasValidContentHash(attachment) &&
+          attachment.hasEncryptionMetadata);
+
+  bool get _showsUnavailableMedia =>
+      GroupMediaIntegrityPolicy.isUnavailableMedia(
+        attachment,
+        requireVerifiedContentHash: requireVerifiedContentHash,
+      ) ||
+      !_hasAllowedDescriptor ||
+      !_hasAllowedSize ||
+      !_hasRequiredGroupMetadata;
+
+  bool get _canShowVideoOverlay =>
+      attachment.mediaType == 'video' && !_showsUnavailableMedia;
+
+  bool get _canRetryUnavailableMedia =>
+      onRetryUnavailableMedia != null &&
+      GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
 
   Widget _buildContent() {
     final isImage = attachment.mediaType == 'image';
     final isVideo = attachment.mediaType == 'video';
     final isDone = attachment.downloadStatus == 'done';
     final hasPath = attachment.localPath != null;
+    if (_showsUnavailableMedia) {
+      return _buildUnavailablePlaceholder();
+    }
 
     if ((isImage || isVideo) && isDone && hasPath) {
+      if (!_isDisplayableDoneMedia) {
+        return _buildUnavailablePlaceholder();
+      }
       return MediaThumbnailImage(
         mediaPath: attachment.localPath!,
         mediaType: attachment.mediaType,
@@ -59,12 +109,8 @@ class MediaGridCell extends StatelessWidget {
         placeholder: isVideo
             ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
             : _buildLoadingPlaceholder(),
-        error: _buildFailedPlaceholder(),
+        error: _buildUnavailablePlaceholder(),
       );
-    }
-
-    if (attachment.downloadStatus == 'failed') {
-      return _buildFailedPlaceholder();
     }
 
     if (isVideo && !hasPath) {
@@ -92,14 +138,58 @@ class MediaGridCell extends StatelessWidget {
     );
   }
 
-  Widget _buildFailedPlaceholder() {
+  Widget _buildUnavailablePlaceholder() {
     return Container(
       color: const Color.fromRGBO(255, 255, 255, 0.03),
-      child: const Center(
-        child: Icon(
-          Icons.broken_image_outlined,
-          size: 24,
-          color: Color.fromRGBO(255, 255, 255, 0.25),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.broken_image_outlined,
+                size: 24,
+                color: Color.fromRGBO(255, 255, 255, 0.34),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Media unavailable',
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Color.fromRGBO(255, 255, 255, 0.66),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (_canRetryUnavailableMedia) ...[
+                const SizedBox(height: 8),
+                Semantics(
+                  container: true,
+                  label: 'Retry unavailable media',
+                  button: true,
+                  child: IconButton(
+                    key: ValueKey(
+                      'unavailable-media-retry-${attachment.messageId}-${attachment.id}',
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 18,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    color: const Color(0xFF4ecdc4),
+                    onPressed: onRetryUnavailableMedia,
+                    tooltip: 'Retry unavailable media',
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );

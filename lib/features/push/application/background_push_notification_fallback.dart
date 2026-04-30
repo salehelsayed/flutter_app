@@ -97,13 +97,24 @@ String? _payloadFromMessage(RemoteMessage message) {
 }
 
 String _resolvedTitle(RemoteMessage message) {
+  if (_usesProtectedMessagePreview(message)) {
+    return backgroundPushDefaultTitle;
+  }
   return _trimToNull(message.data['title']?.toString()) ??
       backgroundPushDefaultTitle;
 }
 
 String _resolvedBody(RemoteMessage message) {
+  if (_usesProtectedMessagePreview(message)) {
+    return backgroundPushDefaultBody;
+  }
   return _trimToNull(message.data['body']?.toString()) ??
       backgroundPushDefaultBody;
+}
+
+bool _usesProtectedMessagePreview(RemoteMessage message) {
+  final type = _trimToNull(message.data['type']?.toString());
+  return type == 'new_message' || type == 'group_message';
 }
 
 String? _trimToNull(String? value) {

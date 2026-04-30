@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
@@ -11,6 +13,9 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/group_test_user.dart';
+
+const _downloadedBytesHash =
+    '9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a';
 
 class _DownloadWritingBridge extends FakeBridge {
   @override
@@ -53,6 +58,7 @@ void main() {
     int? height,
     int? durationMs,
     List<double>? waveform,
+    String contentHash = _downloadedBytesHash,
   }) {
     return MediaAttachment(
       id: id,
@@ -65,6 +71,10 @@ void main() {
       durationMs: durationMs,
       localPath: 'pending_uploads/$id',
       downloadStatus: 'done',
+      contentHash: contentHash,
+      encryptionKeyBase64: 'key-$id',
+      encryptionNonce: 'nonce-$id',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       createdAt: '2026-04-29T00:00:00.000Z',
       waveform: waveform,
     );
@@ -85,6 +95,43 @@ void main() {
     fail(
       'Expected $expectedCount media download attempts for ${user.username}',
     );
+  }
+
+  Future<void> waitForDownloadedAttachments({
+    required GroupTestUser user,
+    required String groupId,
+    required List<String> messageTexts,
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    while (DateTime.now().isBefore(deadline)) {
+      final messages = await user.loadGroupMessages(groupId);
+      var allDone = true;
+      for (final messageText in messageTexts) {
+        final matches = messages
+            .where(
+              (message) => message.isIncoming && message.text == messageText,
+            )
+            .toList();
+        if (matches.length != 1) {
+          allDone = false;
+          break;
+        }
+
+        final attachments = await user.mediaAttachmentRepo
+            .getAttachmentsForMessage(matches.single.id);
+        if (attachments.length != 1 ||
+            attachments.single.downloadStatus != 'done' ||
+            attachments.single.localPath == null) {
+          allDone = false;
+          break;
+        }
+      }
+
+      if (allDone) return;
+      await pump();
+    }
+
+    fail('Expected downloaded media attachments for ${user.username}');
   }
 
   Future<void> saveLatestKey({
@@ -203,7 +250,7 @@ void main() {
         final image = attachment(
           id: 'blob-existing-member-image',
           mime: 'image/jpeg',
-          size: 2048,
+          size: 4,
           width: 640,
           height: 480,
         );
@@ -219,7 +266,7 @@ void main() {
         final video = attachment(
           id: 'blob-existing-member-video',
           mime: 'video/mp4',
-          size: 4096,
+          size: 4,
           width: 1280,
           height: 720,
           durationMs: 12_000,
@@ -236,7 +283,7 @@ void main() {
         final voice = attachment(
           id: 'blob-existing-member-voice',
           mime: 'audio/mp4',
-          size: 1024,
+          size: 4,
           durationMs: 3500,
           waveform: const <double>[0.1, 0.4, 0.2],
         );
@@ -250,6 +297,15 @@ void main() {
         expect(voiceMessage, isNotNull);
 
         await waitForDownloads(user: bob, expectedCount: 3);
+        await waitForDownloadedAttachments(
+          user: bob,
+          groupId: groupId,
+          messageTexts: const [
+            'existing-member image',
+            'existing-member video',
+            'existing-member voice',
+          ],
+        );
 
         for (final receiver in [bob, charlie]) {
           final expectDownloaded = receiver == bob;
@@ -322,6 +378,316 @@ void main() {
     );
 
     test(
+      'oversized fake-network media is not stored or downloaded by recipients',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-oversized-media-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-oversized-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: FakeMediaFileManager(),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-oversized-media-fanout';
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'Oversized Media Fanout',
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+
+        alice.start();
+        bob.start();
+        await pump();
+
+        await network.publish(groupId, alice.peerId, {
+          'groupId': groupId,
+          'senderId': alice.peerId,
+          'senderUsername': alice.username,
+          'keyEpoch': 0,
+          'text': 'oversized fake-network media',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'msg-oversized-fake-network',
+          'media': [
+            attachment(
+              id: 'blob-oversized-fake-network',
+              mime: 'image/jpeg',
+              size: kGroupMediaPerAttachmentLimitBytes + 1,
+            ).toJson(),
+          ],
+        });
+        await pump();
+
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        expect(
+          bobMessages.where(
+            (message) => message.id == 'msg-oversized-fake-network',
+          ),
+          isEmpty,
+        );
+        expect(await bob.mediaAttachmentRepo.getPendingDownloads(), isEmpty);
+        expect(bob.bridge.commandLog, isNot(contains('media:download')));
+      },
+    );
+
+    test(
+      'MD-011 removed member is excluded from future media descriptors and downloads',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-md011-media-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-md011-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: FakeMediaFileManager(),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-md011-media-peer',
+          username: 'Charlie',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: FakeMediaFileManager(),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-md011-removed-media-exclusion';
+        await alice.createGroup(groupId: groupId, name: 'MD011 Media');
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: 1);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+        );
+        await pump();
+
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 2);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 2);
+
+        expect(
+          (await alice.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId),
+          unorderedEquals([alice.peerId, bob.peerId]),
+        );
+        expect(
+          (await bob.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId),
+          unorderedEquals([alice.peerId, bob.peerId]),
+        );
+        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        expect(await charlie.groupRepo.getKeyByGeneration(groupId, 2), isNull);
+        expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+        network.resetCounters();
+        final image = attachment(
+          id: 'blob-md011-future-image',
+          mime: 'image/jpeg',
+          size: 4,
+          width: 640,
+          height: 480,
+        );
+        final (result, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'MD-011 future media',
+          messageId: 'msg-md011-future-media',
+          timestamp: DateTime.utc(2026, 4, 29, 12),
+          mediaAttachments: [image],
+        );
+
+        expect(result, group_send.SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.keyGeneration, 2);
+        expect(network.totalDeliveries, 1);
+
+        await waitForDownloads(user: bob, expectedCount: 1);
+        await waitForDownloadedAttachments(
+          user: bob,
+          groupId: groupId,
+          messageTexts: const ['MD-011 future media'],
+        );
+
+        final bobIncoming = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == sentMessage.id).single;
+        expect(bobIncoming.isIncoming, isTrue);
+        expect(bobIncoming.keyGeneration, 2);
+        final bobAttachments = await bob.mediaAttachmentRepo
+            .getAttachmentsForMessage(bobIncoming.id);
+        expect(bobAttachments, hasLength(1));
+        expect(bobAttachments.single.id, image.id);
+        expect(
+          bobAttachments.single.encryptionKeyBase64,
+          image.encryptionKeyBase64,
+        );
+        expect(bobAttachments.single.downloadStatus, 'done');
+
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          charlieMessages.where((message) => message.id == sentMessage.id),
+          isEmpty,
+        );
+        expect(
+          charlieMessages.where(
+            (message) => message.text == 'MD-011 future media',
+          ),
+          isEmpty,
+        );
+        expect(
+          await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
+            sentMessage.id,
+          ),
+          isEmpty,
+        );
+        expect(
+          await charlie.mediaAttachmentRepo.getPendingDownloads(),
+          isEmpty,
+        );
+        expect(charlie.bridge.commandLog, isNot(contains('media:download')));
+        expect(charlie.bridge.commandLog, isNot(contains('blob:decrypt')));
+
+        final publishPayload = alice.bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:publish')
+            .map((message) => message['payload'] as Map<String, dynamic>)
+            .last;
+        final publishedMedia = (publishPayload['media'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(publishedMedia, hasLength(1));
+        expect(publishedMedia.single['id'], image.id);
+        expect(
+          publishedMedia.single['encryptionKeyBase64'],
+          image.encryptionKeyBase64,
+        );
+
+        final inboxPayload = alice.bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:inboxStore')
+            .map((message) => message['payload'] as Map<String, dynamic>)
+            .last;
+        expect(
+          (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+          unorderedEquals([bob.peerId]),
+        );
+        final replayEnvelope =
+            jsonDecode(inboxPayload['message'] as String)
+                as Map<String, dynamic>;
+        expect(replayEnvelope['keyEpoch'], 2);
+        final replayPlaintext =
+            jsonDecode(replayEnvelope['ciphertext'] as String)
+                as Map<String, dynamic>;
+        expect(replayPlaintext['keyEpoch'], 2);
+        final replayMedia = (replayPlaintext['media'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(replayMedia.single['id'], image.id);
+      },
+    );
+
+    test(
+      'tampered fake-network media download fails integrity before done',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-tampered-media-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bobMediaFileManager = FakeMediaFileManager();
+        final bob = GroupTestUser.create(
+          peerId: 'bob-tampered-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: bobMediaFileManager,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-tampered-media-fanout';
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'Tampered Media Fanout',
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+
+        alice.start();
+        bob.start();
+        await pump();
+
+        final tampered = attachment(
+          id: 'blob-tampered-fake-network',
+          mime: 'image/jpeg',
+          size: 4,
+          contentHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        );
+        await network.publish(groupId, alice.peerId, {
+          'groupId': groupId,
+          'senderId': alice.peerId,
+          'senderUsername': alice.username,
+          'keyEpoch': 0,
+          'text': 'tampered fake-network media',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'msg-tampered-fake-network',
+          'media': [tampered.toJson()],
+        });
+
+        await waitForDownloads(user: bob, expectedCount: 1);
+
+        final received = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.id == 'msg-tampered-fake-network').single;
+        final attachments = await bob.mediaAttachmentRepo
+            .getAttachmentsForMessage(received.id);
+        expect(attachments, hasLength(1));
+        expect(
+          attachments.single.downloadStatus,
+          kMediaDownloadStatusIntegrityFailed,
+        );
+        expect(attachments.single.localPath, isNull);
+
+        final downloadedPath = await bobMediaFileManager.localPathForAttachment(
+          contactPeerId: groupId,
+          blobId: tampered.id,
+          mime: tampered.mime,
+        );
+        expect(File(downloadedPath).existsSync(), isFalse);
+        expect(
+          bob.bridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
       'newly-added discussion member sends image, video, and voice to existing members',
       () async {
         final alice = GroupTestUser.create(
@@ -371,7 +737,7 @@ void main() {
         final image = attachment(
           id: 'blob-new-member-sent-image',
           mime: 'image/jpeg',
-          size: 3072,
+          size: 4,
           width: 800,
           height: 600,
         );
@@ -386,7 +752,7 @@ void main() {
         final video = attachment(
           id: 'blob-new-member-sent-video',
           mime: 'video/mp4',
-          size: 8192,
+          size: 4,
           width: 1920,
           height: 1080,
           durationMs: 18_000,
@@ -402,7 +768,7 @@ void main() {
         final voice = attachment(
           id: 'blob-new-member-sent-voice',
           mime: 'audio/mp4',
-          size: 2048,
+          size: 4,
           durationMs: 4200,
           waveform: const <double>[0.2, 0.5, 0.3, 0.6],
         );
@@ -415,6 +781,15 @@ void main() {
         expect(voiceMessage, isNotNull);
 
         await waitForDownloads(user: alice, expectedCount: 3);
+        await waitForDownloadedAttachments(
+          user: alice,
+          groupId: groupId,
+          messageTexts: const [
+            'new-member image',
+            'new-member video',
+            'new-member voice',
+          ],
+        );
 
         await expectOutgoingAttachment(
           user: bob,

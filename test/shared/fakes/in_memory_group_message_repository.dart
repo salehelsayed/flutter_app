@@ -20,7 +20,7 @@ class InMemoryGroupMessageRepository
     int offset = 0,
   }) async {
     var messages = _messages.values.where((m) => m.groupId == groupId).toList();
-    messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    messages.sort(_compareMessagesDescending);
     // Apply offset and limit, then reverse to ASC order
     final page = messages.skip(offset).take(limit).toList();
     return page.reversed.toList();
@@ -37,7 +37,7 @@ class InMemoryGroupMessageRepository
         .where((m) => m.groupId == groupId)
         .toList();
     if (messages.isEmpty) return null;
-    messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    messages.sort(_compareMessagesDescending);
     return messages.first;
   }
 
@@ -55,7 +55,7 @@ class InMemoryGroupMessageRepository
         )
         .toList();
     if (messages.isEmpty) return null;
-    messages.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    messages.sort(_compareMessagesDescending);
     return messages.first.timestamp.toUtc();
   }
 
@@ -128,7 +128,7 @@ class InMemoryGroupMessageRepository
     final failed = _messages.values
         .where((m) => !m.isIncoming && m.status == 'failed')
         .toList();
-    failed.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    failed.sort(_compareMessagesAscending);
     return failed;
   }
 
@@ -176,7 +176,7 @@ class InMemoryGroupMessageRepository
   Future<GroupThreadSummary> getGroupThreadSummary(String groupId) async {
     final messages =
         _messages.values.where((message) => message.groupId == groupId).toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          ..sort(_compareMessagesDescending);
     return GroupThreadSummary(
       groupId: groupId,
       unreadCount: messages
@@ -196,7 +196,7 @@ class InMemoryGroupMessageRepository
           _messages.values
               .where((message) => message.groupId == groupId)
               .toList()
-            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+            ..sort(_compareMessagesDescending);
       summaries[groupId] = GroupThreadSummary(
         groupId: groupId,
         unreadCount: messages
@@ -221,7 +221,7 @@ class InMemoryGroupMessageRepository
               m.inboxRetryPayload != null,
         )
         .toList();
-    eligible.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    eligible.sort(_compareMessagesAscending);
     return eligible.take(limit).toList();
   }
 
@@ -250,4 +250,16 @@ class InMemoryGroupMessageRepository
   }
 
   int get count => _messages.length;
+}
+
+int _compareMessagesAscending(GroupMessage a, GroupMessage b) {
+  final timestampCompare = a.timestamp.compareTo(b.timestamp);
+  if (timestampCompare != 0) return timestampCompare;
+  return a.id.compareTo(b.id);
+}
+
+int _compareMessagesDescending(GroupMessage a, GroupMessage b) {
+  final timestampCompare = b.timestamp.compareTo(a.timestamp);
+  if (timestampCompare != 0) return timestampCompare;
+  return b.id.compareTo(a.id);
 }

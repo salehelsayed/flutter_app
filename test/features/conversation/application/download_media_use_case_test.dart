@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
@@ -13,6 +16,38 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
+const _jpegBytes = <int>[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
+const _jpegHash =
+    'fc16d7dcee9cae83ef3923222a81ccd8fe96c9d25fdb7f504d66f1011e0cd870';
+const _mediaKey = 'test-media-key';
+const _mediaNonce = 'test-media-nonce';
+
+List<int> _encryptedBytes(
+  List<int> plaintext, {
+  String key = _mediaKey,
+  String nonce = _mediaNonce,
+}) {
+  return [...'cipher:$key:$nonce:'.codeUnits, ...plaintext.reversed];
+}
+
+String _hashBytes(List<int> bytes) => sha256.convert(bytes).toString();
+
+MediaAttachment _encryptedGroupAttachment(
+  MediaAttachment attachment,
+  List<int> plaintext, {
+  String key = _mediaKey,
+  String nonce = _mediaNonce,
+  String? contentHash,
+}) {
+  return attachment.copyWith(
+    size: plaintext.length,
+    contentHash: contentHash ?? _hashBytes(_encryptedBytes(plaintext)),
+    encryptionKeyBase64: key,
+    encryptionNonce: nonce,
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+  );
+}
+
 /// Fake bridge that responds to media:download commands.
 class _FakeBridge implements Bridge {
   Map<String, dynamic> downloadResponse = {'ok': true};
@@ -20,11 +55,42 @@ class _FakeBridge implements Bridge {
   int sendCallCount = 0;
   List<int> downloadedBytes = const <int>[1, 2, 3];
   bool skipFileWrite = false;
+  Map<String, dynamic>? decryptResponse;
 
   @override
   Future<String> send(String message) async {
     sendCallCount++;
     lastRequest = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = lastRequest?['cmd'] as String?;
+    if (cmd == 'blob:decrypt') {
+      if (decryptResponse != null) {
+        return jsonEncode(decryptResponse);
+      }
+      final payload = lastRequest?['payload'] as Map<String, dynamic>?;
+      final filePath = payload?['filePath'] as String?;
+      final keyBase64 = payload?['keyBase64'] as String?;
+      final nonce = payload?['nonce'] as String?;
+      if (filePath == null || keyBase64 == null || nonce == null) {
+        return jsonEncode({'ok': false, 'errorMessage': 'bad decrypt request'});
+      }
+      final encrypted = await File(filePath).readAsBytes();
+      final prefix = 'cipher:$keyBase64:$nonce:'.codeUnits;
+      final hasPrefix =
+          encrypted.length >= prefix.length &&
+          List.generate(
+            prefix.length,
+            (index) => encrypted[index] == prefix[index],
+          ).every((matches) => matches);
+      if (!hasPrefix) {
+        return jsonEncode({'ok': false, 'errorMessage': 'decrypt failed'});
+      }
+      final decryptedPath = '$filePath.dec';
+      await File(decryptedPath).writeAsBytes(
+        encrypted.skip(prefix.length).toList().reversed.toList(),
+        flush: true,
+      );
+      return jsonEncode({'ok': true, 'decryptedPath': decryptedPath});
+    }
     final payload = lastRequest?['payload'] as Map<String, dynamic>?;
     final outputPath = payload?['outputPath'] as String?;
     if (!skipFileWrite &&
@@ -406,6 +472,344 @@ void main() {
     );
 
     test(
+      'group policy rejects relay-returned MIME mismatch before marking done',
+      () async {
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge.downloadedBytes = encrypted;
+        bridge.downloadResponse = {
+          'ok': true,
+          'id': 'blob-download-001',
+          'mime': 'text/html',
+          'size': encrypted.length,
+        };
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: _encryptedGroupAttachment(testAttachment, _jpegBytes),
+          contactPeerId: 'group-1',
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+        final outputPath =
+            (bridge.lastRequest!['payload']
+                    as Map<String, dynamic>)['outputPath']
+                as String;
+        expect(File(outputPath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'group policy rejects oversized declared attachment before media download',
+      () async {
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment.copyWith(
+            size: kGroupMediaPerAttachmentLimitBytes + 1,
+            contentHash: _hashBytes(_encryptedBytes(_jpegBytes)),
+            encryptionKeyBase64: _mediaKey,
+            encryptionNonce: _mediaNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          contactPeerId: 'group-1',
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(bridge.sendCallCount, 0);
+        expect(bridge.lastRequest, isNull);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([('blob-download-001', kMediaDownloadStatusIntegrityFailed)]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test(
+      'group policy rejects spoofed downloaded bytes before marking done',
+      () async {
+        final spoofedBytes = '<script>alert(1)</script>'.codeUnits;
+        final encryptedSpoofedBytes = _encryptedBytes(spoofedBytes);
+        bridge.downloadedBytes = encryptedSpoofedBytes;
+        bridge.downloadResponse = {
+          'ok': true,
+          'id': 'blob-download-001',
+          'mime': 'image/jpeg',
+          'size': encryptedSpoofedBytes.length,
+        };
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: _encryptedGroupAttachment(testAttachment, spoofedBytes),
+          contactPeerId: 'group-1',
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+        final outputPath = await fileManager.localPathForAttachment(
+          contactPeerId: 'group-1',
+          blobId: 'blob-download-001',
+          mime: 'image/jpeg',
+        );
+        expect(File(outputPath).existsSync(), isFalse);
+      },
+    );
+
+    test('group policy verifies content hash before marking done', () async {
+      final encrypted = _encryptedBytes(_jpegBytes);
+      bridge.downloadedBytes = encrypted;
+      bridge.downloadResponse = {
+        'ok': true,
+        'id': 'blob-download-001',
+        'mime': 'image/jpeg',
+        'size': encrypted.length,
+      };
+
+      final result = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: _encryptedGroupAttachment(testAttachment, _jpegBytes),
+        contactPeerId: 'group-1',
+        enforceGroupMediaPolicy: true,
+      );
+
+      expect(result, isNotNull);
+      expect(result!.downloadStatus, 'done');
+      expect(
+        mediaRepo.downloadStatusUpdates,
+        equals([('blob-download-001', 'downloading')]),
+      );
+      expect(mediaRepo.localPathUpdates, hasLength(1));
+    });
+
+    test('group policy rejects cross-object decrypt key attempts', () async {
+      final encrypted = _encryptedBytes(
+        _jpegBytes,
+        key: 'object-a-key',
+        nonce: 'object-a-nonce',
+      );
+      bridge.downloadedBytes = encrypted;
+      bridge.downloadResponse = {
+        'ok': true,
+        'id': 'blob-download-001',
+        'mime': 'image/jpeg',
+        'size': encrypted.length,
+      };
+
+      final result = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: _encryptedGroupAttachment(
+          testAttachment,
+          _jpegBytes,
+          key: 'object-b-key',
+          nonce: 'object-b-nonce',
+          contentHash: _hashBytes(encrypted),
+        ),
+        contactPeerId: 'group-1',
+        enforceGroupMediaPolicy: true,
+      );
+
+      expect(result, isNull);
+      expect(
+        mediaRepo.downloadStatusUpdates,
+        equals([
+          ('blob-download-001', 'downloading'),
+          ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
+        ]),
+      );
+      expect(mediaRepo.localPathUpdates, isEmpty);
+      final outputPath = await fileManager.localPathForAttachment(
+        contactPeerId: 'group-1',
+        blobId: 'blob-download-001',
+        mime: 'image/jpeg',
+      );
+      expect(File(outputPath).existsSync(), isFalse);
+    });
+
+    test(
+      'MD-012 missing decrypted file quarantines instead of generic failed',
+      () async {
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge.downloadedBytes = encrypted;
+        bridge.downloadResponse = {
+          'ok': true,
+          'id': 'blob-download-001',
+          'mime': 'image/jpeg',
+          'size': encrypted.length,
+        };
+        bridge.decryptResponse = {
+          'ok': true,
+          'decryptedPath': '${tempDir.path}/missing-decrypted.jpg',
+        };
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: _encryptedGroupAttachment(testAttachment, _jpegBytes),
+          contactPeerId: 'group-1',
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test(
+      'MD-012 plaintext size mismatch quarantines instead of generic failed',
+      () async {
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge.downloadedBytes = encrypted;
+        bridge.downloadResponse = {
+          'ok': true,
+          'id': 'blob-download-001',
+          'mime': 'image/jpeg',
+          'size': encrypted.length,
+        };
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: _encryptedGroupAttachment(
+            testAttachment,
+            _jpegBytes,
+          ).copyWith(size: _jpegBytes.length + 1),
+          contactPeerId: 'group-1',
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test(
+      'group policy deletes mismatched content hash bytes and does not mark done',
+      () async {
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge.downloadedBytes = encrypted;
+        bridge.downloadResponse = {
+          'ok': true,
+          'id': 'blob-download-001',
+          'mime': 'image/jpeg',
+          'size': encrypted.length,
+        };
+
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: _encryptedGroupAttachment(
+            testAttachment,
+            _jpegBytes,
+            contentHash:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          ),
+          contactPeerId: 'group-1',
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([
+            ('blob-download-001', 'downloading'),
+            ('blob-download-001', kMediaDownloadStatusIntegrityFailed),
+          ]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+        final outputPath =
+            (bridge.lastRequest!['payload']
+                    as Map<String, dynamic>)['outputPath']
+                as String;
+        expect(File(outputPath).existsSync(), isFalse);
+      },
+    );
+
+    test('group policy rejects missing content hash before download', () async {
+      final result = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: mediaRepo,
+        mediaFileManager: fileManager,
+        attachment: testAttachment,
+        contactPeerId: 'group-1',
+        enforceGroupMediaPolicy: true,
+      );
+
+      expect(result, isNull);
+      expect(bridge.sendCallCount, 0);
+      expect(
+        mediaRepo.downloadStatusUpdates,
+        equals([('blob-download-001', kMediaDownloadStatusIntegrityFailed)]),
+      );
+      expect(mediaRepo.localPathUpdates, isEmpty);
+    });
+
+    test(
+      'group policy rejects missing encryption metadata before download',
+      () async {
+        final result = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment.copyWith(contentHash: _jpegHash),
+          contactPeerId: 'group-1',
+          enforceGroupMediaPolicy: true,
+        );
+
+        expect(result, isNull);
+        expect(bridge.sendCallCount, 0);
+        expect(
+          mediaRepo.downloadStatusUpdates,
+          equals([('blob-download-001', kMediaDownloadStatusIntegrityFailed)]),
+        );
+        expect(mediaRepo.localPathUpdates, isEmpty);
+      },
+    );
+
+    test(
       'emits MEDIA_DOWNLOAD_TIMING with blob, mime, and size metadata',
       () async {
         final events = await captureFlowEvents(() async {
@@ -506,7 +910,7 @@ void main() {
           mediaRepo.downloadStatusUpdates,
           equals([
             ('blob-download-001', 'downloading'),
-            ('blob-download-001', 'failed'),
+            ('blob-download-001', kMediaDownloadStatusFailed),
           ]),
         );
         expect(mediaRepo.localPathUpdates, isEmpty);

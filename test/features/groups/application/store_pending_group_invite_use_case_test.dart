@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -29,9 +31,12 @@ void main() {
     );
   }
 
-  ChatMessage makeMessage({String groupId = 'grp-abc123'}) {
+  ChatMessage makeMessage({
+    String groupId = 'grp-abc123',
+    String inviteId = 'invite-1',
+  }) {
     final payload = GroupInvitePayload(
-      id: 'invite-1',
+      id: inviteId,
       groupId: groupId,
       groupKey: 'base64-key',
       keyEpoch: 1,
@@ -85,6 +90,59 @@ void main() {
         );
       },
     );
+
+    test('ignores delayed invite copy when invite was revoked', () async {
+      final revokedAt = DateTime.utc(2026, 4, 29, 12);
+      await pendingInviteRepo.saveRevokedInvite(
+        GroupInviteRevocation(
+          inviteId: 'invite-1',
+          groupId: 'grp-abc123',
+          revokedAt: revokedAt,
+          expiresAt: revokedAt.add(const Duration(days: 7)),
+          revokedBy: '12D3KooWAlice',
+        ),
+      );
+
+      final (result, invite) = await storeIncomingPendingGroupInvite(
+        message: makeMessage(),
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        receivedAt: revokedAt.add(const Duration(minutes: 10)),
+      );
+
+      expect(result, StorePendingGroupInviteResult.revoked);
+      expect(invite, isNull);
+      expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+      expect(await groupRepo.getGroup('grp-abc123'), isNull);
+    });
+
+    test('ignores delayed invite copy when invite was already used', () async {
+      final consumedAt = DateTime.utc(2026, 4, 29, 12);
+      await pendingInviteRepo.saveConsumedInvite(
+        GroupInviteConsumption(
+          inviteId: 'invite-1',
+          groupId: 'grp-abc123',
+          consumedAt: consumedAt,
+          expiresAt: consumedAt.add(const Duration(days: 7)),
+        ),
+      );
+
+      final (result, invite) = await storeIncomingPendingGroupInvite(
+        message: makeMessage(),
+        groupRepo: groupRepo,
+        pendingInviteRepo: pendingInviteRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        receivedAt: consumedAt.add(const Duration(minutes: 10)),
+      );
+
+      expect(result, StorePendingGroupInviteResult.alreadyUsed);
+      expect(invite, isNull);
+      expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+      expect(await groupRepo.getGroup('grp-abc123'), isNull);
+    });
 
     test('returns duplicateGroup when group already exists', () async {
       await groupRepo.saveGroup(

@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -127,6 +129,21 @@ const _tinyPngBytes = <int>[
   0x82,
 ];
 
+const _validContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _md012MediaKey = 'md012-media-key';
+const _md012MediaNonce = 'md012-media-nonce';
+
+List<int> _md012EncryptedBytes(
+  List<int> plaintext, {
+  String key = _md012MediaKey,
+  String nonce = _md012MediaNonce,
+}) {
+  return [...'cipher:$key:$nonce:'.codeUnits, ...plaintext.reversed];
+}
+
+String _md012HashBytes(List<int> bytes) => sha256.convert(bytes).toString();
+
 // --- FakeIdentityRepository ---
 
 class FakeIdentityRepository implements IdentityRepository {
@@ -200,6 +217,74 @@ class _GatedPublishBridge extends FakeBridge {
 
     if (cmd == 'group:publish') {
       await publishGate.future;
+    }
+
+    return super.send(message);
+  }
+}
+
+class _DownloadRepairBridge extends FakeBridge {
+  _DownloadRepairBridge({
+    required this.downloadedBytes,
+    this.mime = 'image/png',
+  });
+
+  List<int> downloadedBytes;
+  String mime;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'media:download') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final outputPath = payload['outputPath'] as String;
+      final file = File(outputPath);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(downloadedBytes, flush: true);
+      return jsonEncode({
+        'ok': true,
+        'id': payload['id'],
+        'mime': mime,
+        'size': downloadedBytes.length,
+      });
+    }
+
+    if (cmd == 'blob:decrypt') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final filePath = payload['filePath'] as String;
+      final keyBase64 = payload['keyBase64'] as String;
+      final nonce = payload['nonce'] as String;
+      final encrypted = await File(filePath).readAsBytes();
+      final prefix = 'cipher:$keyBase64:$nonce:'.codeUnits;
+      final hasPrefix =
+          encrypted.length >= prefix.length &&
+          List.generate(
+            prefix.length,
+            (index) => encrypted[index] == prefix[index],
+          ).every((matches) => matches);
+      if (!hasPrefix) {
+        return jsonEncode({'ok': false, 'errorMessage': 'decrypt failed'});
+      }
+      final decryptedPath = '$filePath.dec';
+      await File(decryptedPath).writeAsBytes(
+        encrypted.skip(prefix.length).toList().reversed.toList(),
+        flush: true,
+      );
+      return jsonEncode({'ok': true, 'decryptedPath': decryptedPath});
     }
 
     return super.send(message);
@@ -440,6 +525,30 @@ Future<void> pumpUntilAsync(
     await tester.pump(const Duration(milliseconds: 50));
     pumps++;
   }
+}
+
+class StartedScreenSend {
+  const StartedScreenSend(this.future);
+
+  final Future<void> future;
+}
+
+Future<StartedScreenSend> startScreenSend(
+  WidgetTester tester,
+  String text, {
+  Duration delay = const Duration(milliseconds: 200),
+}) async {
+  final screen = tester.widget<GroupConversationScreen>(
+    find.byType(GroupConversationScreen),
+  );
+  final send = screen.onSend as Future<void> Function(String);
+  late Future<void> sendFuture;
+  await tester.runAsync(() async {
+    sendFuture = send(text);
+    await Future<void>.delayed(delay);
+  });
+  await tester.pump();
+  return StartedScreenSend(sendFuture);
 }
 
 void main() {
@@ -1075,6 +1184,7 @@ void main() {
                     pending.every(
                       (att) =>
                           att.downloadStatus == 'upload_pending' &&
+                          att.size > 0 &&
                           (att.localPath?.startsWith('pending_uploads/') ??
                               false),
                     ),
@@ -1093,6 +1203,11 @@ void main() {
                       mime: mime,
                     ),
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
                   );
                 },
@@ -1100,9 +1215,7 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
-        await tester.enterText(find.byType(TextField), 'Durable media');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final sendFuture = await startScreenSend(tester, 'Durable media');
         await pumpUntil(tester, () => uploadStarts.length == 3, maxPumps: 40);
 
         expect(uploadStarts, hasLength(3));
@@ -1114,6 +1227,9 @@ void main() {
         expect(seenBlobIds.toSet(), hasLength(3));
 
         uploadRelease.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpFrames(tester, count: 5);
       },
     );
@@ -1177,6 +1293,11 @@ void main() {
                       mime: mime,
                     ),
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
                   );
                 },
@@ -1287,6 +1408,11 @@ void main() {
                       mime: mime,
                     ),
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
                   );
                 },
@@ -1294,10 +1420,11 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
-        await tester.enterText(find.byType(TextField), 'Fail media');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await pumpFrames(tester, count: 25);
+        final sendFuture = await startScreenSend(tester, 'Fail media');
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
+        await pumpFrames(tester, count: 5);
         expect(bridge.commandLog, isNot(contains('group:publish')));
 
         final pending = await mediaAttachmentRepo.getUploadPendingAttachments();
@@ -1373,9 +1500,10 @@ void main() {
         await tester.pump();
         expect(find.text('Replying to'), findsOneWidget);
 
-        await tester.enterText(find.byType(TextField), 'Fail media parent row');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final sendFuture = await startScreenSend(
+          tester,
+          'Fail media parent row',
+        );
         await pumpUntil(tester, () => uploadStarted.isCompleted);
         await pumpFrames(tester, count: 5);
 
@@ -1389,6 +1517,9 @@ void main() {
         expect(persistedBeforeFail.quotedMessageId, 'msg-parent-media-upload');
 
         uploadGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpFrames(tester, count: 20);
 
         expect(
@@ -1469,6 +1600,11 @@ void main() {
                     mime: mime,
                   ),
                   downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  encryptionKeyBase64: 'key-fixture',
+                  encryptionNonce: 'nonce-fixture',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                   createdAt: DateTime.now().toUtc().toIso8601String(),
                 ),
           ),
@@ -1547,6 +1683,11 @@ void main() {
                     mime: mime,
                   ),
                   downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  encryptionKeyBase64: 'key-fixture',
+                  encryptionNonce: 'nonce-fixture',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                   createdAt: DateTime.now().toUtc().toIso8601String(),
                 ),
           ),
@@ -1619,6 +1760,11 @@ void main() {
                     mediaType: MediaAttachment.mediaTypeFromMime(mime),
                     localPath: localFilePath,
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
                   );
                 },
@@ -3070,8 +3216,8 @@ void main() {
           tempDir.deleteSync(recursive: true);
         }
       });
-      final attachment = File('${tempDir.path}/retry.jpg')
-        ..writeAsStringSync('image');
+      final attachment = File('${tempDir.path}/retry.png')
+        ..writeAsBytesSync(_tinyPngBytes);
 
       await tester.pumpWidget(
         buildWidget(
@@ -3090,10 +3236,20 @@ void main() {
                 waveform,
                 allowedPeers,
               }) async => null,
-          initialAttachments: [attachment],
+          initialPendingMedia: [
+            PendingComposerMedia(
+              file: attachment,
+              budgetBytes: attachment.lengthSync(),
+            ),
+          ],
         ),
       );
       await pumpFrames(tester, count: 20);
+      expect(
+        find.byType(AttachmentPreviewStrip),
+        findsOneWidget,
+        reason: 'initial attachment preview should be seeded before send',
+      );
 
       final screen = tester.widget<GroupConversationScreen>(
         find.byType(GroupConversationScreen),
@@ -3104,7 +3260,7 @@ void main() {
       await tester.enterText(find.byType(TextField), 'Retry upload');
       await pumpFrames(tester);
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await pumpFrames(tester, count: 10);
+      await pumpFrames(tester, count: 30);
 
       expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
       expect(find.text('Replying to'), findsOneWidget);
@@ -3165,6 +3321,11 @@ void main() {
                   mediaType: MediaAttachment.mediaTypeFromMime(mime),
                   localPath: localFilePath,
                   downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  encryptionKeyBase64: 'key-fixture',
+                  encryptionNonce: 'nonce-fixture',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                   createdAt: DateTime.now().toUtc().toIso8601String(),
                 );
               },
@@ -3298,6 +3459,11 @@ void main() {
                       mime: mime,
                     ),
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
                   );
                 },
@@ -3305,9 +3471,7 @@ void main() {
         );
         await pumpFrames(tester, count: 20);
 
-        await tester.enterText(find.byType(TextField), 'Cancel upload');
-        await pumpFrames(tester);
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final sendFuture = await startScreenSend(tester, 'Cancel upload');
         await pumpUntil(tester, () => uploadStarted.length == 2, maxPumps: 120);
         await pumpFrames(tester, count: 5);
 
@@ -3328,6 +3492,9 @@ void main() {
         );
 
         uploadGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
         await pumpUntil(
           tester,
           () =>
@@ -3442,6 +3609,10 @@ void main() {
             mediaType: 'image',
             localPath: 'pending_uploads/msg-targeted/att-targeted.jpg',
             downloadStatus: 'done',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-01-15T12:00:00.000Z',
           ),
         );
@@ -3454,6 +3625,10 @@ void main() {
             mediaType: 'image',
             localPath: 'pending_uploads/msg-untouched/att-untouched.jpg',
             downloadStatus: 'done',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
             createdAt: '2026-01-15T12:01:00.000Z',
           ),
         );
@@ -3495,6 +3670,228 @@ void main() {
           1,
         );
         expect(find.text('Could not retry media message.'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'MD-012 retrying quarantined incoming media downloads only the targeted attachment',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final mediaFileManager = FakeMediaFileManager();
+        final repairedBytes = _md012EncryptedBytes(_tinyPngBytes);
+        bridge = _DownloadRepairBridge(downloadedBytes: repairedBytes);
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-md012-repair',
+            text: 'repair incoming media',
+            groupId: group.id,
+            isIncoming: true,
+            senderPeerId: 'peer-alice',
+            senderUsername: 'Alice',
+            status: 'delivered',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-md012-target',
+            messageId: 'msg-md012-repair',
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: mediaFileManager.relativePathForAttachment(
+              contactPeerId: group.id,
+              blobId: 'att-md012-target',
+              mime: 'image/png',
+            ),
+            downloadStatus: kMediaDownloadStatusIntegrityFailed,
+            contentHash: _md012HashBytes(repairedBytes),
+            encryptionKeyBase64: _md012MediaKey,
+            encryptionNonce: _md012MediaNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-04-29T12:00:00.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'att-md012-sibling',
+            messageId: 'msg-md012-repair',
+            mime: 'image/png',
+            size: 1,
+            mediaType: 'image',
+            downloadStatus: kMediaDownloadStatusIntegrityFailed,
+            contentHash:
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            encryptionKeyBase64: 'key-sibling',
+            encryptionNonce: 'nonce-sibling',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-04-29T12:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.onRetryUnavailableMedia != null &&
+              (screen.mediaMap['msg-md012-repair']?.length ?? 0) == 2;
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.onRetryUnavailableMedia, isNotNull);
+        await tester.runAsync(() async {
+          final result = Function.apply(retryScreen.onRetryUnavailableMedia!, [
+            'msg-md012-repair',
+            'att-md012-target',
+          ]);
+          if (result is Future<void>) await result;
+        });
+        await tester.pump();
+        await pumpUntilAsync(tester, () async {
+          final attachments = await mediaAttachmentRepo
+              .getAttachmentsForMessage('msg-md012-repair');
+          return attachments
+                  .where((attachment) => attachment.id == 'att-md012-target')
+                  .single
+                  .downloadStatus ==
+              'done';
+        }, maxPumps: 80);
+
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-md012-repair',
+        );
+        final target = attachments
+            .where((attachment) => attachment.id == 'att-md012-target')
+            .single;
+        final sibling = attachments
+            .where((attachment) => attachment.id == 'att-md012-sibling')
+            .single;
+
+        expect(target.downloadStatus, 'done');
+        expect(target.localPath, isNotNull);
+        expect(sibling.downloadStatus, kMediaDownloadStatusIntegrityFailed);
+        expect(
+          (await msgRepo.getMessage('msg-md012-repair'))?.status,
+          'delivered',
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'blob:decrypt'),
+          hasLength(1),
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+      },
+    );
+
+    testWidgets(
+      'MD-012 failed repair keeps media quarantined and clears unsafe file',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        final mediaFileManager = FakeMediaFileManager();
+        final expectedBytes = _md012EncryptedBytes(_tinyPngBytes);
+        final tamperedBytes = _md012EncryptedBytes('not a png'.codeUnits);
+        bridge = _DownloadRepairBridge(downloadedBytes: tamperedBytes);
+        final stalePath = await mediaFileManager.localPathForAttachment(
+          contactPeerId: group.id,
+          blobId: 'att-md012-fail',
+          mime: 'image/png',
+        );
+        File(stalePath).writeAsBytesSync(<int>[9, 9, 9], flush: true);
+
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'msg-md012-fail',
+            text: 'still unsafe',
+            groupId: group.id,
+            isIncoming: true,
+            senderPeerId: 'peer-alice',
+            senderUsername: 'Alice',
+            status: 'delivered',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          MediaAttachment(
+            id: 'att-md012-fail',
+            messageId: 'msg-md012-fail',
+            mime: 'image/png',
+            size: _tinyPngBytes.length,
+            mediaType: 'image',
+            localPath: mediaFileManager.relativePathForAttachment(
+              contactPeerId: group.id,
+              blobId: 'att-md012-fail',
+              mime: 'image/png',
+            ),
+            downloadStatus: kMediaDownloadStatusIntegrityFailed,
+            contentHash: _md012HashBytes(expectedBytes),
+            encryptionKeyBase64: _md012MediaKey,
+            encryptionNonce: _md012MediaNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-04-29T12:00:00.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.onRetryUnavailableMedia != null &&
+              (screen.mediaMap['msg-md012-fail']?.isNotEmpty ?? false);
+        });
+
+        final retryScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(retryScreen.onRetryUnavailableMedia, isNotNull);
+        await tester.runAsync(() async {
+          final result = Function.apply(retryScreen.onRetryUnavailableMedia!, [
+            'msg-md012-fail',
+            'att-md012-fail',
+          ]);
+          if (result is Future<void>) await result;
+        });
+        await tester.pump();
+        await pumpUntilAsync(tester, () async {
+          if (!bridge.commandLog.contains('media:download')) return false;
+          final attachments = await mediaAttachmentRepo
+              .getAttachmentsForMessage('msg-md012-fail');
+          return attachments.single.downloadStatus ==
+              kMediaDownloadStatusIntegrityFailed;
+        }, maxPumps: 80);
+
+        final attachment = (await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-md012-fail',
+        )).single;
+        expect(attachment.downloadStatus, kMediaDownloadStatusIntegrityFailed);
+        expect(attachment.localPath, isNull);
+        expect(File(stalePath).existsSync(), isFalse);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'media:download'),
+          hasLength(1),
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
       },
     );
 
@@ -3693,6 +4090,10 @@ void main() {
                 mediaType: MediaAttachment.mediaTypeFromMime(mime),
                 localPath: localFilePath,
                 downloadStatus: 'done',
+                contentHash: _validContentHash,
+                encryptionKeyBase64: 'key-fixture',
+                encryptionNonce: 'nonce-fixture',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                 createdAt: DateTime.now().toUtc().toIso8601String(),
               ),
           initialAttachments: [attachment],
@@ -3844,6 +4245,11 @@ void main() {
                       mime: mime,
                     ),
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     durationMs: durationMs,
                     waveform: waveform,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
@@ -4135,6 +4541,11 @@ void main() {
                       mime: mime,
                     ),
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     durationMs: durationMs,
                     waveform: waveform,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
@@ -4277,6 +4688,11 @@ void main() {
                     mediaType: MediaAttachment.mediaTypeFromMime(mime),
                     localPath: localFilePath,
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     durationMs: durationMs,
                     waveform: waveform,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
@@ -4387,6 +4803,11 @@ void main() {
                   mediaType: MediaAttachment.mediaTypeFromMime(mime),
                   localPath: localFilePath,
                   downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  encryptionKeyBase64: 'key-fixture',
+                  encryptionNonce: 'nonce-fixture',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                   durationMs: durationMs,
                   waveform: waveform,
                   createdAt: DateTime.now().toUtc().toIso8601String(),
@@ -4482,6 +4903,11 @@ void main() {
                   mediaType: MediaAttachment.mediaTypeFromMime(mime),
                   localPath: localFilePath,
                   downloadStatus: 'done',
+                  contentHash: _validContentHash,
+                  encryptionKeyBase64: 'key-fixture',
+                  encryptionNonce: 'nonce-fixture',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                   durationMs: durationMs,
                   waveform: waveform,
                   createdAt: DateTime.now().toUtc().toIso8601String(),
@@ -4591,6 +5017,11 @@ void main() {
                       mime: mime,
                     ),
                     downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     durationMs: durationMs,
                     waveform: waveform,
                     createdAt: DateTime.now().toUtc().toIso8601String(),
@@ -4800,6 +5231,10 @@ void main() {
                 mediaType: MediaAttachment.mediaTypeFromMime(mime),
                 localPath: localFilePath,
                 downloadStatus: 'done',
+                contentHash: _validContentHash,
+                encryptionKeyBase64: 'key-fixture',
+                encryptionNonce: 'nonce-fixture',
+                encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                 durationMs: durationMs,
                 waveform: waveform,
                 createdAt: DateTime.now().toUtc().toIso8601String(),

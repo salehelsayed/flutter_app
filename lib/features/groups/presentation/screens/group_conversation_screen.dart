@@ -70,6 +70,8 @@ class GroupConversationScreen extends StatelessWidget {
   final ValueChanged<String>? onQuoteReply;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
+  final void Function(String messageId, String attachmentId)?
+  onRetryUnavailableMedia;
   final String? activeQuoteText;
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
@@ -117,6 +119,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onQuoteReply,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
+    this.onRetryUnavailableMedia,
     this.activeQuoteText,
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
@@ -425,6 +428,7 @@ class GroupConversationScreen extends StatelessWidget {
           quotedText: quotedText,
           isQuoteUnavailable: isQuoteUnavailable,
           media: messageMedia,
+          requireVerifiedContentHash: true,
           onMediaTap: onMediaTap != null
               ? (index) => onMediaTap!(message.id, index)
               : null,
@@ -441,6 +445,10 @@ class GroupConversationScreen extends StatelessWidget {
           onDeleteFailedMedia:
               showFailedMediaActions && onDeleteFailedMedia != null
               ? () => onDeleteFailedMedia!(message.id)
+              : null,
+          onRetryUnavailableMedia: onRetryUnavailableMedia != null
+              ? (attachmentId) =>
+                    onRetryUnavailableMedia!(message.id, attachmentId)
               : null,
           failedMediaActionKeySuffix: message.id,
         );
