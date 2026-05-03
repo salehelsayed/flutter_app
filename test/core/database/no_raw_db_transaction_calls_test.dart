@@ -31,11 +31,20 @@ void main() {
       };
 
       final offenders = <String>[];
-      final pattern = RegExp(r'\bdb\.transaction\s*\(');
+      // Match any receiver, not just `db` — `_db.transaction(...)` is the
+      // canonical Dart private-field shape and a likely future-regression
+      // shape. The receiver doesn't matter; what matters is the
+      // `.transaction(` call against a Database/DatabaseExecutor in any
+      // file outside the allowed subpaths.
+      final pattern = RegExp(r'\.transaction\s*\(');
 
       for (final entity in libDir.listSync(recursive: true)) {
         if (entity is! File || !entity.path.endsWith('.dart')) continue;
-        final normalized = entity.path.replaceAll(r'\\', '/');
+        // Normalize Windows separators to '/' so the allowed-subpath check
+        // works on every host. `r'\\'` is two literal backslashes (no-op on
+        // Windows, where listSync yields single-backslash separators) — use
+        // a regular string '\\' (one backslash) for the actual replacement.
+        final normalized = entity.path.replaceAll('\\', '/');
         if (allowedSubpaths.any(
           (allowed) =>
               normalized == allowed || normalized.startsWith(allowed),

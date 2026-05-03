@@ -258,6 +258,11 @@ Future<void> _drainGroupInbox({
 
     final pageReceipts = <GroupMessageReceipt>[];
     final pageReadMessageIds = <String>[];
+    // Tracks the wire messageIds that Phase 1 actually persisted (or attempted
+    // to persist) for THIS page. If a sys-removal payload mid-page deletes the
+    // group, these are the only rows we sweep — pre-existing failed-send
+    // messages and unrelated state are left alone.
+    final phase1PersistedMessageIds = <String>[];
     var stopGroupDrain = false;
 
     // ── Phase 1 ── process every message OUTSIDE any DB write transaction.
@@ -409,6 +414,10 @@ Future<void> _drainGroupInbox({
           : transportSenderId;
 
       if (groupMessageListener != null && text.startsWith('{"__sys":')) {
+        final sysWireMessageId = payload['messageId'] as String?;
+        if (sysWireMessageId != null && sysWireMessageId.isNotEmpty) {
+          phase1PersistedMessageIds.add(sysWireMessageId);
+        }
         await groupMessageListener.handleReplayEnvelope({
           'groupId': resolvedGroupId,
           'senderId': transportSenderId.isNotEmpty
@@ -438,6 +447,35 @@ Future<void> _drainGroupInbox({
                   : resolvedGroupId,
             },
           );
+          // Sys-removal arrived mid-page. Anything we wrote in Phase 1 of
+          // this same page now points at a deleted groupId — the pre-refactor
+          // shape rolled them back via the SQLCipher txn that wrapped the
+          // whole apply body, but the new three-phase shape has no implicit
+          // rollback for outer-repo writes. Sweep ONLY the IDs we ourselves
+          // persisted on this page; pre-existing rows (e.g. failed-send
+          // outbound messages from the now-removed user) are left alone.
+          var sweptCount = 0;
+          for (final id in phase1PersistedMessageIds) {
+            try {
+              await msgRepo.deleteMessage(id);
+              sweptCount++;
+            } catch (_) {
+              // Swallow per-id delete failures; the sweep is best-effort
+              // cleanup, not a correctness invariant.
+            }
+          }
+          if (sweptCount > 0) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_DRAIN_OFFLINE_INBOX_ORPHANS_SWEPT',
+              details: {
+                'groupId': resolvedGroupId.length > 8
+                    ? resolvedGroupId.substring(0, 8)
+                    : resolvedGroupId,
+                'count': sweptCount,
+              },
+            );
+          }
           stopGroupDrain = true;
           break;
         }
@@ -445,6 +483,11 @@ Future<void> _drainGroupInbox({
       }
 
       if (groupMessageListener != null) {
+        final listenerWireMessageId = payload['messageId'] as String?;
+        if (listenerWireMessageId != null &&
+            listenerWireMessageId.isNotEmpty) {
+          phase1PersistedMessageIds.add(listenerWireMessageId);
+        }
         await groupMessageListener.handleReplayEnvelope({
           'groupId': resolvedGroupId,
           'senderId': senderId,
@@ -472,6 +515,10 @@ Future<void> _drainGroupInbox({
         continue;
       }
 
+      final wireMessageId = payload['messageId'] as String?;
+      if (wireMessageId != null && wireMessageId.isNotEmpty) {
+        phase1PersistedMessageIds.add(wireMessageId);
+      }
       final persistedMessage = await handleIncomingGroupMessage(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -485,14 +532,26 @@ Future<void> _drainGroupInbox({
             ? effectiveTransportPeerId
             : null,
         senderDeviceId: senderDeviceId,
-        messageId: payload['messageId'] as String?,
+        messageId: wireMessageId,
         quotedMessageId: payload['quotedMessageId'] as String?,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
       );
-      if (persistedMessage != null) {
+      // Re-derive the local-delivered receipt even when the message dedup'd
+      // (handleIncomingGroupMessage returns null on dedup). Without this, a
+      // Phase 2 failure that triggers a re-drain permanently loses the
+      // delivered ack — payload-derived receipts survive (they're rebuilt
+      // from the wire payload below) but the local-delivered one is generated
+      // only from a persisted GroupMessage.
+      GroupMessage? messageForLocalReceipts = persistedMessage;
+      if (messageForLocalReceipts == null &&
+          wireMessageId != null &&
+          wireMessageId.isNotEmpty) {
+        messageForLocalReceipts = await msgRepo.getMessage(wireMessageId);
+      }
+      if (messageForLocalReceipts != null) {
         final deliveredReceipts = _receiptsForPersistedInboxMessage(
-          persistedMessage,
+          messageForLocalReceipts,
           localPeerId: selfPeerId,
         );
         pageReceipts.addAll(deliveredReceipts);
@@ -509,7 +568,23 @@ Future<void> _drainGroupInbox({
 
     if (stopGroupDrain) return;
 
-    // ── Phase 2 ── commit the receipts + cursor advance atomically.
+    // ── Phase 2a ── persist detected history-gap stubs BEFORE the cursor
+    // advances. The relay-side gap detector only emits a gap on the first
+    // page that observes it; once the cursor moves past, the gap is gone
+    // from future pages. So if the process dies between Phase 2b and Phase 3
+    // (or if Phase 3 fails), we still want a durable gap record in the
+    // repair repo so it can be retried independently on the next drain.
+    // upsertDetected is idempotent on (groupId, gapId) — a re-drain after a
+    // crash here just merges into the existing record.
+    if (result.historyGaps.isNotEmpty && historyGapRepairRepo != null) {
+      await _persistDetectedGapStubs(
+        historyGapRepairRepo: historyGapRepairRepo,
+        groupId: groupId,
+        gaps: result.historyGaps,
+      );
+    }
+
+    // ── Phase 2b ── commit the receipts + cursor advance atomically.
     // The apply body is intentionally empty: all message-table writes
     // happened in Phase 1 via the outer msgRepo. This transaction is now
     // bounded to a few small writes, so the lock is held for milliseconds
@@ -524,7 +599,8 @@ Future<void> _drainGroupInbox({
 
     // ── Phase 3 ── history-gap repair. Independent of the page commit and
     // safe to run after the cursor has advanced (the repair repo has its own
-    // independently retryable lifecycle).
+    // independently retryable lifecycle). Gap *detection* already landed in
+    // Phase 2a above; this phase only drives the repair attempts.
     if (result.historyGaps.isNotEmpty && historyGapRepairRepo != null) {
       await _repairHistoryGapsFromPage(
         bridge: bridge,
@@ -710,20 +786,7 @@ Future<void> _repairHistoryGapsFromPage({
   final normalizedSelfPeerId = selfPeerId?.trim();
 
   for (final gap in gaps.where((gap) => gap.groupId == groupId)) {
-    final now = DateTime.now().toUtc();
-    await historyGapRepairRepo.upsertDetected(
-      GroupHistoryGapRepair(
-        groupId: gap.groupId,
-        gapId: gap.gapId,
-        missingAfterMessageId: gap.missingAfterMessageId,
-        missingBeforeMessageId: gap.missingBeforeMessageId,
-        expectedRangeHash: gap.expectedRangeHash,
-        expectedHeadMessageId: gap.expectedHeadMessageId,
-        candidateSourcePeerIds: gap.candidateSourcePeerIds,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
+    // Detection already persisted in Phase 2a; just transition to repairing.
     await historyGapRepairRepo.markRepairing(
       groupId: gap.groupId,
       gapId: gap.gapId,
@@ -1328,6 +1391,32 @@ List<GroupMessageReceipt> _receiptsFromPayload(
 bool _isSupportedReceiptType(String receiptType) {
   return receiptType == groupMessageReceiptTypeDelivered ||
       receiptType == groupMessageReceiptTypeRead;
+}
+
+/// Phase 2a: persist gap-detection stubs into the repair repo before the
+/// cursor advances. Idempotent on (groupId, gapId) so re-drain after a
+/// crash here merges into the existing record.
+Future<void> _persistDetectedGapStubs({
+  required GroupHistoryGapRepairRepository historyGapRepairRepo,
+  required String groupId,
+  required List<GroupInboxHistoryGap> gaps,
+}) async {
+  for (final gap in gaps.where((g) => g.groupId == groupId)) {
+    final now = DateTime.now().toUtc();
+    await historyGapRepairRepo.upsertDetected(
+      GroupHistoryGapRepair(
+        groupId: gap.groupId,
+        gapId: gap.gapId,
+        missingAfterMessageId: gap.missingAfterMessageId,
+        missingBeforeMessageId: gap.missingBeforeMessageId,
+        expectedRangeHash: gap.expectedRangeHash,
+        expectedHeadMessageId: gap.expectedHeadMessageId,
+        candidateSourcePeerIds: gap.candidateSourcePeerIds,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  }
 }
 
 List<String> _localReadReceiptMessageIds(
