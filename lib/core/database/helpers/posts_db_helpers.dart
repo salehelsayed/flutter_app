@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import '../db_write_transaction.dart';
 
 void _emitPostsDbTiming({
   required String event,
@@ -418,7 +419,7 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
 }
 
 Future<void> dbDeletePostCascade(Database db, String postId) async {
-  await db.transaction((txn) async {
+  await dbWriteTransaction(db, (txn) async {
     await _deleteRequiredPostRows(txn, 'post_comment_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_comments', postId);

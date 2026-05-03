@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import '../db_write_transaction.dart';
 
 Future<void> dbUpsertPostMediaAttachment(
   Database db,
@@ -92,7 +93,7 @@ Future<void> dbReplacePostMediaAttachments(
   String postId,
   List<Map<String, Object?>> rows,
 ) async {
-  await db.transaction((txn) async {
+  await dbWriteTransaction(db, (txn) async {
     await txn.delete(
       'post_media_attachments',
       where: 'post_id = ?',

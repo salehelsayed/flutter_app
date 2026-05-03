@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
@@ -56,6 +57,21 @@ class FakeBridge implements Bridge {
 
   @override
   Future<String> send(String message) async {
+    // Mirror the production guard: never allow a bridge call to be issued
+    // from inside a dbWriteTransaction body, so unit tests catch the
+    // anti-pattern locally instead of relying on the live device's sqflite
+    // "database has been locked" warning.
+    final cmdPreview = (() {
+      try {
+        return (jsonDecode(message) as Map<String, dynamic>)['cmd']
+                as String? ??
+            '';
+      } catch (_) {
+        return '';
+      }
+    })();
+    assertNotInsideDbWriteTransaction(commandPreview: cmdPreview);
+
     sendCallCount++;
     lastSentMessage = message;
     sentMessages.add(message);

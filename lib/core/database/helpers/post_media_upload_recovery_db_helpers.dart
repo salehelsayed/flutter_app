@@ -1,11 +1,13 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../db_write_transaction.dart';
+
 Future<void> dbReplacePostMediaUploadRecoveryItems(
   Database db,
   String postId,
   List<Map<String, Object?>> rows,
 ) async {
-  await db.transaction((txn) async {
+  await dbWriteTransaction(db, (txn) async {
     await txn.delete(
       'post_media_upload_recovery',
       where: 'post_id = ?',

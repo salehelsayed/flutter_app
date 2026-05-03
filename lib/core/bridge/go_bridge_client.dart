@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'bridge.dart';
+import '../database/db_write_transaction.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
 import '../../features/p2p/domain/models/connection_state.dart';
 import '../utils/flow_event_emitter.dart';
@@ -433,6 +434,12 @@ class GoBridgeClient extends Bridge {
     final request = jsonDecode(message) as Map<String, dynamic>;
     final cmd = request['cmd'] as String;
     final payload = request['payload'] as Map<String, dynamic>?;
+
+    // Refuse to issue a native-bridge round-trip from inside a SQLCipher
+    // write transaction. Holding the DB lock across this hop is what
+    // produced the 10-second "database has been locked" warnings and the
+    // stuck Orbit skeleton state.
+    assertNotInsideDbWriteTransaction(commandPreview: cmd);
 
     final spec = _cmdMap[cmd];
     if (spec == null) {
