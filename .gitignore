@@ -140,14 +140,26 @@ ios/build/
 .codex-test-logs/
 .full_regression_logs/
 
-# Local Codex sandbox helpers — never commit these to git.
-# .codex-bin/ holds a per-developer Flutter shim that hardcodes their
-# absolute FLUTTER_ROOT; .codex-gocache/ is a Go build cache whose shards
-# embed nanosecond timestamps and per-host content hashes. Both are
-# regenerated on every build and would otherwise drown real diffs in
-# thousands of meaningless cache files.
+# Local sandbox / build caches — never commit these to git.
+# All entries below hold per-developer state that gets regenerated on every
+# build and embeds machine-specific identifiers (absolute paths, nanosecond
+# timestamps, per-host content hashes, telemetry session ids). Tracking any
+# of them produces constant merge churn and drowns real diffs.
+#  - .codex-bin/                  per-developer Flutter shim w/ hardcoded FLUTTER_ROOT
+#  - .codex-gocache/              Go build cache shards
+#  - .codex-home/                 sandbox HOME for dart/flutter analyze (analysis-driver
+#                                 binary scratch, telemetry session, per-developer CLIENT_ID)
+#  - CompilationCache.noindex/    Xcode compilation cache
+#  - Logs/                        Xcode .xcactivitylog build logs
+#  - output/                      Playwright UI-test screenshots / .yml snapshots
+#  - .playwright-cli/             More Playwright UI-test snapshots
 .codex-bin/
 .codex-gocache/
+.codex-home/
+CompilationCache.noindex/
+Logs/
+output/
+.playwright-cli/
 
 # Claude Code scheduler state
 .claude/scheduled_tasks.lock
