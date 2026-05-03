@@ -97,9 +97,12 @@ void main() {
         final firstInviteResult = await sendGroupInvite(
           p2pService: aliceP2p,
           bridge: bridge,
+          groupRepo: aliceGroupRepo,
           recipientPeerId: bob.peerId,
           recipientMlKemPublicKey: bob.mlKemPublicKey,
           senderPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
           senderUsername: alice.username,
           groupId: groupId,
           groupKey: aliceFirstKey!.encryptedKey,
@@ -121,6 +124,8 @@ void main() {
           contactRepo: bobContactRepo,
           bridge: bridge,
           ownMlKemSecretKey: bob.mlKemSecretKey,
+          ownPeerId: bob.peerId,
+          ownMlKemPublicKey: bob.mlKemPublicKey,
         );
         expect(firstAcceptResult, HandleGroupInviteResult.success);
         expect(firstAcceptedGroupId, groupId);
@@ -179,9 +184,12 @@ void main() {
         final readdResult = await sendGroupInvite(
           p2pService: aliceP2p,
           bridge: bridge,
+          groupRepo: aliceGroupRepo,
           recipientPeerId: bob.peerId,
           recipientMlKemPublicKey: bob.mlKemPublicKey,
           senderPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
           senderUsername: alice.username,
           groupId: groupId,
           groupKey: nextKey.encryptedKey,
