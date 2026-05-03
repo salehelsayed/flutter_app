@@ -24,14 +24,20 @@ class GroupSecurityStatusViewState {
     required GroupKeyInfo? latestKey,
     required int memberCount,
     required Iterable<GroupMemberIdentitySafety> memberSafety,
+    int locallyVerifiedMemberCount = 0,
   }) {
     final safetyList = memberSafety.toList(growable: false);
     final identityWarnings = safetyList
         .where((safety) => safety.identityChanged)
         .length;
-    final verifiedMembers = safetyList
-        .where((safety) => !safety.identityChanged)
-        .length;
+    final locallyVerifiedMembers = locallyVerifiedMemberCount < 0
+        ? 0
+        : locallyVerifiedMemberCount;
+    final verifiedMembers =
+        (safetyList.where((safety) => !safety.identityChanged).length +
+                locallyVerifiedMembers)
+            .clamp(0, memberCount)
+            .toInt();
     final unverifiedMembers = memberCount - verifiedMembers - identityWarnings;
 
     return GroupSecurityStatusViewState(

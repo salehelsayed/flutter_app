@@ -425,6 +425,85 @@ void main() {
       expect(find.textContaining('test-group-key-2'), findsNothing);
     });
 
+    testWidgets('counts own member as verified without saved contact', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final contactRepo = InMemoryContactRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+          publicKey: testIdentity.publicKey,
+          mlKemPublicKey: testIdentity.mlKemPublicKey,
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          publicKey: 'pk-bob',
+          mlKemPublicKey: 'mlkem-bob',
+        ),
+      );
+      await contactRepo.addContact(
+        makeContact(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+      await contactRepo.addContact(
+        makeContact(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          publicKey: 'pk-bob',
+          mlKemPublicKey: 'mlkem-bob',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('group-security-status-card')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await pumpFrames(tester, count: 2);
+
+      expect(find.text('All 3 members verified'), findsOneWidget);
+      expect(find.text('2 of 3 members verified'), findsNothing);
+      expect(
+        find.textContaining('not verified from saved contacts'),
+        findsNothing,
+      );
+    });
+
     testWidgets('shows Add Member button for admin role', (tester) async {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();

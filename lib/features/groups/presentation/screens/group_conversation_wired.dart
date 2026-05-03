@@ -725,10 +725,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _loadSecurityStatus() async {
     try {
+      final identity = _ownPeerId == null
+          ? await widget.identityRepo.loadIdentity()
+          : null;
+      final ownPeerId = _ownPeerId ?? identity?.peerId;
       final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
       final memberSafety = <GroupMemberIdentitySafety>[];
       for (final member in members) {
+        if (member.peerId == ownPeerId) {
+          continue;
+        }
         try {
           final contact = await widget.contactRepo.getContact(member.peerId);
           final safety = GroupMemberIdentitySafety.compare(
@@ -755,9 +762,19 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         latestKey: latestKey,
         memberCount: members.length,
         memberSafety: memberSafety,
+        locallyVerifiedMemberCount:
+            ownPeerId != null &&
+                members.any((member) => member.peerId == ownPeerId)
+            ? 1
+            : 0,
       );
       if (!mounted) return;
-      setState(() => _securityStatus = securityStatus);
+      setState(() {
+        if (_ownPeerId == null && ownPeerId != null) {
+          _ownPeerId = ownPeerId;
+        }
+        _securityStatus = securityStatus;
+      });
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',

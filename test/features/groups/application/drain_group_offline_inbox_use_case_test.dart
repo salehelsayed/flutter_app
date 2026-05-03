@@ -453,13 +453,13 @@ void main() {
     myRole: GroupRole.member,
   );
 
-  String? _legacyString(Object? value) {
+  String? legacyString(Object? value) {
     if (value is! String) return null;
     final trimmed = value.trim();
     return trimmed.isEmpty ? null : trimmed;
   }
 
-  Map<String, dynamic>? _legacyPayloadFromRelayMessage(
+  Map<String, dynamic>? legacyPayloadFromRelayMessage(
     String pageGroupId,
     Map<String, dynamic> relayMessage,
   ) {
@@ -485,7 +485,7 @@ void main() {
     return null;
   }
 
-  Future<void> _saveReplayKey(String groupId, int keyGeneration) async {
+  Future<void> saveReplayKey(String groupId, int keyGeneration) async {
     await groupRepo.saveKey(
       GroupKeyInfo(
         groupId: groupId,
@@ -497,7 +497,7 @@ void main() {
   }
 
   Future<({String publicKey, String? deviceId, String? transportPeerId})>
-  _legacySigningIdentity({
+  legacySigningIdentity({
     required String groupId,
     required String senderPeerId,
     String? senderDeviceId,
@@ -534,35 +534,35 @@ void main() {
     String pageGroupId,
     Map<String, dynamic> relayMessage,
   ) async {
-    final payload = _legacyPayloadFromRelayMessage(pageGroupId, relayMessage);
+    final payload = legacyPayloadFromRelayMessage(pageGroupId, relayMessage);
     if (payload == null) {
       return relayMessage;
     }
-    final groupId = _legacyString(payload['groupId']) ?? pageGroupId;
+    final groupId = legacyString(payload['groupId']) ?? pageGroupId;
     final senderPeerId =
-        _legacyString(payload['senderId']) ??
-        _legacyString(payload['senderPeerId']) ??
-        _legacyString(relayMessage['from']) ??
+        legacyString(payload['senderId']) ??
+        legacyString(payload['senderPeerId']) ??
+        legacyString(relayMessage['from']) ??
         'peer-sender';
     final keyGeneration = payload['keyEpoch'] is int
         ? payload['keyEpoch'] as int
         : 1;
 
-    await _saveReplayKey(groupId, keyGeneration);
-    final identity = await _legacySigningIdentity(
+    await saveReplayKey(groupId, keyGeneration);
+    final identity = await legacySigningIdentity(
       groupId: groupId,
       senderPeerId: senderPeerId,
-      senderDeviceId: _legacyString(payload['senderDeviceId']),
-      senderTransportPeerId: _legacyString(payload['transportPeerId']),
+      senderDeviceId: legacyString(payload['senderDeviceId']),
+      senderTransportPeerId: legacyString(payload['transportPeerId']),
     );
     final payloadType = payload['type'] == groupOfflineReplayPayloadTypeReaction
         ? groupOfflineReplayPayloadTypeReaction
         : groupOfflineReplayPayloadTypeMessage;
     final plaintext = payloadType == groupOfflineReplayPayloadTypeReaction
-        ? (_legacyString(payload['reaction']) ?? jsonEncode(payload))
+        ? (legacyString(payload['reaction']) ?? jsonEncode(payload))
         : jsonEncode(payload);
     final messageId =
-        _legacyString(payload['messageId']) ?? _legacyString(payload['id']);
+        legacyString(payload['messageId']) ?? legacyString(payload['id']);
     final replayEnvelope = await buildGroupOfflineReplayEnvelope(
       bridge: bridge,
       groupRepo: groupRepo,
@@ -3180,6 +3180,27 @@ void main() {
       expect(retrieveCmds[2]['payload']['cursor'], 'cursor-3');
     },
   );
+
+  test('stale group inbox cursor stops instead of looping forever', () async {
+    bridge.addPage('group-1', '', const [], 'repeat-cursor');
+    bridge.addPage('group-1', 'repeat-cursor', const [], 'repeat-cursor');
+
+    await drainGroupOfflineInbox(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+    );
+
+    final retrieveCmds = bridge.sentMessages
+        .map((m) => jsonDecode(m) as Map<String, dynamic>)
+        .where((m) => m['cmd'] == 'group:inboxRetrieveCursor')
+        .toList();
+
+    expect(retrieveCmds, hasLength(2));
+    expect(retrieveCmds[0]['payload']['cursor'], '');
+    expect(retrieveCmds[1]['payload']['cursor'], 'repeat-cursor');
+    expect(await msgRepo.getInboxCursor('group-1'), 'repeat-cursor');
+  });
 
   test(
     'cursor timeout logs a group error instead of treating backlog as drained',

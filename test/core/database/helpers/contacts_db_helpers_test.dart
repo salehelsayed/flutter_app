@@ -144,6 +144,24 @@ void main() {
       expect(rows, isEmpty);
     });
 
+    test('does not delete other contacts', () async {
+      await dbUpsertContact(
+        db,
+        makeContactRow(peerId: 'peer-delete', username: 'Delete Me'),
+      );
+      await dbUpsertContact(
+        db,
+        makeContactRow(peerId: 'peer-keep-contact', username: 'Keep Me'),
+      );
+
+      await dbDeleteContact(db, 'peer-delete');
+
+      expect(await dbLoadContact(db, 'peer-delete'), isNull);
+      final kept = await dbLoadContact(db, 'peer-keep-contact');
+      expect(kept, isNotNull);
+      expect(kept!['username'], 'Keep Me');
+    });
+
     test('no error for non-existent peerId', () async {
       // Should not throw
       await dbDeleteContact(db, 'nonexistent-peer');

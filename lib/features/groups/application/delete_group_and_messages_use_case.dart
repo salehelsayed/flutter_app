@@ -4,7 +4,7 @@ import 'package:flutter_app/features/groups/application/leave_group_use_case.dar
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
-/// Deletes all messages for a group and then leaves it.
+/// Leaves a group and then deletes its local message history.
 Future<void> deleteGroupAndMessages({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -21,10 +21,19 @@ Future<void> deleteGroupAndMessages({
   );
 
   try {
-    final deletedCount = await groupMessageRepo.deleteMessagesForGroup(groupId);
     final group = await groupRepo.getGroup(groupId);
     final shouldDeleteLocallyOnly =
         deleteLocallyIfDissolved && group?.isDissolved == true;
+
+    if (shouldDeleteLocallyOnly) {
+      await groupRepo.removeAllMembers(groupId);
+      await groupRepo.removeAllKeys(groupId);
+      await groupRepo.deleteGroup(groupId);
+    } else {
+      await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: groupId);
+    }
+
+    final deletedCount = await groupMessageRepo.deleteMessagesForGroup(groupId);
 
     emitFlowEvent(
       layer: 'UC',
@@ -35,14 +44,6 @@ Future<void> deleteGroupAndMessages({
         'cleanupMode': shouldDeleteLocallyOnly ? 'local_only' : 'leave',
       },
     );
-
-    if (shouldDeleteLocallyOnly) {
-      await groupRepo.removeAllMembers(groupId);
-      await groupRepo.removeAllKeys(groupId);
-      await groupRepo.deleteGroup(groupId);
-    } else {
-      await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: groupId);
-    }
 
     emitFlowEvent(
       layer: 'UC',

@@ -21,6 +21,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_ke
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 const groupUndecryptablePlaceholderText = 'Message could not be decrypted.';
+const defaultGroupInboxDrainMaxPages = 100;
 
 typedef RequestGroupHistoryRepairRange =
     Future<GroupHistoryRepairRangeResult> Function({
@@ -55,6 +56,7 @@ Future<void> drainGroupOfflineInbox({
   String? selfPeerId,
   bool drainAllPages = true,
   int pageSize = 50,
+  int maxPages = defaultGroupInboxDrainMaxPages,
 }) async {
   final drainStopwatch = Stopwatch()..start();
   emitFlowEvent(
@@ -84,6 +86,7 @@ Future<void> drainGroupOfflineInbox({
           selfPeerId: selfPeerId,
           drainAllPages: drainAllPages,
           pageSize: pageSize,
+          maxPages: maxPages,
         );
       } catch (e) {
         emitFlowEvent(
@@ -146,6 +149,7 @@ Future<void> drainGroupOfflineInboxForGroup({
   String? selfPeerId,
   bool drainAllPages = true,
   int pageSize = 50,
+  int maxPages = defaultGroupInboxDrainMaxPages,
 }) async {
   final drainStopwatch = Stopwatch()..start();
   emitFlowEvent(
@@ -172,6 +176,7 @@ Future<void> drainGroupOfflineInboxForGroup({
       selfPeerId: selfPeerId,
       drainAllPages: drainAllPages,
       pageSize: pageSize,
+      maxPages: maxPages,
     );
 
     emitFlowEvent(
@@ -228,10 +233,12 @@ Future<void> _drainGroupInbox({
   String? selfPeerId,
   bool drainAllPages = true,
   int pageSize = 50,
+  int maxPages = defaultGroupInboxDrainMaxPages,
 }) async {
   final drainStopwatch = Stopwatch()..start();
   final retentionCutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
   String cursor = (await msgRepo.getInboxCursor(groupId)) ?? '';
+  final seenCursors = <String>{cursor};
   int totalMessages = 0;
   var pageCount = 0;
   DateTime? latestExpiredBacklogAt;
@@ -426,7 +433,7 @@ Future<void> _drainGroupInbox({
                     'messageId': payload['messageId'],
                   if (payload['quotedMessageId'] is String)
                     'quotedMessageId': payload['quotedMessageId'],
-                  if (media != null) 'media': media,
+                  'media': ?media,
                 },
                 msgRepoOverride: transactionMsgRepo,
                 rethrowOnError: true,
@@ -465,7 +472,7 @@ Future<void> _drainGroupInbox({
                     'messageId': payload['messageId'],
                   if (payload['quotedMessageId'] is String)
                     'quotedMessageId': payload['quotedMessageId'],
-                  if (media != null) 'media': media,
+                  'media': ?media,
                 },
                 msgRepoOverride: transactionMsgRepo,
                 rethrowOnError: true,
@@ -589,6 +596,75 @@ Future<void> _drainGroupInbox({
           'messageCount': totalMessages,
           'pageCount': pageCount,
           'drainAllPages': false,
+        },
+      );
+      return;
+    }
+
+    if (cursor.isNotEmpty && !seenCursors.add(cursor)) {
+      await _persistRetentionState(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        sawTimestampedRetentionPayload: sawTimestampedRetentionPayload,
+        latestExpiredBacklogAt: latestExpiredBacklogAt,
+        latestRetainedBacklogAt: latestRetainedBacklogAt,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_STALE_CURSOR_STOP',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'cursor': cursor.length > 8 ? cursor.substring(0, 8) : cursor,
+          'messageCount': totalMessages,
+          'pageCount': pageCount,
+        },
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+        details: {
+          'scope': 'group',
+          'elapsedMs': drainStopwatch.elapsedMilliseconds,
+          'outcome': 'stale_cursor_stop',
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'messageCount': totalMessages,
+          'pageCount': pageCount,
+          'drainAllPages': drainAllPages,
+        },
+      );
+      return;
+    }
+
+    if (cursor.isNotEmpty && pageCount >= maxPages) {
+      await _persistRetentionState(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        sawTimestampedRetentionPayload: sawTimestampedRetentionPayload,
+        latestExpiredBacklogAt: latestExpiredBacklogAt,
+        latestRetainedBacklogAt: latestRetainedBacklogAt,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_MAX_PAGES_STOP',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'messageCount': totalMessages,
+          'pageCount': pageCount,
+          'maxPages': maxPages,
+        },
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_TIMING',
+        details: {
+          'scope': 'group',
+          'elapsedMs': drainStopwatch.elapsedMilliseconds,
+          'outcome': 'max_pages_stop',
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'messageCount': totalMessages,
+          'pageCount': pageCount,
+          'drainAllPages': drainAllPages,
+          'maxPages': maxPages,
         },
       );
       return;
@@ -904,7 +980,7 @@ Future<List<String>> _applyRepairedHistoryMessages({
         'messageId': messageId,
         if (payload['quotedMessageId'] is String)
           'quotedMessageId': payload['quotedMessageId'],
-        if (media != null) 'media': media,
+        'media': ?media,
       }, msgRepoOverride: msgRepo);
     } else {
       await handleIncomingGroupMessage(
