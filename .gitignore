@@ -140,5 +140,14 @@ ios/build/
 .codex-test-logs/
 .full_regression_logs/
 
+# Local Codex sandbox helpers — never commit these to git.
+# .codex-bin/ holds a per-developer Flutter shim that hardcodes their
+# absolute FLUTTER_ROOT; .codex-gocache/ is a Go build cache whose shards
+# embed nanosecond timestamps and per-host content hashes. Both are
+# regenerated on every build and would otherwise drown real diffs in
+# thousands of meaningless cache files.
+.codex-bin/
+.codex-gocache/
+
 # Claude Code scheduler state
 .claude/scheduled_tasks.lock

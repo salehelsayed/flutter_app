@@ -1,6 +1,0 @@
-./decrypt.go
-./encrypt.go
-./group.go
-./mlkem.go
-./sign.go
-./x25519.go
