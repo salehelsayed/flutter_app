@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
@@ -60,7 +62,7 @@ void main() {
   });
 
   test(
-    'dissolves a group, stores a timeline event, and leaves the topic',
+    'EK004 dissolve stores signed group_dissolved replay envelope',
     () async {
       final (result, group) = await dissolveGroup(
         bridge: bridge,
@@ -97,6 +99,22 @@ void main() {
         bridge.commandLog,
         containsAll(['group:publish', 'group:inboxStore', 'group:leave']),
       );
+      final inboxStoreMessage = bridge.sentMessages.firstWhere((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:inboxStore';
+      });
+      final inboxPayload =
+          (jsonDecode(inboxStoreMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final replayEnvelope =
+          jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
+      expect(replayEnvelope['kind'], 'group_offline_replay');
+      expect(replayEnvelope['payloadType'], 'group_message');
+      expect(replayEnvelope['senderPeerId'], 'peer-admin');
+      expect(replayEnvelope['senderPublicKey'], 'pk-admin');
+      expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
+      expect(replayEnvelope['signedPayload'], isA<String>());
+      expect(replayEnvelope['signature'], isA<String>());
     },
   );
 

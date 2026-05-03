@@ -15,6 +15,8 @@ class FakeGroupPubSubNetwork {
       {};
   final Map<String, StreamController<Map<String, dynamic>>>
   _deviceReactionControllers = {};
+  final Set<String> _heldDeliveryDeviceIds = {};
+  final Map<String, List<Map<String, dynamic>>> _heldMessageDeliveries = {};
 
   final _random = Random();
 
@@ -45,6 +47,14 @@ class FakeGroupPubSubNetwork {
 
   /// Total publishes (alias for [publishCallCount]).
   int get publishCount => publishCallCount;
+
+  Set<String> registeredDeviceIdsFor(String peerId) {
+    final deviceIds = _peerDeviceIds[peerId];
+    if (deviceIds == null || deviceIds.isEmpty) {
+      return const <String>{};
+    }
+    return Set<String>.unmodifiable(deviceIds);
+  }
 
   /// Creates and returns the broadcast stream controller for a peer.
   ///
@@ -102,7 +112,53 @@ class FakeGroupPubSubNetwork {
       if (reactionController != null && !reactionController.isClosed) {
         reactionController.close();
       }
+
+      _heldDeliveryDeviceIds.remove(deviceId);
+      _heldMessageDeliveries.remove(deviceId);
     }
+  }
+
+  /// Holds future message deliveries for one device or all devices of a peer.
+  void holdDeliveriesFor(String peerOrDeviceId) {
+    for (final deviceId in _resolveKnownDeviceIds(peerOrDeviceId)) {
+      _heldDeliveryDeviceIds.add(deviceId);
+    }
+  }
+
+  /// Releases held message deliveries, optionally reversing delivery order.
+  Future<void> releaseHeldDeliveriesFor(
+    String peerOrDeviceId, {
+    bool reverse = false,
+  }) async {
+    for (final deviceId in _resolveKnownDeviceIds(peerOrDeviceId)) {
+      _heldDeliveryDeviceIds.remove(deviceId);
+      final held = _heldMessageDeliveries.remove(deviceId) ?? const [];
+      final deliveries = reverse ? held.reversed : held;
+      final controller = _deviceControllers[deviceId];
+      if (controller == null || controller.isClosed) continue;
+
+      for (final envelope in deliveries) {
+        if (deliveryDelay != null) {
+          await Future.delayed(deliveryDelay!);
+        }
+
+        controller.add(Map<String, dynamic>.from(envelope));
+        _totalDeliveries++;
+
+        if (duplicateOnDeliver) {
+          controller.add(Map<String, dynamic>.from(envelope));
+          _totalDeliveries++;
+        }
+      }
+    }
+  }
+
+  int heldDeliveryCountFor(String peerOrDeviceId) {
+    var total = 0;
+    for (final deviceId in _resolveKnownDeviceIds(peerOrDeviceId)) {
+      total += _heldMessageDeliveries[deviceId]?.length ?? 0;
+    }
+    return total;
   }
 
   /// Adds a device (or a legacy one-device peer id) to the subscription set.
@@ -157,12 +213,22 @@ class FakeGroupPubSubNetwork {
         await Future.delayed(deliveryDelay!);
       }
 
-      controller.add(envelope);
+      final deliveredEnvelope = Map<String, dynamic>.from(envelope)
+        ..putIfAbsent('senderDeviceId', () => senderDeviceId ?? senderPeerId)
+        ..putIfAbsent('transportPeerId', () => senderDeviceId ?? senderPeerId);
+      if (_heldDeliveryDeviceIds.contains(subscriberId)) {
+        _heldMessageDeliveries
+            .putIfAbsent(subscriberId, () => <Map<String, dynamic>>[])
+            .add(Map<String, dynamic>.from(deliveredEnvelope));
+        continue;
+      }
+
+      controller.add(deliveredEnvelope);
       _totalDeliveries++;
 
       // Duplicate injection if enabled.
       if (duplicateOnDeliver) {
-        controller.add(Map<String, dynamic>.from(envelope));
+        controller.add(Map<String, dynamic>.from(deliveredEnvelope));
         _totalDeliveries++;
       }
     }
@@ -238,6 +304,8 @@ class FakeGroupPubSubNetwork {
     deliveryDelay = null;
     dropRate = 0.0;
     duplicateOnDeliver = false;
+    _heldDeliveryDeviceIds.clear();
+    _heldMessageDeliveries.clear();
   }
 
   Iterable<String> _resolveDeviceIds(String peerOrDeviceId) sync* {
@@ -247,5 +315,11 @@ class FakeGroupPubSubNetwork {
     }
 
     yield* _peerDeviceIds[peerOrDeviceId] ?? const <String>{};
+  }
+
+  List<String> _resolveKnownDeviceIds(String peerOrDeviceId) {
+    final deviceIds = _resolveDeviceIds(peerOrDeviceId).toList();
+    if (deviceIds.isNotEmpty) return deviceIds;
+    return [peerOrDeviceId];
   }
 }

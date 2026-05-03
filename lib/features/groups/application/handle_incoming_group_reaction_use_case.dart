@@ -2,6 +2,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// Result of handling an incoming group reaction.
@@ -28,6 +29,8 @@ handleIncomingGroupReaction({
   required String groupId,
   required String senderId,
   required String reactionJson,
+  String? transportPeerId,
+  String? senderDeviceId,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -93,7 +96,7 @@ handleIncomingGroupReaction({
     return (HandleGroupReactionResult.senderMismatch, null);
   }
 
-  // 4. Validate sender is a member (optional — member list may be stale)
+  // 4. Validate sender is a member before creating visible reaction state.
   final member = await groupRepo.getMember(groupId, senderId);
   if (member == null) {
     emitFlowEvent(
@@ -103,7 +106,22 @@ handleIncomingGroupReaction({
         'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
       },
     );
-    // Still process — member list may be stale
+    return (HandleGroupReactionResult.unknownSender, null);
+  }
+  if (!_isReactionSenderDeviceBound(
+    member: member,
+    senderDeviceId: senderDeviceId,
+    transportPeerId: transportPeerId,
+  )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_REACTION_RECEIVE_UNBOUND_DEVICE_REJECTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+      },
+    );
+    return (HandleGroupReactionResult.senderMismatch, null);
   }
 
   // 5. Process action
@@ -142,6 +160,25 @@ handleIncomingGroupReaction({
   );
 
   return (HandleGroupReactionResult.success, ReactionChange.upsert(reaction));
+}
+
+bool _isReactionSenderDeviceBound({
+  required GroupMember member,
+  required String? senderDeviceId,
+  required String? transportPeerId,
+}) {
+  final resolvedTransportPeerId = transportPeerId?.trim().isNotEmpty == true
+      ? transportPeerId!.trim()
+      : member.peerId;
+  if (member.devices.isEmpty) {
+    return resolvedTransportPeerId == member.peerId;
+  }
+  final device = senderDeviceId?.trim().isNotEmpty == true
+      ? member.findDeviceById(senderDeviceId)
+      : member.findDeviceByTransportPeerId(resolvedTransportPeerId);
+  return device != null &&
+      device.isActive &&
+      device.transportPeerId == resolvedTransportPeerId;
 }
 
 DateTime _parseReactionTimestamp(String timestamp) {

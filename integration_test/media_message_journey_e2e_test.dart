@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -43,6 +44,9 @@ const bool _runGifManualAcceptance = bool.fromEnvironment(
 enum _JourneyDevice { ibra, saleh }
 
 enum _JourneyFixtureKind { png, gif }
+
+const _fixtureEncryptionKeyBase64 = 'fixture-group-media-key';
+const _fixtureEncryptionNonce = 'fixture-group-media-nonce';
 
 class _TrackingDurableMediaFileManager extends FakeMediaFileManager {
   _TrackingDurableMediaFileManager(this.rootDir);
@@ -616,6 +620,20 @@ class _JourneyHarnessAppState extends State<_JourneyHarnessApp> {
             height: height,
             durationMs: durationMs,
             waveform: waveform,
+            contentHash: allowedPeers != null
+                ? await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                    localFilePath,
+                  )
+                : null,
+            encryptionKeyBase64: allowedPeers != null
+                ? _fixtureEncryptionKeyBase64
+                : null,
+            encryptionNonce: allowedPeers != null
+                ? _fixtureEncryptionNonce
+                : null,
+            encryptionScheme: allowedPeers != null
+                ? kMediaAttachmentEncryptionSchemeBlobAesGcmV1
+                : null,
           ),
       sendChatMessageFn: sendChatMessage,
       deleteContactFn: (_) async {},
@@ -664,6 +682,12 @@ class _JourneyHarnessAppState extends State<_JourneyHarnessApp> {
             height: height,
             durationMs: durationMs,
             waveform: waveform,
+            contentHash: await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+              localFilePath,
+            ),
+            encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+            encryptionNonce: _fixtureEncryptionNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
     );
   }

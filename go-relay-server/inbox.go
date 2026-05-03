@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -770,10 +771,21 @@ func (is *InboxStore) Stats() (totalPeers, totalMessages int) {
 // --- Group Inbox store ---
 
 type groupInboxMessage struct {
-	From      string `json:"from"`
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
-	ID        string `json:"id,omitempty"`
+	From             string   `json:"from"`
+	Message          string   `json:"message"`
+	Timestamp        int64    `json:"timestamp"`
+	ID               string   `json:"id,omitempty"`
+	RecipientPeerIds []string `json:"-"`
+}
+
+type groupInboxHistoryGap struct {
+	GroupId                string   `json:"groupId"`
+	GapId                  string   `json:"gapId"`
+	MissingAfterMessageId  string   `json:"missingAfterMessageId"`
+	MissingBeforeMessageId string   `json:"missingBeforeMessageId"`
+	ExpectedRangeHash      string   `json:"expectedRangeHash"`
+	ExpectedHeadMessageId  string   `json:"expectedHeadMessageId"`
+	CandidateSourcePeerIds []string `json:"candidateSourcePeerIds"`
 }
 
 // GroupInboxStore wraps a GroupInboxBackend.
@@ -801,7 +813,26 @@ func (s *GroupInboxStore) SetPush(push *PushService) {
 }
 
 func (s *GroupInboxStore) Store(groupId, from, message string) error {
-	err := s.backend.Store(groupId, from, message)
+	return s.store(groupId, from, message, nil)
+}
+
+func (s *GroupInboxStore) store(
+	groupId string,
+	from string,
+	message string,
+	recipientPeerIds []string,
+) error {
+	var err error
+	if recipientBackend, ok := s.backend.(GroupInboxRecipientBackend); ok {
+		err = recipientBackend.StoreWithRecipients(
+			groupId,
+			from,
+			message,
+			recipientPeerIds,
+		)
+	} else {
+		err = s.backend.Store(groupId, from, message)
+	}
 	if err == nil {
 		groupInboxStoredCounter.Inc()
 		log.Printf("[GROUP_INBOX] Stored message for group %s from %s",
@@ -817,7 +848,7 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 	message string,
 	recipientPeerIds []string,
 ) error {
-	if err := s.Store(groupId, from, message); err != nil {
+	if err := s.store(groupId, from, message, recipientPeerIds); err != nil {
 		return err
 	}
 
@@ -893,11 +924,228 @@ func (s *GroupInboxStore) Retrieve(groupId string, sinceTimestamp int64) []group
 	return result
 }
 
+func (s *GroupInboxStore) RetrieveAuthorized(
+	groupId string,
+	sinceTimestamp int64,
+	requesterPeerId string,
+) []groupInboxMessage {
+	messages := s.backend.RetrieveSince(groupId, sinceTimestamp)
+	result := filterGroupInboxMessagesForPeer(messages, requesterPeerId)
+	groupInboxRetrievedCounter.Add(float64(len(result)))
+
+	log.Printf("[GROUP_INBOX] Retrieved %d authorized message(s) for group %s peer %s (since=%d)",
+		len(result),
+		groupId[:min(20, len(groupId))],
+		requesterPeerId[:min(20, len(requesterPeerId))],
+		sinceTimestamp)
+	return result
+}
+
 // RetrieveWithCursor retrieves messages using cursor-based pagination.
-func (s *GroupInboxStore) RetrieveWithCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string) {
-	messages, nextCursor := s.backend.RetrieveCursor(groupId, cursor, limit)
+func (s *GroupInboxStore) RetrieveWithCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string, []groupInboxHistoryGap) {
+	messages, nextCursor, historyGaps := s.backend.RetrieveCursor(groupId, cursor, limit)
 	groupInboxRetrievedCounter.Add(float64(len(messages)))
-	return messages, nextCursor
+	return messages, nextCursor, historyGaps
+}
+
+func (s *GroupInboxStore) RetrieveWithCursorAuthorized(
+	groupId string,
+	cursor string,
+	limit int,
+	requesterPeerId string,
+) ([]groupInboxMessage, string, []groupInboxHistoryGap) {
+	if limit <= 0 {
+		return nil, "", nil
+	}
+
+	allMessages := s.backend.RetrieveSince(groupId, 0)
+	cursorFound := cursor == ""
+	startIdx := 0
+	if cursor != "" {
+		for i, message := range allMessages {
+			if message.ID == cursor {
+				startIdx = i + 1
+				cursorFound = true
+				break
+			}
+		}
+	}
+
+	result := make([]groupInboxMessage, 0, min(limit, len(allMessages)))
+	lastReturnedIndex := -1
+
+	for i := startIdx; i < len(allMessages); i++ {
+		message := allMessages[i]
+		if !groupInboxMessageAuthorizedForPeer(message, requesterPeerId) {
+			continue
+		}
+		result = append(result, message)
+		lastReturnedIndex = i
+		if len(result) == limit {
+			break
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, "", nil
+	}
+
+	nextCursor := ""
+	for i := lastReturnedIndex + 1; i < len(allMessages); i++ {
+		if groupInboxMessageAuthorizedForPeer(allMessages[i], requesterPeerId) {
+			nextCursor = result[len(result)-1].ID
+			break
+		}
+	}
+
+	groupInboxRetrievedCounter.Add(float64(len(result)))
+	return result, nextCursor, buildGroupInboxHistoryGaps(groupId, cursor, cursorFound, result)
+}
+
+func (s *GroupInboxStore) RetrieveHistoryRepairRangeAuthorized(
+	groupId string,
+	missingAfterMessageId string,
+	missingBeforeMessageId string,
+	limit int,
+	requesterPeerId string,
+) ([]groupInboxMessage, string, string) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	allMessages := s.backend.RetrieveSince(groupId, 0)
+	startIdx := 0
+	if missingAfterMessageId != "" {
+		for i, message := range allMessages {
+			if message.ID == missingAfterMessageId {
+				startIdx = i + 1
+				break
+			}
+		}
+	}
+
+	result := make([]groupInboxMessage, 0, min(limit, len(allMessages)))
+	for i := startIdx; i < len(allMessages) && len(result) < limit; i++ {
+		message := allMessages[i]
+		if !groupInboxMessageAuthorizedForPeer(message, requesterPeerId) {
+			continue
+		}
+		result = append(result, message)
+		if message.ID == missingBeforeMessageId {
+			break
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, "", ""
+	}
+	return result, computeGroupHistoryRangeHash(result), result[len(result)-1].ID
+}
+
+func buildGroupInboxHistoryGaps(
+	groupId string,
+	cursor string,
+	cursorFound bool,
+	repairMessages []groupInboxMessage,
+) []groupInboxHistoryGap {
+	if cursor == "" || cursorFound || len(repairMessages) == 0 {
+		return nil
+	}
+
+	headMessageID := repairMessages[len(repairMessages)-1].ID
+	rangeHash := computeGroupHistoryRangeHash(repairMessages)
+	gapSeed := fmt.Sprintf("%s|%s|%s|%s", groupId, cursor, headMessageID, rangeHash)
+	gapHash := sha256.Sum256([]byte(gapSeed))
+	return []groupInboxHistoryGap{{
+		GroupId:                groupId,
+		GapId:                  fmt.Sprintf("relay-gap-%x", gapHash[:8]),
+		MissingAfterMessageId:  cursor,
+		MissingBeforeMessageId: headMessageID,
+		ExpectedRangeHash:      rangeHash,
+		ExpectedHeadMessageId:  headMessageID,
+		CandidateSourcePeerIds: groupInboxCandidateSourcePeerIds(repairMessages),
+	}}
+}
+
+func groupInboxCandidateSourcePeerIds(messages []groupInboxMessage) []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0)
+	add := func(peerId string) {
+		peerId = strings.TrimSpace(peerId)
+		if peerId == "" {
+			return
+		}
+		if _, ok := seen[peerId]; ok {
+			return
+		}
+		seen[peerId] = struct{}{}
+		result = append(result, peerId)
+	}
+
+	for _, message := range messages {
+		add(message.From)
+		for _, peerId := range message.RecipientPeerIds {
+			add(peerId)
+		}
+	}
+	return result
+}
+
+func computeGroupHistoryRangeHash(messages []groupInboxMessage) string {
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		payload := map[string]interface{}{
+			"from":      message.From,
+			"message":   message.Message,
+			"timestamp": message.Timestamp,
+		}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			continue
+		}
+		parts = append(parts, string(raw))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func normalizePeerIds(peerIds []string) []string {
+	if len(peerIds) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(peerIds))
+	result := make([]string, 0, len(peerIds))
+	for _, peerId := range peerIds {
+		if peerId == "" {
+			continue
+		}
+		if _, ok := seen[peerId]; ok {
+			continue
+		}
+		seen[peerId] = struct{}{}
+		result = append(result, peerId)
+	}
+	return result
+}
+
+func groupInboxMessageAuthorizedForPeer(message groupInboxMessage, peerId string) bool {
+	if peerId == "" {
+		return false
+	}
+	return message.From == peerId || containsPeer(message.RecipientPeerIds, peerId)
+}
+
+func filterGroupInboxMessagesForPeer(messages []groupInboxMessage, peerId string) []groupInboxMessage {
+	if len(messages) == 0 {
+		return nil
+	}
+	result := make([]groupInboxMessage, 0, len(messages))
+	for _, message := range messages {
+		if groupInboxMessageAuthorizedForPeer(message, peerId) {
+			result = append(result, message)
+		}
+	}
+	return result
 }
 
 // Prune removes expired messages across all groups. Called periodically.
@@ -955,20 +1203,32 @@ type inboxRequest struct {
 	Token    string                 `json:"token,omitempty"`
 	Platform string                 `json:"platform,omitempty"`
 	// Group inbox fields.
-	GroupId          string   `json:"groupId,omitempty"`
-	RecipientPeerIds []string `json:"recipientPeerIds,omitempty"`
-	SinceTimestamp   int64    `json:"sinceTimestamp,omitempty"`
-	Cursor           string   `json:"cursor,omitempty"`
+	GroupId                string   `json:"groupId,omitempty"`
+	RecipientPeerIds       []string `json:"recipientPeerIds,omitempty"`
+	SinceTimestamp         int64    `json:"sinceTimestamp,omitempty"`
+	Cursor                 string   `json:"cursor,omitempty"`
+	GapId                  string   `json:"gapId,omitempty"`
+	SourcePeerId           string   `json:"sourcePeerId,omitempty"`
+	MissingAfterMessageId  string   `json:"missingAfterMessageId,omitempty"`
+	MissingBeforeMessageId string   `json:"missingBeforeMessageId,omitempty"`
+	ExpectedRangeHash      string   `json:"expectedRangeHash,omitempty"`
+	ExpectedHeadMessageId  string   `json:"expectedHeadMessageId,omitempty"`
 }
 
 type inboxResponse struct {
-	Status        string              `json:"status"`
-	Error         string              `json:"error,omitempty"`
-	Messages      []inboxMessage      `json:"messages,omitempty"`
-	HasMore       bool                `json:"hasMore,omitempty"`
-	Acked         int                 `json:"acked,omitempty"`
-	GroupMessages []groupInboxMessage `json:"groupMessages,omitempty"`
-	NextCursor    string              `json:"nextCursor,omitempty"`
+	Status        string                 `json:"status"`
+	Error         string                 `json:"error,omitempty"`
+	Messages      []inboxMessage         `json:"messages,omitempty"`
+	HasMore       bool                   `json:"hasMore,omitempty"`
+	Acked         int                    `json:"acked,omitempty"`
+	GroupMessages []groupInboxMessage    `json:"groupMessages,omitempty"`
+	NextCursor    string                 `json:"nextCursor,omitempty"`
+	HistoryGaps   []groupInboxHistoryGap `json:"historyGaps,omitempty"`
+	GroupId       string                 `json:"groupId,omitempty"`
+	GapId         string                 `json:"gapId,omitempty"`
+	SourcePeerId  string                 `json:"sourcePeerId,omitempty"`
+	RangeHash     string                 `json:"rangeHash,omitempty"`
+	HeadMessageId string                 `json:"headMessageId,omitempty"`
 }
 
 func fitRetrievePendingResponse(
@@ -1115,16 +1375,20 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 	case "group_store":
 		if req.GroupId == "" || req.Message == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: groupId, message"}
+		} else if len(normalizePeerIds(req.RecipientPeerIds)) == 0 {
+			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: recipientPeerIds"}
 		} else {
 			from := req.From
 			if from == "" {
 				from = remotePeer
 			}
-			if err := groupInbox.StoreWithPushRecipients(
+			if from != remotePeer {
+				resp = inboxResponse{Status: "ERROR", Error: "not authorized"}
+			} else if err := groupInbox.StoreWithPushRecipients(
 				req.GroupId,
-				from,
+				remotePeer,
 				req.Message,
-				req.RecipientPeerIds,
+				normalizePeerIds(req.RecipientPeerIds),
 			); err != nil {
 				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
 			} else {
@@ -1136,7 +1400,7 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		if req.GroupId == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: groupId"}
 		} else {
-			messages := groupInbox.Retrieve(req.GroupId, req.SinceTimestamp)
+			messages := groupInbox.RetrieveAuthorized(req.GroupId, req.SinceTimestamp, remotePeer)
 			if len(messages) > 0 {
 				resp = inboxResponse{Status: "OK", GroupMessages: messages}
 			} else {
@@ -1152,9 +1416,41 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			if limit <= 0 {
 				limit = 50
 			}
-			messages, nextCursor := groupInbox.RetrieveWithCursor(req.GroupId, req.Cursor, limit)
+			messages, nextCursor, historyGaps := groupInbox.RetrieveWithCursorAuthorized(req.GroupId, req.Cursor, limit, remotePeer)
 			if len(messages) > 0 {
-				resp = inboxResponse{Status: "OK", GroupMessages: messages, NextCursor: nextCursor}
+				resp = inboxResponse{Status: "OK", GroupMessages: messages, NextCursor: nextCursor, HistoryGaps: historyGaps}
+			} else {
+				resp = inboxResponse{Status: "NO_MESSAGES"}
+			}
+		}
+
+	case "group_history_repair_range":
+		if req.GroupId == "" || req.GapId == "" || req.SourcePeerId == "" ||
+			req.MissingAfterMessageId == "" || req.MissingBeforeMessageId == "" ||
+			req.ExpectedRangeHash == "" || req.ExpectedHeadMessageId == "" {
+			resp = inboxResponse{Status: "ERROR", Error: "Missing required history repair fields"}
+		} else {
+			limit := req.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			messages, rangeHash, headMessageId := groupInbox.RetrieveHistoryRepairRangeAuthorized(
+				req.GroupId,
+				req.MissingAfterMessageId,
+				req.MissingBeforeMessageId,
+				limit,
+				remotePeer,
+			)
+			if len(messages) > 0 {
+				resp = inboxResponse{
+					Status:        "OK",
+					GroupMessages: messages,
+					GroupId:       req.GroupId,
+					GapId:         req.GapId,
+					SourcePeerId:  req.SourcePeerId,
+					RangeHash:     rangeHash,
+					HeadMessageId: headMessageId,
+				}
 			} else {
 				resp = inboxResponse{Status: "NO_MESSAGES"}
 			}

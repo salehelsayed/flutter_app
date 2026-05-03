@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// 24x24 glass circle X button for closing the Orbit screen.
 class OrbitCloseButton extends StatelessWidget {
@@ -9,6 +10,8 @@ class OrbitCloseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return GestureDetector(
       onTap: onTap,
       child: ClipOval(
@@ -19,14 +22,12 @@ class OrbitCloseButton extends StatelessWidget {
             height: 44,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: const Color(0x1AFFFFFF), // rgba(255,255,255,0.1)
-              border: Border.all(
-                color: const Color(0x1FFFFFFF), // rgba(255,255,255,0.12)
-              ),
+              color: readableColors.glassSurface,
+              border: Border.all(color: readableColors.glassBorder),
             ),
             child: CustomPaint(
               size: const Size(20, 20),
-              painter: _XPainter(),
+              painter: _XPainter(color: readableColors.iconPrimary),
             ),
           ),
         ),
@@ -36,10 +37,14 @@ class OrbitCloseButton extends StatelessWidget {
 }
 
 class _XPainter extends CustomPainter {
+  final Color color;
+
+  const _XPainter({required this.color});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0xCCFFFFFF) // rgba(255,255,255,0.8)
+      ..color = color
       ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.round;
 
@@ -59,5 +64,7 @@ class _XPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _XPainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
 }

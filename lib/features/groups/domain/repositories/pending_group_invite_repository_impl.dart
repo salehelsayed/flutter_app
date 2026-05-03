@@ -1,6 +1,7 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package_tombstone.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 
 import 'pending_group_invite_repository.dart';
@@ -19,12 +20,22 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   dbUpsertGroupInviteConsumption;
   final Future<Map<String, Object?>?> Function(String inviteId)
   dbLoadGroupInviteConsumption;
+  final Future<void> Function(Map<String, Object?> row)
+  dbUpsertGroupWelcomeKeyPackageTombstone;
+  final Future<Map<String, Object?>?> Function({
+    required String packageId,
+    required String recipientDeviceId,
+    required String groupId,
+  })
+  dbLoadGroupWelcomeKeyPackageTombstone;
   final Future<void> Function(String groupId) dbDeletePendingGroupInvite;
   final Future<int> Function(String cutoff) dbDeleteExpiredPendingGroupInvites;
   final Future<int> Function(String cutoff)
   dbDeleteExpiredGroupInviteRevocations;
   final Future<int> Function(String cutoff)
   dbDeleteExpiredGroupInviteConsumptions;
+  final Future<int> Function(String cutoff)
+  dbDeleteExpiredGroupWelcomeKeyPackageTombstones;
 
   PendingGroupInviteRepositoryImpl({
     required this.dbUpsertPendingGroupInvite,
@@ -34,10 +45,13 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
     required this.dbLoadGroupInviteRevocation,
     required this.dbUpsertGroupInviteConsumption,
     required this.dbLoadGroupInviteConsumption,
+    required this.dbUpsertGroupWelcomeKeyPackageTombstone,
+    required this.dbLoadGroupWelcomeKeyPackageTombstone,
     required this.dbDeletePendingGroupInvite,
     required this.dbDeleteExpiredPendingGroupInvites,
     required this.dbDeleteExpiredGroupInviteRevocations,
     required this.dbDeleteExpiredGroupInviteConsumptions,
+    required this.dbDeleteExpiredGroupWelcomeKeyPackageTombstones,
   });
 
   @override
@@ -116,6 +130,33 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   }
 
   @override
+  Future<void> saveWelcomeKeyPackageTombstone(
+    GroupWelcomeKeyPackageTombstone tombstone,
+  ) async {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_WELCOME_KEY_PACKAGE_TOMBSTONE_REPO_SAVE_START',
+      details: {
+        'packageId': tombstone.packageId.length > 8
+            ? tombstone.packageId.substring(0, 8)
+            : tombstone.packageId,
+      },
+    );
+
+    await dbUpsertGroupWelcomeKeyPackageTombstone(tombstone.toMap());
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_WELCOME_KEY_PACKAGE_TOMBSTONE_REPO_SAVE_SUCCESS',
+      details: {
+        'packageId': tombstone.packageId.length > 8
+            ? tombstone.packageId.substring(0, 8)
+            : tombstone.packageId,
+      },
+    );
+  }
+
+  @override
   Future<List<PendingGroupInvite>> getPendingInvites() async {
     final rows = await dbLoadPendingGroupInvites();
     return rows.map((row) => PendingGroupInvite.fromMap(row)).toList();
@@ -149,6 +190,23 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   }
 
   @override
+  Future<GroupWelcomeKeyPackageTombstone?> getWelcomeKeyPackageTombstone({
+    required String packageId,
+    required String recipientDeviceId,
+    required String groupId,
+  }) async {
+    final row = await dbLoadGroupWelcomeKeyPackageTombstone(
+      packageId: packageId,
+      recipientDeviceId: recipientDeviceId,
+      groupId: groupId,
+    );
+    if (row == null) {
+      return null;
+    }
+    return GroupWelcomeKeyPackageTombstone.fromMap(row);
+  }
+
+  @override
   Future<void> deletePendingInvite(String groupId) async {
     await dbDeletePendingGroupInvite(groupId);
   }
@@ -169,5 +227,11 @@ class PendingGroupInviteRepositoryImpl implements PendingGroupInviteRepository {
   Future<int> deleteExpiredConsumedInvites(DateTime now) async {
     final cutoff = now.toUtc().toIso8601String();
     return dbDeleteExpiredGroupInviteConsumptions(cutoff);
+  }
+
+  @override
+  Future<int> deleteExpiredWelcomeKeyPackageTombstones(DateTime now) async {
+    final cutoff = now.toUtc().toIso8601String();
+    return dbDeleteExpiredGroupWelcomeKeyPackageTombstones(cutoff);
   }
 }

@@ -51,9 +51,12 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
@@ -100,6 +103,8 @@ class OrbitWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupPendingKeyRepairRepository? groupPendingKeyRepairRepository;
+  final GroupHistoryGapRepairRepository? groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
@@ -140,6 +145,8 @@ class OrbitWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupPendingKeyRepairRepository,
+    this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
@@ -917,9 +924,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     setState(() => _processingPendingInviteIds.add(invite.groupId));
     try {
       final identity = await widget.identityRepo.loadIdentity();
+      final localTransportPeerId = widget.p2pService.currentState.peerId;
       final (result, group) = await acceptPendingGroupInvite(
         pendingInviteRepo: inviteListener.pendingInviteRepo,
         groupRepo: groupRepository,
+        contactRepo: widget.contactRepo,
         msgRepo: groupMessageRepository,
         bridge: widget.bridge,
         groupId: invite.groupId,
@@ -930,6 +939,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         senderPublicKey: identity?.publicKey,
         senderPrivateKey: identity?.privateKey,
         senderUsername: identity?.username,
+        ownDeviceId: localTransportPeerId,
+        ownTransportPeerId: localTransportPeerId,
+        ownMlKemPublicKey: identity?.mlKemPublicKey,
+        ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+          localTransportPeerId,
+        ),
+        ownKeyPackagePublicMaterial: identity?.mlKemPublicKey,
       );
       if (group != null) {
         _markGroupChanged(group.id);
@@ -956,6 +972,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           break;
         case AcceptPendingGroupInviteResult.alreadyUsed:
           _showSnackBar('Invite already used');
+          break;
+        case AcceptPendingGroupInviteResult.wrongIdentity:
+          _showSnackBar('Invite is for another identity');
+          break;
+        case AcceptPendingGroupInviteResult.repairPending:
+          _showSnackBar('Invite needs fresh key material');
           break;
         case AcceptPendingGroupInviteResult.invalidPayload:
           _showSnackBar('Invite is no longer valid');
@@ -1738,6 +1760,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               reactionRepo: widget.reactionRepository,
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
+              historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
               backgroundPreference:
                   widget.appShellController?.backgroundPreference ??
                   BackgroundPreference.defaultBackground,

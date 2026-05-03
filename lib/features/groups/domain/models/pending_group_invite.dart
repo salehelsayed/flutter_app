@@ -72,6 +72,11 @@ class PendingGroupInvite {
       config['metadataUpdatedAt'] as String?,
     );
     final resolvedReceivedAt = receivedAt.toUtc();
+    final localExpiry = resolvedReceivedAt.add(ttl);
+    final policyExpiry = payload.invitePolicy.expiresAt.toUtc();
+    final expiresAt = policyExpiry.isBefore(localExpiry)
+        ? policyExpiry
+        : localExpiry;
 
     return PendingGroupInvite(
       groupId: payload.groupId,
@@ -88,7 +93,7 @@ class PendingGroupInvite {
       createdAt: createdAt,
       metadataUpdatedAt: metadataUpdatedAt,
       receivedAt: resolvedReceivedAt,
-      expiresAt: resolvedReceivedAt.add(ttl),
+      expiresAt: expiresAt,
     );
   }
 

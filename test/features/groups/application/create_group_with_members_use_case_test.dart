@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -51,6 +52,44 @@ final contactBob = makeContact(peerId: 'peer-bob', username: 'Bob');
 final contactCharlie = makeContact(peerId: 'peer-charlie', username: 'Charlie');
 final contactDave = makeContact(peerId: 'peer-dave', username: 'Dave');
 
+const _gl005ForbiddenPublicRouteKeys = {
+  'visibility',
+  'ispublic',
+  'discoverable',
+  'isdiscoverable',
+  'openjoin',
+  'allowopenjoin',
+  'joinpolicy',
+  'invitelink',
+  'joinlink',
+  'publicpreview',
+  'publiclisting',
+  'publiccatalog',
+  'publicroom',
+  'publicgroup',
+};
+
+void _expectNoPublicRouteFields(Object? value, {String path = 'payload'}) {
+  if (value is Map) {
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      final normalized = key.replaceAll(RegExp(r'[_-]'), '').toLowerCase();
+      expect(
+        _gl005ForbiddenPublicRouteKeys,
+        isNot(contains(normalized)),
+        reason: 'GL-005 forbids public/open route field "$key" at $path',
+      );
+      _expectNoPublicRouteFields(entry.value, path: '$path.$key');
+    }
+  } else if (value is Iterable) {
+    var index = 0;
+    for (final item in value) {
+      _expectNoPublicRouteFields(item, path: '$path[$index]');
+      index++;
+    }
+  }
+}
+
 class _FailingSaveMemberGroupRepository extends InMemoryGroupRepository {
   _FailingSaveMemberGroupRepository({required this.failingPeerIds});
 
@@ -84,7 +123,7 @@ void main() {
         'groupId': 'test-group-id',
         'topicName': 'topic-test-group-id',
         'groupKey': 'base64-group-key',
-        'keyEpoch': 0,
+        'keyEpoch': 1,
       };
     });
 
@@ -240,6 +279,96 @@ void main() {
     );
 
     test(
+      'GL-005 config, members_added, and invite fanout stay selected-member-only without public route flags',
+      () async {
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice, contactBob],
+          type: GroupType.chat,
+          name: 'Private Selected Members',
+        );
+
+        expect(result.membersAdded, 2);
+        expect(result.invitesSent, 2);
+
+        final storedMembers = await groupRepo.getMembers('test-group-id');
+        final storedPeerIds = storedMembers
+            .map((member) => member.peerId)
+            .toSet();
+        expect(storedPeerIds, {'peer-admin', 'peer-alice', 'peer-bob'});
+        expect(storedPeerIds, isNot(contains(contactCharlie.peerId)));
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:updateConfig',
+        );
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final groupConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        _expectNoPublicRouteFields(groupConfig, path: 'groupConfig');
+
+        final configPeerIds = (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .map((member) => member['peerId'])
+            .toSet();
+        expect(configPeerIds, storedPeerIds);
+        expect(configPeerIds, isNot(contains(contactCharlie.peerId)));
+
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysMsg =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        expect(sysMsg['__sys'], 'members_added');
+        _expectNoPublicRouteFields(sysMsg, path: 'members_added');
+
+        final publishedPeerIds = (sysMsg['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .map((member) => member['peerId'])
+            .toSet();
+        expect(publishedPeerIds, {'peer-alice', 'peer-bob'});
+        expect(publishedPeerIds, isNot(contains(contactCharlie.peerId)));
+
+        final invitePeerIds = p2pService.sentMessageLog
+            .map((entry) => entry.peerId)
+            .toSet();
+        expect(invitePeerIds, {'peer-alice', 'peer-bob'});
+        expect(invitePeerIds, isNot(contains(contactCharlie.peerId)));
+
+        for (final entry in p2pService.sentMessageLog) {
+          final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+          _expectNoPublicRouteFields(envelope, path: 'inviteEnvelope');
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          final innerPayload =
+              jsonDecode(encrypted['ciphertext'] as String)
+                  as Map<String, dynamic>;
+          _expectNoPublicRouteFields(innerPayload, path: 'invitePayload');
+          expect(innerPayload['recipientPeerId'], entry.peerId);
+          final inviteConfig =
+              innerPayload['groupConfig'] as Map<String, dynamic>;
+          final inviteConfigPeerIds = (inviteConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'])
+              .toSet();
+          expect(inviteConfigPeerIds, storedPeerIds);
+          expect(inviteConfigPeerIds, isNot(contains(contactCharlie.peerId)));
+        }
+      },
+    );
+
+    test(
       'calls callGroupUpdateConfig once with full member list including self',
       () async {
         await createGroupWithMembers(
@@ -326,6 +455,40 @@ void main() {
         expect(envelope['version'], '2');
       }
     });
+
+    test(
+      'PREREQ-INVITER-FRESHNESS create fanout sends invites with signed freshness proof',
+      () async {
+        await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice, contactBob],
+          type: GroupType.chat,
+          name: 'My Group',
+        );
+
+        expect(p2pService.sentMessageLog.length, 2);
+        for (final entry in p2pService.sentMessageLog) {
+          final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          final payload = GroupInvitePayload.fromInnerJson(
+            encrypted['ciphertext'] as String,
+          );
+          expect(payload, isNotNull);
+          expect(payload!.membershipFreshnessProof, isNotNull);
+          expect(
+            payload.inviteSignature!.signedPayload,
+            contains(groupInviteMembershipFreshnessProofField),
+          );
+          expect(
+            payload.membershipFreshnessProof!.groupConfigStateHash,
+            payload.groupConfig['stateHash'],
+          );
+        }
+      },
+    );
 
     test('uses auto-generated name from usernames when name is null', () async {
       final result = await createGroupWithMembers(

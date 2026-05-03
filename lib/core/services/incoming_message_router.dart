@@ -172,6 +172,18 @@ class IncomingMessageRouter {
             },
           );
           _groupInviteController.add(message);
+        case 'group_invite_revocation':
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MESSAGE_ROUTER_GROUP_INVITE_REVOCATION_DISPATCHED',
+            details: {
+              'from': message.from.length > 10
+                  ? message.from.substring(0, 10)
+                  : message.from,
+              'hasListeners': _groupInviteController.hasListener,
+            },
+          );
+          _groupInviteController.add(message);
         case 'group_key_update':
           _groupKeyUpdateController.add(message);
         case 'introduction':

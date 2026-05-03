@@ -92,10 +92,12 @@ func TestRelayGroupMediaUploadDownload(t *testing.T) {
 
 	nodeA, peerIdA := startNode(t) // sender / member 1
 	nodeB, peerIdB := startNode(t) // member 2
+	nodeD, peerIdD := startNode(t) // member 3
 	nodeC, _ := startNode(t)       // outsider (NOT in allowedPeers)
 
 	t.Logf("NodeA (sender) = %s", peerIdA)
 	t.Logf("NodeB (member) = %s", peerIdB)
+	t.Logf("NodeD (member) = %s", peerIdD)
 
 	dir := t.TempDir()
 
@@ -111,7 +113,7 @@ func TestRelayGroupMediaUploadDownload(t *testing.T) {
 
 	blobID := "smoke-group-blob"
 	groupID := "group-uuid-test"
-	allowedPeers := []string{peerIdA, peerIdB} // both members, NOT nodeC
+	allowedPeers := []string{peerIdA, peerIdB, peerIdD} // members, NOT nodeC
 
 	// --- Upload with AllowedPeers ---
 	if err := nodeA.MediaUpload(blobID, groupID, "image/jpeg", uploadPath, allowedPeers); err != nil {
@@ -126,6 +128,12 @@ func TestRelayGroupMediaUploadDownload(t *testing.T) {
 		t.Fatalf("MediaDownload (member B): %v", err)
 	}
 	t.Logf("member B download: mime=%s size=%d", mime, size)
+	if mime != "image/jpeg" {
+		t.Errorf("member B mime=%s, want image/jpeg", mime)
+	}
+	if size != int64(len(originalData)) {
+		t.Errorf("member B size=%d, want %d", size, len(originalData))
+	}
 
 	downloadedB, err := os.ReadFile(downloadPathB)
 	if err != nil {
@@ -137,22 +145,28 @@ func TestRelayGroupMediaUploadDownload(t *testing.T) {
 	t.Log("member B download verified — data matches")
 
 	// --- Blob should NOT be auto-deleted (group mode) ---
-	// Member A downloads the same blob — should still exist.
-	downloadPathA := filepath.Join(dir, "download_a.enc")
-	mime2, size2, err := nodeA.MediaDownload(blobID, downloadPathA)
+	// Member D downloads the same blob — should still exist after member B.
+	downloadPathD := filepath.Join(dir, "download_d.enc")
+	mime2, size2, err := nodeD.MediaDownload(blobID, downloadPathD)
 	if err != nil {
-		t.Fatalf("MediaDownload (member A, second download): %v — blob was auto-deleted but shouldn't be in group mode", err)
+		t.Fatalf("MediaDownload (member D, second non-sender download): %v — blob was auto-deleted but shouldn't be in group mode", err)
 	}
-	t.Logf("member A download: mime=%s size=%d", mime2, size2)
+	t.Logf("member D download: mime=%s size=%d", mime2, size2)
+	if mime2 != "image/jpeg" {
+		t.Errorf("member D mime=%s, want image/jpeg", mime2)
+	}
+	if size2 != int64(len(originalData)) {
+		t.Errorf("member D size=%d, want %d", size2, len(originalData))
+	}
 
-	downloadedA, err := os.ReadFile(downloadPathA)
+	downloadedD, err := os.ReadFile(downloadPathD)
 	if err != nil {
-		t.Fatalf("ReadFile A: %v", err)
+		t.Fatalf("ReadFile D: %v", err)
 	}
-	if !bytes.Equal(originalData, downloadedA) {
-		t.Error("member A: downloaded data does not match uploaded data")
+	if !bytes.Equal(originalData, downloadedD) {
+		t.Error("member D: downloaded data does not match uploaded data")
 	}
-	t.Log("group blob persisted after first download — no auto-delete confirmed")
+	t.Log("member D download verified — second authorized non-sender data matches")
 
 	// --- Outsider C should be rejected ---
 	downloadPathC := filepath.Join(dir, "download_c.enc")

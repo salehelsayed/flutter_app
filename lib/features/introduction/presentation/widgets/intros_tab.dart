@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
@@ -45,16 +46,15 @@ class IntrosTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     if (groupedIntros.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Text(
             'No introductions yet',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.white.withValues(alpha: 0.4),
-            ),
+            style: TextStyle(fontSize: 14, color: readableColors.textMuted),
           ),
         ),
       );
@@ -71,10 +71,7 @@ class IntrosTab extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 16),
             child: Text(
               'These are people your friends know well. Once you both accept, you can start chatting.',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.white.withValues(alpha: 0.4),
-              ),
+              style: TextStyle(fontSize: 13, color: readableColors.textMuted),
               textAlign: TextAlign.center,
             ),
           ),

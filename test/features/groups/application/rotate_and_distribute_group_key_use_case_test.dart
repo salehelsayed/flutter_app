@@ -3,7 +3,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -319,6 +321,35 @@ void main() {
     expect(sysText['newKeyEpoch'], 2);
   });
 
+  test(
+    'PREREQ-SIGNED-COMMIT-AUDIT signs key_rotated transition before publish',
+    () async {
+      await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+      );
+
+      final publishMsg = bridge.sentMessages.firstWhere((m) {
+        final parsed = jsonDecode(m) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:publish';
+      });
+      final publishPayload =
+          (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final sysText =
+          jsonDecode(publishPayload['text'] as String) as Map<String, dynamic>;
+
+      expect(sysText['__sys'], 'key_rotated');
+      expect(sysText[signedGroupTransitionAuditField], isNotNull);
+      expect(bridge.commandLog.where((c) => c == 'payload.sign').length, 5);
+    },
+  );
+
   test('sends key update to each non-self member via p2p', () async {
     final sentMessages = <(String, String)>[];
 
@@ -350,6 +381,74 @@ void main() {
       expect(parsed['encrypted'], isNotNull);
     }
   });
+
+  test(
+    'PREREQ-SIGNED-COMMIT-AUDIT signs distributed direct key-update payloads before encryption',
+    () async {
+      final sentMessages = <(String, String)>[];
+
+      await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sendP2PMessage: (peerId, message) async {
+          sentMessages.add((peerId, message));
+          return true;
+        },
+      );
+
+      expect(sentMessages.length, 2);
+      expect(bridge.commandLog.where((c) => c == 'payload.sign').length, 5);
+
+      final sourceEventIds = <String>{};
+      final eventAtValues = <String>{};
+      for (final (_, message) in sentMessages) {
+        final envelope = jsonDecode(message) as Map<String, dynamic>;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final keyPayload =
+            jsonDecode(encrypted['ciphertext'] as String)
+                as Map<String, dynamic>;
+
+        expect(keyPayload['sourcePeerId'], selfPeerId);
+        expect(keyPayload['sourceEventId'], isA<String>());
+        expect(keyPayload['eventAt'], isA<String>());
+        sourceEventIds.add(keyPayload['sourceEventId'] as String);
+        eventAtValues.add(keyPayload['eventAt'] as String);
+        expect(
+          keyPayload['signatureAlgorithm'],
+          groupKeyUpdateSignatureAlgorithm,
+        );
+        expect(keyPayload['signature'], 'fake-signature');
+        expect(keyPayload[signedGroupTransitionAuditField], isNotNull);
+
+        final expectedSignedPayload = canonicalGroupKeyUpdateSignedPayload(
+          groupId: groupId,
+          sourcePeerId: selfPeerId,
+          keyGeneration: 2,
+          encryptedKey: 'newKey==',
+          sourceDeviceId: selfPeerId,
+          sourceTransportPeerId: selfPeerId,
+          recipientPeerId: keyPayload['recipientPeerId'] as String?,
+          recipientDeviceId: keyPayload['recipientDeviceId'] as String?,
+          recipientTransportPeerId:
+              keyPayload['recipientTransportPeerId'] as String?,
+        );
+        expect(keyPayload['signedPayload'], expectedSignedPayload);
+        final signedAudit =
+            keyPayload[signedGroupTransitionAuditField] as Map<String, dynamic>;
+        expect(signedAudit['transitionType'], 'group_key_update');
+        expect(signedAudit['sourceEventId'], keyPayload['sourceEventId']);
+        expect(signedAudit['eventAt'], keyPayload['eventAt']);
+        expect(signedAudit['signedPayload'], isA<String>());
+      }
+      expect(sourceEventIds, hasLength(2));
+      expect(eventAtValues, hasLength(1));
+    },
+  );
 
   test('returns null when generate-next-key fails (ok: false)', () async {
     bridge.responses['group:generateNextKey'] = {
@@ -418,6 +517,144 @@ void main() {
         .length;
     expect(encryptCount, 2);
   });
+
+  test(
+    'targets active registered recipient devices and skips revoked devices',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'self-device-1',
+              transportPeerId: 'self-device-1',
+              deviceSigningPublicKey: 'selfPubKey',
+              mlKemPublicKey: 'selfDeviceMlKem',
+              keyPackageId: 'self-kp-1',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 1, 12),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'bobPubKey',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'bob-phone',
+              transportPeerId: 'bob-phone-transport',
+              deviceSigningPublicKey: 'bobPhonePubKey',
+              mlKemPublicKey: 'bobPhoneMlKem',
+              keyPackageId: 'bob-phone-kp',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'bob-tablet',
+              transportPeerId: 'bob-tablet-transport',
+              deviceSigningPublicKey: 'bobTabletPubKey',
+              mlKemPublicKey: 'bobTabletMlKem',
+              keyPackageId: 'bob-tablet-kp',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'bob-revoked',
+              transportPeerId: 'bob-revoked-transport',
+              deviceSigningPublicKey: 'bobRevokedPubKey',
+              mlKemPublicKey: 'bobRevokedMlKem',
+              keyPackageId: 'bob-revoked-kp',
+              status: GroupMemberDeviceStatus.revoked,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 1, 12),
+        ),
+      );
+      final sentMessages = <(String, Map<String, dynamic>)>[];
+
+      await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sendP2PMessage: (peerId, message) async {
+          final envelope = jsonDecode(message) as Map<String, dynamic>;
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          final payload =
+              jsonDecode(encrypted['ciphertext'] as String)
+                  as Map<String, dynamic>;
+          sentMessages.add((peerId, payload));
+          return true;
+        },
+      );
+
+      final targetPeerIds = sentMessages.map((entry) => entry.$1).toSet();
+      expect(targetPeerIds, contains('bob-phone-transport'));
+      expect(targetPeerIds, contains('bob-tablet-transport'));
+      expect(targetPeerIds, isNot(contains('bob-revoked-transport')));
+      final bobPayloads = sentMessages
+          .where(
+            (entry) => (entry.$2['recipientPeerId'] as String?) == 'peer-bob',
+          )
+          .map((entry) => entry.$2)
+          .toList();
+      expect(
+        bobPayloads.map((payload) => payload['recipientDeviceId']).toSet(),
+        {'bob-phone', 'bob-tablet'},
+      );
+      expect(bobPayloads.map((payload) => payload['sourceDeviceId']).toSet(), {
+        'self-device-1',
+      });
+    },
+  );
+
+  test(
+    'rejects registered source member without matching active source device before key generation',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'self-device-1',
+              transportPeerId: 'self-device-1',
+              deviceSigningPublicKey: 'different-device-pub-key',
+              mlKemPublicKey: 'selfDeviceMlKem',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 1, 12),
+        ),
+      );
+
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+      );
+
+      expect(result, isNull);
+      expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      final latest = await groupRepo.getLatestKey(groupId);
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 1);
+    },
+  );
 
   test('continues distribution when per-member encrypt fails', () async {
     // Use a custom bridge that fails encrypt for Bob but succeeds for Carol

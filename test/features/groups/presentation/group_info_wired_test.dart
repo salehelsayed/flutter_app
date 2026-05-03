@@ -9,6 +9,7 @@ import 'package:flutter_app/features/groups/application/create_group_use_case.da
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -351,6 +352,79 @@ void main() {
       );
     });
 
+    testWidgets('shows security status from key epoch and member safety', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final contactRepo = InMemoryContactRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo, generation: 2);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          publicKey: 'pk-bob-current',
+          mlKemPublicKey: 'mlkem-bob-current',
+        ),
+      );
+      await contactRepo.addContact(
+        makeContact(
+          peerId: 'peer-alice',
+          username: 'Alice',
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+      await contactRepo.addContact(
+        makeContact(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          publicKey: 'pk-bob-saved',
+          mlKemPublicKey: 'mlkem-bob-saved',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('group-security-status-card')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await pumpFrames(tester, count: 2);
+
+      expect(
+        find.byKey(const ValueKey('group-security-status-card')),
+        findsOneWidget,
+      );
+      expect(find.text('End-to-end encrypted'), findsOneWidget);
+      expect(find.text('Group key changed to epoch 2'), findsNWidgets(2));
+      expect(find.text('1 of 2 members verified'), findsOneWidget);
+      expect(find.text('1 member needs verification review'), findsOneWidget);
+      expect(find.textContaining('test-group-key-2'), findsNothing);
+    });
+
     testWidgets('shows Add Member button for admin role', (tester) async {
       final groupRepo = InMemoryGroupRepository();
       final group = makeAdminGroup();
@@ -678,7 +752,7 @@ void main() {
     });
 
     testWidgets(
-      'admin metadata edit updates repo state, timeline, and bridge payloads',
+      'EK004 PREREQ-SIGNED-COMMIT-AUDIT admin metadata edit stores signed replay and audit payloads',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final msgRepo = InMemoryGroupMessageRepository();
@@ -786,6 +860,32 @@ void main() {
         expect(publishPayload['senderPeerId'], testIdentity.peerId);
         expect(publishPayload['senderPublicKey'], testIdentity.publicKey);
         expect(publishPayload['senderPrivateKey'], testIdentity.privateKey);
+        expect(sysText[signedGroupTransitionAuditField], isA<Map>());
+        final audit = (sysText[signedGroupTransitionAuditField] as Map)
+            .cast<String, dynamic>();
+        expect(audit['transitionType'], 'group_metadata_updated');
+        expect(audit['groupId'], 'group-1');
+        expect(audit['sourceEventId'], publishPayload['messageId']);
+        expect(
+          audit['signatureAlgorithm'],
+          signedGroupTransitionAuditSignatureAlgorithm,
+        );
+        expect(audit['signature'], 'sig-metadata');
+        final auditPayload =
+            jsonDecode(audit['signedPayload'] as String)
+                as Map<String, dynamic>;
+        expect(auditPayload['sourceEventId'], publishPayload['messageId']);
+        expect(auditPayload['transitionType'], 'group_metadata_updated');
+        expect(auditPayload['transitionOutputHash'], isA<String>());
+        expect(auditPayload['preTransitionStateHash'], isA<String>());
+        expect(
+          (auditPayload['actor'] as Map)['signingPublicKey'],
+          testIdentity.publicKey,
+        );
+        expect(
+          audit['signedPayload'] as String,
+          isNot(contains(testIdentity.privateKey)),
+        );
         expect(sysText['groupConfig']['name'], 'Renamed Group');
         expect(sysText['groupConfig']['description'], 'Fresh description');
         expect(
@@ -867,6 +967,16 @@ void main() {
             (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
         expect(inboxStorePayload['recipientPeerIds'], ['peer-bob']);
+        final replayEnvelope = _storedGroupReplayEnvelope(
+          inboxStorePayload['message'] as String,
+        );
+        expect(replayEnvelope['kind'], 'group_offline_replay');
+        expect(replayEnvelope['payloadType'], 'group_message');
+        expect(replayEnvelope['senderPeerId'], testIdentity.peerId);
+        expect(replayEnvelope['senderPublicKey'], testIdentity.publicKey);
+        expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
+        expect(replayEnvelope['signedPayload'], isA<String>());
+        expect(replayEnvelope['signature'], isA<String>());
         final inboxEnvelope = _decodedGroupReplayPayload(
           inboxStorePayload['message'] as String,
         );
@@ -965,7 +1075,7 @@ void main() {
     );
 
     testWidgets(
-      'promote member shows confirmation, updates badge, and emits member_role_updated payload',
+      'EK004 promote member stores signed member_role_updated replay envelope',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final msgRepo = InMemoryGroupMessageRepository();
@@ -1072,6 +1182,16 @@ void main() {
             (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
         expect(inboxStorePayload['recipientPeerIds'], ['peer-alice']);
+        final replayEnvelope = _storedGroupReplayEnvelope(
+          inboxStorePayload['message'] as String,
+        );
+        expect(replayEnvelope['kind'], 'group_offline_replay');
+        expect(replayEnvelope['payloadType'], 'group_message');
+        expect(replayEnvelope['senderPeerId'], testIdentity.peerId);
+        expect(replayEnvelope['senderPublicKey'], testIdentity.publicKey);
+        expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
+        expect(replayEnvelope['signedPayload'], isA<String>());
+        expect(replayEnvelope['signature'], isA<String>());
 
         final latestTimeline = await msgRepo.getLatestMessage('group-1');
         expect(latestTimeline, isNotNull);
@@ -1970,10 +2090,11 @@ void main() {
           if (!distinctCommands.contains(cmd)) {
             distinctCommands.add(cmd);
           }
-          if (distinctCommands.length == 5) break;
+          if (distinctCommands.length == 6) break;
         }
         expect(distinctCommands, [
           'group:updateConfig',
+          'payload.sign',
           'group:publish',
           'group.encrypt',
           'group:inboxStore',
@@ -2075,7 +2196,7 @@ void main() {
     );
 
     testWidgets(
-      'remove member broadcast and replay artifact contain correct member_removed payload',
+      'EK004 remove member broadcast stores signed member_removed replay envelope',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final msgRepo = InMemoryGroupMessageRepository();
@@ -2208,6 +2329,11 @@ void main() {
         expect(replayEnvelope['payloadType'], 'group_message');
         expect(replayEnvelope['keyEpoch'], 1);
         expect(replayEnvelope['messageId'], timelineMessage.id);
+        expect(replayEnvelope['senderPeerId'], testIdentity.peerId);
+        expect(replayEnvelope['senderPublicKey'], testIdentity.publicKey);
+        expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
+        expect(replayEnvelope['signedPayload'], isA<String>());
+        expect(replayEnvelope['signature'], isA<String>());
 
         final inboxEnvelope = _decodedGroupReplayPayload(
           inboxStorePayload['message'] as String,

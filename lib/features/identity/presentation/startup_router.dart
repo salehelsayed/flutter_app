@@ -14,8 +14,11 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -128,6 +131,12 @@ class StartupRouter extends StatefulWidget {
   /// The group message repository for group message persistence.
   final GroupMessageRepository? groupMessageRepository;
 
+  /// Durable queue for future/missing-key repair replay.
+  final GroupPendingKeyRepairRepository? groupPendingKeyRepairRepository;
+
+  /// Durable lifecycle state for partial history gap repair.
+  final GroupHistoryGapRepairRepository? groupHistoryGapRepairRepository;
+
   /// Durable sender-owned reaction replay outbox repository.
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
@@ -186,6 +195,8 @@ class StartupRouter extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupPendingKeyRepairRepository,
+    this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
@@ -561,6 +572,9 @@ class _StartupRouterState extends State<StartupRouter> {
                 groupMessageListener: widget.groupMessageListener,
                 mediaAttachmentRepo: widget.mediaAttachmentRepository,
                 reactionRepo: widget.reactionRepository,
+                pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+                historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
+                requestGroupKeyRepair: emitGroupKeyRepairRequest,
               );
             }
           }),
@@ -794,6 +808,8 @@ class _StartupRouterState extends State<StartupRouter> {
       bridge: widget.bridge,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      pendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+      historyGapRepairRepository: widget.groupHistoryGapRepairRepository,
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,

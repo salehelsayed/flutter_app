@@ -1,13 +1,17 @@
 package node
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
+	"github.com/mknoon/go-mknoon/internal"
 )
 
 func startLocalNodeForMultiRelayTestWithCollector(t *testing.T, collector *testEventCollector) *Node {
@@ -15,6 +19,133 @@ func startLocalNodeForMultiRelayTestWithCollector(t *testing.T, collector *testE
 	n := startLocalNodeForMultiRelayTest(t)
 	n.eventCallback = collector
 	return n
+}
+
+type lp013GroupHarness struct {
+	nodeA        *Node
+	nodeBCapture *testEventCollector
+	nodeB        *Node
+	privB64      string
+	pubB64       string
+	keyInfo      *GroupKeyInfo
+}
+
+func setupLP013TwoNodeGroup(t *testing.T, groupId string) lp013GroupHarness {
+	t.Helper()
+
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	config := &GroupConfig{
+		Name:      "LP013 Duplicate PubSub Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: pubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "peerBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	var nodeBAddrStrs []string
+	for _, addr := range nodeB.Host().Addrs() {
+		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
+	}
+	if err := nodeA.DialPeer(nodeB.PeerId(), nodeBAddrStrs); err != nil {
+		t.Fatalf("DialPeer A->B: %v", err)
+	}
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 2*time.Second)
+
+	return lp013GroupHarness{
+		nodeA:        nodeA,
+		nodeBCapture: nodeBCapture,
+		nodeB:        nodeB,
+		privB64:      privB64,
+		pubB64:       pubB64,
+		keyInfo:      keyInfo,
+	}
+}
+
+func buildLP013GroupMessageEnvelope(
+	t *testing.T,
+	harness lp013GroupHarness,
+	groupId string,
+	messageId string,
+	text string,
+	timestamp string,
+) string {
+	t.Helper()
+
+	payload := &internal.GroupMessagePayload{
+		Text:      text,
+		Timestamp: timestamp,
+		Username:  "Alice",
+		Extra:     buildGroupMessageExtra(messageId, nil),
+	}
+	payloadJSON, err := internal.MarshalGroupPayload(payload)
+	if err != nil {
+		t.Fatalf("marshal LP013 payload: %v", err)
+	}
+
+	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(harness.keyInfo.Key, payloadJSON)
+	if err != nil {
+		t.Fatalf("encrypt LP013 payload: %v", err)
+	}
+
+	sigData := mcrypto.BuildGroupSignatureData(groupId, harness.keyInfo.KeyEpoch, ctB64)
+	signature, err := mcrypto.SignPayload(harness.privB64, sigData)
+	if err != nil {
+		t.Fatalf("sign LP013 envelope: %v", err)
+	}
+
+	envelopeJSON, err := internal.MarshalGroupEnvelope(&internal.GroupEnvelope{
+		Version:         "3",
+		Type:            "group_message",
+		GroupId:         groupId,
+		SenderId:        harness.nodeA.PeerId(),
+		SenderPublicKey: harness.pubB64,
+		Signature:       signature,
+		KeyEpoch:        harness.keyInfo.KeyEpoch,
+		Encrypted: internal.GroupEncryptedPayload{
+			Ciphertext: ctB64,
+			Nonce:      nonceB64,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal LP013 envelope: %v", err)
+	}
+	return envelopeJSON
+}
+
+func publishLP013RawGroupEnvelope(t *testing.T, n *Node, groupId string, envelopeJSON string) {
+	t.Helper()
+
+	n.mu.RLock()
+	topic := n.groupTopics[groupId]
+	n.mu.RUnlock()
+	if topic == nil {
+		t.Fatalf("group topic %q is not joined", groupId)
+	}
+
+	ctx, cancel := context.WithTimeout(n.ctx, PubSubTimeout)
+	defer cancel()
+	if err := topic.Publish(ctx, []byte(envelopeJSON)); err != nil {
+		t.Fatalf("publish raw LP013 envelope: %v", err)
+	}
 }
 
 // --- PublishGroupMessage peer count tests ---
@@ -42,7 +173,7 @@ func TestPublishGroupMessage_ReturnsPeerCountZero_WhenNoPeers(t *testing.T) {
 	defer n.Stop()
 
 	groupId := "test-peer-count-zero"
-	senderPeerId := "sender-zero"
+	senderPeerId := n.PeerId()
 	config := &GroupConfig{
 		Name:      "Zero Peers Group",
 		GroupType: GroupTypeChat,
@@ -366,6 +497,131 @@ func TestPublishGroupMessage_DuplicateProvidedMessageIdRemainsVisibleAfterDecryp
 		if got := int(event["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
 			t.Fatalf("event %d keyEpoch = %d, want %d", i+1, got, keyInfo.KeyEpoch)
 		}
+	}
+}
+
+func TestLP013DefaultPubSubMessageIdUsesSourceAndSeqnoNotPayloadHash(t *testing.T) {
+	topic := "lp013-default-msg-id"
+	from := []byte("lp013-source-peer")
+	seqOne := []byte("seq-1")
+	seqTwo := []byte("seq-2")
+
+	msgID := func(data, seqno []byte) string {
+		return pubsub.DefaultMsgIdFn(&pb.Message{
+			From:  from,
+			Data:  data,
+			Seqno: seqno,
+			Topic: &topic,
+		})
+	}
+
+	first := msgID([]byte("payload-a"), seqOne)
+	conflictingPayload := msgID([]byte("payload-b"), seqOne)
+	samePayloadDistinctSeq := msgID([]byte("payload-a"), seqTwo)
+
+	if first != string(from)+string(seqOne) {
+		t.Fatalf("default PubSub message ID = %q, want from+seqno %q", first, string(from)+string(seqOne))
+	}
+	if conflictingPayload != first {
+		t.Fatalf("same from+seqno with conflicting payload should collide: got %q want %q", conflictingPayload, first)
+	}
+	if samePayloadDistinctSeq == first {
+		t.Fatalf("same payload with distinct seqno should not collide: both IDs were %q", first)
+	}
+	if strings.Contains(first, "payload-a") || strings.Contains(conflictingPayload, "payload-b") {
+		t.Fatalf("default PubSub message ID unexpectedly included payload bytes: %q / %q", first, conflictingPayload)
+	}
+}
+
+func TestLP013DuplicateWireEnvelopeWithDistinctPubSubSeqnosPreservesApplicationMessageId(t *testing.T) {
+	groupId := "test-lp013-duplicate-wire-envelope"
+	messageId := "lp013-wire-dup"
+	harness := setupLP013TwoNodeGroup(t, groupId)
+	envelopeJSON := buildLP013GroupMessageEnvelope(
+		t,
+		harness,
+		groupId,
+		messageId,
+		"lp013 duplicate wire body",
+		"2026-04-30T22:45:00.000Z",
+	)
+
+	publishLP013RawGroupEnvelope(t, harness.nodeA, groupId, envelopeJSON)
+	publishLP013RawGroupEnvelope(t, harness.nodeA, groupId, envelopeJSON)
+
+	events := waitForCollectedEventCount(t, harness.nodeBCapture, "group_message:received", 1, 5*time.Second)
+	deadline := time.Now().Add(750 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		events = harness.nodeBCapture.collectEvents("group_message:received")
+		if len(events) >= 2 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if len(events) < 1 || len(events) > 2 {
+		t.Fatalf("same wire envelope published twice produced %d events, want explicit one-or-two event outcome", len(events))
+	}
+
+	for i, event := range events {
+		if got, _ := event["messageId"].(string); got != messageId {
+			t.Fatalf("event %d messageId = %q, want %q", i+1, got, messageId)
+		}
+		if got, _ := event["text"].(string); got != "lp013 duplicate wire body" {
+			t.Fatalf("event %d text = %q, want lp013 duplicate wire body", i+1, got)
+		}
+		if got := int(event["keyEpoch"].(float64)); got != harness.keyInfo.KeyEpoch {
+			t.Fatalf("event %d keyEpoch = %d, want %d", i+1, got, harness.keyInfo.KeyEpoch)
+		}
+	}
+	t.Logf("same encrypted wire envelope published twice produced %d app event(s); PubSub suppressed before app when count is one", len(events))
+}
+
+func TestLP013ConflictingApplicationDuplicatePubSubPayloadsPreserveFirstWriterInputsForDartDedupe(t *testing.T) {
+	groupId := "test-lp013-conflicting-app-duplicate"
+	messageId := "lp013-conflicting-dup"
+	harness := setupLP013TwoNodeGroup(t, groupId)
+
+	firstEnvelopeJSON := buildLP013GroupMessageEnvelope(
+		t,
+		harness,
+		groupId,
+		messageId,
+		"trusted first content",
+		"2026-04-30T22:46:00.000Z",
+	)
+	secondEnvelopeJSON := buildLP013GroupMessageEnvelope(
+		t,
+		harness,
+		groupId,
+		messageId,
+		"conflicting duplicate content",
+		"2026-04-30T22:47:00.000Z",
+	)
+
+	publishLP013RawGroupEnvelope(t, harness.nodeA, groupId, firstEnvelopeJSON)
+	publishLP013RawGroupEnvelope(t, harness.nodeA, groupId, secondEnvelopeJSON)
+
+	events := waitForCollectedEventCount(t, harness.nodeBCapture, "group_message:received", 2, 5*time.Second)
+	seenText := map[string]bool{}
+	seenTimestamp := map[string]bool{}
+	for i, event := range events[:2] {
+		if got, _ := event["messageId"].(string); got != messageId {
+			t.Fatalf("event %d messageId = %q, want %q", i+1, got, messageId)
+		}
+		if got := int(event["keyEpoch"].(float64)); got != harness.keyInfo.KeyEpoch {
+			t.Fatalf("event %d keyEpoch = %d, want %d", i+1, got, harness.keyInfo.KeyEpoch)
+		}
+		text, _ := event["text"].(string)
+		timestamp, _ := event["timestamp"].(string)
+		seenText[text] = true
+		seenTimestamp[timestamp] = true
+	}
+
+	if !seenText["trusted first content"] || !seenText["conflicting duplicate content"] {
+		t.Fatalf("conflicting duplicate payloads did not both reach the app layer: texts=%v", seenText)
+	}
+	if !seenTimestamp["2026-04-30T22:46:00.000Z"] || !seenTimestamp["2026-04-30T22:47:00.000Z"] {
+		t.Fatalf("conflicting duplicate payload timestamps were not preserved into app events: timestamps=%v", seenTimestamp)
 	}
 }
 

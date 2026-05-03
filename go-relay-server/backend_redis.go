@@ -155,10 +155,11 @@ func redisReplaceList(tx *redis.Tx, key string, values []string) error {
 }
 
 type redisGroupRecord struct {
-	From      string `json:"from"`
-	Message   string `json:"message"`
-	Timestamp int64  `json:"timestamp"`
-	ID        string `json:"id"`
+	From             string   `json:"from"`
+	Message          string   `json:"message"`
+	Timestamp        int64    `json:"timestamp"`
+	ID               string   `json:"id"`
+	RecipientPeerIds []string `json:"recipientPeerIds,omitempty"`
 }
 
 func (b *redisRendezvousBackend) key(ns string, peerId string) string {
@@ -558,6 +559,15 @@ func (b *redisGroupInboxBackend) sequenceKey() string {
 }
 
 func (b *redisGroupInboxBackend) Store(groupId string, from string, message string) error {
+	return b.StoreWithRecipients(groupId, from, message, nil)
+}
+
+func (b *redisGroupInboxBackend) StoreWithRecipients(
+	groupId string,
+	from string,
+	message string,
+	recipientPeerIds []string,
+) error {
 	ctx := context.Background()
 	id, err := b.client.Incr(ctx, b.sequenceKey()).Result()
 	if err != nil {
@@ -565,10 +575,11 @@ func (b *redisGroupInboxBackend) Store(groupId string, from string, message stri
 	}
 
 	record := redisGroupRecord{
-		From:      from,
-		Message:   message,
-		Timestamp: time.Now().UnixMilli(),
-		ID:        fmt.Sprintf("%d", id),
+		From:             from,
+		Message:          message,
+		Timestamp:        time.Now().UnixMilli(),
+		ID:               fmt.Sprintf("%d", id),
+		RecipientPeerIds: normalizePeerIds(recipientPeerIds),
 	}
 
 	payload, err := json.Marshal(record)
@@ -613,36 +624,36 @@ func (b *redisGroupInboxBackend) RetrieveSince(groupId string, sinceTimestamp in
 	return results
 }
 
-func (b *redisGroupInboxBackend) RetrieveCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string) {
+func (b *redisGroupInboxBackend) RetrieveCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string, []groupInboxHistoryGap) {
 	if limit <= 0 {
-		return nil, ""
+		return nil, "", nil
 	}
 
 	rawEntries, err := b.client.LRange(context.Background(), b.key(groupId), 0, -1).Result()
 	if err == redis.Nil {
-		return nil, ""
+		return nil, "", nil
 	}
 	if err != nil {
 		log.Printf("[REDIS][GROUP_INBOX] retrieve cursor failed: %v", err)
-		return nil, ""
+		return nil, "", nil
 	}
 
 	decoded := decodeGroupInboxEntries(rawEntries)
 	if len(decoded) == 0 {
-		return nil, ""
+		return nil, "", nil
 	}
 
 	startIdx := 0
+	cursorFound := cursor == ""
 	if cursor != "" {
-		found := false
 		for i, message := range decoded {
 			if message.ID == cursor {
 				startIdx = i + 1
-				found = true
+				cursorFound = true
 				break
 			}
 		}
-		if !found {
+		if !cursorFound {
 			startIdx = 0
 		}
 	}
@@ -661,7 +672,7 @@ func (b *redisGroupInboxBackend) RetrieveCursor(groupId string, cursor string, l
 	}
 
 	if len(result) == 0 {
-		return nil, ""
+		return nil, "", nil
 	}
 
 	nextCursor := ""
@@ -672,7 +683,7 @@ func (b *redisGroupInboxBackend) RetrieveCursor(groupId string, cursor string, l
 		}
 	}
 
-	return result, nextCursor
+	return result, nextCursor, buildGroupInboxHistoryGaps(groupId, cursor, cursorFound, result)
 }
 
 func (b *redisGroupInboxBackend) Prune() {
@@ -772,10 +783,11 @@ func decodeGroupInboxEntries(rawEntries []string) []groupInboxMessage {
 			continue
 		}
 		results = append(results, groupInboxMessage{
-			From:      message.From,
-			Message:   message.Message,
-			Timestamp: message.Timestamp,
-			ID:        message.ID,
+			From:             message.From,
+			Message:          message.Message,
+			Timestamp:        message.Timestamp,
+			ID:               message.ID,
+			RecipientPeerIds: normalizePeerIds(message.RecipientPeerIds),
 		})
 	}
 

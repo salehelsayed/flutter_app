@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_app/features/introduction/application/send_introduction_
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_screen.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Stateful wrapper that manages selection state for FriendPickerScreen.
 ///
@@ -21,6 +23,7 @@ class FriendPickerWired extends StatefulWidget {
   final Bridge bridge;
   final IdentityRepository identityRepo;
   final Function(List<IntroductionModel>) onIntroductionsSent;
+  final BackgroundPreference backgroundPreference;
 
   const FriendPickerWired({
     super.key,
@@ -31,6 +34,7 @@ class FriendPickerWired extends StatefulWidget {
     required this.bridge,
     required this.identityRepo,
     required this.onIntroductionsSent,
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
   @override
@@ -128,7 +132,7 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
         p2pService: widget.p2pService,
         bridge: widget.bridge,
         introducerPeerId: identity.peerId,
-        introducerUsername: identity.username ?? 'Unknown',
+        introducerUsername: identity.username,
         recipientPeerId: widget.recipient.peerId,
         recipientUsername: widget.recipient.username,
         recipientMlKemPublicKey: widget.recipient.mlKemPublicKey,
@@ -164,34 +168,52 @@ class _FriendPickerWiredState extends State<FriendPickerWired> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Container(
-        height: 300,
-        decoration: const BoxDecoration(
-          color: Color(0xFF0B0D11),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: const Center(
-          child: CircularProgressIndicator(
-            color: Color(0xFF1DB954),
-            strokeWidth: 2,
-          ),
-        ),
-      );
-    }
+    final readableColors = BackgroundReadableColors.resolve(
+      widget.backgroundPreference,
+    );
+    final theme = Theme.of(context);
+    final themedChild = _isLoading
+        ? Container(
+            height: 300,
+            decoration: BoxDecoration(
+              color: readableColors.surfaceBase,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(20),
+              ),
+            ),
+            child: Center(
+              child: CircularProgressIndicator(
+                color: readableColors.isLightSurface
+                    ? const Color(0xFF157A39)
+                    : const Color(0xFF1DB954),
+                strokeWidth: 2,
+              ),
+            ),
+          )
+        : FriendPickerScreen(
+            recipientUsername: widget.recipient.username,
+            availableFriends: _availableFriends,
+            selectedPeerIds: _selectedPeerIds,
+            searchQuery: _searchQuery,
+            isSending: _isSending,
+            sendCompletedCount: _sendCompletedCount,
+            sendTotalCount: _sendTotalCount,
+            onSearchChanged: (query) => setState(() => _searchQuery = query),
+            onToggleFriend: _onToggleFriend,
+            onSend: _onSend,
+            onClose: () => Navigator.of(context).pop(),
+          );
 
-    return FriendPickerScreen(
-      recipientUsername: widget.recipient.username,
-      availableFriends: _availableFriends,
-      selectedPeerIds: _selectedPeerIds,
-      searchQuery: _searchQuery,
-      isSending: _isSending,
-      sendCompletedCount: _sendCompletedCount,
-      sendTotalCount: _sendTotalCount,
-      onSearchChanged: (query) => setState(() => _searchQuery = query),
-      onToggleFriend: _onToggleFriend,
-      onSend: _onSend,
-      onClose: () => Navigator.of(context).pop(),
+    return Theme(
+      data: theme.copyWith(
+        extensions: [
+          ...theme.extensions.values.where(
+            (extension) => extension is! BackgroundReadableColors,
+          ),
+          readableColors,
+        ],
+      ),
+      child: themedChild,
     );
   }
 }

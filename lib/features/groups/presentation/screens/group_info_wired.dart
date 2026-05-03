@@ -14,6 +14,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
@@ -24,6 +25,7 @@ import 'package:flutter_app/features/groups/application/leave_group_use_case.dar
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -31,6 +33,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member_identity_
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
@@ -77,6 +80,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   late GroupModel _group;
   List<GroupMember> _members = [];
   Map<String, GroupMemberIdentitySafety> _memberSafetyByPeerId = {};
+  GroupSecurityStatusViewState? _securityStatus;
   String? _ownPeerId;
   bool _didMutateGroup = false;
   bool _isUpdatingMute = false;
@@ -105,6 +109,12 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final group = await widget.groupRepo.getGroup(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
       final memberSafetyByPeerId = await _loadMemberSafety(members);
+      final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
+      final securityStatus = GroupSecurityStatusViewState.fromSnapshot(
+        latestKey: latestKey,
+        memberCount: members.length,
+        memberSafety: memberSafetyByPeerId.values,
+      );
       if (!mounted) return;
       setState(() {
         if (group != null) {
@@ -112,6 +122,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         }
         _members = members;
         _memberSafetyByPeerId = memberSafetyByPeerId;
+        _securityStatus = securityStatus;
       });
     } catch (e) {
       emitFlowEvent(
@@ -436,102 +447,27 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<void> _broadcastSelfRemovalIfNeeded() async {
-    final identity = await widget.identityRepo.loadIdentity();
-    if (identity == null) {
-      throw StateError('No identity found');
-    }
-
-    final members = await widget.groupRepo.getMembers(_group.id);
-    final adminCount = members
-        .where((member) => member.role == MemberRole.admin)
-        .length;
-    if (_group.myRole == GroupRole.admin && adminCount <= 1) {
-      return;
-    }
-
-    final selfMember = members.where(
-      (member) => member.peerId == identity.peerId,
+    await broadcastVoluntaryLeaveAndRotateKey(
+      bridge: widget.bridge,
+      groupRepo: widget.groupRepo,
+      group: _group,
+      identityRepo: widget.identityRepo,
+      msgRepo: widget.msgRepo,
+      sendP2PMessage: (peerId, message) async {
+        await widget.p2pService.sendMessage(peerId, message);
+        return true;
+      },
     );
-    if (selfMember.isEmpty) {
-      return;
-    }
-
-    final remainingMembers = members
-        .where((member) => member.peerId != identity.peerId)
-        .toList();
-    final leftAt = DateTime.now().toUtc();
-    final sysText = jsonEncode({
-      '__sys': 'member_removed',
-      'member': {'peerId': identity.peerId, 'username': identity.username},
-      'removedAt': leftAt.toIso8601String(),
-      'groupConfig': _buildGroupConfig(_group, remainingMembers),
-    });
-
-    final leaveTimelineMessage = buildMemberRemovedTimelineMessage(
-      groupId: _group.id,
-      removedPeerId: identity.peerId,
-      removedUsername: identity.username,
-      senderId: identity.peerId,
-      senderUsername: identity.username ?? '',
-      eventAt: leftAt,
-    );
-    if (widget.msgRepo != null) {
-      await widget.msgRepo!.saveMessage(leaveTimelineMessage);
-    }
-
-    await callGroupPublish(
-      widget.bridge,
-      groupId: _group.id,
-      text: sysText,
-      senderPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-      senderUsername: identity.username ?? '',
-    );
-
-    final recipientPeerIds = remainingMembers
-        .map((member) => member.peerId)
-        .toList();
-    if (recipientPeerIds.isNotEmpty) {
-      final inboxPayload = jsonEncode({
-        'groupId': _group.id,
-        'senderId': identity.peerId,
-        'senderUsername': identity.username ?? '',
-        'text': sysText,
-        'timestamp': leftAt.toIso8601String(),
-      });
-      await storeGroupOfflineReplayEnvelope(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupId: _group.id,
-        payloadType: groupOfflineReplayPayloadTypeMessage,
-        plaintext: inboxPayload,
-        messageId: leaveTimelineMessage.id,
-        recipientPeerIds: recipientPeerIds,
-      );
-    }
-
-    if (remainingMembers.isNotEmpty) {
-      await rotateAndDistributeGroupKey(
-        bridge: widget.bridge,
-        groupRepo: widget.groupRepo,
-        groupId: _group.id,
-        selfPeerId: identity.peerId,
-        senderPublicKey: identity.publicKey,
-        senderPrivateKey: identity.privateKey,
-        senderUsername: identity.username ?? '',
-        sendP2PMessage: (peerId, message) async {
-          await widget.p2pService.sendMessage(peerId, message);
-          return true;
-        },
-      );
-    }
   }
 
   Future<void> _onRemoveMember(GroupMember member) async {
     try {
       final removedAt = DateTime.now().toUtc();
       final identity = await widget.identityRepo.loadIdentity();
+      final preTransitionStateHash = await buildGroupTransitionStateHash(
+        widget.groupRepo,
+        widget.group.id,
+      );
 
       // 1. Remove from DB + update admin's Go config
       await removeGroupMember(
@@ -551,12 +487,28 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         if (group != null) {
           final groupConfig = buildGroupConfigPayload(group, allMembers);
 
-          final sysMessage = jsonEncode({
-            '__sys': 'member_removed',
-            'member': {'peerId': member.peerId, 'username': member.username},
-            'removedAt': removedAt.toIso8601String(),
-            'groupConfig': groupConfig,
-          });
+          final sourceEventId =
+              'member_removed:${widget.group.id}:${identity.peerId}:${removedAt.microsecondsSinceEpoch}';
+          final sysPayload = await signGroupSystemTransitionPayload(
+            bridge: widget.bridge,
+            groupRepo: widget.groupRepo,
+            groupId: widget.group.id,
+            transitionType: 'member_removed',
+            sourceEventId: sourceEventId,
+            eventAt: removedAt,
+            actorPeerId: identity.peerId,
+            actorUsername: identity.username ?? '',
+            actorSigningPublicKey: identity.publicKey,
+            actorPrivateKey: identity.privateKey,
+            preTransitionStateHash: preTransitionStateHash,
+            systemPayload: {
+              '__sys': 'member_removed',
+              'member': {'peerId': member.peerId, 'username': member.username},
+              'removedAt': removedAt.toIso8601String(),
+              'groupConfig': groupConfig,
+            },
+          );
+          final sysMessage = jsonEncode(sysPayload);
           final removalTimelineMessage = buildMemberRemovedTimelineMessage(
             groupId: widget.group.id,
             removedPeerId: member.peerId,
@@ -574,6 +526,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             'senderUsername': identity.username ?? '',
             'text': sysMessage,
             'timestamp': removedAt.toIso8601String(),
+            'messageId': sourceEventId,
           });
 
           await callGroupPublish(
@@ -584,6 +537,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPublicKey: identity.publicKey,
             senderPrivateKey: identity.privateKey,
             senderUsername: identity.username ?? '',
+            messageId: sourceEventId,
           );
           await storeGroupOfflineReplayEnvelope(
             bridge: widget.bridge,
@@ -591,6 +545,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             groupId: widget.group.id,
             payloadType: groupOfflineReplayPayloadTypeMessage,
             plaintext: removalInboxPayload,
+            senderPeerId: identity.peerId,
+            senderPublicKey: identity.publicKey,
+            senderPrivateKey: identity.privateKey,
             messageId: removalTimelineMessage.id,
             recipientPeerIds: [member.peerId],
           );
@@ -685,6 +642,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       if (identity == null) {
         throw StateError('No identity found');
       }
+      final preTransitionStateHash = await buildGroupTransitionStateHash(
+        widget.groupRepo,
+        _group.id,
+      );
 
       await updateGroupMemberRole(
         bridge: widget.bridge,
@@ -707,18 +668,34 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         throw StateError('Member not found');
       }
 
-      final sysText = jsonEncode({
-        '__sys': 'member_role_updated',
-        'member': {
-          'peerId': updatedMember.peerId,
-          'username': updatedMember.username,
-          'role': updatedMember.role.toValue(),
-          'publicKey': updatedMember.publicKey,
-          if (updatedMember.mlKemPublicKey != null)
-            'mlKemPublicKey': updatedMember.mlKemPublicKey,
+      final sourceEventId =
+          'member_role_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
+      final sysPayload = await signGroupSystemTransitionPayload(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        groupId: _group.id,
+        transitionType: 'member_role_updated',
+        sourceEventId: sourceEventId,
+        eventAt: changedAt,
+        actorPeerId: identity.peerId,
+        actorUsername: identity.username ?? '',
+        actorSigningPublicKey: identity.publicKey,
+        actorPrivateKey: identity.privateKey,
+        preTransitionStateHash: preTransitionStateHash,
+        systemPayload: {
+          '__sys': 'member_role_updated',
+          'member': {
+            'peerId': updatedMember.peerId,
+            'username': updatedMember.username,
+            'role': updatedMember.role.toValue(),
+            'publicKey': updatedMember.publicKey,
+            if (updatedMember.mlKemPublicKey != null)
+              'mlKemPublicKey': updatedMember.mlKemPublicKey,
+          },
+          'groupConfig': _buildGroupConfig(group, members),
         },
-        'groupConfig': _buildGroupConfig(group, members),
-      });
+      );
+      final sysText = jsonEncode(sysPayload);
       final roleTimelineMessage = buildMemberRoleUpdatedTimelineMessage(
         groupId: _group.id,
         updatedPeerId: updatedMember.peerId,
@@ -742,6 +719,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username ?? '',
+        messageId: sourceEventId,
       );
 
       final recipientPeerIds = members
@@ -756,6 +734,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'senderUsername': identity.username ?? '',
           'text': sysText,
           'timestamp': changedAt.toIso8601String(),
+          'messageId': sourceEventId,
         });
         await storeGroupOfflineReplayEnvelope(
           bridge: widget.bridge,
@@ -763,6 +742,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           groupId: _group.id,
           payloadType: groupOfflineReplayPayloadTypeMessage,
           plaintext: inboxPayload,
+          senderPeerId: identity.peerId,
+          senderPublicKey: identity.publicKey,
+          senderPrivateKey: identity.privateKey,
           messageId: roleTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
@@ -891,6 +873,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       if (identity == null) {
         throw StateError('No identity found');
       }
+      final preTransitionStateHash = await buildGroupTransitionStateHash(
+        widget.groupRepo,
+        _group.id,
+      );
 
       final members = await widget.groupRepo.getMembers(_group.id);
       final allowedPeers = members.isEmpty
@@ -978,7 +964,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           }
 
           refreshedMembers = membersForConfig;
-          sysText = jsonEncode({
+          final sourceEventId =
+              'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}';
+          final unsignedPayload = {
             '__sys': 'group_metadata_updated',
             'updatedAt': changedAt.toIso8601String(),
             'groupConfig': groupConfig,
@@ -987,7 +975,22 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                   signedPayload: canonicalPayload,
                   signature: signature,
                 ),
-          });
+          };
+          final signedPayload = await signGroupSystemTransitionPayload(
+            bridge: widget.bridge,
+            groupRepo: widget.groupRepo,
+            groupId: _group.id,
+            transitionType: 'group_metadata_updated',
+            sourceEventId: sourceEventId,
+            eventAt: changedAt,
+            actorPeerId: identity.peerId,
+            actorUsername: identity.username ?? '',
+            actorSigningPublicKey: identity.publicKey,
+            actorPrivateKey: identity.privateKey,
+            preTransitionStateHash: preTransitionStateHash,
+            systemPayload: unsignedPayload,
+          );
+          sysText = jsonEncode(signedPayload);
         },
       );
 
@@ -1015,6 +1018,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username ?? '',
+        messageId:
+            'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}',
       );
 
       final recipientPeerIds = signedMembers
@@ -1028,6 +1033,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           'senderUsername': identity.username ?? '',
           'text': signedSysText,
           'timestamp': changedAt.toIso8601String(),
+          'messageId':
+              'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}',
         });
         await storeGroupOfflineReplayEnvelope(
           bridge: widget.bridge,
@@ -1035,6 +1042,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           groupId: _group.id,
           payloadType: groupOfflineReplayPayloadTypeMessage,
           plaintext: inboxPayload,
+          senderPeerId: identity.peerId,
+          senderPublicKey: identity.publicKey,
+          senderPrivateKey: identity.privateKey,
           messageId: metadataTimelineMessage.id,
           recipientPeerIds: recipientPeerIds,
         );
@@ -1112,6 +1122,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       group: _group,
       members: _members,
       memberSafetyByPeerId: _memberSafetyByPeerId,
+      securityStatus: _securityStatus,
       isAdmin: isAdmin,
       ownPeerId: _ownPeerId,
       isMuted: _group.isMuted,

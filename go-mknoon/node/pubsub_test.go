@@ -200,6 +200,56 @@ func TestFilterDiscoveredGroupMembers_ExcludesNonMembers(t *testing.T) {
 	}
 }
 
+func TestGL005PrivateGroupDiscoveryFiltersNonMembersBeforeDialUse(t *testing.T) {
+	selfID, err := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
+	if err != nil {
+		t.Fatalf("decode self peer: %v", err)
+	}
+	memberID, err := peer.Decode("12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g")
+	if err != nil {
+		t.Fatalf("decode member peer: %v", err)
+	}
+	nonMemberID, err := peer.Decode("12D3KooWRby3kFPcEJBxLFasMBr1Y5sTpBLTpfhCoVkdCquN4CY1")
+	if err != nil {
+		t.Fatalf("decode non-member peer: %v", err)
+	}
+	alreadyConnectedID, err := peer.Decode("12D3KooWL8hWR1wU8YEWzsXTH8LuN2n7FBbUMPSu1tfQZyxkPp2v")
+	if err != nil {
+		t.Fatalf("decode connected peer: %v", err)
+	}
+
+	discovered := []peer.AddrInfo{
+		{ID: selfID},
+		{ID: memberID},
+		{ID: nonMemberID},
+		{ID: alreadyConnectedID},
+	}
+	topicPeers := map[peer.ID]struct{}{
+		alreadyConnectedID: {},
+	}
+	allowedMembers := map[peer.ID]struct{}{
+		memberID: {},
+	}
+
+	newPeers := filterDiscoveredPeers(discovered, selfID, topicPeers)
+	filtered, ignoredNonMembers := filterDiscoveredGroupMembers(newPeers, allowedMembers)
+
+	if len(filtered) != 1 {
+		t.Fatalf("expected only configured member to remain eligible, got %d peers", len(filtered))
+	}
+	if filtered[0].ID != memberID {
+		t.Fatalf("expected member peer %s to remain eligible, got %s", memberID, filtered[0].ID)
+	}
+	if ignoredNonMembers != 1 {
+		t.Fatalf("expected one discovered non-member to be ignored before dial/use, got %d", ignoredNonMembers)
+	}
+	for _, p := range filtered {
+		if p.ID == nonMemberID {
+			t.Fatalf("non-member peer %s became eligible for group discovery use", nonMemberID)
+		}
+	}
+}
+
 func TestFilterDiscoveredGroupMembers_AllowsAllWhenMemberSetEmpty(t *testing.T) {
 	peer1, _ := peer.Decode("12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g")
 	peer2, _ := peer.Decode("12D3KooWRby3kFPcEJBxLFasMBr1Y5sTpBLTpfhCoVkdCquN4CY1")
@@ -657,6 +707,9 @@ func TestBuildGroupMessageReceivedEvent_IncludesQuotedMessageId(t *testing.T) {
 	if got := event["senderUsername"]; got != "Alice" {
 		t.Fatalf("senderUsername = %v, want %q", got, "Alice")
 	}
+	if got := event["transportPeerId"]; got != "peer-sender" {
+		t.Fatalf("transportPeerId = %v, want %q", got, "peer-sender")
+	}
 	if _, ok := event["media"]; !ok {
 		t.Fatal("expected media in received event")
 	}
@@ -696,6 +749,10 @@ func validateGroupEnvelopeForTransportPeer(data string, groupId string, config *
 	if member == nil {
 		return "reject:non_member"
 	}
+	sourceDevice := activeMemberDeviceForEnvelope(member, env, transportPeerId)
+	if sourceDevice == nil {
+		return "reject:unbound_device"
+	}
 
 	if env.Type == "group_message" && !isAllowedWriter(config, env.SenderId) {
 		return "reject:unauthorized"
@@ -705,7 +762,7 @@ func validateGroupEnvelopeForTransportPeer(data string, groupId string, config *
 		return "reject:no_key"
 	}
 
-	if !verifyGroupEnvelopeSignature(groupId, member.PublicKey, env, keyInfo, time.Now()) {
+	if !verifyGroupEnvelopeSignature(groupId, sourceDevice.DeviceSigningPublicKey, env, keyInfo, time.Now()) {
 		return "reject:bad_signature"
 	}
 
@@ -744,6 +801,68 @@ func buildTestEnvelope(t *testing.T, groupId, senderId, privB64, pubB64, groupKe
 		SenderPublicKey: pubB64,
 		Signature:       signature,
 		KeyEpoch:        keyEpoch,
+		Encrypted: internal.GroupEncryptedPayload{
+			Ciphertext: ctB64,
+			Nonce:      nonceB64,
+		},
+	}
+
+	envelopeJSON, err := internal.MarshalGroupEnvelope(envelope)
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	return envelopeJSON
+}
+
+func buildTestDeviceEnvelope(
+	t *testing.T,
+	groupId string,
+	senderId string,
+	senderDeviceId string,
+	senderTransportPeerId string,
+	senderDevicePublicKey string,
+	senderKeyPackageId string,
+	privB64 string,
+	pubB64 string,
+	groupKey string,
+	keyEpoch int,
+	text string,
+) string {
+	t.Helper()
+
+	payload := &internal.GroupMessagePayload{
+		Text:      text,
+		Timestamp: "2026-01-01T00:00:00Z",
+		Username:  "TestUser",
+	}
+	payloadJSON, err := internal.MarshalGroupPayload(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	ctB64, nonceB64, err := mcrypto.EncryptGroupMessage(groupKey, payloadJSON)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	sigData := mcrypto.BuildGroupSignatureData(groupId, keyEpoch, ctB64)
+	signature, err := mcrypto.SignPayload(privB64, sigData)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+
+	envelope := &internal.GroupEnvelope{
+		Version:               "3",
+		Type:                  "group_message",
+		GroupId:               groupId,
+		SenderId:              senderId,
+		SenderDeviceId:        senderDeviceId,
+		SenderTransportPeerId: senderTransportPeerId,
+		SenderDevicePublicKey: senderDevicePublicKey,
+		SenderKeyPackageId:    senderKeyPackageId,
+		SenderPublicKey:       pubB64,
+		Signature:             signature,
+		KeyEpoch:              keyEpoch,
 		Encrypted: internal.GroupEncryptedPayload{
 			Ciphertext: ctB64,
 			Nonce:      nonceB64,
@@ -977,6 +1096,201 @@ func TestGroupTopicValidator_RejectsTransportPeerIdMismatch(t *testing.T) {
 	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "peer-X")
 	if result != "reject:peer_mismatch" {
 		t.Errorf("expected reject:peer_mismatch for mismatched transport peer id, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_DeviceBoundMemberAcceptsRegisteredDevice(t *testing.T) {
+	devicePriv, devicePub := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-device-bound-accept"
+
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "member-B",
+				Role:      GroupRoleWriter,
+				PublicKey: "member-public-key",
+				Devices: []GroupMemberDevice{
+					{
+						DeviceId:               "device-phone",
+						TransportPeerId:        "transport-phone",
+						DeviceSigningPublicKey: devicePub,
+						MlKemPublicKey:         "mlkem-phone",
+						KeyPackageId:           "kp-phone",
+						Status:                 "active",
+					},
+				},
+			},
+		},
+		CreatedBy: "member-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	envelopeJSON := buildTestDeviceEnvelope(
+		t,
+		groupId,
+		"member-B",
+		"device-phone",
+		"transport-phone",
+		devicePub,
+		"kp-phone",
+		devicePriv,
+		devicePub,
+		groupKey,
+		1,
+		"valid bound device",
+	)
+
+	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "transport-phone")
+	if result != "accept" {
+		t.Errorf("expected accept for registered device, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_DeviceRejectsUnboundSibling(t *testing.T) {
+	_, phonePub := generateEd25519KeyPair(t)
+	tabletPriv, tabletPub := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-device-unbound-sibling"
+
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "member-B",
+				Role:      GroupRoleWriter,
+				PublicKey: "member-public-key",
+				Devices: []GroupMemberDevice{
+					{
+						DeviceId:               "device-phone",
+						TransportPeerId:        "transport-phone",
+						DeviceSigningPublicKey: phonePub,
+						KeyPackageId:           "kp-phone",
+						Status:                 "active",
+					},
+				},
+			},
+		},
+		CreatedBy: "member-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	envelopeJSON := buildTestDeviceEnvelope(
+		t,
+		groupId,
+		"member-B",
+		"device-tablet",
+		"transport-tablet",
+		tabletPub,
+		"kp-tablet",
+		tabletPriv,
+		tabletPub,
+		groupKey,
+		1,
+		"cloned sibling",
+	)
+
+	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "transport-tablet")
+	if result != "reject:unbound_device" {
+		t.Errorf("expected reject:unbound_device for unregistered same-member device, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_DeviceRejectsPublicKeyMismatch(t *testing.T) {
+	_, devicePub := generateEd25519KeyPair(t)
+	attackerPriv, attackerPub := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-device-key-mismatch"
+
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "member-B",
+				Role:      GroupRoleWriter,
+				PublicKey: "member-public-key",
+				Devices: []GroupMemberDevice{
+					{
+						DeviceId:               "device-phone",
+						TransportPeerId:        "transport-phone",
+						DeviceSigningPublicKey: devicePub,
+						KeyPackageId:           "kp-phone",
+						Status:                 "active",
+					},
+				},
+			},
+		},
+		CreatedBy: "member-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	envelopeJSON := buildTestDeviceEnvelope(
+		t,
+		groupId,
+		"member-B",
+		"device-phone",
+		"transport-phone",
+		attackerPub,
+		"kp-phone",
+		attackerPriv,
+		attackerPub,
+		groupKey,
+		1,
+		"wrong device key",
+	)
+
+	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "transport-phone")
+	if result != "reject:unbound_device" {
+		t.Errorf("expected reject:unbound_device for mismatched device public key, got %s", result)
+	}
+}
+
+func TestGroupTopicValidator_DeviceRejectsTransportMismatch(t *testing.T) {
+	devicePriv, devicePub := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "group-device-transport-mismatch"
+
+	config := &GroupConfig{
+		Name:      "Test",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    "member-B",
+				Role:      GroupRoleWriter,
+				PublicKey: "member-public-key",
+				Devices: []GroupMemberDevice{
+					{
+						DeviceId:               "device-phone",
+						TransportPeerId:        "transport-phone",
+						DeviceSigningPublicKey: devicePub,
+						KeyPackageId:           "kp-phone",
+						Status:                 "active",
+					},
+				},
+			},
+		},
+		CreatedBy: "member-admin",
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	envelopeJSON := buildTestDeviceEnvelope(
+		t,
+		groupId,
+		"member-B",
+		"device-phone",
+		"transport-phone",
+		devicePub,
+		"kp-phone",
+		devicePriv,
+		devicePub,
+		groupKey,
+		1,
+		"wrong transport",
+	)
+
+	result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, config, keyInfo, "transport-tablet")
+	if result != "reject:peer_mismatch" {
+		t.Errorf("expected reject:peer_mismatch for transport mismatch, got %s", result)
 	}
 }
 
@@ -1255,9 +1569,24 @@ func TestGroupTopicValidator_RejectsInvalidSignatureForSecurityEventFamilies(t *
 			plaintext:    `{"__sys":"member_removed","member":{"peerId":"peer-member"},"removedAt":"2026-01-01T00:00:00Z"}`,
 		},
 		{
+			name:         "member_banned",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"member_banned","targetPeerId":"peer-member","bannedAt":"2026-01-01T00:00:00Z"}`,
+		},
+		{
+			name:         "member_unbanned",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"member_unbanned","targetPeerId":"peer-member","unbannedAt":"2026-01-01T00:00:00Z"}`,
+		},
+		{
 			name:         "member_role_updated",
 			envelopeType: "group_message",
 			plaintext:    `{"__sys":"member_role_updated","member":{"peerId":"peer-member","role":"reader"}}`,
+		},
+		{
+			name:         "group_message_deleted",
+			envelopeType: "group_message",
+			plaintext:    `{"__sys":"group_message_deleted","targetMessageId":"msg-1","deletedAt":"2026-01-01T00:00:00Z"}`,
 		},
 		{
 			name:         "group_metadata_updated",
@@ -2702,6 +3031,108 @@ func TestKnownGroupMemberDial_PrefersExistingOrDirectPathBeforeRelay(t *testing.
 	if dialer.Host().Network().Connectedness(targetID) != network.Connected {
 		t.Fatalf("expected peerstore direct dial to connect to %s before relay fallback", target.PeerId())
 	}
+}
+
+func TestRP017RemovedPeerExcludedFromKnownAndDiscoveredDialsAfterConfigUpdate(t *testing.T) {
+	collector := &testEventCollector{}
+	admin := startLocalNodeForMultiRelayTestWithCollector(t, collector)
+	remaining := startLocalNodeForMultiRelayTest(t)
+	removed := startLocalNodeForMultiRelayTest(t)
+
+	remainingID, err := peer.Decode(remaining.PeerId())
+	if err != nil {
+		t.Fatalf("decode remaining peer ID: %v", err)
+	}
+	removedID, err := peer.Decode(removed.PeerId())
+	if err != nil {
+		t.Fatalf("decode removed peer ID: %v", err)
+	}
+
+	groupId := "rp017-removed-peer-dial"
+	originalConfig := &GroupConfig{
+		Name:      "RP017 Original Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: admin.PeerId(), Role: GroupRoleAdmin, PublicKey: "adminPk"},
+			{PeerId: remaining.PeerId(), Username: "remaining", Role: GroupRoleWriter, PublicKey: "remainingPk"},
+			{PeerId: removed.PeerId(), Username: "removed", Role: GroupRoleWriter, PublicKey: "removedPk"},
+		},
+		CreatedBy: admin.PeerId(),
+	}
+	currentConfig := &GroupConfig{
+		Name:      "RP017 Current Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: admin.PeerId(), Role: GroupRoleAdmin, PublicKey: "adminPk"},
+			{PeerId: remaining.PeerId(), Username: "remaining", Role: GroupRoleWriter, PublicKey: "remainingPk"},
+		},
+		CreatedBy: admin.PeerId(),
+	}
+
+	admin.mu.Lock()
+	admin.groupConfigs[groupId] = originalConfig
+	admin.mu.Unlock()
+	admin.UpdateGroupConfig(groupId, currentConfig)
+	admin.Host().Peerstore().AddAddrs(remainingID, remaining.Host().Addrs(), time.Hour)
+	admin.Host().Peerstore().AddAddrs(removedID, removed.Host().Addrs(), time.Hour)
+
+	admin.dialKnownGroupMembers(groupId, true)
+	waitForRP017Connectedness(t, admin, remainingID, network.Connected, time.Second)
+	if got := admin.Host().Network().Connectedness(removedID); got == network.Connected {
+		t.Fatalf("removed peer %s was dialed from known-member recovery after config update", removed.PeerId())
+	}
+
+	admin.rendezvousDiscoverHook = func(namespace string, serverAddresses []string) ([]peer.AddrInfo, error) {
+		if namespace != groupRendezvousNamespace(groupId) {
+			t.Fatalf("unexpected rendezvous namespace %q", namespace)
+		}
+		return []peer.AddrInfo{
+			{ID: removedID, Addrs: removed.Host().Addrs()},
+		}, nil
+	}
+	admin.discoverAndConnectGroupPeers(groupId)
+	time.Sleep(100 * time.Millisecond)
+
+	if got := admin.Host().Network().Connectedness(removedID); got == network.Connected {
+		t.Fatalf("removed peer %s was dialed from rendezvous discovery after config update", removed.PeerId())
+	}
+	assertRP017DiscoveryIgnoredNonMembers(t, collector, groupId, 1)
+}
+
+func waitForRP017Connectedness(t *testing.T, n *Node, pid peer.ID, want network.Connectedness, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if got := n.Host().Network().Connectedness(pid); got == want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("peer %s connectedness did not become %s; got %s", pid, want, n.Host().Network().Connectedness(pid))
+}
+
+func assertRP017DiscoveryIgnoredNonMembers(t *testing.T, collector *testEventCollector, groupId string, want int) {
+	t.Helper()
+
+	for _, raw := range collector.snapshot() {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			continue
+		}
+		if payload["event"] != "group:discovery" {
+			continue
+		}
+		data, ok := payload["data"].(map[string]interface{})
+		if !ok || data["groupId"] != groupId || data["step"] != "discover_result" {
+			continue
+		}
+		ignored, ok := data["ignoredNonMembers"].(float64)
+		if ok && int(ignored) == want {
+			return
+		}
+	}
+	t.Fatalf("expected discovery event for group %s to report ignoredNonMembers=%d; events=%v", groupId, want, collector.snapshot())
 }
 
 func TestGroupDiscoveryCycle_NoKnownPeersUsesRendezvousFallback(t *testing.T) {

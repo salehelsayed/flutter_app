@@ -1,9 +1,21 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_message.dart';
+import '../models/group_message_receipt.dart';
 import '../models/group_thread_summary.dart';
+import '../utils/group_message_ordering.dart';
 import 'group_thread_summary_repository.dart';
 import 'group_message_repository.dart';
+
+typedef RunGroupInboxPageTransaction =
+    Future<void> Function({
+      required String groupId,
+      required String nextCursor,
+      required Future<void> Function(GroupMessageRepository transactionRepo)
+      apply,
+      required List<GroupMessageReceipt> receipts,
+      required List<String> markReadMessageIds,
+    });
 
 /// Implementation of GroupMessageRepository using constructor-injected DB helper functions.
 class GroupMessageRepositoryImpl
@@ -49,6 +61,14 @@ class GroupMessageRepositoryImpl
   dbUpdateGroupMessageInboxRetryPayloadFn;
   final Future<void> Function(String id, String? envelope)?
   dbUpdateGroupMessageWireEnvelopeFn;
+  final Future<String?> Function(String groupId)? dbLoadGroupInboxCursorFn;
+  final Future<List<Map<String, Object?>>> Function(
+    String groupId,
+    String messageId, {
+    String? receiptType,
+  })?
+  dbLoadGroupMessageReceiptsFn;
+  final RunGroupInboxPageTransaction? dbRunGroupInboxPageTransactionFn;
 
   GroupMessageRepositoryImpl({
     required this.dbInsertGroupMessage,
@@ -71,6 +91,9 @@ class GroupMessageRepositoryImpl
     this.dbUpdateGroupMessageInboxStoredFn,
     this.dbUpdateGroupMessageInboxRetryPayloadFn,
     this.dbUpdateGroupMessageWireEnvelopeFn,
+    this.dbLoadGroupInboxCursorFn,
+    this.dbLoadGroupMessageReceiptsFn,
+    this.dbRunGroupInboxPageTransactionFn,
   });
 
   @override
@@ -80,11 +103,53 @@ class GroupMessageRepositoryImpl
   }
 
   @override
+  Future<String?> getInboxCursor(String groupId) async {
+    final fn = dbLoadGroupInboxCursorFn;
+    return fn == null ? null : fn(groupId);
+  }
+
+  @override
+  Future<List<GroupMessageReceipt>> getReceiptsForMessage(
+    String groupId,
+    String messageId, {
+    String? receiptType,
+  }) async {
+    final fn = dbLoadGroupMessageReceiptsFn;
+    if (fn == null) return const [];
+    final rows = await fn(groupId, messageId, receiptType: receiptType);
+    return rows.map(GroupMessageReceipt.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<void> runInboxPageTransaction({
+    required String groupId,
+    required String nextCursor,
+    required Future<void> Function(GroupMessageRepository transactionRepo)
+    apply,
+    List<GroupMessageReceipt> receipts = const [],
+    List<String> markReadMessageIds = const [],
+  }) async {
+    final fn = dbRunGroupInboxPageTransactionFn;
+    if (fn == null) {
+      await apply(this);
+      return;
+    }
+    await fn(
+      groupId: groupId,
+      nextCursor: nextCursor,
+      apply: apply,
+      receipts: receipts,
+      markReadMessageIds: markReadMessageIds,
+    );
+  }
+
+  @override
   Future<List<GroupMessage>> getFailedOutgoingMessages() async {
     final fn = dbLoadFailedOutgoingGroupMessagesFn;
     if (fn == null) return const [];
     final rows = await fn();
-    return rows.map((row) => GroupMessage.fromMap(row)).toList();
+    final messages = rows.map((row) => GroupMessage.fromMap(row));
+    return orderGroupMessagesForTimeline(messages);
   }
 
   @override
@@ -143,7 +208,8 @@ class GroupMessageRepositoryImpl
       limit: limit,
       offset: offset,
     );
-    return rows.map((row) => GroupMessage.fromMap(row)).toList();
+    final messages = rows.map((row) => GroupMessage.fromMap(row));
+    return orderGroupMessagesForTimeline(messages);
   }
 
   @override
@@ -179,6 +245,39 @@ class GroupMessageRepositoryImpl
       }
     }
     return null;
+  }
+
+  @override
+  Future<DateTime?> getLatestSystemEventTimestampForTarget(
+    String groupId, {
+    required String eventType,
+    required String targetId,
+  }) async {
+    final prefix = 'sys-$eventType:$groupId:$targetId:';
+    const pageSize = 500;
+    var offset = 0;
+    DateTime? latest;
+    while (true) {
+      final messages = await getMessagesPage(
+        groupId,
+        limit: pageSize,
+        offset: offset,
+      );
+      for (final message in messages) {
+        if (!message.id.startsWith(prefix)) {
+          continue;
+        }
+        final timestamp = message.timestamp.toUtc();
+        if (latest == null || timestamp.isAfter(latest)) {
+          latest = timestamp;
+        }
+      }
+      if (messages.length < pageSize) {
+        break;
+      }
+      offset += messages.length;
+    }
+    return latest;
   }
 
   @override
@@ -257,6 +356,7 @@ class GroupMessageRepositoryImpl
                 'id': row['latest_id'],
                 'group_id': row['latest_group_id'],
                 'sender_peer_id': row['latest_sender_peer_id'],
+                'transport_peer_id': row['latest_transport_peer_id'],
                 'sender_username': row['latest_sender_username'],
                 'text': row['latest_text'],
                 'timestamp': row['latest_timestamp'],

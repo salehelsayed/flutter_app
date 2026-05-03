@@ -2,6 +2,7 @@ import 'package:flutter_app/features/feed/domain/models/feed_item.dart';
 import 'package:flutter_app/features/feed/domain/utils/format_message_time.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.dart';
 
 /// Groups group messages into [GroupThreadFeedItem]s — one per group.
 ///
@@ -33,8 +34,7 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
 
   for (final entry in byGroup.entries) {
     final groupId = entry.key;
-    final msgs = entry.value
-      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final msgs = orderGroupMessagesForTimeline(entry.value);
     final group = groupMap[groupId]!;
 
     // Derive conversation state from ALL messages for this group
@@ -101,8 +101,17 @@ List<GroupThreadFeedItem> groupGroupMessagesIntoThreads({
   }
 
   // Sort each section newest-first
-  aboveDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-  belowDivider.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  aboveDivider.sort(_compareGroupThreadFeedItemsDescending);
+  belowDivider.sort(_compareGroupThreadFeedItemsDescending);
 
   return [...aboveDivider, ...belowDivider];
+}
+
+int _compareGroupThreadFeedItemsDescending(
+  GroupThreadFeedItem a,
+  GroupThreadFeedItem b,
+) {
+  final timestampCompare = b.timestamp.compareTo(a.timestamp);
+  if (timestampCompare != 0) return timestampCompare;
+  return a.id.compareTo(b.id);
 }

@@ -80,10 +80,13 @@ void main() {
           'acknowledgeGroupRecoveryFn: () => callGroupAcknowledgeRecovery(bridge),',
         ),
       );
+      expect(retrierBlock, contains('drainGroupOfflineInboxFn: () async {'));
       expect(
         retrierBlock,
-        contains('drainGroupOfflineInboxFn: () => drainGroupOfflineInbox('),
+        contains('final identity = await repository.loadIdentity();'),
       );
+      expect(retrierBlock, contains('return drainGroupOfflineInbox('));
+      expect(retrierBlock, contains('selfPeerId: identity?.peerId,'));
       expect(
         retrierBlock,
         contains(

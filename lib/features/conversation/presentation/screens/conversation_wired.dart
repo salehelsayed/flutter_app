@@ -991,6 +991,9 @@ class _ConversationWiredState extends State<ConversationWired> {
         p2pService: widget.p2pService,
         bridge: widget.bridge!,
         identityRepo: widget.identityRepo,
+        backgroundPreference:
+            widget.appShellController?.backgroundPreference ??
+            BackgroundPreference.defaultBackground,
         onIntroductionsSent: (intros) {
           // Insert system message into conversation history
           final identity = _identity;
@@ -1018,6 +1021,9 @@ class _ConversationWiredState extends State<ConversationWired> {
                     .map((i) => i.introducedUsername ?? 'Unknown')
                     .toList(),
                 onBackToConversation: () => Navigator.of(context).pop(),
+                backgroundPreference:
+                    widget.appShellController?.backgroundPreference ??
+                    BackgroundPreference.defaultBackground,
               ),
             ),
           );
@@ -1933,7 +1939,8 @@ class _ConversationWiredState extends State<ConversationWired> {
               }
             }
           }
-          final persistedMedia = displayMedia ?? optimisticMedia;
+          final persistedMedia =
+              displayMedia ?? uploadedAttachments ?? optimisticMedia;
           final messageWithMedia = message.copyWith(
             quotedMessageId: quotedMessageId,
             media: persistedMedia ?? message.media,

@@ -1,12 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_revocation_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -35,6 +37,13 @@ enum StorePendingGroupInviteResult {
   decryptionFailed,
 }
 
+enum HandleGroupInviteRevocationResult {
+  revoked,
+  invalidPayload,
+  unknownSender,
+  decryptionFailed,
+}
+
 enum _ResolveIncomingGroupInviteResult {
   success,
   invalidPayload,
@@ -48,6 +57,12 @@ class _ResolvedGroupInvite {
   const _ResolvedGroupInvite(this.payload);
 }
 
+class _ResolvedGroupInviteRevocation {
+  final GroupInviteRevocationPayload payload;
+
+  const _ResolvedGroupInviteRevocation(this.payload);
+}
+
 Future<(_ResolveIncomingGroupInviteResult, _ResolvedGroupInvite?)>
 _resolveIncomingGroupInvite({
   required ChatMessage message,
@@ -55,6 +70,12 @@ _resolveIncomingGroupInvite({
   required Bridge bridge,
   String? ownMlKemSecretKey,
   String? ownPeerId,
+  String? ownDeviceId,
+  String? ownTransportPeerId,
+  String? ownMlKemPublicKey,
+  String? ownKeyPackageId,
+  String? ownKeyPackagePublicMaterial,
+  DateTime? validationTime,
 }) async {
   GroupInvitePayload? payload;
 
@@ -139,12 +160,28 @@ _resolveIncomingGroupInvite({
     return (_ResolveIncomingGroupInviteResult.invalidPayload, null);
   }
 
-  final boundRecipientPeerId = payload.recipientPeerId;
-  if (boundRecipientPeerId != null &&
-      boundRecipientPeerId.isNotEmpty &&
-      ownPeerId != null &&
-      ownPeerId.isNotEmpty &&
-      boundRecipientPeerId != ownPeerId) {
+  final expectedRecipientPeerId = ownPeerId?.trim();
+  if (expectedRecipientPeerId == null || expectedRecipientPeerId.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_MISSING_OWN_PEER_ID',
+      details: {
+        'messageTo': message.to.length > 10
+            ? message.to.substring(0, 10)
+            : message.to,
+      },
+    );
+    return (_ResolveIncomingGroupInviteResult.invalidPayload, null);
+  }
+
+  if (!payload.isBoundToRecipientDevice(
+    ownPeerId: expectedRecipientPeerId,
+    ownDeviceId: ownDeviceId,
+    ownTransportPeerId: ownTransportPeerId,
+    ownMlKemPublicKey: ownMlKemPublicKey,
+    ownKeyPackageId: ownKeyPackageId,
+    ownKeyPackagePublicMaterial: ownKeyPackagePublicMaterial,
+  )) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_INVITE_HANDLE_RECIPIENT_MISMATCH',
@@ -157,25 +194,261 @@ _resolveIncomingGroupInvite({
     return (_ResolveIncomingGroupInviteResult.invalidPayload, null);
   }
 
-  final senderPeerId = payload.senderPeerId;
-  final contact = await contactRepo.getContact(senderPeerId);
-  if (contact == null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_INVITE_HANDLE_UNKNOWN_SENDER',
-      details: {
-        'senderPeerId': senderPeerId.length > 10
-            ? senderPeerId.substring(0, 10)
-            : senderPeerId,
-      },
-    );
-    return (_ResolveIncomingGroupInviteResult.unknownSender, null);
+  final authResult = await verifyGroupInviteAttestation(
+    payload: payload,
+    contactRepo: contactRepo,
+    bridge: bridge,
+    validationTime: validationTime,
+  );
+  switch (authResult) {
+    case GroupInviteAuthResult.authorized:
+      break;
+    case GroupInviteAuthResult.unknownSender:
+      final senderPeerId = payload.senderPeerId;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_HANDLE_UNKNOWN_SENDER',
+        details: {
+          'senderPeerId': senderPeerId.length > 10
+              ? senderPeerId.substring(0, 10)
+              : senderPeerId,
+        },
+      );
+      return (_ResolveIncomingGroupInviteResult.unknownSender, null);
+    case GroupInviteAuthResult.invalidPayload:
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_HANDLE_INVALID_SIGNATURE',
+        details: {
+          'groupId': payload.groupId.length > 8
+              ? payload.groupId.substring(0, 8)
+              : payload.groupId,
+        },
+      );
+      return (_ResolveIncomingGroupInviteResult.invalidPayload, null);
   }
 
   return (
     _ResolveIncomingGroupInviteResult.success,
     _ResolvedGroupInvite(payload),
   );
+}
+
+Future<(HandleGroupInviteRevocationResult, _ResolvedGroupInviteRevocation?)>
+_resolveIncomingGroupInviteRevocation({
+  required ChatMessage message,
+  required ContactRepository contactRepo,
+  required Bridge bridge,
+  String? ownMlKemSecretKey,
+  String? ownPeerId,
+  DateTime? now,
+}) async {
+  final envelope = GroupInviteRevocationPayload.parseEncryptedEnvelope(
+    message.content,
+  );
+  if (envelope == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_HANDLE_INVALID_ENVELOPE',
+      details: {},
+    );
+    return (HandleGroupInviteRevocationResult.invalidPayload, null);
+  }
+
+  final envelopeSenderPeerId = envelope['senderPeerId'] as String;
+  if (envelopeSenderPeerId != message.from) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_HANDLE_SENDER_MISMATCH',
+      details: {},
+    );
+    return (HandleGroupInviteRevocationResult.invalidPayload, null);
+  }
+
+  if (ownMlKemSecretKey == null || ownMlKemSecretKey.trim().isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_HANDLE_NO_SECRET_KEY',
+      details: {},
+    );
+    return (HandleGroupInviteRevocationResult.decryptionFailed, null);
+  }
+
+  final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+  late final GroupInviteRevocationPayload payload;
+  try {
+    final decryptResult = await callDecryptMessage(
+      bridge: bridge,
+      ownMlKemSecretKey: ownMlKemSecretKey,
+      kem: encrypted['kem'] as String,
+      ciphertext: encrypted['ciphertext'] as String,
+      nonce: encrypted['nonce'] as String,
+    );
+    if (decryptResult['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_REVOCATION_HANDLE_DECRYPT_FAILED',
+        details: {'errorCode': decryptResult['errorCode']},
+      );
+      return (HandleGroupInviteRevocationResult.decryptionFailed, null);
+    }
+
+    final plaintext = decryptResult['plaintext'] as String;
+    final parsedPayload = GroupInviteRevocationPayload.fromInnerJson(plaintext);
+    if (parsedPayload == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_REVOCATION_HANDLE_INVALID_PAYLOAD',
+        details: {},
+      );
+      return (HandleGroupInviteRevocationResult.invalidPayload, null);
+    }
+    payload = parsedPayload;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_HANDLE_DECRYPT_ERROR',
+      details: {'error': e.toString()},
+    );
+    return (HandleGroupInviteRevocationResult.decryptionFailed, null);
+  }
+
+  if (payload.revokedByPeerId != message.from) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_HANDLE_PAYLOAD_SENDER_MISMATCH',
+      details: {},
+    );
+    return (HandleGroupInviteRevocationResult.invalidPayload, null);
+  }
+
+  final expectedRecipient = _effectiveRecipientPeerId(
+    ownPeerId: ownPeerId,
+    message: message,
+  );
+  if (expectedRecipient != null &&
+      !payload.isBoundToRecipient(expectedRecipient)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_HANDLE_RECIPIENT_MISMATCH',
+      details: {},
+    );
+    return (HandleGroupInviteRevocationResult.invalidPayload, null);
+  }
+
+  final effectiveNow =
+      (now ?? DateTime.tryParse(message.timestamp) ?? DateTime.now()).toUtc();
+  if (payload.isExpiredAt(effectiveNow)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_REVOCATION_HANDLE_EXPIRED',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+      },
+    );
+    return (HandleGroupInviteRevocationResult.invalidPayload, null);
+  }
+
+  final authResult = await verifyGroupInviteRevocationAttestation(
+    payload: payload,
+    contactRepo: contactRepo,
+    bridge: bridge,
+  );
+  switch (authResult) {
+    case GroupInviteAuthResult.authorized:
+      break;
+    case GroupInviteAuthResult.unknownSender:
+      return (HandleGroupInviteRevocationResult.unknownSender, null);
+    case GroupInviteAuthResult.invalidPayload:
+      return (HandleGroupInviteRevocationResult.invalidPayload, null);
+  }
+
+  return (
+    HandleGroupInviteRevocationResult.revoked,
+    _ResolvedGroupInviteRevocation(payload),
+  );
+}
+
+String? _effectiveRecipientPeerId({
+  required String? ownPeerId,
+  required ChatMessage message,
+}) {
+  final own = ownPeerId?.trim();
+  if (own != null && own.isNotEmpty) {
+    return own;
+  }
+  final to = message.to.trim();
+  return to.isEmpty ? null : to;
+}
+
+Future<(HandleGroupInviteRevocationResult, PendingGroupInvite?)>
+handleIncomingGroupInviteRevocation({
+  required ChatMessage message,
+  required PendingGroupInviteRepository pendingInviteRepo,
+  required ContactRepository contactRepo,
+  required Bridge bridge,
+  String? ownMlKemSecretKey,
+  String? ownPeerId,
+  DateTime? now,
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_INVITE_REVOCATION_HANDLE_START',
+    details: {
+      'from': message.from.length > 10
+          ? message.from.substring(0, 10)
+          : message.from,
+    },
+  );
+
+  final (
+    resolveResult,
+    resolvedRevocation,
+  ) = await _resolveIncomingGroupInviteRevocation(
+    message: message,
+    contactRepo: contactRepo,
+    bridge: bridge,
+    ownMlKemSecretKey: ownMlKemSecretKey,
+    ownPeerId: ownPeerId,
+    now: now,
+  );
+  if (resolveResult != HandleGroupInviteRevocationResult.revoked) {
+    return (resolveResult, null);
+  }
+
+  final payload = resolvedRevocation!.payload;
+  final effectiveNow = (now ?? DateTime.now()).toUtc();
+  final revocation = GroupInviteRevocation(
+    inviteId: payload.inviteId,
+    groupId: payload.groupId,
+    revokedAt: payload.revokedAtDateTime,
+    expiresAt: payload.expiresAtDateTime.isAfter(effectiveNow)
+        ? payload.expiresAtDateTime
+        : effectiveNow.add(pendingGroupInviteTtl),
+    revokedBy: payload.revokedByPeerId,
+  );
+  await pendingInviteRepo.saveRevokedInvite(revocation);
+
+  final pending = await pendingInviteRepo.getPendingInvite(payload.groupId);
+  PendingGroupInvite? removedPendingInvite;
+  if (pending != null && pending.inviteId == payload.inviteId) {
+    removedPendingInvite = pending;
+    await pendingInviteRepo.deletePendingInvite(payload.groupId);
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_INVITE_REVOCATION_HANDLE_SUCCESS',
+    details: {
+      'groupId': payload.groupId.length > 8
+          ? payload.groupId.substring(0, 8)
+          : payload.groupId,
+      'removedPending': removedPendingInvite != null,
+    },
+  );
+  return (HandleGroupInviteRevocationResult.revoked, removedPendingInvite);
 }
 
 Future<(StorePendingGroupInviteResult, PendingGroupInvite?)>
@@ -187,6 +460,11 @@ storeIncomingPendingGroupInvite({
   required Bridge bridge,
   String? ownMlKemSecretKey,
   String? ownPeerId,
+  String? ownDeviceId,
+  String? ownTransportPeerId,
+  String? ownMlKemPublicKey,
+  String? ownKeyPackageId,
+  String? ownKeyPackagePublicMaterial,
   DateTime? receivedAt,
   Duration ttl = pendingGroupInviteTtl,
 }) async {
@@ -200,12 +478,21 @@ storeIncomingPendingGroupInvite({
     },
   );
 
+  final effectiveReceivedAt =
+      (receivedAt ?? DateTime.tryParse(message.timestamp) ?? DateTime.now())
+          .toUtc();
   final (resolveResult, resolvedInvite) = await _resolveIncomingGroupInvite(
     message: message,
     contactRepo: contactRepo,
     bridge: bridge,
     ownMlKemSecretKey: ownMlKemSecretKey,
     ownPeerId: ownPeerId,
+    ownDeviceId: ownDeviceId,
+    ownTransportPeerId: ownTransportPeerId,
+    ownMlKemPublicKey: ownMlKemPublicKey,
+    ownKeyPackageId: ownKeyPackageId,
+    ownKeyPackagePublicMaterial: ownKeyPackagePublicMaterial,
+    validationTime: effectiveReceivedAt,
   );
 
   switch (resolveResult) {
@@ -220,7 +507,19 @@ storeIncomingPendingGroupInvite({
   }
 
   final payload = resolvedInvite!.payload;
-  final effectiveReceivedAt = (receivedAt ?? DateTime.now()).toUtc();
+  if (!payload.isInvitePolicyValid(validationTime: effectiveReceivedAt)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_STORE_PENDING_INVALID_POLICY',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+      },
+    );
+    return (StorePendingGroupInviteResult.invalidPayload, null);
+  }
+
   final revocation = await pendingInviteRepo.getRevokedInvite(payload.id);
   if (revocation != null && revocation.isActiveAt(effectiveReceivedAt)) {
     emitFlowEvent(
@@ -235,11 +534,30 @@ storeIncomingPendingGroupInvite({
     return (StorePendingGroupInviteResult.revoked, null);
   }
 
-  final consumption = await pendingInviteRepo.getConsumedInvite(payload.id);
-  if (consumption != null && consumption.isActiveAt(effectiveReceivedAt)) {
+  if (payload.invitePolicy.reusePolicy == GroupInviteReusePolicy.singleUse) {
+    final consumption = await pendingInviteRepo.getConsumedInvite(payload.id);
+    if (consumption != null && consumption.isActiveAt(effectiveReceivedAt)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_STORE_PENDING_ALREADY_USED',
+        details: {
+          'groupId': payload.groupId.length > 8
+              ? payload.groupId.substring(0, 8)
+              : payload.groupId,
+        },
+      );
+      return (StorePendingGroupInviteResult.alreadyUsed, null);
+    }
+  }
+
+  if (await _hasActiveWelcomeKeyPackageTombstone(
+    pendingInviteRepo: pendingInviteRepo,
+    payload: payload,
+    now: effectiveReceivedAt,
+  )) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_INVITE_STORE_PENDING_ALREADY_USED',
+      event: 'GROUP_INVITE_STORE_PENDING_PACKAGE_ALREADY_USED',
       details: {
         'groupId': payload.groupId.length > 8
             ? payload.groupId.substring(0, 8)
@@ -282,6 +600,23 @@ storeIncomingPendingGroupInvite({
   return (StorePendingGroupInviteResult.storedPending, invite);
 }
 
+Future<bool> _hasActiveWelcomeKeyPackageTombstone({
+  required PendingGroupInviteRepository pendingInviteRepo,
+  required GroupInvitePayload payload,
+  required DateTime now,
+}) async {
+  final welcome = payload.welcomeKeyPackage;
+  if (welcome == null) {
+    return false;
+  }
+  final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
+    packageId: welcome.packageId,
+    recipientDeviceId: welcome.recipientDeviceId,
+    groupId: welcome.groupId,
+  );
+  return tombstone != null && tombstone.isActiveAt(now);
+}
+
 /// Processes an incoming group invite message.
 ///
 /// Steps:
@@ -305,6 +640,12 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
   required Bridge bridge,
   String? ownMlKemSecretKey,
   String? ownPeerId,
+  String? ownDeviceId,
+  String? ownTransportPeerId,
+  String? ownMlKemPublicKey,
+  String? ownKeyPackageId,
+  String? ownKeyPackagePublicMaterial,
+  DateTime? now,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
 }) async {
   emitFlowEvent(
@@ -317,12 +658,19 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
     },
   );
 
+  final effectiveNow = (now ?? DateTime.now()).toUtc();
   final (resolveResult, resolvedInvite) = await _resolveIncomingGroupInvite(
     message: message,
     contactRepo: contactRepo,
     bridge: bridge,
     ownMlKemSecretKey: ownMlKemSecretKey,
     ownPeerId: ownPeerId,
+    ownDeviceId: ownDeviceId,
+    ownTransportPeerId: ownTransportPeerId,
+    ownMlKemPublicKey: ownMlKemPublicKey,
+    ownKeyPackageId: ownKeyPackageId,
+    ownKeyPackagePublicMaterial: ownKeyPackagePublicMaterial,
+    validationTime: effectiveNow,
   );
 
   switch (resolveResult) {
@@ -336,8 +684,23 @@ Future<(HandleGroupInviteResult, String?)> handleIncomingGroupInvite({
       break;
   }
 
+  if (!resolvedInvite!.payload.isInvitePolicyValid(
+    validationTime: effectiveNow,
+  )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_INVALID_POLICY',
+      details: {
+        'groupId': resolvedInvite.payload.groupId.length > 8
+            ? resolvedInvite.payload.groupId.substring(0, 8)
+            : resolvedInvite.payload.groupId,
+      },
+    );
+    return (HandleGroupInviteResult.invalidPayload, null);
+  }
+
   return materializeAcceptedGroupInvitePayload(
-    payload: resolvedInvite!.payload,
+    payload: resolvedInvite.payload,
     groupRepo: groupRepo,
     bridge: bridge,
     downloadGroupAvatarFn: downloadGroupAvatarFn,
@@ -351,6 +714,19 @@ materializeAcceptedGroupInvitePayload({
   required Bridge bridge,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
 }) async {
+  if (!payload.isInvitePolicyValid()) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_INVALID_POLICY',
+      details: {
+        'groupId': payload.groupId.length > 8
+            ? payload.groupId.substring(0, 8)
+            : payload.groupId,
+      },
+    );
+    return (HandleGroupInviteResult.invalidPayload, null);
+  }
+
   final existingGroup = await groupRepo.getGroup(payload.groupId);
   if (existingGroup != null) {
     emitFlowEvent(
@@ -415,15 +791,10 @@ materializeAcceptedGroupInvitePayload({
   // 7. Persist members from config
   final membersList = config['members'] as List<dynamic>? ?? [];
   for (final memberMap in membersList) {
-    final m = memberMap as Map<String, dynamic>;
-    final member = GroupMember(
+    final m = Map<String, dynamic>.from(memberMap as Map);
+    final member = GroupMember.fromConfigMap(
       groupId: payload.groupId,
-      peerId: m['peerId'] as String? ?? '',
-      username: m['username'] as String?,
-      role: _parseMemberRole(m['role'] as String? ?? 'member'),
-      permissions: GroupMemberPermissions.fromJson(m['permissions']),
-      publicKey: m['publicKey'] as String?,
-      mlKemPublicKey: m['mlKemPublicKey'] as String?,
+      map: m,
       joinedAt: DateTime.now().toUtc(),
     );
     await groupRepo.saveMember(member);
@@ -458,6 +829,30 @@ materializeAcceptedGroupInvitePayload({
       groupKey: payload.groupKey,
       keyEpoch: payload.keyEpoch,
     );
+  } on BridgeCommandException catch (e) {
+    if (_isRepairableJoinMaterialError(e)) {
+      await _rollbackMaterializedInviteState(
+        groupRepo: groupRepo,
+        groupId: payload.groupId,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_HANDLE_JOIN_MATERIAL_REPAIR_PENDING',
+        details: {
+          'groupId': payload.groupId.length > 8
+              ? payload.groupId.substring(0, 8)
+              : payload.groupId,
+          'errorCode': e.errorCode,
+        },
+      );
+      return (HandleGroupInviteResult.invalidPayload, null);
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_INVITE_HANDLE_BRIDGE_ERROR',
+      details: {'error': e.toString()},
+    );
+    return (HandleGroupInviteResult.bridgeError, payload.groupId);
   } on TimeoutException {
     emitFlowEvent(
       layer: 'FL',
@@ -491,6 +886,41 @@ materializeAcceptedGroupInvitePayload({
   return (HandleGroupInviteResult.success, payload.groupId);
 }
 
+bool _isRepairableJoinMaterialError(BridgeCommandException error) {
+  final code = error.errorCode.toUpperCase();
+  const repairableCodes = {
+    'INVALID_JOIN_MATERIAL',
+    'STALE_JOIN_MATERIAL',
+    'KEY_DECRYPT_FAILED',
+    'GROUP_KEY_DECRYPT_FAILED',
+    'WELCOME_DECRYPT_FAILED',
+    'KEY_PACKAGE_DECRYPT_FAILED',
+    'KEY_EPOCH_STALE',
+  };
+  if (repairableCodes.contains(code)) {
+    return true;
+  }
+
+  final message = (error.errorMessage ?? '').toLowerCase();
+  return message.contains('join material') ||
+      message.contains('key material') ||
+      message.contains('key package') ||
+      message.contains('welcome') ||
+      message.contains('decrypt') ||
+      message.contains('stale key') ||
+      message.contains('invalid key') ||
+      message.contains('key epoch');
+}
+
+Future<void> _rollbackMaterializedInviteState({
+  required GroupRepository groupRepo,
+  required String groupId,
+}) async {
+  await groupRepo.removeAllKeys(groupId);
+  await groupRepo.removeAllMembers(groupId);
+  await groupRepo.deleteGroup(groupId);
+}
+
 GroupType _parseGroupType(String value) {
   switch (value) {
     case 'chat':
@@ -501,18 +931,5 @@ GroupType _parseGroupType(String value) {
       return GroupType.qa;
     default:
       return GroupType.chat;
-  }
-}
-
-MemberRole _parseMemberRole(String value) {
-  switch (value) {
-    case 'admin':
-      return MemberRole.admin;
-    case 'writer':
-      return MemberRole.writer;
-    case 'reader':
-      return MemberRole.reader;
-    default:
-      return MemberRole.writer;
   }
 }

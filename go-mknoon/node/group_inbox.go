@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
@@ -13,26 +14,120 @@ import (
 // groupInboxRequest is the JSON envelope sent to the relay server
 // for group inbox operations.
 type groupInboxRequest struct {
-	Action           string   `json:"action"`
-	GroupId          string   `json:"groupId,omitempty"`
-	From             string   `json:"from,omitempty"`
-	Message          string   `json:"message,omitempty"`
-	RecipientPeerIds []string `json:"recipientPeerIds,omitempty"`
-	PushTitle        string   `json:"pushTitle,omitempty"`
-	PushBody         string   `json:"pushBody,omitempty"`
-	SinceTimestamp   int64    `json:"sinceTimestamp,omitempty"`
-	Cursor           string   `json:"cursor,omitempty"`
-	Limit            int      `json:"limit,omitempty"`
+	Action                 string   `json:"action"`
+	GroupId                string   `json:"groupId,omitempty"`
+	From                   string   `json:"from,omitempty"`
+	Message                string   `json:"message,omitempty"`
+	RecipientPeerIds       []string `json:"recipientPeerIds,omitempty"`
+	SinceTimestamp         int64    `json:"sinceTimestamp,omitempty"`
+	Cursor                 string   `json:"cursor,omitempty"`
+	Limit                  int      `json:"limit,omitempty"`
+	GapId                  string   `json:"gapId,omitempty"`
+	SourcePeerId           string   `json:"sourcePeerId,omitempty"`
+	MissingAfterMessageId  string   `json:"missingAfterMessageId,omitempty"`
+	MissingBeforeMessageId string   `json:"missingBeforeMessageId,omitempty"`
+	ExpectedRangeHash      string   `json:"expectedRangeHash,omitempty"`
+	ExpectedHeadMessageId  string   `json:"expectedHeadMessageId,omitempty"`
 }
 
 // groupInboxResponse is the JSON envelope received from the relay
 // server for group inbox operations.
 // NOTE: The relay uses "groupMessages" (not "messages") for group inbox.
 type groupInboxResponse struct {
-	Status     string         `json:"status"`
-	Error      string         `json:"error,omitempty"`
-	Messages   []InboxMessage `json:"groupMessages,omitempty"`
-	NextCursor string         `json:"nextCursor,omitempty"`
+	Status        string                 `json:"status"`
+	Error         string                 `json:"error,omitempty"`
+	Messages      []InboxMessage         `json:"groupMessages,omitempty"`
+	NextCursor    string                 `json:"nextCursor,omitempty"`
+	HistoryGaps   []GroupInboxHistoryGap `json:"historyGaps,omitempty"`
+	GroupId       string                 `json:"groupId,omitempty"`
+	GapId         string                 `json:"gapId,omitempty"`
+	SourcePeerId  string                 `json:"sourcePeerId,omitempty"`
+	RangeHash     string                 `json:"rangeHash,omitempty"`
+	HeadMessageId string                 `json:"headMessageId,omitempty"`
+}
+
+// GroupInboxHistoryGap is relay-provided continuity metadata for a cursor page.
+type GroupInboxHistoryGap struct {
+	GroupId                string   `json:"groupId"`
+	GapId                  string   `json:"gapId"`
+	MissingAfterMessageId  string   `json:"missingAfterMessageId"`
+	MissingBeforeMessageId string   `json:"missingBeforeMessageId"`
+	ExpectedRangeHash      string   `json:"expectedRangeHash"`
+	ExpectedHeadMessageId  string   `json:"expectedHeadMessageId"`
+	CandidateSourcePeerIds []string `json:"candidateSourcePeerIds"`
+}
+
+// GroupInboxCursorResult carries a cursor page plus any detected history gaps.
+type GroupInboxCursorResult struct {
+	Messages    []InboxMessage
+	NextCursor  string
+	HistoryGaps []GroupInboxHistoryGap
+}
+
+// GroupHistoryRepairRangeRequest describes a bounded request for encrypted
+// replay envelopes that fill one explicit history gap.
+type GroupHistoryRepairRangeRequest struct {
+	GroupId                string `json:"groupId"`
+	GapId                  string `json:"gapId"`
+	SourcePeerId           string `json:"sourcePeerId"`
+	MissingAfterMessageId  string `json:"missingAfterMessageId"`
+	MissingBeforeMessageId string `json:"missingBeforeMessageId"`
+	ExpectedRangeHash      string `json:"expectedRangeHash"`
+	ExpectedHeadMessageId  string `json:"expectedHeadMessageId"`
+	Limit                  int    `json:"limit,omitempty"`
+}
+
+// GroupHistoryRepairRangeResponse carries source-provided encrypted replay
+// envelopes plus the range integrity values Flutter validates before replay.
+type GroupHistoryRepairRangeResponse struct {
+	GroupId       string         `json:"groupId"`
+	GapId         string         `json:"gapId"`
+	SourcePeerId  string         `json:"sourcePeerId"`
+	RangeHash     string         `json:"rangeHash"`
+	HeadMessageId string         `json:"headMessageId"`
+	Messages      []InboxMessage `json:"messages"`
+}
+
+func (req GroupHistoryRepairRangeRequest) Validate() error {
+	if strings.TrimSpace(req.GroupId) == "" {
+		return fmt.Errorf("missing groupId")
+	}
+	if strings.TrimSpace(req.GapId) == "" {
+		return fmt.Errorf("missing gapId")
+	}
+	if strings.TrimSpace(req.SourcePeerId) == "" {
+		return fmt.Errorf("missing sourcePeerId")
+	}
+	if strings.TrimSpace(req.MissingAfterMessageId) == "" {
+		return fmt.Errorf("missing missingAfterMessageId")
+	}
+	if strings.TrimSpace(req.MissingBeforeMessageId) == "" {
+		return fmt.Errorf("missing missingBeforeMessageId")
+	}
+	if strings.TrimSpace(req.ExpectedRangeHash) == "" {
+		return fmt.Errorf("missing expectedRangeHash")
+	}
+	if strings.TrimSpace(req.ExpectedHeadMessageId) == "" {
+		return fmt.Errorf("missing expectedHeadMessageId")
+	}
+	return nil
+}
+
+func NormalizeGroupHistoryRepairRangeRequest(req GroupHistoryRepairRangeRequest) (GroupHistoryRepairRangeRequest, error) {
+	req.GroupId = strings.TrimSpace(req.GroupId)
+	req.GapId = strings.TrimSpace(req.GapId)
+	req.SourcePeerId = strings.TrimSpace(req.SourcePeerId)
+	req.MissingAfterMessageId = strings.TrimSpace(req.MissingAfterMessageId)
+	req.MissingBeforeMessageId = strings.TrimSpace(req.MissingBeforeMessageId)
+	req.ExpectedRangeHash = strings.TrimSpace(req.ExpectedRangeHash)
+	req.ExpectedHeadMessageId = strings.TrimSpace(req.ExpectedHeadMessageId)
+	if req.Limit <= 0 {
+		req.Limit = 50
+	}
+	if err := req.Validate(); err != nil {
+		return GroupHistoryRepairRangeRequest{}, err
+	}
+	return req, nil
 }
 
 // GroupInboxStore stores a group message in the relay's group inbox.
@@ -115,8 +210,8 @@ func buildGroupInboxStoreRequest(
 	from,
 	message string,
 	recipientPeerIds []string,
-	pushTitle,
-	pushBody string,
+	_,
+	_ string,
 ) groupInboxRequest {
 	return groupInboxRequest{
 		Action:           "group_store",
@@ -124,8 +219,6 @@ func buildGroupInboxStoreRequest(
 		From:             from,
 		Message:          message,
 		RecipientPeerIds: recipientPeerIds,
-		PushTitle:        pushTitle,
-		PushBody:         pushBody,
 	}
 }
 
@@ -149,6 +242,16 @@ func (n *Node) GroupInboxRetrieve(groupId string, sinceTimestamp int64) ([]Inbox
 // pagination. The cursor is opaque and comes from the relay server.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) GroupInboxRetrieveWithCursor(groupId, cursor string, limit int) ([]InboxMessage, string, error) {
+	result, err := n.GroupInboxRetrieveWithCursorResult(groupId, cursor, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	return result.Messages, result.NextCursor, nil
+}
+
+// GroupInboxRetrieveWithCursorResult retrieves a cursor page and preserves
+// relay-provided history-gap metadata for Dart repair orchestration.
+func (n *Node) GroupInboxRetrieveWithCursorResult(groupId, cursor string, limit int) (*GroupInboxCursorResult, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -160,9 +263,64 @@ func (n *Node) GroupInboxRetrieveWithCursor(groupId, cursor string, limit int) (
 		Limit:   limit,
 	})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return result.Messages, result.NextCursor, nil
+	return &GroupInboxCursorResult{
+		Messages:    result.Messages,
+		NextCursor:  result.NextCursor,
+		HistoryGaps: result.HistoryGaps,
+	}, nil
+}
+
+// GroupHistoryRepairRange requests a bounded encrypted replay-envelope range
+// from the configured relay inbox repair action.
+func (n *Node) GroupHistoryRepairRange(req GroupHistoryRepairRangeRequest) (*GroupHistoryRepairRangeResponse, error) {
+	normalized, err := NormalizeGroupHistoryRepairRangeRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+
+	if h == nil {
+		return nil, fmt.Errorf("node not started")
+	}
+
+	result, err := n.groupInboxRetrieve(groupInboxRequest{
+		Action:                 "group_history_repair_range",
+		GroupId:                normalized.GroupId,
+		GapId:                  normalized.GapId,
+		SourcePeerId:           normalized.SourcePeerId,
+		MissingAfterMessageId:  normalized.MissingAfterMessageId,
+		MissingBeforeMessageId: normalized.MissingBeforeMessageId,
+		ExpectedRangeHash:      normalized.ExpectedRangeHash,
+		ExpectedHeadMessageId:  normalized.ExpectedHeadMessageId,
+		Limit:                  normalized.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GroupHistoryRepairRangeResponse{
+		GroupId:       result.GroupId,
+		GapId:         result.GapId,
+		SourcePeerId:  result.SourcePeerId,
+		RangeHash:     result.RangeHash,
+		HeadMessageId: result.HeadMessageId,
+		Messages:      result.Messages,
+	}
+	if response.GroupId == "" {
+		response.GroupId = normalized.GroupId
+	}
+	if response.GapId == "" {
+		response.GapId = normalized.GapId
+	}
+	if response.SourcePeerId == "" {
+		response.SourcePeerId = normalized.SourcePeerId
+	}
+	return response, nil
 }
 
 func (n *Node) groupInboxRetrieve(req groupInboxRequest) (*groupInboxResponse, error) {

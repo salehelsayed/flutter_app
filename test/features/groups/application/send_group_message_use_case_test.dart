@@ -23,6 +23,10 @@ import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
+final _uuidV4Pattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
 ) async {
@@ -236,6 +240,36 @@ Map<String, dynamic> _offlineReplayEnvelopeFromRetryPayload(
   return jsonDecode(retryPayload['message'] as String) as Map<String, dynamic>;
 }
 
+void _expectSignedReplayEnvelope(
+  Map<String, dynamic> envelope, {
+  required String groupId,
+  required String payloadType,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required String messageId,
+}) {
+  expect(envelope['kind'], 'group_offline_replay');
+  expect(envelope['groupId'], groupId);
+  expect(envelope['payloadType'], payloadType);
+  expect(envelope['senderPeerId'], senderPeerId);
+  expect(envelope['senderPublicKey'], senderPublicKey);
+  expect(envelope['messageId'], messageId);
+  expect(envelope['signatureAlgorithm'], 'ed25519');
+  expect(envelope['signedPayload'], isA<String>());
+  expect(envelope['signature'], isA<String>());
+  final signedPayload =
+      jsonDecode(envelope['signedPayload'] as String) as Map<String, dynamic>;
+  expect(signedPayload['kind'], 'group_offline_replay');
+  expect(signedPayload['groupId'], groupId);
+  expect(signedPayload['payloadType'], payloadType);
+  expect(signedPayload['senderPeerId'], senderPeerId);
+  expect(signedPayload['senderSigningPublicKey'], senderPublicKey);
+  expect(signedPayload['messageId'], messageId);
+  expect(signedPayload['ciphertextHash'], isA<String>());
+  expect(signedPayload['nonceHash'], isA<String>());
+  expect(signedPayload['plaintextHash'], isA<String>());
+}
+
 void _expectNoProtectedFragments(String raw, Iterable<String> fragments) {
   for (final fragment in fragments) {
     expect(raw, isNot(contains(fragment)));
@@ -317,6 +351,71 @@ void main() {
     expect(message.isIncoming, false);
     expect(message.status, 'sent');
   });
+
+  test(
+    'production send resolves registered sender device distinct from member peer id',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: testGroup.id,
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'peer-1-device-a',
+              transportPeerId: 'peer-1-device-a',
+              deviceSigningPublicKey: 'pk-1',
+              mlKemPublicKey: 'mlkem-peer-1-device-a',
+              keyPackageId: 'kp-peer-1-device-a',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 1, 12),
+        ),
+      );
+
+      final trackingMsgRepo = _SaveTrackingGroupMessageRepository();
+      final (result, message) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: trackingMsgRepo,
+        groupId: 'group-1',
+        text: 'Hello from registered device',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'registered-device-send',
+      );
+
+      expect(result, SendGroupMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.transportPeerId, 'peer-1-device-a');
+
+      final publishMessage = bridge.sentMessages.firstWhere((raw) {
+        final parsed = jsonDecode(raw) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:publish';
+      });
+      final publishPayload =
+          (jsonDecode(publishMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      expect(publishPayload['senderPeerId'], 'peer-1');
+      expect(publishPayload['senderDeviceId'], 'peer-1-device-a');
+      expect(publishPayload['senderTransportPeerId'], 'peer-1-device-a');
+      expect(publishPayload['senderDevicePublicKey'], 'pk-1');
+
+      final saved = await trackingMsgRepo.getMessage('registered-device-send');
+      expect(saved, isNotNull);
+      final initialSave = trackingMsgRepo.savedMessages.firstWhere(
+        (savedMessage) => savedMessage.id == 'registered-device-send',
+      );
+      final wireEnvelope =
+          jsonDecode(initialSave.wireEnvelope!) as Map<String, dynamic>;
+      expect(wireEnvelope['senderDeviceId'], 'peer-1-device-a');
+      expect(wireEnvelope['transportPeerId'], 'peer-1-device-a');
+    },
+  );
 
   test('emits GROUP_SEND_MSG_TIMING with group and media metadata', () async {
     bridge.responses['group:publish'] = {
@@ -632,8 +731,8 @@ void main() {
     },
   );
 
-  test('stores message in relay inbox on publish', () async {
-    await sendGroupMessage(
+  test('EK004 stores signed offline replay envelope for group_message', () async {
+    final (result, message) = await sendGroupMessage(
       bridge: bridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
@@ -643,11 +742,23 @@ void main() {
       senderPublicKey: 'pk-1',
       senderPrivateKey: 'sk-1',
       senderUsername: 'Alice',
+      messageId: 'msg-ek004-offline-replay',
     );
 
+    expect(result, SendGroupMessageResult.success);
+    expect(message, isNotNull);
     // Both operations should run (order is non-deterministic due to parallelism)
     expect(bridge.commandLog, contains('group:publish'));
     expect(bridge.commandLog, contains('group:inboxStore'));
+
+    _expectSignedReplayEnvelope(
+      _lastGroupOfflineReplayEnvelope(bridge),
+      groupId: 'group-1',
+      payloadType: 'group_message',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      messageId: 'msg-ek004-offline-replay',
+    );
   });
 
   test(
@@ -1516,6 +1627,42 @@ void main() {
 
       expect(message!.id, isNotEmpty);
       expect(message.id, isNot('pre-created-id'));
+    });
+
+    test('SP003 default message ids are unique UUID v4 values', () async {
+      final (firstResult, firstMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'First random id message',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      final (secondResult, secondMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'Second random id message',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+      );
+
+      expect(firstResult, SendGroupMessageResult.success);
+      expect(secondResult, SendGroupMessageResult.success);
+      expect(firstMessage, isNotNull);
+      expect(secondMessage, isNotNull);
+      expect(_uuidV4Pattern.hasMatch(firstMessage!.id), isTrue);
+      expect(_uuidV4Pattern.hasMatch(secondMessage!.id), isTrue);
+      expect(firstMessage.id, isNot(secondMessage.id));
+      expect(await msgRepo.getMessage(firstMessage.id), isNotNull);
+      expect(await msgRepo.getMessage(secondMessage.id), isNotNull);
     });
 
     test(
@@ -2550,7 +2697,8 @@ void main() {
         expect(retryEnvelope['nonce'], 'opaque-replay-nonce');
 
         final inboxStoreCommand = privacyBridge.sentMessages.lastWhere(
-          (raw) => (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
               'group:inboxStore',
         );
         _expectNoProtectedFragments(inboxStoreCommand, protectedFragments);

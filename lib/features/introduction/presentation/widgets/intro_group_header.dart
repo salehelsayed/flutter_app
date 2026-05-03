@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 
 /// Section header for a group of introductions from the same introducer.
@@ -7,18 +8,15 @@ import 'package:flutter_app/core/utils/text_direction_utils.dart';
 class IntroGroupHeader extends StatelessWidget {
   final String introducerUsername;
 
-  const IntroGroupHeader({
-    super.key,
-    required this.introducerUsername,
-  });
+  const IntroGroupHeader({super.key, required this.introducerUsername});
 
   @override
   Widget build(BuildContext context) {
-    const style = TextStyle(
+    final readableColors = context.backgroundReadableColors;
+    final style = TextStyle(
       fontSize: 12,
       fontWeight: FontWeight.w600,
-      letterSpacing: 0.3,
-      color: Color(0x66FFFFFF), // rgba(255,255,255,0.4)
+      color: readableColors.textSecondary,
     );
 
     return Padding(
@@ -27,7 +25,7 @@ class IntroGroupHeader extends StatelessWidget {
         spacing: 4,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          const Text('From', style: style),
+          Text('From', style: style),
           Text(
             introducerUsername,
             textDirection: detectTextDirection(introducerUsername),

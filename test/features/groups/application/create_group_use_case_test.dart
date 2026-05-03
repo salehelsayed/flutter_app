@@ -9,6 +9,44 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
+const _gl005ForbiddenPublicRouteKeys = {
+  'visibility',
+  'ispublic',
+  'discoverable',
+  'isdiscoverable',
+  'openjoin',
+  'allowopenjoin',
+  'joinpolicy',
+  'invitelink',
+  'joinlink',
+  'publicpreview',
+  'publiclisting',
+  'publiccatalog',
+  'publicroom',
+  'publicgroup',
+};
+
+void _expectNoPublicRouteFields(Object? value, {String path = 'payload'}) {
+  if (value is Map) {
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      final normalized = key.replaceAll(RegExp(r'[_-]'), '').toLowerCase();
+      expect(
+        _gl005ForbiddenPublicRouteKeys,
+        isNot(contains(normalized)),
+        reason: 'GL-005 forbids public/open route field "$key" at $path',
+      );
+      _expectNoPublicRouteFields(entry.value, path: '$path.$key');
+    }
+  } else if (value is Iterable) {
+    var index = 0;
+    for (final item in value) {
+      _expectNoPublicRouteFields(item, path: '$path[$index]');
+      index++;
+    }
+  }
+}
+
 void main() {
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -49,6 +87,56 @@ void main() {
     expect(result.topicName, '/mknoon/group/test-group-id');
     expect(result.myRole, GroupRole.admin);
   });
+
+  test(
+    'GL-005 create payloads use only supported private group variants and no public route flags',
+    () async {
+      final supportedTypes = {
+        GroupType.chat: 'chat',
+        GroupType.announcement: 'announcement',
+        GroupType.qa: 'qa',
+      };
+
+      for (final entry in supportedTypes.entries) {
+        final localBridge = FakeBridge();
+        final localGroupRepo = InMemoryGroupRepository();
+        final groupId = 'gl005-${entry.value}-group';
+        localBridge.responses['group:create'] = {
+          'ok': true,
+          'groupId': groupId,
+          'topicName': '/mknoon/group/$groupId',
+          'groupKey': 'gl005-group-key-${entry.value}',
+          'keyEpoch': 1,
+        };
+
+        final result = await createGroup(
+          bridge: localBridge,
+          groupRepo: localGroupRepo,
+          name: 'GL-005 ${entry.value}',
+          type: entry.key,
+          creatorPeerId: 'peer-creator',
+          creatorPublicKey: 'pk-creator',
+          creatorMlKemPublicKey: 'mlkem-pk-creator',
+          description: 'Private invite-only group',
+        );
+
+        final createMessage = localBridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:create',
+        );
+        final createPayload =
+            (jsonDecode(createMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+
+        expect(createPayload['groupType'], entry.value);
+        expect(supportedTypes.values, contains(createPayload['groupType']));
+        _expectNoPublicRouteFields(createPayload);
+        expect(result.type, entry.key);
+        expect(await localGroupRepo.getMembers(groupId), hasLength(1));
+      }
+    },
+  );
 
   test('throws on empty name', () async {
     expect(

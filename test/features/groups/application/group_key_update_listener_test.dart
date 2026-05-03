@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -22,12 +25,18 @@ void main() {
   late GroupKeyUpdateListener listener;
   late String? mlKemSecretKey;
 
-  ChatMessage _makeMessage(String content, {String? confirmNonce}) {
+  ChatMessage _makeMessage(
+    String content, {
+    String? confirmNonce,
+    String from = 'sender-peer',
+    String to = 'me',
+    String? timestamp,
+  }) {
     return ChatMessage(
-      from: 'sender-peer',
-      to: 'me',
+      from: from,
+      to: to,
       content: content,
-      timestamp: DateTime.now().toUtc().toIso8601String(),
+      timestamp: timestamp ?? DateTime.now().toUtc().toIso8601String(),
       isIncoming: true,
       confirmNonce: confirmNonce,
     );
@@ -40,11 +49,57 @@ void main() {
     String groupId = 'group-1',
     int keyGeneration = 2,
     String encryptedKey = 'base64-key-material',
+    String sourcePeerId = 'sender-peer',
+    String? sourceDeviceId,
+    String? sourceTransportPeerId,
+    String? recipientPeerId,
+    String? recipientDeviceId,
+    String? recipientTransportPeerId,
+    String? recipientKeyPackageId,
+    bool includeSignature = true,
+    String? signedPayload,
+    String signature = 'fake-signature',
+    String? sourceEventId,
+    DateTime? eventAt,
+    Map<String, Object?>? signedTransitionAudit,
   }) {
+    final canonicalPayload =
+        signedPayload ??
+        canonicalGroupKeyUpdateSignedPayload(
+          groupId: groupId,
+          sourcePeerId: sourcePeerId,
+          sourceDeviceId: sourceDeviceId,
+          sourceTransportPeerId: sourceTransportPeerId,
+          recipientPeerId: recipientPeerId,
+          recipientDeviceId: recipientDeviceId,
+          recipientTransportPeerId: recipientTransportPeerId,
+          recipientKeyPackageId: recipientKeyPackageId,
+          keyGeneration: keyGeneration,
+          encryptedKey: encryptedKey,
+        );
     final innerJson = jsonEncode({
       'groupId': groupId,
+      if (sourceEventId != null) 'sourceEventId': sourceEventId,
+      if (eventAt != null) 'eventAt': eventAt.toUtc().toIso8601String(),
+      'sourcePeerId': sourcePeerId,
+      if (sourceDeviceId != null) 'sourceDeviceId': sourceDeviceId,
+      if (sourceTransportPeerId != null)
+        'sourceTransportPeerId': sourceTransportPeerId,
+      if (recipientPeerId != null) 'recipientPeerId': recipientPeerId,
+      if (recipientDeviceId != null) 'recipientDeviceId': recipientDeviceId,
+      if (recipientTransportPeerId != null)
+        'recipientTransportPeerId': recipientTransportPeerId,
+      if (recipientKeyPackageId != null)
+        'recipientKeyPackageId': recipientKeyPackageId,
       'keyGeneration': keyGeneration,
       'encryptedKey': encryptedKey,
+      if (includeSignature) ...{
+        'signatureAlgorithm': groupKeyUpdateSignatureAlgorithm,
+        'signedPayload': canonicalPayload,
+        'signature': signature,
+      },
+      if (signedTransitionAudit != null)
+        signedGroupTransitionAuditField: signedTransitionAudit,
     });
     return jsonEncode({
       'encrypted': {
@@ -53,6 +108,30 @@ void main() {
         'nonce': 'fake-nonce',
       },
     });
+  }
+
+  Future<void> _saveMember({
+    required String groupId,
+    required String peerId,
+    required MemberRole role,
+    String? username,
+    GroupMemberPermissions permissions = GroupMemberPermissions.empty,
+    List<GroupMemberDeviceIdentity> devices =
+        const <GroupMemberDeviceIdentity>[],
+  }) async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: peerId,
+        username: username ?? peerId,
+        role: role,
+        permissions: permissions,
+        publicKey: 'pk-$peerId',
+        mlKemPublicKey: 'mlkem-$peerId',
+        devices: devices,
+        joinedAt: DateTime.utc(2026, 4, 5, 12, 0),
+      ),
+    );
   }
 
   Future<void> _saveActiveGroup(String groupId) async {
@@ -65,6 +144,58 @@ void main() {
         createdAt: DateTime.utc(2026, 4, 5, 12, 0),
         createdBy: 'sender-peer',
         myRole: GroupRole.member,
+      ),
+    );
+    await _saveMember(
+      groupId: groupId,
+      peerId: 'sender-peer',
+      role: MemberRole.admin,
+      username: 'Sender Admin',
+    );
+  }
+
+  Future<Map<String, Object?>> _signDirectKeyUpdateAudit({
+    required String groupId,
+    required String sourceEventId,
+    required DateTime eventAt,
+    required int keyGeneration,
+    required String encryptedKey,
+    String sourcePeerId = 'sender-peer',
+    String actorUsername = 'Sender Admin',
+    String? actorSigningPublicKey,
+    String? sourceDeviceId,
+    String? sourceTransportPeerId,
+    String? recipientPeerId,
+    String? recipientDeviceId,
+    String? recipientTransportPeerId,
+    String? recipientKeyPackageId,
+  }) {
+    return signGroupTransitionAudit(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      transitionType: 'group_key_update',
+      sourceEventId: sourceEventId,
+      eventAt: eventAt,
+      actorPeerId: sourcePeerId,
+      actorUsername: actorUsername,
+      actorSigningPublicKey:
+          actorSigningPublicKey ??
+          (sourceDeviceId == null ? 'pk-$sourcePeerId' : 'pk-$sourceDeviceId'),
+      actorPrivateKey: 'sk-$sourcePeerId',
+      actorDeviceId: sourceDeviceId,
+      actorTransportPeerId: sourceTransportPeerId,
+      transitionSubject: buildGroupKeyUpdateTransitionSubject(
+        groupId: groupId,
+        sourcePeerId: sourcePeerId,
+        sourceDeviceId: sourceDeviceId,
+        sourceTransportPeerId: sourceTransportPeerId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDeviceId,
+        recipientTransportPeerId: recipientTransportPeerId,
+        recipientKeyPackageId: recipientKeyPackageId,
+        keyGeneration: keyGeneration,
+        encryptedKey: encryptedKey,
       ),
     );
   }
@@ -100,9 +231,101 @@ void main() {
   });
 
   test(
-    'logs key update and rejects tampered replay before replacing key',
+    'PREREQ-SIGNED-COMMIT-AUDIT direct key update retains signature as audit evidence before key save',
     () async {
-      await _saveActiveGroup('group-log');
+      await _saveActiveGroup('group-prereq-direct-key');
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final sourceEventId = 'direct-key-audit-1';
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 2);
+      final audit = await _signDirectKeyUpdateAudit(
+        groupId: 'group-prereq-direct-key',
+        sourceEventId: sourceEventId,
+        eventAt: eventAt,
+        keyGeneration: 2,
+        encryptedKey: 'key-v2',
+      );
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-prereq-direct-key',
+            keyGeneration: 2,
+            encryptedKey: 'key-v2',
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+            signedTransitionAudit: audit,
+          ),
+          confirmNonce: sourceEventId,
+          timestamp: eventAt.toIso8601String(),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final saved = await groupRepo.getLatestKey('group-prereq-direct-key');
+      expect(saved, isNotNull);
+      expect(saved!.encryptedKey, 'key-v2');
+      expect(eventLog.entries, hasLength(1));
+      final payload =
+          eventLog.entries.single['payload'] as Map<String, Object?>;
+      expect(payload[signedGroupTransitionAuditField], isNull);
+      expect(payload['encryptedKey'], isNull);
+      expect(payload.toString(), isNot(contains('key-v2')));
+      expect(payload['encryptedKeyHash'], isNotNull);
+      expect(
+        payload['signedTransitionAuditHash'],
+        signedGroupTransitionAuditHash(audit),
+      );
+
+      final tamperedAudit = Map<String, Object?>.from(audit)
+        ..['signedPayload'] = (audit['signedPayload'] as String).replaceAll(
+          'key-v2',
+          'evil-key',
+        );
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-prereq-direct-key',
+            keyGeneration: 3,
+            encryptedKey: 'evil-key',
+            sourceEventId: 'direct-key-audit-2',
+            eventAt: DateTime.utc(2026, 5, 1, 12, 3),
+            signedTransitionAudit: tamperedAudit,
+          ),
+          confirmNonce: 'direct-key-audit-2',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final stillSaved = await groupRepo.getLatestKey(
+        'group-prereq-direct-key',
+      );
+      expect(stillSaved!.encryptedKey, 'key-v2');
+      expect(eventLog.entries, hasLength(1));
+    },
+  );
+
+  test(
+    'PREREQ-SIGNED-COMMIT-AUDIT rejects missing direct key-update audit before side effects when append is wired',
+    () async {
+      await _saveActiveGroup('group-prereq-missing-direct-audit');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-prereq-missing-direct-audit',
+          keyGeneration: 1,
+          encryptedKey: 'old-key-v1',
+          createdAt: DateTime.utc(2026, 5, 1, 12),
+        ),
+      );
       final eventLog = _FakeEventLog();
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -117,11 +340,72 @@ void main() {
       controller.add(
         _makeMessage(
           _validEnvelope(
+            groupId: 'group-prereq-missing-direct-audit',
+            keyGeneration: 2,
+            encryptedKey: 'unaudited-key-v2',
+            sourceEventId: 'missing-direct-audit-1',
+            eventAt: DateTime.utc(2026, 5, 1, 12, 5),
+          ),
+          confirmNonce: 'missing-direct-audit-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, contains('payload.verify'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      final saved = await groupRepo.getLatestKey(
+        'group-prereq-missing-direct-audit',
+      );
+      expect(saved, isNotNull);
+      expect(saved!.keyGeneration, 1);
+      expect(saved.encryptedKey, 'old-key-v1');
+      expect(
+        await groupRepo.getKeyByGeneration(
+          'group-prereq-missing-direct-audit',
+          2,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'logs key update and rejects tampered replay before replacing key',
+    () async {
+      await _saveActiveGroup('group-log');
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final sourceEventId = 'key-event-1';
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 10);
+      final audit = await _signDirectKeyUpdateAudit(
+        groupId: 'group-log',
+        sourceEventId: sourceEventId,
+        eventAt: eventAt,
+        keyGeneration: 2,
+        encryptedKey: 'key-v2',
+      );
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
             groupId: 'group-log',
             keyGeneration: 2,
             encryptedKey: 'key-v2',
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+            signedTransitionAudit: audit,
           ),
-          confirmNonce: 'key-event-1',
+          confirmNonce: sourceEventId,
         ),
       );
 
@@ -129,7 +413,11 @@ void main() {
 
       expect(eventLog.entries, hasLength(1));
       expect(eventLog.entries.single['eventType'], 'group_key_update');
-      expect(eventLog.entries.single['sourceEventId'], 'key-event-1');
+      expect(eventLog.entries.single['sourceEventId'], sourceEventId);
+      final payload =
+          eventLog.entries.single['payload'] as Map<String, Object?>;
+      expect(payload['encryptedKey'], isNull);
+      expect(payload['encryptedKeyHash'], isNotNull);
       expect(
         (await groupRepo.getLatestKey('group-log'))!.encryptedKey,
         'key-v2',
@@ -141,8 +429,11 @@ void main() {
             groupId: 'group-log',
             keyGeneration: 2,
             encryptedKey: 'tampered-key-v2',
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+            signedTransitionAudit: audit,
           ),
-          confirmNonce: 'key-event-1',
+          confirmNonce: sourceEventId,
         ),
       );
 
@@ -171,13 +462,25 @@ void main() {
       );
       listener.start();
 
+      final sourceEventId = 'key-exact-replay-1';
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 11);
+      final audit = await _signDirectKeyUpdateAudit(
+        groupId: 'group-exact-replay',
+        sourceEventId: sourceEventId,
+        eventAt: eventAt,
+        keyGeneration: 2,
+        encryptedKey: 'key-v2',
+      );
       final message = _makeMessage(
         _validEnvelope(
           groupId: 'group-exact-replay',
           keyGeneration: 2,
           encryptedKey: 'key-v2',
+          sourceEventId: sourceEventId,
+          eventAt: eventAt,
+          signedTransitionAudit: audit,
         ),
-        confirmNonce: 'key-exact-replay-1',
+        confirmNonce: sourceEventId,
       );
 
       controller.add(message);
@@ -187,7 +490,7 @@ void main() {
 
       expect(eventLog.entries, hasLength(1));
       expect(eventLog.entries.single['eventType'], 'group_key_update');
-      expect(eventLog.entries.single['sourceEventId'], 'key-exact-replay-1');
+      expect(eventLog.entries.single['sourceEventId'], sourceEventId);
 
       final saved = await groupRepo.getLatestKey('group-exact-replay');
       expect(saved, isNotNull);
@@ -293,6 +596,542 @@ void main() {
     },
   );
 
+  test(
+    'RP004 unauthorized direct key update sender is ignored before bridge update, log, or key save',
+    () async {
+      await _saveActiveGroup('group-rp004-direct-auth');
+      await _saveMember(
+        groupId: 'group-rp004-direct-auth',
+        peerId: 'peer-writer',
+        role: MemberRole.writer,
+        username: 'Writer',
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-rp004-direct-auth',
+          keyGeneration: 1,
+          encryptedKey: 'old-rp004-key',
+          createdAt: DateTime.utc(2026, 4, 5, 12, 1),
+        ),
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-rp004-direct-auth',
+            keyGeneration: 2,
+            encryptedKey: 'unauthorized-rp004-key',
+          ),
+          confirmNonce: 'rp004-unauthorized-key-update',
+          from: 'peer-writer',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      final latest = await groupRepo.getLatestKey('group-rp004-direct-auth');
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 1);
+      expect(latest.encryptedKey, 'old-rp004-key');
+      expect(
+        await groupRepo.getKeyByGeneration('group-rp004-direct-auth', 2),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'RP004 rotate-permission sender direct key update is accepted',
+    () async {
+      await _saveActiveGroup('group-rp004-rotate-override');
+      await _saveMember(
+        groupId: 'group-rp004-rotate-override',
+        peerId: 'peer-rotator',
+        role: MemberRole.writer,
+        username: 'Rotator',
+        permissions: const GroupMemberPermissions(rotateKeys: true),
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final sourceEventId = 'rp004-authorized-key-update';
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 12);
+      final audit = await _signDirectKeyUpdateAudit(
+        groupId: 'group-rp004-rotate-override',
+        sourceEventId: sourceEventId,
+        eventAt: eventAt,
+        sourcePeerId: 'peer-rotator',
+        actorUsername: 'Rotator',
+        keyGeneration: 2,
+        encryptedKey: 'authorized-rp004-key',
+      );
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-rp004-rotate-override',
+            sourcePeerId: 'peer-rotator',
+            keyGeneration: 2,
+            encryptedKey: 'authorized-rp004-key',
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+            signedTransitionAudit: audit,
+          ),
+          confirmNonce: sourceEventId,
+          from: 'peer-rotator',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, contains('group:updateKey'));
+      expect(eventLog.entries, hasLength(1));
+      expect(eventLog.entries.single['sourcePeerId'], 'peer-rotator');
+      final latest = await groupRepo.getLatestKey(
+        'group-rp004-rotate-override',
+      );
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 2);
+      expect(latest.encryptedKey, 'authorized-rp004-key');
+    },
+  );
+
+  test(
+    'accepts direct key update only from a registered active source device to the local device',
+    () async {
+      await _saveActiveGroup('group-device-key');
+      await _saveMember(
+        groupId: 'group-device-key',
+        peerId: 'me',
+        role: MemberRole.writer,
+        username: 'Me',
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'me-device-1',
+            transportPeerId: 'me-device-1',
+            deviceSigningPublicKey: 'pk-me-device-1',
+            mlKemPublicKey: 'mlkem-me-device-1',
+            keyPackageId: 'me-kp-1',
+          ),
+        ],
+      );
+      await _saveMember(
+        groupId: 'group-device-key',
+        peerId: 'sender-peer',
+        role: MemberRole.admin,
+        username: 'Sender Admin',
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'sender-device-1',
+            transportPeerId: 'sender-device-1',
+            deviceSigningPublicKey: 'pk-sender-device-1',
+            mlKemPublicKey: 'mlkem-sender-device-1',
+            keyPackageId: 'sender-kp-1',
+          ),
+        ],
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        getOwnPeerId: () async => 'me',
+        getOwnDeviceId: () async => 'me-device-1',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final sourceEventId = 'device-key-event-1';
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 13);
+      final audit = await _signDirectKeyUpdateAudit(
+        groupId: 'group-device-key',
+        sourceEventId: sourceEventId,
+        eventAt: eventAt,
+        sourceDeviceId: 'sender-device-1',
+        sourceTransportPeerId: 'sender-device-1',
+        actorSigningPublicKey: 'pk-sender-device-1',
+        recipientPeerId: 'me',
+        recipientDeviceId: 'me-device-1',
+        recipientTransportPeerId: 'me-device-1',
+        recipientKeyPackageId: 'me-kp-1',
+        keyGeneration: 2,
+        encryptedKey: 'device-bound-key-v2',
+      );
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-device-key',
+            keyGeneration: 2,
+            encryptedKey: 'device-bound-key-v2',
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+            sourceDeviceId: 'sender-device-1',
+            sourceTransportPeerId: 'sender-device-1',
+            recipientPeerId: 'me',
+            recipientDeviceId: 'me-device-1',
+            recipientTransportPeerId: 'me-device-1',
+            recipientKeyPackageId: 'me-kp-1',
+            signedTransitionAudit: audit,
+          ),
+          from: 'sender-device-1',
+          to: 'me-device-1',
+          confirmNonce: sourceEventId,
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('group:updateKey'));
+      expect(eventLog.entries, hasLength(1));
+      final latest = await groupRepo.getLatestKey('group-device-key');
+      expect(latest, isNotNull);
+      expect(latest!.encryptedKey, 'device-bound-key-v2');
+    },
+  );
+
+  test(
+    'rejects direct key update from unbound registered source before key save',
+    () async {
+      await _saveActiveGroup('group-unbound-source-key');
+      await _saveMember(
+        groupId: 'group-unbound-source-key',
+        peerId: 'me',
+        role: MemberRole.writer,
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'me-device-1',
+            transportPeerId: 'me-device-1',
+            deviceSigningPublicKey: 'pk-me-device-1',
+            mlKemPublicKey: 'mlkem-me-device-1',
+          ),
+        ],
+      );
+      await _saveMember(
+        groupId: 'group-unbound-source-key',
+        peerId: 'sender-peer',
+        role: MemberRole.admin,
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'sender-device-1',
+            transportPeerId: 'sender-device-1',
+            deviceSigningPublicKey: 'pk-sender-device-1',
+            mlKemPublicKey: 'mlkem-sender-device-1',
+          ),
+        ],
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        getOwnPeerId: () async => 'me',
+        getOwnDeviceId: () async => 'me-device-1',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 14);
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-unbound-source-key',
+            keyGeneration: 2,
+            encryptedKey: 'unbound-source-key-v2',
+            sourceEventId: 'unbound-source-key-event',
+            eventAt: eventAt,
+            sourceDeviceId: 'sender-device-2',
+            sourceTransportPeerId: 'sender-device-2',
+            recipientPeerId: 'me',
+            recipientDeviceId: 'me-device-1',
+            recipientTransportPeerId: 'me-device-1',
+          ),
+          from: 'sender-device-2',
+          confirmNonce: 'unbound-source-key-event',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, isNot(contains('payload.verify')));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      expect(await groupRepo.getLatestKey('group-unbound-source-key'), isNull);
+    },
+  );
+
+  test(
+    'rejects direct key update for the wrong local recipient device before key save',
+    () async {
+      await _saveActiveGroup('group-wrong-recipient-key');
+      await _saveMember(
+        groupId: 'group-wrong-recipient-key',
+        peerId: 'me',
+        role: MemberRole.writer,
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'me-device-1',
+            transportPeerId: 'me-device-1',
+            deviceSigningPublicKey: 'pk-me-device-1',
+            mlKemPublicKey: 'mlkem-me-device-1',
+            keyPackageId: 'me-kp-1',
+          ),
+        ],
+      );
+      await _saveMember(
+        groupId: 'group-wrong-recipient-key',
+        peerId: 'sender-peer',
+        role: MemberRole.admin,
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'sender-device-1',
+            transportPeerId: 'sender-device-1',
+            deviceSigningPublicKey: 'pk-sender-device-1',
+            mlKemPublicKey: 'mlkem-sender-device-1',
+          ),
+        ],
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        getOwnPeerId: () async => 'me',
+        getOwnDeviceId: () async => 'me-device-1',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 15);
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-wrong-recipient-key',
+            keyGeneration: 2,
+            encryptedKey: 'wrong-recipient-key-v2',
+            sourceEventId: 'wrong-recipient-key-event',
+            eventAt: eventAt,
+            sourceDeviceId: 'sender-device-1',
+            sourceTransportPeerId: 'sender-device-1',
+            recipientPeerId: 'me',
+            recipientDeviceId: 'me-device-2',
+            recipientTransportPeerId: 'me-device-2',
+          ),
+          from: 'sender-device-1',
+          confirmNonce: 'wrong-recipient-key-event',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('payload.verify'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      expect(await groupRepo.getLatestKey('group-wrong-recipient-key'), isNull);
+    },
+  );
+
+  test(
+    'EK004 rejects unsigned direct key update before bridge update, log, or key save',
+    () async {
+      await _saveActiveGroup('group-ek004-unsigned-key');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-ek004-unsigned-key',
+          keyGeneration: 1,
+          encryptedKey: 'old-ek004-key',
+          createdAt: DateTime.utc(2026, 4, 5, 12, 1),
+        ),
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 17);
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-ek004-unsigned-key',
+            keyGeneration: 2,
+            encryptedKey: 'unsigned-ek004-key',
+            sourceEventId: 'ek004-unsigned-key-update',
+            eventAt: eventAt,
+            includeSignature: false,
+          ),
+          confirmNonce: 'ek004-unsigned-key-update',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, isNot(contains('payload.verify')));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      final latest = await groupRepo.getLatestKey('group-ek004-unsigned-key');
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 1);
+      expect(latest.encryptedKey, 'old-ek004-key');
+      expect(
+        await groupRepo.getKeyByGeneration('group-ek004-unsigned-key', 2),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'EK004 rejects mismatched direct key update signature payload before verify or key save',
+    () async {
+      await _saveActiveGroup('group-ek004-mismatch-key');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-ek004-mismatch-key',
+          keyGeneration: 1,
+          encryptedKey: 'old-ek004-key',
+          createdAt: DateTime.utc(2026, 4, 5, 12, 1),
+        ),
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final mismatchedSignedPayload = canonicalGroupKeyUpdateSignedPayload(
+        groupId: 'group-ek004-mismatch-key',
+        sourcePeerId: 'sender-peer',
+        keyGeneration: 2,
+        encryptedKey: 'different-signed-key',
+      );
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 18);
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-ek004-mismatch-key',
+            keyGeneration: 2,
+            encryptedKey: 'mismatched-ek004-key',
+            sourceEventId: 'ek004-mismatched-key-update',
+            eventAt: eventAt,
+            signedPayload: mismatchedSignedPayload,
+          ),
+          confirmNonce: 'ek004-mismatched-key-update',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, isNot(contains('payload.verify')));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      final latest = await groupRepo.getLatestKey('group-ek004-mismatch-key');
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 1);
+      expect(latest.encryptedKey, 'old-ek004-key');
+      expect(
+        await groupRepo.getKeyByGeneration('group-ek004-mismatch-key', 2),
+        isNull,
+      );
+    },
+  );
+
+  test(
+    'EK004 rejects invalid direct key update signature before bridge update, log, or key save',
+    () async {
+      await _saveActiveGroup('group-ek004-invalid-signature');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-ek004-invalid-signature',
+          keyGeneration: 1,
+          encryptedKey: 'old-ek004-key',
+          createdAt: DateTime.utc(2026, 4, 5, 12, 1),
+        ),
+      );
+      bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 16);
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-ek004-invalid-signature',
+            keyGeneration: 2,
+            encryptedKey: 'invalid-signature-ek004-key',
+            sourceEventId: 'ek004-invalid-signature-key-update',
+            eventAt: eventAt,
+          ),
+          confirmNonce: 'ek004-invalid-signature-key-update',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, contains('payload.verify'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      final latest = await groupRepo.getLatestKey(
+        'group-ek004-invalid-signature',
+      );
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 1);
+      expect(latest.encryptedKey, 'old-ek004-key');
+      expect(
+        await groupRepo.getKeyByGeneration('group-ek004-invalid-signature', 2),
+        isNull,
+      );
+    },
+  );
+
   test('saves key on successful decrypt', () async {
     await _saveActiveGroup('group-42');
     listener.start();
@@ -361,6 +1200,134 @@ void main() {
   });
 
   test(
+    'PREREQ-FUTURE-EPOCH-KEY-REPAIR key arrival retries pending future epoch replay after save',
+    () async {
+      await _saveActiveGroup('group-prereq-future-key');
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          expect(
+            await groupRepo.getKeyByGeneration(
+              request.groupId,
+              request.keyEpoch,
+            ),
+            isNotNull,
+          );
+          repairCalls.add(request);
+        },
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-prereq-future-key',
+            keyGeneration: 2,
+            encryptedKey: 'future-key-material',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repairCalls, hasLength(1));
+      expect(repairCalls.single.groupId, 'group-prereq-future-key');
+      expect(repairCalls.single.keyEpoch, 2);
+      final saved = await groupRepo.getKeyByGeneration(
+        'group-prereq-future-key',
+        2,
+      );
+      expect(saved, isNotNull);
+      expect(saved!.encryptedKey, 'future-key-material');
+    },
+  );
+
+  test(
+    'PREREQ-FUTURE-EPOCH-KEY-REPAIR rejected key updates do not trigger pending repair',
+    () async {
+      await _saveActiveGroup('group-prereq-reject-key');
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+
+      final invalidSignatureBridge = PassthroughCryptoBridge();
+      invalidSignatureBridge.responses['payload.verify'] = {
+        'ok': true,
+        'valid': false,
+      };
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: invalidSignatureBridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          repairCalls.add(request);
+        },
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-prereq-reject-key',
+            keyGeneration: 2,
+            encryptedKey: 'rejected-key-material',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(invalidSignatureBridge.commandLog, contains('payload.verify'));
+      expect(
+        invalidSignatureBridge.commandLog,
+        isNot(contains('group:updateKey')),
+      );
+      expect(repairCalls, isEmpty);
+      expect(
+        await groupRepo.getKeyByGeneration('group-prereq-reject-key', 2),
+        isNull,
+      );
+
+      final failUpdateKeyBridge = _UpdateKeyFailBridge();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: failUpdateKeyBridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          repairCalls.add(request);
+        },
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-prereq-reject-key',
+            keyGeneration: 3,
+            encryptedKey: 'bridge-rejected-key-material',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(failUpdateKeyBridge.commandLog, contains('group:updateKey'));
+      expect(repairCalls, isEmpty);
+      expect(
+        await groupRepo.getKeyByGeneration('group-prereq-reject-key', 3),
+        isNull,
+      );
+    },
+  );
+
+  test(
     'send during pending key update uses old epoch until local update commits',
     () async {
       await groupRepo.saveGroup(
@@ -383,6 +1350,12 @@ void main() {
           publicKey: 'pk-b',
           joinedAt: DateTime.now().toUtc(),
         ),
+      );
+      await _saveMember(
+        groupId: 'group-pending-send',
+        peerId: 'sender-peer',
+        role: MemberRole.admin,
+        username: 'Sender Admin',
       );
       await groupRepo.saveKey(
         GroupKeyInfo(

@@ -69,22 +69,6 @@ Future<void> updateGroupMemberRole({
     );
   }
 
-  if (selfMember != null &&
-      !canApplyGroupMemberRoleUpdate(actor: selfMember, newRole: role)) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_PERMISSION_ESCALATION_BLOCKED',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'peerId': memberPeerId.length > 8
-            ? memberPeerId.substring(0, 8)
-            : memberPeerId,
-        'role': role.toValue(),
-      },
-    );
-    throw StateError(permissionEscalationBlockedMessage);
-  }
-
   final targetMember = await groupRepo.getMember(groupId, memberPeerId);
   if (targetMember == null) {
     emitFlowEvent(
@@ -98,6 +82,27 @@ Future<void> updateGroupMemberRole({
       },
     );
     throw StateError('Member not found');
+  }
+
+  if (selfMember != null &&
+      !canApplyGroupMemberRoleUpdate(
+        actor: selfMember,
+        newRole: role,
+        existingRole: targetMember.role,
+        existingPermissions: targetMember.permissions,
+      )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_UPDATE_MEMBER_ROLE_USE_CASE_PERMISSION_ESCALATION_BLOCKED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'peerId': memberPeerId.length > 8
+            ? memberPeerId.substring(0, 8)
+            : memberPeerId,
+        'role': role.toValue(),
+      },
+    );
+    throw StateError(permissionEscalationBlockedMessage);
   }
 
   if (targetMember.role == role) {

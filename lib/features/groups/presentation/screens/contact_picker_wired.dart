@@ -13,6 +13,7 @@ import 'package:flutter_app/features/groups/application/add_group_member_use_cas
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -158,6 +159,10 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         currentMemberCount: currentMembers.length,
         requestedAdditionalMembers: selectedContacts.length,
       );
+      final preTransitionStateHash = await buildGroupTransitionStateHash(
+        widget.groupRepo,
+        widget.groupId,
+      );
 
       // 1. Add all members locally (continue on individual errors)
       final addedMembers = <GroupMember>[];
@@ -218,22 +223,38 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
 
       // 3. Broadcast ONE members_added system message
       final publishedAt = DateTime.now().toUtc();
-      final sysMessage = jsonEncode({
-        '__sys': 'members_added',
-        'members': addedMembers
-            .map(
-              (m) => {
-                'peerId': m.peerId,
-                'username': m.username,
-                'role': m.role.toValue(),
-                'publicKey': m.publicKey,
-                if (m.mlKemPublicKey != null)
-                  'mlKemPublicKey': m.mlKemPublicKey,
-              },
-            )
-            .toList(),
-        'groupConfig': groupConfig,
-      });
+      final sourceEventId =
+          'members_added:${widget.groupId}:${identity.peerId}:${publishedAt.microsecondsSinceEpoch}';
+      final sysPayload = await signGroupSystemTransitionPayload(
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        groupId: widget.groupId,
+        transitionType: 'members_added',
+        sourceEventId: sourceEventId,
+        eventAt: publishedAt,
+        actorPeerId: identity.peerId,
+        actorUsername: identity.username,
+        actorSigningPublicKey: identity.publicKey,
+        actorPrivateKey: identity.privateKey,
+        preTransitionStateHash: preTransitionStateHash,
+        systemPayload: {
+          '__sys': 'members_added',
+          'members': addedMembers
+              .map(
+                (m) => {
+                  'peerId': m.peerId,
+                  'username': m.username,
+                  'role': m.role.toValue(),
+                  'publicKey': m.publicKey,
+                  if (m.mlKemPublicKey != null)
+                    'mlKemPublicKey': m.mlKemPublicKey,
+                },
+              )
+              .toList(),
+          'groupConfig': groupConfig,
+        },
+      );
+      final sysMessage = jsonEncode(sysPayload);
 
       var membersAddedPublishFailed = false;
       try {
@@ -244,7 +265,8 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           senderPeerId: identity.peerId,
           senderPublicKey: identity.publicKey,
           senderPrivateKey: identity.privateKey,
-          senderUsername: identity.username ?? '',
+          senderUsername: identity.username,
+          messageId: sourceEventId,
         );
         if (publishResult['ok'] != true) {
           membersAddedPublishFailed = true;
@@ -269,7 +291,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
                 )
                 .toList(growable: false),
             senderId: identity.peerId,
-            senderUsername: identity.username ?? '',
+            senderUsername: identity.username,
             eventAt: publishedAt,
           ),
         );
@@ -305,8 +327,11 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
         inviteBatchResult = await sendGroupInvitesInParallel(
           p2pService: widget.p2pService,
           bridge: widget.bridge,
+          groupRepo: widget.groupRepo,
           senderPeerId: identity.peerId,
-          senderUsername: identity.username ?? '',
+          senderPublicKey: identity.publicKey,
+          senderPrivateKey: identity.privateKey,
+          senderUsername: identity.username,
           groupId: widget.groupId,
           groupKey: keyInfo.encryptedKey,
           keyEpoch: keyInfo.keyGeneration,

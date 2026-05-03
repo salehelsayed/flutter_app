@@ -2,16 +2,25 @@ package bridge
 
 import (
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"regexp"
 	"sync"
 	"testing"
+	"time"
 
+	libp2p "github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/mknoon/go-mknoon/node"
 )
+
+var sp003UUIDV4Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 // parseJSON is a test helper that unmarshals a JSON string into a map.
 func parseJSON(t *testing.T, s string) map[string]interface{} {
@@ -52,6 +61,31 @@ func assertNotOk(t *testing.T, m map[string]interface{}, expectedCode string) {
 		t.Errorf("expected errorCode=%q, got %q (errorMessage=%v)",
 			expectedCode, code, m["errorMessage"])
 	}
+}
+
+func writeBridgeTestFrame(t *testing.T, w io.Writer, data []byte) {
+	t.Helper()
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+	if _, err := w.Write(lenBuf[:]); err != nil {
+		t.Fatalf("write frame length: %v", err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatalf("write frame payload: %v", err)
+	}
+}
+
+func readBridgeTestFrame(t *testing.T, r io.Reader) []byte {
+	t.Helper()
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+		t.Fatalf("read frame length: %v", err)
+	}
+	data := make([]byte, binary.BigEndian.Uint32(lenBuf[:]))
+	if _, err := io.ReadFull(r, data); err != nil {
+		t.Fatalf("read frame payload: %v", err)
+	}
+	return data
 }
 
 // --- GenerateIdentity ---
@@ -700,6 +734,39 @@ func generateTestKeyHex(t *testing.T) string {
 		t.Fatalf("raw key: %v", err)
 	}
 	return hex.EncodeToString(raw)
+}
+
+type testIdentityMaterial struct {
+	PrivateKeyHex string
+	PeerId        string
+	PublicKey     string
+	PrivateKey    string
+}
+
+func generateTestIdentityMaterial(t *testing.T) testIdentityMaterial {
+	t.Helper()
+	priv, pub, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	rawPriv, err := priv.Raw()
+	if err != nil {
+		t.Fatalf("raw private key: %v", err)
+	}
+	rawPub, err := pub.Raw()
+	if err != nil {
+		t.Fatalf("raw public key: %v", err)
+	}
+	peerId, err := peer.IDFromPublicKey(pub)
+	if err != nil {
+		t.Fatalf("derive peer id: %v", err)
+	}
+	return testIdentityMaterial{
+		PrivateKeyHex: hex.EncodeToString(rawPriv),
+		PeerId:        peerId.String(),
+		PublicKey:     base64.StdEncoding.EncodeToString(rawPub),
+		PrivateKey:    base64.StdEncoding.EncodeToString(rawPriv),
+	}
 }
 
 // startNodeJSON builds a valid JSON input string for StartNode.
@@ -1476,6 +1543,77 @@ func TestGroupCreate_MissingFields(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestGroupCreate_GL005RejectsUnsupportedPublicOrOpenGroupTypes(t *testing.T) {
+	withSingletonNode(t)
+
+	for _, groupType := range []string{"public", "private", "broadcast", "discoverable", "openJoin"} {
+		t.Run(groupType, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]interface{}{
+				"name":             "GL-005 unsupported group",
+				"groupType":        groupType,
+				"creatorPeerId":    "peer-admin",
+				"creatorPublicKey": "pk-admin",
+			})
+
+			result := GroupCreate(string(input))
+			m := parseJSON(t, result)
+			assertNotOk(t, m, "INVALID_INPUT")
+		})
+	}
+}
+
+func TestSP003GroupCreateGeneratesFreshV4GroupIdsAndKeys(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	startResult := StartNode(startNodeJSON(t, generateTestKeyHex(t)))
+	assertOk(t, parseJSON(t, startResult))
+
+	genIdentity := parseJSON(t, GenerateIdentity())
+	assertOk(t, genIdentity)
+	identity := genIdentity["identity"].(map[string]interface{})
+	creatorPeerId := identity["peerId"].(string)
+	creatorPublicKey := identity["publicKey"].(string)
+
+	seenGroupIds := make(map[string]struct{}, 8)
+	seenGroupKeys := make(map[string]struct{}, 8)
+	for i := 0; i < 8; i++ {
+		createInput, _ := json.Marshal(map[string]interface{}{
+			"name":             fmt.Sprintf("SP-003 Random Group %d", i+1),
+			"groupType":        "chat",
+			"creatorPeerId":    creatorPeerId,
+			"creatorPublicKey": creatorPublicKey,
+		})
+		createResult := GroupCreate(string(createInput))
+		createMap := parseJSON(t, createResult)
+		assertOk(t, createMap)
+
+		groupId, ok := createMap["groupId"].(string)
+		if !ok || !sp003UUIDV4Pattern.MatchString(groupId) {
+			t.Fatalf("groupId #%d = %v, want UUID v4", i+1, createMap["groupId"])
+		}
+		if _, exists := seenGroupIds[groupId]; exists {
+			t.Fatalf("duplicate group id at sample %d", i+1)
+		}
+		seenGroupIds[groupId] = struct{}{}
+
+		groupKey, ok := createMap["groupKey"].(string)
+		if !ok || groupKey == "" {
+			t.Fatalf("groupKey #%d missing or empty: %v", i+1, createMap["groupKey"])
+		}
+		keyBytes, err := base64.StdEncoding.DecodeString(groupKey)
+		if err != nil {
+			t.Fatalf("decode groupKey #%d: %v", i+1, err)
+		}
+		if len(keyBytes) != 32 {
+			t.Fatalf("groupKey #%d length = %d, want 32", i+1, len(keyBytes))
+		}
+		if _, exists := seenGroupKeys[groupKey]; exists {
+			t.Fatalf("duplicate group key at sample %d", i+1)
+		}
+		seenGroupKeys[groupKey] = struct{}{}
+	}
+}
+
 func TestGroupJoinTopic_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupJoinTopic("not valid json")
@@ -1560,44 +1698,35 @@ func TestGroupPublish_MediaOnly_AcceptsEmptyText(t *testing.T) {
 func TestGroupPublish_ResponseIncludesTopicPeers(t *testing.T) {
 	withFreshSingletonNode(t)
 
-	// 1. Generate identity to get valid Ed25519 keys.
-	genResult := GenerateIdentity()
-	genMap := parseJSON(t, genResult)
-	assertOk(t, genMap)
-	identity := genMap["identity"].(map[string]interface{})
-	peerId := identity["peerId"].(string)
-	publicKey := identity["publicKey"].(string)
-	privateKey := identity["privateKey"].(string)
-
-	// 2. Start the node.
-	keyHex := generateTestKeyHex(t)
+	// 1. Start the node with matching libp2p and signing identity material.
+	identity := generateTestIdentityMaterial(t)
 	startInput, _ := json.Marshal(map[string]interface{}{
-		"privateKeyHex":  keyHex,
+		"privateKeyHex":  identity.PrivateKeyHex,
 		"relayAddresses": []string{},
 		"autoRegister":   false,
 	})
 	startResult := StartNode(string(startInput))
 	assertOk(t, parseJSON(t, startResult))
 
-	// 3. Create a group (this joins the topic and generates a group key).
+	// 2. Create a group (this joins the topic and generates a group key).
 	createInput, _ := json.Marshal(map[string]interface{}{
 		"name":             "Peer Count Test Group",
 		"groupType":        "chat",
-		"creatorPeerId":    peerId,
-		"creatorPublicKey": publicKey,
+		"creatorPeerId":    identity.PeerId,
+		"creatorPublicKey": identity.PublicKey,
 	})
 	createResult := GroupCreate(string(createInput))
 	createMap := parseJSON(t, createResult)
 	assertOk(t, createMap)
 	groupId := createMap["groupId"].(string)
 
-	// 4. Publish a message to the group.
+	// 3. Publish a message to the group.
 	publishInput, _ := json.Marshal(map[string]interface{}{
 		"groupId":          groupId,
 		"text":             "hello from bridge test",
-		"senderPeerId":     peerId,
-		"senderPublicKey":  publicKey,
-		"senderPrivateKey": privateKey,
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
 		"senderUsername":   "TestUser",
 	})
 	publishResult := GroupPublish(string(publishInput))
@@ -1619,8 +1748,12 @@ func TestGroupPublish_ResponseIncludesTopicPeers(t *testing.T) {
 	}
 
 	// 6. Verify "messageId" is still present.
-	if _, ok := m["messageId"].(string); !ok {
+	messageId, ok := m["messageId"].(string)
+	if !ok {
 		t.Fatal("response missing 'messageId' string field")
+	}
+	if !sp003UUIDV4Pattern.MatchString(messageId) {
+		t.Fatalf("messageId = %q, want UUID v4", messageId)
 	}
 }
 
@@ -1704,7 +1837,7 @@ func TestGroupInboxStore_MissingFields(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
-func TestGroupInboxStore_AcceptsPushFanoutFields(t *testing.T) {
+func TestGroupInboxStore_IgnoresRetiredPushPreviewFields(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupInboxStore(`{
 		"groupId": "g1",
@@ -2468,4 +2601,131 @@ func TestGroupInboxRetrieveCursor_CommandExposed(t *testing.T) {
 	}
 	// Expected failure: GROUP_INBOX_ERROR (no relay reachable)
 	assertNotOk(t, m, "GROUP_INBOX_ERROR")
+}
+
+func TestBridgeGroupHistoryRepairRange_MissingFields(t *testing.T) {
+	withFreshSingletonNode(t)
+	keyHex := generateTestKeyHex(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex": keyHex,
+		"relayAddresses": []string{
+			generateFakeRelayAddrBridge(t, 19996),
+		},
+		"autoRegister": false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	result := GroupHistoryRepairRange(`{"groupId":"group-1","gapId":"gap-1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestBridgeGroupHistoryRepairRange_CommandExposed(t *testing.T) {
+	withFreshSingletonNode(t)
+	keyHex := generateTestKeyHex(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex": keyHex,
+		"relayAddresses": []string{
+			generateFakeRelayAddrBridge(t, 19997),
+		},
+		"autoRegister": false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	repairInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":                "test-group-history-repair",
+		"gapId":                  "gap-1",
+		"sourcePeerId":           "peer-source",
+		"missingAfterMessageId":  "msg-before",
+		"missingBeforeMessageId": "msg-after",
+		"expectedRangeHash":      "range-hash",
+		"expectedHeadMessageId":  "msg-after",
+		"limit":                  20,
+	})
+	result := GroupHistoryRepairRange(string(repairInput))
+	m := parseJSON(t, result)
+
+	code, _ := m["errorCode"].(string)
+	if code == "INVALID_INPUT" {
+		t.Fatal("GroupHistoryRepairRange should be exposed and accept valid input")
+	}
+	assertNotOk(t, m, "GROUP_HISTORY_REPAIR_ERROR")
+}
+
+func TestBridgeGroupHistoryRepairRange_ReturnsRelayReplayEnvelopes(t *testing.T) {
+	withFreshSingletonNode(t)
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan map[string]interface{}, 1)
+	relayHost.SetStreamHandler(node.InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes := readBridgeTestFrame(t, s)
+		var req map[string]interface{}
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			t.Errorf("unmarshal relay request: %v", err)
+			return
+		}
+		requestSeen <- req
+		writeBridgeTestFrame(t, s, []byte(`{
+			"status":"OK",
+			"groupId":"group-1",
+			"gapId":"gap-1",
+			"sourcePeerId":"peer-source",
+			"rangeHash":"range-hash",
+			"headMessageId":"msg-after",
+			"groupMessages":[
+				{"from":"peer-source","message":"{\"messageId\":\"msg-repaired\"}","timestamp":1777659516000}
+			]
+		}`))
+	})
+
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	keyHex := generateTestKeyHex(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  keyHex,
+		"relayAddresses": []string{relayAddr},
+		"autoRegister":   false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	repairInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":                "group-1",
+		"gapId":                  "gap-1",
+		"sourcePeerId":           "peer-source",
+		"missingAfterMessageId":  "msg-before",
+		"missingBeforeMessageId": "msg-after",
+		"expectedRangeHash":      "range-hash",
+		"expectedHeadMessageId":  "msg-after",
+		"limit":                  20,
+	})
+	result := GroupHistoryRepairRange(string(repairInput))
+	m := parseJSON(t, result)
+	assertOk(t, m)
+	if m["rangeHash"] != "range-hash" || m["headMessageId"] != "msg-after" {
+		t.Fatalf("unexpected bridge repair metadata: %#v", m)
+	}
+	messages, ok := m["messages"].([]interface{})
+	if !ok || len(messages) != 1 {
+		t.Fatalf("messages = %#v, want one replay envelope", m["messages"])
+	}
+
+	select {
+	case req := <-requestSeen:
+		if req["action"] != "group_history_repair_range" {
+			t.Fatalf("action = %v, want group_history_repair_range", req["action"])
+		}
+		if req["expectedRangeHash"] != "range-hash" ||
+			req["expectedHeadMessageId"] != "msg-after" {
+			t.Fatalf("repair request missing integrity fields: %#v", req)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for relay repair request")
+	}
 }

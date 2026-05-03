@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
@@ -69,6 +70,10 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
   if (member == null) {
     return RemoveGroupReactionResult.notMember;
   }
+  final senderDevice = member.firstActiveDeviceForSigningKey(
+    senderPublicKey,
+    allowLegacyFallback: true,
+  );
 
   // 3. Build remove payload
   final reactionId = _uuid.v4();
@@ -91,6 +96,10 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
       senderPeerId: senderPeerId,
       senderPublicKey: senderPublicKey,
       senderPrivateKey: senderPrivateKey,
+      senderDeviceId: senderDevice?.deviceId,
+      senderTransportPeerId: senderDevice?.transportPeerId,
+      senderDevicePublicKey: senderDevice?.deviceSigningPublicKey,
+      senderKeyPackageId: senderDevice?.keyPackageId,
       reactionPayload: payload.toInnerJson(),
     );
 
@@ -113,6 +122,9 @@ Future<RemoveGroupReactionResult> removeGroupReaction({
     reactionReplayOutboxRepo: reactionReplayOutboxRepo,
     groupId: groupId,
     payload: payload,
+    senderPublicKey: senderDevice?.deviceSigningPublicKey ?? senderPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    senderDevice: senderDevice,
   );
 
   // 6. Delete locally
@@ -136,6 +148,9 @@ Future<void> _stageRemoveReactionInboxStore({
   required GroupReactionReplayOutboxRepository reactionReplayOutboxRepo,
   required String groupId,
   required GroupReactionPayload payload,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required GroupMemberDeviceIdentity? senderDevice,
 }) async {
   late final String inboxRetryPayload;
   try {
@@ -145,7 +160,13 @@ Future<void> _stageRemoveReactionInboxStore({
       groupId: groupId,
       payloadType: groupOfflineReplayPayloadTypeReaction,
       plaintext: payload.toInnerJson(),
+      senderPeerId: payload.senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
       messageId: payload.id,
+      senderDeviceId: senderDevice?.deviceId,
+      senderTransportPeerId: senderDevice?.transportPeerId,
+      senderKeyPackageId: senderDevice?.keyPackageId,
     );
   } catch (e) {
     emitFlowEvent(

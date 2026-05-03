@@ -13,6 +13,9 @@ class GroupMessage {
   /// The peer ID of the message sender.
   final String senderPeerId;
 
+  /// The verified transport Peer ID observed at the live or replay boundary.
+  final String? transportPeerId;
+
   /// The display name of the sender at the time of sending.
   final String? senderUsername;
 
@@ -60,6 +63,7 @@ class GroupMessage {
     required this.id,
     required this.groupId,
     required this.senderPeerId,
+    this.transportPeerId,
     this.senderUsername,
     required this.text,
     required this.timestamp,
@@ -81,6 +85,7 @@ class GroupMessage {
       id: map['id'] as String,
       groupId: map['group_id'] as String,
       senderPeerId: map['sender_peer_id'] as String,
+      transportPeerId: map['transport_peer_id'] as String?,
       senderUsername: map['sender_username'] as String?,
       text: map['text'] as String,
       timestamp: DateTime.parse(map['timestamp'] as String),
@@ -104,6 +109,7 @@ class GroupMessage {
       'id': id,
       'group_id': groupId,
       'sender_peer_id': senderPeerId,
+      'transport_peer_id': transportPeerId,
       'sender_username': senderUsername,
       'text': text,
       'timestamp': timestamp.toUtc().toIso8601String(),
@@ -124,6 +130,7 @@ class GroupMessage {
     String? id,
     String? groupId,
     String? senderPeerId,
+    Object? transportPeerId = _sentinel,
     String? senderUsername,
     String? text,
     DateTime? timestamp,
@@ -142,6 +149,9 @@ class GroupMessage {
       id: id ?? this.id,
       groupId: groupId ?? this.groupId,
       senderPeerId: senderPeerId ?? this.senderPeerId,
+      transportPeerId: transportPeerId == _sentinel
+          ? this.transportPeerId
+          : transportPeerId as String?,
       senderUsername: senderUsername ?? this.senderUsername,
       text: text ?? this.text,
       timestamp: timestamp ?? this.timestamp,

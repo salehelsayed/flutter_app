@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 
 void main() {
@@ -16,6 +17,7 @@ void main() {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupMessagesTablesMigration(db);
     await runGroupQuotedMessageIdMigration(db);
+    await runGroupMessageTransportPeerIdMigration(db);
   });
 
   tearDown(() async {
@@ -30,6 +32,7 @@ void main() {
     String text = 'Hello group',
     String timestamp = '2026-01-15T12:00:00.000Z',
     String? quotedMessageId,
+    String? transportPeerId,
     int keyGeneration = 0,
     String status = 'sent',
     int isIncoming = 1,
@@ -40,6 +43,7 @@ void main() {
       'id': id,
       'group_id': groupId,
       'sender_peer_id': senderPeerId,
+      'transport_peer_id': transportPeerId,
       'sender_username': senderUsername,
       'text': text,
       'timestamp': timestamp,
@@ -250,6 +254,7 @@ void main() {
             id: 'msg-c',
             timestamp: sharedTimestamp,
             quotedMessageId: 'msg-parent',
+            transportPeerId: 'peer-sender-device',
             createdAt: '2026-01-02T00:00:01.000Z',
           ),
         );
@@ -266,6 +271,7 @@ void main() {
         expect(rows, hasLength(1));
         expect(rows.single['latest_id'], 'msg-c');
         expect(rows.single['latest_quoted_message_id'], 'msg-parent');
+        expect(rows.single['latest_transport_peer_id'], 'peer-sender-device');
       },
     );
   });

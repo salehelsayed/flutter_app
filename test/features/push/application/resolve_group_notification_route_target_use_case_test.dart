@@ -41,6 +41,14 @@ GroupInvitePayload _makeInvitePayload({String groupId = _groupId}) {
     senderPeerId: 'peer-admin',
     senderUsername: 'Admin',
     timestamp: '2026-04-06T10:00:00.000Z',
+    invitePolicy: GroupInvitePolicy(
+      expiresAt: DateTime.utc(2026, 4, 7, 10),
+      allowedDevices: const ['peer-user-a'],
+      assignedRole: 'writer',
+      canInviteOthers: false,
+      joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+      keyEpoch: 1,
+    ),
   );
 }
 

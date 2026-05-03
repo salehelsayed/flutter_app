@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// "+N" circle badge shown on the outer ring when friends exceed 13.
 ///
@@ -40,15 +41,20 @@ class _OverflowBadgeState extends State<OverflowBadge>
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final surfaceColor = readableColors.isLightSurface
+        ? readableColors.surfaceSubtle.withValues(alpha: 0.82)
+        : readableColors.glassSurface;
+    final borderColor = readableColors.border.withValues(
+      alpha: readableColors.isLightSurface ? 0.28 : 0.20,
+    );
+
     return AnimatedBuilder(
       animation: _animation,
       builder: (context, child) {
         return Transform.scale(
           scale: _animation.value,
-          child: Opacity(
-            opacity: _animation.value,
-            child: child,
-          ),
+          child: Opacity(opacity: _animation.value, child: child),
         );
       },
       child: ClipOval(
@@ -59,22 +65,22 @@ class _OverflowBadgeState extends State<OverflowBadge>
             height: 28,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: const Color(0x0FFFFFFF), // rgba(255,255,255,0.06)
+              color: surfaceColor,
               border: Border.all(
-                color: const Color(0x33FFFFFF), // rgba(255,255,255,0.2)
+                color: borderColor,
                 width: 1,
                 style: BorderStyle.none, // We'll use dashed via paint
               ),
             ),
             child: CustomPaint(
-              painter: _DashedBorderPainter(),
+              painter: _DashedBorderPainter(color: borderColor),
               child: Center(
                 child: Text(
                   '+${widget.count}',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
-                    color: Color(0x80FFFFFF), // rgba(255,255,255,0.5)
+                    color: readableColors.textMuted,
                     letterSpacing: -0.5,
                   ),
                 ),
@@ -88,10 +94,14 @@ class _OverflowBadgeState extends State<OverflowBadge>
 }
 
 class _DashedBorderPainter extends CustomPainter {
+  final Color color;
+
+  const _DashedBorderPainter({required this.color});
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0x33FFFFFF)
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
 
@@ -118,5 +128,7 @@ class _DashedBorderPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _DashedBorderPainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
 }

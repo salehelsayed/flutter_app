@@ -38,6 +38,7 @@ import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart
 import 'package:flutter_app/core/database/helpers/group_invite_consumptions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_revocations_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_welcome_key_package_tombstones_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
 import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
@@ -80,10 +81,19 @@ import 'package:flutter_app/core/database/migrations/057_group_member_permission
 import 'package:flutter_app/core/database/migrations/058_media_attachment_integrity_columns.dart';
 import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
 import 'package:flutter_app/core/database/migrations/060_group_event_log.dart';
+import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
+import 'package:flutter_app/core/database/migrations/063_group_pending_key_repairs.dart';
+import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
+import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
+import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_comment_reactions_db_helpers.dart';
@@ -109,12 +119,10 @@ import 'package:flutter_app/features/introduction/application/resolve_unknown_in
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
-import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
-import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
@@ -133,13 +141,15 @@ import 'package:flutter_app/features/conversation/application/retry_unacked_mess
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
-import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
@@ -219,10 +229,7 @@ import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository_impl.dart';
-import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
-import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository_impl.dart';
-import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository_impl.dart';
 
 void main() async {
@@ -289,7 +296,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 60,
+    version: 66,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -351,6 +358,12 @@ void main() async {
       await runMediaAttachmentIntegrityColumnsMigration(db);
       await runMediaAttachmentEncryptionColumnsMigration(db);
       await runGroupEventLogMigration(db);
+      await runGroupMessageTransportPeerIdMigration(db);
+      await runGroupMemberDeviceIdentitiesMigration(db);
+      await runGroupPendingKeyRepairsMigration(db);
+      await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      await runGroupHistoryGapRepairsMigration(db);
+      await runGroupSyncReceiptsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -528,6 +541,24 @@ void main() async {
       if (oldVersion < 60) {
         await runGroupEventLogMigration(db);
       }
+      if (oldVersion < 61) {
+        await runGroupMessageTransportPeerIdMigration(db);
+      }
+      if (oldVersion < 62) {
+        await runGroupMemberDeviceIdentitiesMigration(db);
+      }
+      if (oldVersion < 63) {
+        await runGroupPendingKeyRepairsMigration(db);
+      }
+      if (oldVersion < 64) {
+        await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      }
+      if (oldVersion < 65) {
+        await runGroupHistoryGapRepairsMigration(db);
+      }
+      if (oldVersion < 66) {
+        await runGroupSyncReceiptsMigration(db);
+      }
     },
   );
   StartupTiming.instance.mark('database_ready');
@@ -539,6 +570,10 @@ void main() async {
 
   // 4. Apply CHECK constraints now that secret columns are guaranteed NULL
   await runSecretNullChecksMigration(db);
+  await scrubLegacyGroupSecretsToSecureStorage(
+    db: db,
+    secureKeyStore: secureKeyStore,
+  );
   StartupTiming.instance.mark('identity_store_ready');
 
   // 5. Create repository with database helpers + secure key store
@@ -805,6 +840,7 @@ void main() async {
     dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
     dbLoadUploadPendingAttachments: ({int limit = 50}) =>
         dbLoadUploadPendingAttachments(db, limit: limit),
+    secureKeyStore: secureKeyStore,
   );
 
   // Create reaction repository
@@ -874,6 +910,7 @@ void main() async {
     dbLoadAllGroupKeys: (groupId) => dbLoadAllGroupKeys(db, groupId),
     dbDeleteGroupKeysBeforeGeneration: (groupId, minKeyGenerationToKeep) =>
         dbDeleteGroupKeysBeforeGeneration(db, groupId, minKeyGenerationToKeep),
+    groupKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
   );
   await groupRepository.mirrorAllKeysToSecureStore();
@@ -891,6 +928,16 @@ void main() async {
         dbUpsertGroupInviteConsumption(db, row),
     dbLoadGroupInviteConsumption: (inviteId) =>
         dbLoadGroupInviteConsumption(db, inviteId),
+    dbUpsertGroupWelcomeKeyPackageTombstone: (row) =>
+        dbUpsertGroupWelcomeKeyPackageTombstone(db, row),
+    dbLoadGroupWelcomeKeyPackageTombstone:
+        ({required packageId, required recipientDeviceId, required groupId}) =>
+            dbLoadGroupWelcomeKeyPackageTombstone(
+              db,
+              packageId: packageId,
+              recipientDeviceId: recipientDeviceId,
+              groupId: groupId,
+            ),
     dbDeletePendingGroupInvite: (groupId) =>
         dbDeletePendingGroupInvite(db, groupId),
     dbDeleteExpiredPendingGroupInvites: (cutoff) =>
@@ -899,51 +946,153 @@ void main() async {
         dbDeleteExpiredGroupInviteRevocations(db, cutoff),
     dbDeleteExpiredGroupInviteConsumptions: (cutoff) =>
         dbDeleteExpiredGroupInviteConsumptions(db, cutoff),
+    dbDeleteExpiredGroupWelcomeKeyPackageTombstones: (cutoff) =>
+        dbDeleteExpiredGroupWelcomeKeyPackageTombstones(db, cutoff),
   );
 
+  GroupMessageRepositoryImpl createGroupMessageRepository(
+    dynamic executor, {
+    bool enableInboxPageTransactions = false,
+  }) {
+    return GroupMessageRepositoryImpl(
+      dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
+      dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
+          dbLoadGroupMessagesPage(
+            executor,
+            groupId,
+            limit: limit,
+            offset: offset,
+          ),
+      dbLoadGroupMessage: (id) => dbLoadGroupMessage(executor, id),
+      dbLoadLatestGroupMessage: (groupId) =>
+          dbLoadLatestGroupMessage(executor, groupId),
+      dbLoadLatestRemovalTimestampForSenderFn: (groupId, senderPeerId) =>
+          dbLoadLatestGroupRemovalTimestampForSender(
+            executor,
+            groupId,
+            senderPeerId,
+          ),
+      dbUpdateGroupMessageStatus: (id, status) =>
+          dbUpdateGroupMessageStatus(executor, id, status),
+      dbCountGroupMessages: (groupId) =>
+          dbCountGroupMessages(executor, groupId),
+      dbCountUnreadGroupMessages: (groupId) =>
+          dbCountUnreadGroupMessages(executor, groupId),
+      dbCountTotalUnreadGroupMessages: () =>
+          dbCountTotalUnreadGroupMessages(executor),
+      dbMarkGroupMessagesAsRead: (groupId) =>
+          dbMarkGroupMessagesAsRead(executor, groupId),
+      dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
+      dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
+          dbExistsGroupMessageByContent(
+            executor,
+            groupId,
+            senderPeerId,
+            text,
+            timestamp,
+          ),
+      dbDeleteGroupMessagesForGroup: (groupId) =>
+          dbDeleteGroupMessagesForGroup(executor, groupId),
+      dbLoadGroupThreadSummaries: (groupIds) =>
+          dbLoadGroupThreadSummaries(executor, groupIds),
+      dbLoadFailedOutgoingGroupMessagesFn: () =>
+          dbLoadFailedOutgoingGroupMessages(executor),
+      dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
+          dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
+      dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>
+          dbLoadGroupMessagesWithFailedInboxStore(executor, limit: limit),
+      dbUpdateGroupMessageInboxStoredFn: (id, {required bool stored}) =>
+          dbUpdateGroupMessageInboxStored(executor, id, stored: stored),
+      dbUpdateGroupMessageInboxRetryPayloadFn: (id, payload) =>
+          dbUpdateGroupMessageInboxRetryPayload(executor, id, payload),
+      dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
+          dbUpdateGroupMessageWireEnvelope(executor, id, envelope),
+      dbLoadGroupInboxCursorFn: (groupId) async {
+        final row = await dbLoadGroupInboxCursor(executor, groupId);
+        return row?['cursor'] as String?;
+      },
+      dbLoadGroupMessageReceiptsFn:
+          (groupId, messageId, {String? receiptType}) =>
+              dbLoadGroupMessageReceipts(
+                executor,
+                groupId: groupId,
+                messageId: messageId,
+                receiptType: receiptType,
+              ),
+      dbRunGroupInboxPageTransactionFn: enableInboxPageTransactions
+          ? ({
+              required groupId,
+              required nextCursor,
+              required apply,
+              required receipts,
+              required markReadMessageIds,
+            }) {
+              return dbApplyGroupInboxPageTransaction(
+                db,
+                groupId: groupId,
+                nextCursor: nextCursor,
+                receiptRows: () =>
+                    receipts.map((receipt) => receipt.toMap()).toList(),
+                markReadMessageIds: () => markReadMessageIds,
+                apply: (transactionExecutor) {
+                  final transactionRepo = createGroupMessageRepository(
+                    transactionExecutor,
+                  );
+                  return apply(transactionRepo);
+                },
+              );
+            }
+          : null,
+    );
+  }
+
   // Create group message repository
-  final groupMessageRepository = GroupMessageRepositoryImpl(
-    dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
-    dbLoadGroupMessagesPage: (groupId, {limit = 50, offset = 0}) =>
-        dbLoadGroupMessagesPage(db, groupId, limit: limit, offset: offset),
-    dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
-    dbLoadLatestGroupMessage: (groupId) =>
-        dbLoadLatestGroupMessage(db, groupId),
-    dbLoadLatestRemovalTimestampForSenderFn: (groupId, senderPeerId) =>
-        dbLoadLatestGroupRemovalTimestampForSender(db, groupId, senderPeerId),
-    dbUpdateGroupMessageStatus: (id, status) =>
-        dbUpdateGroupMessageStatus(db, id, status),
-    dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
-    dbCountUnreadGroupMessages: (groupId) =>
-        dbCountUnreadGroupMessages(db, groupId),
-    dbCountTotalUnreadGroupMessages: () => dbCountTotalUnreadGroupMessages(db),
-    dbMarkGroupMessagesAsRead: (groupId) =>
-        dbMarkGroupMessagesAsRead(db, groupId),
-    dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
-    dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
-        dbExistsGroupMessageByContent(
-          db,
-          groupId,
-          senderPeerId,
-          text,
-          timestamp,
-        ),
-    dbDeleteGroupMessagesForGroup: (groupId) =>
-        dbDeleteGroupMessagesForGroup(db, groupId),
-    dbLoadGroupThreadSummaries: (groupIds) =>
-        dbLoadGroupThreadSummaries(db, groupIds),
-    dbLoadFailedOutgoingGroupMessagesFn: () =>
-        dbLoadFailedOutgoingGroupMessages(db),
-    dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
-        dbTransitionGroupSendingToFailed(db, olderThan: olderThan),
-    dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>
-        dbLoadGroupMessagesWithFailedInboxStore(db, limit: limit),
-    dbUpdateGroupMessageInboxStoredFn: (id, {required bool stored}) =>
-        dbUpdateGroupMessageInboxStored(db, id, stored: stored),
-    dbUpdateGroupMessageInboxRetryPayloadFn: (id, payload) =>
-        dbUpdateGroupMessageInboxRetryPayload(db, id, payload),
-    dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
-        dbUpdateGroupMessageWireEnvelope(db, id, envelope),
+  final groupMessageRepository = createGroupMessageRepository(
+    db,
+    enableInboxPageTransactions: true,
+  );
+
+  final groupPendingKeyRepairRepository = GroupPendingKeyRepairRepositoryImpl(
+    dbUpsertGroupPendingKeyRepair: (row) =>
+        dbUpsertGroupPendingKeyRepair(db, row),
+    dbLoadGroupPendingKeyRepair: (id) => dbLoadGroupPendingKeyRepair(db, id),
+    dbLoadPendingGroupKeyRepairsForEpoch:
+        ({required groupId, required keyEpoch, int limit = 50}) =>
+            dbLoadPendingGroupKeyRepairsForEpoch(
+              db,
+              groupId: groupId,
+              keyEpoch: keyEpoch,
+              limit: limit,
+            ),
+    dbRecordGroupPendingKeyRepairAttempt:
+        (id, {required lastError, required updatedAt}) =>
+            dbRecordGroupPendingKeyRepairAttempt(
+              db,
+              id,
+              lastError: lastError,
+              updatedAt: updatedAt,
+            ),
+    dbFinalizeGroupPendingKeyRepair:
+        (id, {required status, required lastError, required finalizedAt}) =>
+            dbFinalizeGroupPendingKeyRepair(
+              db,
+              id,
+              status: status,
+              lastError: lastError,
+              finalizedAt: finalizedAt,
+            ),
+  );
+
+  final groupHistoryGapRepairRepository = GroupHistoryGapRepairRepositoryImpl(
+    dbUpsertGroupHistoryGapRepair: (row) =>
+        dbUpsertGroupHistoryGapRepair(db, row),
+    dbSaveGroupHistoryGapRepair: (row) => dbSaveGroupHistoryGapRepair(db, row),
+    dbLoadGroupHistoryGapRepair: ({required groupId, required gapId}) =>
+        dbLoadGroupHistoryGapRepair(db, groupId: groupId, gapId: gapId),
+    dbLoadLatestGroupHistoryGapRepair: ({required groupId}) =>
+        dbLoadLatestGroupHistoryGapRepair(db, groupId: groupId),
+    dbLoadVisibleGroupHistoryGapRepairs: ({required groupId, int limit = 20}) =>
+        dbLoadVisibleGroupHistoryGapRepairs(db, groupId: groupId, limit: limit),
   );
 
   // Create introduction repository
@@ -1409,6 +1558,9 @@ void main() async {
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
     reactionRepo: reactionRepository,
+    groupDiagnosticEvents: groupDiagnosticEventStream,
+    pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+    requestGroupKeyRepair: emitGroupKeyRepairRequest,
     appendGroupEventLogEntry:
         ({
           required groupId,
@@ -1440,6 +1592,16 @@ void main() async {
     groupReactionStreamController.add(data);
   };
 
+  final groupPendingKeyRepairRunner = GroupPendingKeyRepairRunner(
+    bridge: bridge,
+    groupRepo: groupRepository,
+    msgRepo: groupMessageRepository,
+    pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+    mediaAttachmentRepo: mediaAttachmentRepository,
+    reactionRepo: reactionRepository,
+    replayGroupEnvelope: groupMessageListener.handleReplayEnvelope,
+  );
+
   // Create group invite listener
   final groupInviteListener = GroupInviteListener(
     groupInviteStream: messageRouter.groupInviteStream,
@@ -1452,6 +1614,23 @@ void main() async {
     getOwnMlKemSecretKey: () async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
+    },
+    getOwnPeerId: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.peerId;
+    },
+    getOwnDeviceId: () async => p2pService.currentState.peerId,
+    getOwnTransportPeerId: () async => p2pService.currentState.peerId,
+    getOwnMlKemPublicKey: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemPublicKey;
+    },
+    getOwnKeyPackageId: () async => defaultGroupWelcomeKeyPackageIdForDevice(
+      p2pService.currentState.peerId,
+    ),
+    getOwnKeyPackagePublicMaterial: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.mlKemPublicKey;
     },
     appendGroupEventLogEntry:
         ({
@@ -1483,6 +1662,34 @@ void main() async {
       final identity = await repository.loadIdentity();
       return identity?.mlKemSecretKey;
     },
+    getOwnPeerId: () async {
+      final identity = await repository.loadIdentity();
+      return identity?.peerId;
+    },
+    getOwnDeviceId: () async {
+      return p2pService.currentState.peerId;
+    },
+    retryPendingGroupKeyRepairs:
+        groupPendingKeyRepairRunner.retryPendingRepairsForRequest,
+    appendGroupEventLogEntry:
+        ({
+          required groupId,
+          required eventType,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required payload,
+          createdAt,
+        }) => dbAppendGroupEventLogEntry(
+          db,
+          groupId: groupId,
+          eventType: eventType,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          payload: payload,
+          createdAt: createdAt,
+        ),
   );
 
   // Create introduction listener
@@ -1530,14 +1737,21 @@ void main() async {
           rejoinResult.errorCount == 0;
     },
     acknowledgeGroupRecoveryFn: () => callGroupAcknowledgeRecovery(bridge),
-    drainGroupOfflineInboxFn: () => drainGroupOfflineInbox(
-      bridge: bridge,
-      groupRepo: groupRepository,
-      msgRepo: groupMessageRepository,
-      groupMessageListener: groupMessageListener,
-      mediaAttachmentRepo: mediaAttachmentRepository,
-      reactionRepo: reactionRepository,
-    ),
+    drainGroupOfflineInboxFn: () async {
+      final identity = await repository.loadIdentity();
+      return drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepository,
+        msgRepo: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        reactionRepo: reactionRepository,
+        pendingKeyRepairRepo: groupPendingKeyRepairRepository,
+        historyGapRepairRepo: groupHistoryGapRepairRepository,
+        requestGroupKeyRepair: emitGroupKeyRepairRequest,
+        selfPeerId: identity?.peerId,
+      );
+    },
     recoverStuckSendingGroupMessagesFn: () =>
         recoverStuckSendingGroupMessages(groupMsgRepo: groupMessageRepository),
     retryIncompleteGroupUploadsFn: () => retryIncompleteGroupUploads(
@@ -1717,6 +1931,8 @@ void main() async {
       conversationTracker: conversationTracker,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
+      groupPendingKeyRepairRepository: groupPendingKeyRepairRepository,
+      groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
       groupMessageListener: groupMessageListener,
       groupInviteListener: groupInviteListener,
@@ -1862,6 +2078,8 @@ class MyApp extends StatefulWidget {
   final ActiveConversationTracker conversationTracker;
   final GroupRepositoryImpl groupRepository;
   final GroupMessageRepositoryImpl groupMessageRepository;
+  final GroupPendingKeyRepairRepositoryImpl groupPendingKeyRepairRepository;
+  final GroupHistoryGapRepairRepositoryImpl groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepositoryImpl
   groupReactionReplayOutboxRepository;
   final GroupMessageListener groupMessageListener;
@@ -1919,6 +2137,8 @@ class MyApp extends StatefulWidget {
     required this.conversationTracker,
     required this.groupRepository,
     required this.groupMessageRepository,
+    required this.groupPendingKeyRepairRepository,
+    required this.groupHistoryGapRepairRepository,
     required this.groupReactionReplayOutboxRepository,
     required this.groupMessageListener,
     required this.groupInviteListener,
@@ -2262,6 +2482,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               reactionRepo: widget.reactionRepository,
               groupReactionReplayOutboxRepository:
                   widget.groupReactionReplayOutboxRepository,
+              historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
               notificationTappedAt: tappedAt,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
@@ -2316,6 +2537,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionListener: widget.reactionListener,
         groupRepository: widget.groupRepository,
         groupMessageRepository: widget.groupMessageRepository,
+        groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+        groupHistoryGapRepairRepository: widget.groupHistoryGapRepairRepository,
         groupReactionReplayOutboxRepository:
             widget.groupReactionReplayOutboxRepository,
         groupMessageListener: widget.groupMessageListener,
@@ -2522,6 +2745,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         groupRepo: widget.groupRepository,
         groupMsgRepo: widget.groupMessageRepository,
         groupMessageListener: widget.groupMessageListener,
+        pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+        historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
+        requestGroupKeyRepair: emitGroupKeyRepairRequest,
         mediaAttachmentRepo: widget.mediaAttachmentRepository,
         reactionRepo: widget.reactionRepository,
         nearbyLocationService: widget.nearbyLocationService,
@@ -2611,16 +2837,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             data: message.data,
             messageId: message.messageId,
             drainOfflineInbox: widget.p2pService.drainOfflineInbox,
-            drainGroupOfflineInboxForGroup: (groupId) =>
-                drainGroupOfflineInboxForGroup(
-                  bridge: widget.bridge,
-                  groupRepo: widget.groupRepository,
-                  msgRepo: widget.groupMessageRepository,
-                  groupId: groupId,
-                  mediaAttachmentRepo: widget.mediaAttachmentRepository,
-                  reactionRepo: widget.reactionRepository,
-                  groupMessageListener: widget.groupMessageListener,
-                ),
+            drainGroupOfflineInboxForGroup: (groupId) async {
+              final identity = await widget.repository.loadIdentity();
+              return drainGroupOfflineInboxForGroup(
+                bridge: widget.bridge,
+                groupRepo: widget.groupRepository,
+                msgRepo: widget.groupMessageRepository,
+                groupId: groupId,
+                mediaAttachmentRepo: widget.mediaAttachmentRepository,
+                reactionRepo: widget.reactionRepository,
+                groupMessageListener: widget.groupMessageListener,
+                pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+                historyGapRepairRepo: widget.groupHistoryGapRepairRepository,
+                requestGroupKeyRepair: emitGroupKeyRepairRequest,
+                selfPeerId: identity?.peerId,
+              );
+            },
           ),
         );
       });
@@ -2675,6 +2907,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionListener: widget.reactionListener,
         groupRepository: widget.groupRepository,
         groupMessageRepository: widget.groupMessageRepository,
+        groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+        groupHistoryGapRepairRepository: widget.groupHistoryGapRepairRepository,
         groupReactionReplayOutboxRepository:
             widget.groupReactionReplayOutboxRepository,
         groupMessageListener: widget.groupMessageListener,

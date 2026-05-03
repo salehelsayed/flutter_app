@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
+import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 
 void main() {
@@ -16,6 +17,7 @@ void main() {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupsTablesMigration(db);
     await runGroupMemberPermissionsMigration(db);
+    await runGroupMemberDeviceIdentitiesMigration(db);
   });
 
   tearDown(() async {
@@ -30,6 +32,7 @@ void main() {
     String? publicKey = 'pk-base64',
     String? mlKemPublicKey = 'mlkem-base64',
     String? permissionsJson,
+    String? devicesJson,
     String joinedAt = '2026-01-15T12:00:00.000Z',
   }) {
     return {
@@ -40,6 +43,7 @@ void main() {
       'public_key': publicKey,
       'ml_kem_public_key': mlKemPublicKey,
       'permissions_json': permissionsJson,
+      'devices_json': devicesJson,
       'joined_at': joinedAt,
     };
   }
@@ -96,6 +100,16 @@ void main() {
       final result = await dbLoadGroupMember(db, 'group-1', 'peer-1');
       expect(result, isNotNull);
       expect(result!['permissions_json'], '{"inviteMembers":true}');
+    });
+
+    test('preserves devices_json roster', () async {
+      const devicesJson =
+          '[{"deviceId":"bob-phone","transportPeerId":"12D3KooWBobPhone","deviceSigningPublicKey":"device-pk","mlKemPublicKey":"mlkem-phone","keyPackageId":"kp-phone","keyPackagePublicMaterial":"kp-pub-phone","status":"active"}]';
+      await dbInsertGroupMember(db, makeMemberRow(devicesJson: devicesJson));
+
+      final result = await dbLoadGroupMember(db, 'group-1', 'peer-1');
+      expect(result, isNotNull);
+      expect(result!['devices_json'], devicesJson);
     });
   });
 

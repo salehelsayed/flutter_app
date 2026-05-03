@@ -21,14 +21,18 @@ import 'package:flutter_app/features/groups/application/group_avatar_storage.dar
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/application/trusted_private_group_system_event.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
@@ -59,14 +63,19 @@ class GroupMessageListener {
   final ReactionRepository? _reactionRepo;
   final DownloadGroupAvatarFn _downloadGroupAvatarFn;
   final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
+  final Stream<Map<String, dynamic>>? _groupDiagnosticEvents;
+  final GroupPendingKeyRepairRepository? _pendingKeyRepairRepo;
+  final RequestGroupKeyRepair _requestGroupKeyRepair;
 
   StreamSubscription<Map<String, dynamic>>? _subscription;
   StreamSubscription<Map<String, dynamic>>? _reactionSubscription;
+  StreamSubscription<Map<String, dynamic>>? _diagnosticSubscription;
   final _messageController = StreamController<GroupMessage>.broadcast();
   final _removedController = StreamController<String>.broadcast();
   final _reactionChangeController =
       StreamController<ReactionChange>.broadcast();
   final Map<String, Future<void>> _groupConfigWorkQueue = {};
+  final Map<String, String> _acceptedSignedTransitionAuditHashesBySourceId = {};
   String? _cachedSelfPeerId;
   var _hasResolvedSelfPeerId = false;
   Future<String?>? _selfPeerIdLoadFuture;
@@ -85,6 +94,9 @@ class GroupMessageListener {
     ReactionRepository? reactionRepo,
     DownloadGroupAvatarFn? downloadGroupAvatarFn,
     AppendGroupEventLogEntry? appendGroupEventLogEntry,
+    Stream<Map<String, dynamic>>? groupDiagnosticEvents,
+    GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+    RequestGroupKeyRepair? requestGroupKeyRepair,
   }) : _groupRepo = groupRepo,
        _msgRepo = msgRepo,
        _bridge = bridge,
@@ -98,7 +110,11 @@ class GroupMessageListener {
            remoteNotificationGate ?? recentRemoteNotificationGate,
        _reactionRepo = reactionRepo,
        _downloadGroupAvatarFn = downloadGroupAvatarFn ?? downloadGroupAvatar,
-       _appendGroupEventLogEntry = appendGroupEventLogEntry;
+       _appendGroupEventLogEntry = appendGroupEventLogEntry,
+       _groupDiagnosticEvents = groupDiagnosticEvents,
+       _pendingKeyRepairRepo = pendingKeyRepairRepo,
+       _requestGroupKeyRepair =
+           requestGroupKeyRepair ?? emitGroupKeyRepairRequest;
 
   /// Stream of new incoming group messages for the UI to listen to.
   Stream<GroupMessage> get groupMessageStream => _messageController.stream;
@@ -117,8 +133,16 @@ class GroupMessageListener {
   ///
   /// Offline inbox recovery uses this so replayed system payloads can trigger
   /// the same cleanup and UI streams as live listener traffic.
-  Future<void> handleReplayEnvelope(Map<String, dynamic> data) {
-    return _handleMessage(data);
+  Future<void> handleReplayEnvelope(
+    Map<String, dynamic> data, {
+    GroupMessageRepository? msgRepoOverride,
+    bool rethrowOnError = false,
+  }) {
+    return _handleMessage(
+      data,
+      msgRepoOverride: msgRepoOverride,
+      rethrowOnError: rethrowOnError,
+    );
   }
 
   Future<String?> _resolveSelfPeerId() {
@@ -190,15 +214,53 @@ class GroupMessageListener {
         },
       );
     }
+
+    final diagnostics = _groupDiagnosticEvents;
+    if (diagnostics != null && _diagnosticSubscription == null) {
+      _diagnosticSubscription = diagnostics.listen(
+        _handleGroupDiagnosticEvent,
+        onError: (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_DIAGNOSTIC_STREAM_ERROR',
+            details: {'error': error.toString()},
+          );
+        },
+      );
+    }
   }
 
-  Future<void> _handleMessage(Map<String, dynamic> data) async {
+  Future<void> _handleGroupDiagnosticEvent(Map<String, dynamic> event) async {
+    final pendingRepo = _pendingKeyRepairRepo;
+    if (pendingRepo == null) return;
+    final placeholder = await queueLiveGroupDecryptionFailureRepair(
+      groupRepo: _groupRepo,
+      msgRepo: _msgRepo,
+      pendingKeyRepairRepo: pendingRepo,
+      diagnostic: event,
+      requestGroupKeyRepair: _requestGroupKeyRepair,
+    );
+    if (placeholder != null) {
+      _messageController.add(placeholder);
+    }
+  }
+
+  Future<void> _handleMessage(
+    Map<String, dynamic> data, {
+    GroupMessageRepository? msgRepoOverride,
+    bool rethrowOnError = false,
+  }) async {
     try {
+      final msgRepo = msgRepoOverride ?? _msgRepo;
       final groupId = data['groupId'] as String? ?? '';
       final senderId = data['senderId'] as String? ?? '';
       final senderUsername = data['senderUsername'] as String? ?? '';
       final keyEpoch = data['keyEpoch'] as int? ?? 0;
       final text = data['text'] as String? ?? '';
+      final transportPeerId =
+          data['transportPeerId'] as String? ??
+          data['senderDeviceId'] as String?;
+      final senderDeviceId = data['senderDeviceId'] as String?;
       final timestamp =
           data['timestamp'] as String? ??
           DateTime.now().toUtc().toIso8601String();
@@ -222,7 +284,11 @@ class GroupMessageListener {
           timestamp,
           senderId: senderId,
           senderUsername: senderUsername,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: transportPeerId,
           sourceEventId: wireMessageId,
+          msgRepo: msgRepo,
+          rethrowOnError: rethrowOnError,
         );
         return;
       }
@@ -234,13 +300,15 @@ class GroupMessageListener {
 
       final result = await handleIncomingGroupMessage(
         groupRepo: _groupRepo,
-        msgRepo: _msgRepo,
+        msgRepo: msgRepo,
         groupId: groupId,
         senderId: senderId,
         senderUsername: senderUsername,
         keyEpoch: keyEpoch,
         text: text,
         timestamp: timestamp,
+        transportPeerId: transportPeerId,
+        senderDeviceId: senderDeviceId,
         selfPeerId: selfPeerId,
         messageId: wireMessageId,
         quotedMessageId: wireQuotedMessageId,
@@ -302,6 +370,7 @@ class GroupMessageListener {
         event: 'GROUP_MESSAGE_LISTENER_ERROR',
         details: {'error': e.toString()},
       );
+      if (rethrowOnError) rethrow;
     }
   }
 
@@ -368,7 +437,11 @@ class GroupMessageListener {
     String timestamp, {
     required String senderId,
     required String senderUsername,
+    String? senderDeviceId,
+    String? transportPeerId,
     String? sourceEventId,
+    required GroupMessageRepository msgRepo,
+    bool rethrowOnError = false,
   }) async {
     try {
       final parsed = jsonDecode(text) as Map<String, dynamic>;
@@ -388,8 +461,34 @@ class GroupMessageListener {
                 groupConfig?['metadataUpdatedAt'] as String?,
               ) ??
               envelopeEventAt,
+        'member_banned' ||
+        'member_unbanned' ||
+        'group_message_deleted' => trustedPrivateSystemEventAt(
+          sysType,
+          parsed,
+          fallback: envelopeEventAt,
+        ),
         _ => envelopeEventAt,
       };
+
+      if (!await _isBoundSystemEventSenderDevice(
+        groupId: groupId,
+        senderId: senderId,
+        senderDeviceId: senderDeviceId,
+        transportPeerId: transportPeerId,
+      )) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_UNBOUND_SYSTEM_DEVICE',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'senderId': senderId.length > 8
+                ? senderId.substring(0, 8)
+                : senderId,
+          },
+        );
+        return;
+      }
 
       if (sysType == 'member_joined' &&
           !await _isAuthorizedJoinEventSender(groupId, senderId, parsed)) {
@@ -428,6 +527,81 @@ class GroupMessageListener {
         return;
       }
 
+      final transitionSourceEventId =
+          signedGroupTransitionAuditSourceEventId(parsed) ??
+          (sourceEventId != null && sourceEventId.isNotEmpty
+              ? sourceEventId
+              : 'system:$groupId:$senderId:$sysType:$timestamp:${jsonEncode(parsed)}');
+      SignedGroupTransitionAuditVerification? signedTransitionAudit;
+      if (_shouldRequireSignedTransitionAudit(sysType, parsed)) {
+        final signedAuditHash = signedGroupTransitionAuditHashFromPayload(
+          parsed,
+        );
+        final acceptedHash =
+            _acceptedSignedTransitionAuditHashesBySourceId[transitionSourceEventId];
+        if (acceptedHash != null) {
+          if (signedAuditHash != null && acceptedHash == signedAuditHash) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_DUPLICATE_IGNORED',
+              details: {
+                'groupId': groupId.length > 8
+                    ? groupId.substring(0, 8)
+                    : groupId,
+                'type': sysType ?? 'null',
+              },
+            );
+            return;
+          }
+          _emitSignedTransitionAuditRejected(
+            groupId,
+            sysType: sysType,
+            reason: 'conflicting_replay',
+          );
+          return;
+        }
+
+        final actorPublicKey = await _resolveActorSigningPublicKey(
+          groupId: groupId,
+          senderId: senderId,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: transportPeerId,
+        );
+        final preTransitionStateHash = await buildGroupTransitionStateHash(
+          _groupRepo,
+          groupId,
+        );
+        final auditCheck = await verifyGroupTransitionAudit(
+          bridge: _bridge!,
+          containerPayload: parsed,
+          groupId: groupId,
+          transitionType: sysType ?? '',
+          sourceEventId: transitionSourceEventId,
+          eventAt: eventAt ?? envelopeEventAt ?? DateTime.now().toUtc(),
+          actorPeerId: senderId,
+          actorUsername: senderUsername,
+          actorSigningPublicKey: actorPublicKey ?? '',
+          actorDeviceId: senderDeviceId,
+          actorTransportPeerId: transportPeerId,
+          expectedPreTransitionStateHash: preTransitionStateHash,
+          expectedTransitionSubject: buildGroupSystemTransitionSubject(parsed),
+        );
+        if (!auditCheck.isValid) {
+          _emitSignedTransitionAuditRejected(
+            groupId,
+            sysType: sysType,
+            reason: auditCheck.failure?.reason ?? 'signature_invalid',
+          );
+          return;
+        }
+        signedTransitionAudit = auditCheck.verification;
+        if (_appendGroupEventLogEntry == null &&
+            signedTransitionAudit != null) {
+          _acceptedSignedTransitionAuditHashesBySourceId[transitionSourceEventId] =
+              signedTransitionAudit.auditHash;
+        }
+      }
+
       final group = await _groupRepo.getGroup(groupId);
       if (group?.isDissolved == true && sysType != 'group_dissolved') {
         emitFlowEvent(
@@ -444,15 +618,11 @@ class GroupMessageListener {
       Future<void> appendSystemEventLog() async {
         final append = _appendGroupEventLogEntry;
         if (append == null || sysType == null) return;
-        final resolvedSourceEventId =
-            sourceEventId != null && sourceEventId.isNotEmpty
-            ? sourceEventId
-            : 'system:$groupId:$senderId:$sysType:$timestamp:${jsonEncode(parsed)}';
         await append(
           groupId: groupId,
           eventType: sysType,
           sourcePeerId: senderId,
-          sourceEventId: resolvedSourceEventId,
+          sourceEventId: transitionSourceEventId,
           sourceTimestamp:
               (eventAt ?? envelopeEventAt ?? DateTime.now().toUtc())
                   .toIso8601String(),
@@ -464,6 +634,10 @@ class GroupMessageListener {
             'payload': parsed,
           },
         );
+        if (signedTransitionAudit != null) {
+          _acceptedSignedTransitionAuditHashesBySourceId[transitionSourceEventId] =
+              signedTransitionAudit!.auditHash;
+        }
       }
 
       if (sysType == 'member_added') {
@@ -482,6 +656,7 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: eventAt,
+            msgRepo: msgRepo,
           );
         });
       } else if (sysType == 'members_added') {
@@ -500,12 +675,14 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: eventAt,
+            msgRepo: msgRepo,
           );
         });
       } else if (sysType == 'member_removed') {
         await _enqueueGroupConfigWork(groupId, () async {
-          if (await _shouldIgnoreStaleMembershipEvent(
+          if (await _shouldIgnoreStaleMemberRemovedEvent(
             groupId,
+            parsed: parsed,
             sysType: sysType,
             eventAt: eventAt,
           )) {
@@ -518,6 +695,43 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: eventAt,
+            msgRepo: msgRepo,
+          );
+        });
+      } else if (sysType == 'member_banned') {
+        await _enqueueGroupConfigWork(groupId, () async {
+          await _handleMemberBanned(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+            msgRepo: msgRepo,
+            appendSystemEventLog: appendSystemEventLog,
+          );
+        });
+      } else if (sysType == 'member_unbanned') {
+        await _enqueueGroupConfigWork(groupId, () async {
+          await _handleMemberUnbanned(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+            msgRepo: msgRepo,
+            appendSystemEventLog: appendSystemEventLog,
+          );
+        });
+      } else if (sysType == 'group_message_deleted') {
+        await _enqueueGroupConfigWork(groupId, () async {
+          await _handleGroupMessageDeleted(
+            groupId,
+            parsed,
+            senderId: senderId,
+            senderUsername: senderUsername,
+            eventAt: eventAt,
+            msgRepo: msgRepo,
+            appendSystemEventLog: appendSystemEventLog,
           );
         });
       } else if (sysType == 'member_role_updated') {
@@ -536,6 +750,7 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: eventAt,
+            msgRepo: msgRepo,
           );
         });
       } else if (sysType == 'group_dissolved') {
@@ -553,6 +768,7 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: eventAt,
+            msgRepo: msgRepo,
           );
         });
       } else if (sysType == 'group_metadata_updated') {
@@ -579,11 +795,17 @@ class GroupMessageListener {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: eventAt,
+            msgRepo: msgRepo,
           );
         });
       } else if (sysType == 'member_joined') {
         await appendSystemEventLog();
-        await _handleMemberJoined(groupId, parsed, eventAt: eventAt);
+        await _handleMemberJoined(
+          groupId,
+          parsed,
+          eventAt: eventAt,
+          msgRepo: msgRepo,
+        );
       } else if (sysType == 'key_rotated') {
         await appendSystemEventLog();
         emitFlowEvent(
@@ -607,7 +829,87 @@ class GroupMessageListener {
         event: 'GROUP_MESSAGE_LISTENER_SYS_MSG_ERROR',
         details: {'error': e.toString()},
       );
+      if (rethrowOnError) rethrow;
     }
+  }
+
+  Future<bool> _isBoundSystemEventSenderDevice({
+    required String groupId,
+    required String senderId,
+    String? senderDeviceId,
+    String? transportPeerId,
+  }) async {
+    if (senderId.isEmpty) {
+      return false;
+    }
+    final member = await _groupRepo.getMember(groupId, senderId);
+    if (member == null) {
+      return false;
+    }
+    final resolvedTransportPeerId = transportPeerId?.trim().isNotEmpty == true
+        ? transportPeerId!.trim()
+        : senderId;
+    if (member.devices.isEmpty) {
+      return resolvedTransportPeerId == senderId;
+    }
+    final device = senderDeviceId?.trim().isNotEmpty == true
+        ? member.findDeviceById(senderDeviceId)
+        : member.findDeviceByTransportPeerId(resolvedTransportPeerId);
+    return device != null &&
+        device.isActive &&
+        device.transportPeerId == resolvedTransportPeerId;
+  }
+
+  bool _shouldRequireSignedTransitionAudit(
+    String? sysType,
+    Map<String, dynamic> parsed,
+  ) {
+    if (!requiresSignedGroupTransitionAudit(sysType)) {
+      return false;
+    }
+    return _appendGroupEventLogEntry != null ||
+        parsed.containsKey(signedGroupTransitionAuditField);
+  }
+
+  Future<String?> _resolveActorSigningPublicKey({
+    required String groupId,
+    required String senderId,
+    String? senderDeviceId,
+    String? transportPeerId,
+  }) async {
+    final member = await _groupRepo.getMember(groupId, senderId);
+    if (member == null) {
+      return null;
+    }
+    if (member.devices.isNotEmpty) {
+      final device = senderDeviceId?.trim().isNotEmpty == true
+          ? member.findDeviceById(senderDeviceId)
+          : member.findDeviceByTransportPeerId(transportPeerId);
+      final devicePublicKey = device?.deviceSigningPublicKey.trim();
+      if (devicePublicKey != null && devicePublicKey.isNotEmpty) {
+        return devicePublicKey;
+      }
+    }
+    final memberPublicKey = member.publicKey?.trim();
+    return memberPublicKey == null || memberPublicKey.isEmpty
+        ? null
+        : memberPublicKey;
+  }
+
+  void _emitSignedTransitionAuditRejected(
+    String groupId, {
+    required String? sysType,
+    required String reason,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_SIGNED_AUDIT_REJECTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'type': sysType ?? 'null',
+        'reason': reason,
+      },
+    );
   }
 
   bool _requiresMembershipEventAuthorization(String? sysType) {
@@ -635,25 +937,19 @@ class GroupMessageListener {
     }
 
     final senderMember = await _groupRepo.getMember(groupId, senderId);
-    // Dissolve must stay current-admin-only; stored creator identity alone
-    // is not sufficient once the creator has been demoted.
+    // Stored creator identity alone is not sufficient once the creator has
+    // been demoted or removed; receive-side mutations recheck current state.
     if (sysType == 'group_dissolved') {
       return senderMember?.role == MemberRole.admin;
     }
 
     if (sysType == 'member_role_updated') {
-      if (senderMember == null) {
-        return group.createdBy == senderId;
-      }
+      if (senderMember == null) return false;
       return _canApplyIncomingMemberRoleUpdate(
         groupId: groupId,
         actor: senderMember,
         parsed: parsed,
       );
-    }
-
-    if (group.createdBy == senderId) {
-      return true;
     }
 
     if (sysType == 'member_removed') {
@@ -667,6 +963,44 @@ class GroupMessageListener {
       }
     }
     return senderMember?.role == MemberRole.admin;
+  }
+
+  Future<bool> _isAuthorizedTrustedPrivateMemberModerator(
+    String groupId,
+    String senderId,
+  ) async {
+    if (senderId.isEmpty) {
+      return false;
+    }
+    final senderMember = await _groupRepo.getMember(groupId, senderId);
+    if (senderMember == null) {
+      return false;
+    }
+    return senderMember.permissions.allows(
+      GroupMemberPermission.removeMembers,
+      senderMember.role,
+    );
+  }
+
+  Future<bool> _isAuthorizedTrustedPrivateMessageDelete(
+    String groupId,
+    String senderId,
+    GroupMessage targetMessage,
+  ) async {
+    if (senderId.isEmpty) {
+      return false;
+    }
+    final senderMember = await _groupRepo.getMember(groupId, senderId);
+    if (senderMember == null) {
+      return false;
+    }
+    if (senderMember.permissions.allows(
+      GroupMemberPermission.deleteMessages,
+      senderMember.role,
+    )) {
+      return true;
+    }
+    return targetMessage.senderPeerId == senderId;
   }
 
   Future<bool> _canApplyIncomingMemberRoleUpdate({
@@ -684,6 +1018,24 @@ class GroupMessageListener {
     }
 
     final existingMember = await _groupRepo.getMember(groupId, updatedPeerId);
+    if (existingMember == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event:
+            'GROUP_MESSAGE_LISTENER_MEMBER_ROLE_UPDATE_MISSING_TARGET_IGNORED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'memberPeerId': updatedPeerId.length > 8
+              ? updatedPeerId.substring(0, 8)
+              : updatedPeerId,
+          'actorPeerId': actor.peerId.length > 8
+              ? actor.peerId.substring(0, 8)
+              : actor.peerId,
+        },
+      );
+      return false;
+    }
+
     final groupConfig = parsed?['groupConfig'] as Map<String, dynamic>?;
     final snapshotMemberData = _findGroupConfigMember(
       groupConfig,
@@ -755,20 +1107,19 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
   }) async {
     // Save new member to local DB
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final addedPeerId = memberData?['peerId'] as String?;
     final addedUsername = memberData?['username'] as String?;
     if (memberData != null) {
-      final member = GroupMember(
+      final member = GroupMember.fromConfigMap(
         groupId: groupId,
-        peerId: memberData['peerId'] as String,
-        username: memberData['username'] as String?,
-        role: MemberRole.fromValue(memberData['role'] as String? ?? 'writer'),
-        permissions: GroupMemberPermissions.fromJson(memberData['permissions']),
-        publicKey: memberData['publicKey'] as String?,
-        mlKemPublicKey: memberData['mlKemPublicKey'] as String?,
+        map: Map<String, dynamic>.from(memberData),
+        existing: addedPeerId == null
+            ? null
+            : await _groupRepo.getMember(groupId, addedPeerId),
         joinedAt: eventAt ?? DateTime.now().toUtc(),
       );
       await _groupRepo.saveMember(member);
@@ -794,7 +1145,10 @@ class GroupMessageListener {
         eventAt: eventAt ?? DateTime.now().toUtc(),
       );
       final savedTimelineMessage =
-          await _saveTimelineMessagePreservingReadState(timelineMessage);
+          await _saveTimelineMessagePreservingReadState(
+            timelineMessage,
+            msgRepo,
+          );
       _messageController.add(savedTimelineMessage);
     }
 
@@ -820,19 +1174,19 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
   }) async {
     final membersList = parsed['members'] as List<dynamic>?;
     if (membersList != null) {
       for (final memberData in membersList) {
-        final data = memberData as Map<String, dynamic>;
-        final member = GroupMember(
+        final data = Map<String, dynamic>.from(memberData as Map);
+        final peerId = data['peerId'] as String?;
+        final member = GroupMember.fromConfigMap(
           groupId: groupId,
-          peerId: data['peerId'] as String,
-          username: data['username'] as String?,
-          role: MemberRole.fromValue(data['role'] as String? ?? 'writer'),
-          permissions: GroupMemberPermissions.fromJson(data['permissions']),
-          publicKey: data['publicKey'] as String?,
-          mlKemPublicKey: data['mlKemPublicKey'] as String?,
+          map: data,
+          existing: peerId == null
+              ? null
+              : await _groupRepo.getMember(groupId, peerId),
           joinedAt: eventAt ?? DateTime.now().toUtc(),
         );
         await _groupRepo.saveMember(member);
@@ -868,7 +1222,10 @@ class GroupMessageListener {
         eventAt: eventAt ?? DateTime.now().toUtc(),
       );
       final savedTimelineMessage =
-          await _saveTimelineMessagePreservingReadState(timelineMessage);
+          await _saveTimelineMessagePreservingReadState(
+            timelineMessage,
+            msgRepo,
+          );
       _messageController.add(savedTimelineMessage);
     }
 
@@ -888,6 +1245,7 @@ class GroupMessageListener {
     String groupId,
     Map<String, dynamic> parsed, {
     DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final joinedPeerId = memberData?['peerId'] as String? ?? '';
@@ -902,6 +1260,7 @@ class GroupMessageListener {
     );
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
+      msgRepo,
     );
     _messageController.add(savedTimelineMessage);
 
@@ -931,6 +1290,7 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final removedPeerId = memberData?['peerId'] as String?;
@@ -1011,6 +1371,7 @@ class GroupMessageListener {
     );
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
+      msgRepo,
     );
     _messageController.add(savedTimelineMessage);
 
@@ -1026,12 +1387,290 @@ class GroupMessageListener {
     );
   }
 
+  Future<void> _handleMemberBanned(
+    String groupId,
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
+    required Future<void> Function() appendSystemEventLog,
+  }) async {
+    final event = parseTrustedPrivateMemberSystemEvent(
+      parsed,
+      systemType: 'member_banned',
+      fallbackEventAt: eventAt,
+    );
+    if (event == null) {
+      return;
+    }
+
+    final timelineMessage = _buildTrustedPrivateMemberTombstoneMessage(
+      eventType: 'member_banned',
+      groupId: groupId,
+      targetPeerId: event.targetPeerId,
+      targetUsername: event.targetUsername,
+      senderId: senderId,
+      senderUsername: senderUsername,
+      eventAt: event.eventAt,
+    );
+    if (await msgRepo.getMessage(timelineMessage.id) != null) {
+      return;
+    }
+
+    final latestUnbanAt = await msgRepo.getLatestSystemEventTimestampForTarget(
+      groupId,
+      eventType: 'member_unbanned',
+      targetId: event.targetPeerId,
+    );
+    if (latestUnbanAt != null && !event.eventAt.isAfter(latestUnbanAt)) {
+      _emitTrustedPrivateSystemEventIgnored(
+        groupId,
+        sysType: 'member_banned',
+        reason: 'stale_after_unban',
+      );
+      return;
+    }
+
+    final existingMember = await _groupRepo.getMember(
+      groupId,
+      event.targetPeerId,
+    );
+    if (existingMember == null ||
+        existingMember.joinedAt.toUtc().isAfter(event.eventAt)) {
+      _emitTrustedPrivateSystemEventIgnored(
+        groupId,
+        sysType: 'member_banned',
+        reason: 'stale_or_missing_target',
+      );
+      return;
+    }
+
+    if (!await _isAuthorizedTrustedPrivateMemberModerator(groupId, senderId)) {
+      _emitTrustedPrivateSystemEventIgnored(
+        groupId,
+        sysType: 'member_banned',
+        reason: 'unauthorized',
+      );
+      return;
+    }
+
+    await appendSystemEventLog();
+    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
+      timelineMessage,
+      msgRepo,
+    );
+    _messageController.add(savedTimelineMessage);
+
+    final getSelfPeerId = _getSelfPeerId;
+    final bridge = _bridge;
+    if (getSelfPeerId != null && bridge != null) {
+      final selfPeerId = await getSelfPeerId();
+      if (selfPeerId == event.targetPeerId) {
+        await leaveGroup(
+          bridge: bridge,
+          groupRepo: _groupRepo,
+          groupId: groupId,
+        );
+        _removedController.add(groupId);
+        return;
+      }
+    }
+
+    await _groupRepo.removeMember(groupId, event.targetPeerId);
+
+    final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (groupConfig != null) {
+      await _applyAuthoritativeGroupConfigSnapshot(
+        groupId,
+        groupConfig,
+        eventAt: event.eventAt,
+      );
+      final synced = await _syncGroupConfig(
+        groupId,
+        groupConfig,
+        emitFailureEvent: true,
+      );
+      if (!synced) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONFIG_SYNC_FAILED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+      }
+    }
+
+    await _recordMembershipEventWatermark(groupId, event.eventAt);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_MEMBER_BANNED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'memberPeerId': event.targetPeerId.length > 8
+            ? event.targetPeerId.substring(0, 8)
+            : event.targetPeerId,
+      },
+    );
+  }
+
+  Future<void> _handleMemberUnbanned(
+    String groupId,
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
+    required Future<void> Function() appendSystemEventLog,
+  }) async {
+    final event = parseTrustedPrivateMemberSystemEvent(
+      parsed,
+      systemType: 'member_unbanned',
+      fallbackEventAt: eventAt,
+    );
+    if (event == null) {
+      return;
+    }
+
+    final timelineMessage = _buildTrustedPrivateMemberTombstoneMessage(
+      eventType: 'member_unbanned',
+      groupId: groupId,
+      targetPeerId: event.targetPeerId,
+      targetUsername: event.targetUsername,
+      senderId: senderId,
+      senderUsername: senderUsername,
+      eventAt: event.eventAt,
+    );
+    if (await msgRepo.getMessage(timelineMessage.id) != null) {
+      return;
+    }
+
+    final latestBanAt = await msgRepo.getLatestSystemEventTimestampForTarget(
+      groupId,
+      eventType: 'member_banned',
+      targetId: event.targetPeerId,
+    );
+    if (latestBanAt != null && latestBanAt.isAfter(event.eventAt)) {
+      _emitTrustedPrivateSystemEventIgnored(
+        groupId,
+        sysType: 'member_unbanned',
+        reason: 'stale_before_ban',
+      );
+      return;
+    }
+
+    if (!await _isAuthorizedTrustedPrivateMemberModerator(groupId, senderId)) {
+      _emitTrustedPrivateSystemEventIgnored(
+        groupId,
+        sysType: 'member_unbanned',
+        reason: 'unauthorized',
+      );
+      return;
+    }
+
+    await appendSystemEventLog();
+    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
+      timelineMessage,
+      msgRepo,
+    );
+    _messageController.add(savedTimelineMessage);
+    await _recordMembershipEventWatermark(groupId, event.eventAt);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_MEMBER_UNBANNED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'memberPeerId': event.targetPeerId.length > 8
+            ? event.targetPeerId.substring(0, 8)
+            : event.targetPeerId,
+      },
+    );
+  }
+
+  Future<void> _handleGroupMessageDeleted(
+    String groupId,
+    Map<String, dynamic> parsed, {
+    required String senderId,
+    required String senderUsername,
+    DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
+    required Future<void> Function() appendSystemEventLog,
+  }) async {
+    final event = parseTrustedPrivateMessageDeleteEvent(
+      parsed,
+      fallbackEventAt: eventAt,
+    );
+    if (event == null) {
+      return;
+    }
+
+    final timelineMessage = _buildTrustedPrivateMessageDeleteTombstoneMessage(
+      groupId: groupId,
+      targetMessageId: event.targetMessageId,
+      senderId: senderId,
+      senderUsername: senderUsername,
+      eventAt: event.eventAt,
+    );
+    if (await msgRepo.getMessage(timelineMessage.id) != null) {
+      return;
+    }
+
+    final targetMessage = await msgRepo.getMessage(event.targetMessageId);
+    if (targetMessage == null ||
+        targetMessage.groupId != groupId ||
+        targetMessage.id.startsWith('sys-') ||
+        !targetMessage.timestamp.toUtc().isBefore(event.eventAt)) {
+      _emitTrustedPrivateSystemEventIgnored(
+        groupId,
+        sysType: 'group_message_deleted',
+        reason: 'stale_or_missing_target',
+      );
+      return;
+    }
+
+    if (!await _isAuthorizedTrustedPrivateMessageDelete(
+      groupId,
+      senderId,
+      targetMessage,
+    )) {
+      _emitTrustedPrivateSystemEventIgnored(
+        groupId,
+        sysType: 'group_message_deleted',
+        reason: 'unauthorized',
+      );
+      return;
+    }
+
+    await appendSystemEventLog();
+    final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
+      timelineMessage,
+      msgRepo,
+    );
+    await msgRepo.deleteMessage(event.targetMessageId);
+    _messageController.add(savedTimelineMessage);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_GROUP_MESSAGE_DELETED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'targetMessageId': event.targetMessageId.length > 8
+            ? event.targetMessageId.substring(0, 8)
+            : event.targetMessageId,
+      },
+    );
+  }
+
   Future<void> _handleMemberRoleUpdated(
     String groupId,
     Map<String, dynamic> parsed, {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final updatedPeerId = memberData?['peerId'] as String?;
@@ -1045,21 +1684,16 @@ class GroupMessageListener {
 
     if (updatedPeerId != null && updatedPeerId.isNotEmpty) {
       await _groupRepo.saveMember(
-        GroupMember(
+        GroupMember.fromConfigMap(
           groupId: groupId,
-          peerId: updatedPeerId,
-          username: updatedUsername ?? existingMember?.username,
-          role: newRole,
-          permissions: memberData?.containsKey('permissions') == true
-              ? GroupMemberPermissions.fromJson(memberData?['permissions'])
-              : existingMember?.permissions ?? GroupMemberPermissions.empty,
-          publicKey:
-              memberData?['publicKey'] as String? ?? existingMember?.publicKey,
-          mlKemPublicKey:
-              memberData?['mlKemPublicKey'] as String? ??
-              existingMember?.mlKemPublicKey,
-          joinedAt:
-              existingMember?.joinedAt ?? eventAt ?? DateTime.now().toUtc(),
+          map: {
+            ...?memberData,
+            'peerId': updatedPeerId,
+            if (updatedUsername != null) 'username': updatedUsername,
+            'role': newRole.toValue(),
+          },
+          existing: existingMember,
+          joinedAt: eventAt ?? DateTime.now().toUtc(),
         ),
       );
     }
@@ -1114,7 +1748,10 @@ class GroupMessageListener {
         eventAt: eventAt ?? DateTime.now().toUtc(),
       );
       final savedTimelineMessage =
-          await _saveTimelineMessagePreservingReadState(timelineMessage);
+          await _saveTimelineMessagePreservingReadState(
+            timelineMessage,
+            msgRepo,
+          );
       _messageController.add(savedTimelineMessage);
     }
 
@@ -1137,6 +1774,7 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
   }) async {
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig == null) {
@@ -1187,6 +1825,7 @@ class GroupMessageListener {
     );
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
+      msgRepo,
     );
     _messageController.add(savedTimelineMessage);
 
@@ -1283,6 +1922,7 @@ class GroupMessageListener {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    required GroupMessageRepository msgRepo,
   }) async {
     final group = await _groupRepo.getGroup(groupId);
     if (group == null) {
@@ -1307,6 +1947,7 @@ class GroupMessageListener {
     );
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
+      msgRepo,
     );
     _messageController.add(savedTimelineMessage);
 
@@ -1342,6 +1983,8 @@ class GroupMessageListener {
     try {
       final groupId = data['groupId'] as String? ?? '';
       final senderId = data['senderId'] as String? ?? '';
+      final senderDeviceId = data['senderDeviceId'] as String?;
+      final transportPeerId = data['transportPeerId'] as String?;
       final reactionJson = data['reaction'] as String? ?? '';
 
       if (groupId.isEmpty || senderId.isEmpty || reactionJson.isEmpty) {
@@ -1360,6 +2003,8 @@ class GroupMessageListener {
         reactionRepo: _reactionRepo!,
         groupId: groupId,
         senderId: senderId,
+        senderDeviceId: senderDeviceId,
+        transportPeerId: transportPeerId,
         reactionJson: reactionJson,
       );
 
@@ -1392,14 +2037,91 @@ class GroupMessageListener {
 
   Future<GroupMessage> _saveTimelineMessagePreservingReadState(
     GroupMessage timelineMessage,
+    GroupMessageRepository msgRepo,
   ) async {
-    final existing = await _msgRepo.getMessage(timelineMessage.id);
+    final existing = await msgRepo.getMessage(timelineMessage.id);
     final existingReadAt = existing?.readAt;
     final messageToSave = existingReadAt == null
         ? timelineMessage
         : timelineMessage.copyWith(readAt: existingReadAt);
-    await _msgRepo.saveMessage(messageToSave);
+    await msgRepo.saveMessage(messageToSave);
     return messageToSave;
+  }
+
+  GroupMessage _buildTrustedPrivateMemberTombstoneMessage({
+    required String eventType,
+    required String groupId,
+    required String targetPeerId,
+    String? targetUsername,
+    required String senderId,
+    required String senderUsername,
+    required DateTime eventAt,
+  }) {
+    final normalizedEventAt = eventAt.toUtc();
+    final effectiveSenderId = senderId.isNotEmpty ? senderId : 'system';
+    final actor = senderUsername.trim().isNotEmpty
+        ? senderUsername.trim()
+        : 'Admin';
+    final subject = targetUsername?.trim().isNotEmpty == true
+        ? targetUsername!.trim()
+        : 'a member';
+    final action = eventType == 'member_unbanned' ? 'unbanned' : 'banned';
+    return GroupMessage(
+      id:
+          'sys-$eventType:$groupId:$targetPeerId:'
+          '$effectiveSenderId:${normalizedEventAt.microsecondsSinceEpoch}',
+      groupId: groupId,
+      senderPeerId: effectiveSenderId,
+      senderUsername: senderUsername.isNotEmpty ? senderUsername : null,
+      text: '$actor $action $subject',
+      timestamp: normalizedEventAt,
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: normalizedEventAt,
+    );
+  }
+
+  GroupMessage _buildTrustedPrivateMessageDeleteTombstoneMessage({
+    required String groupId,
+    required String targetMessageId,
+    required String senderId,
+    required String senderUsername,
+    required DateTime eventAt,
+  }) {
+    final normalizedEventAt = eventAt.toUtc();
+    final effectiveSenderId = senderId.isNotEmpty ? senderId : 'system';
+    final actor = senderUsername.trim().isNotEmpty
+        ? senderUsername.trim()
+        : 'Admin';
+    return GroupMessage(
+      id:
+          'sys-group_message_deleted:$groupId:$targetMessageId:'
+          '$effectiveSenderId:${normalizedEventAt.microsecondsSinceEpoch}',
+      groupId: groupId,
+      senderPeerId: effectiveSenderId,
+      senderUsername: senderUsername.isNotEmpty ? senderUsername : null,
+      text: '$actor deleted a message',
+      timestamp: normalizedEventAt,
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: normalizedEventAt,
+    );
+  }
+
+  void _emitTrustedPrivateSystemEventIgnored(
+    String groupId, {
+    required String sysType,
+    required String reason,
+  }) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_TRUSTED_PRIVATE_SYSTEM_EVENT_IGNORED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'type': sysType,
+        'reason': reason,
+      },
+    );
   }
 
   DateTime? _parseMembershipEventAt(String? timestamp) {
@@ -1422,6 +2144,58 @@ class GroupMessageListener {
     final watermark = await _resolveMembershipEventWatermark(groupId);
     if (watermark == null || eventAt.isAfter(watermark)) {
       return false;
+    }
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBERSHIP_EVENT_IGNORED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'type': sysType ?? 'null',
+        'eventAt': eventAt.toIso8601String(),
+        'watermark': watermark.toIso8601String(),
+      },
+    );
+    return true;
+  }
+
+  Future<bool> _shouldIgnoreStaleMemberRemovedEvent(
+    String groupId, {
+    required Map<String, dynamic> parsed,
+    required String? sysType,
+    required DateTime? eventAt,
+  }) async {
+    if (eventAt == null) {
+      return false;
+    }
+
+    final watermark = await _resolveMembershipEventWatermark(groupId);
+    if (watermark == null || eventAt.isAfter(watermark)) {
+      return false;
+    }
+
+    final memberData = parsed['member'] as Map<String, dynamic>?;
+    final removedPeerId = memberData?['peerId'] as String?;
+    if (removedPeerId != null && removedPeerId.isNotEmpty) {
+      final existingMember = await _groupRepo.getMember(groupId, removedPeerId);
+      final joinedAt = existingMember?.joinedAt.toUtc();
+      if (existingMember != null &&
+          joinedAt != null &&
+          !joinedAt.isAfter(eventAt)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_CONFLICT_APPLIED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'memberPeerId': removedPeerId.length > 8
+                ? removedPeerId.substring(0, 8)
+                : removedPeerId,
+            'eventAt': eventAt.toIso8601String(),
+            'watermark': watermark.toIso8601String(),
+          },
+        );
+        return false;
+      }
     }
 
     emitFlowEvent(
@@ -1560,22 +2334,11 @@ class GroupMessageListener {
       }
 
       await _groupRepo.saveMember(
-        GroupMember(
+        GroupMember.fromConfigMap(
           groupId: groupId,
-          peerId: peerId,
-          username:
-              memberData['username'] as String? ?? existingMember?.username,
-          role: role,
-          permissions: GroupMemberPermissions.fromJson(
-            memberData['permissions'],
-          ),
-          publicKey:
-              memberData['publicKey'] as String? ?? existingMember?.publicKey,
-          mlKemPublicKey:
-              memberData['mlKemPublicKey'] as String? ??
-              existingMember?.mlKemPublicKey,
-          joinedAt:
-              existingMember?.joinedAt ?? eventAt ?? group.createdAt.toUtc(),
+          map: memberData,
+          existing: existingMember,
+          joinedAt: eventAt ?? group.createdAt.toUtc(),
         ),
       );
     }
@@ -1731,6 +2494,8 @@ class GroupMessageListener {
     _subscription = null;
     _reactionSubscription?.cancel();
     _reactionSubscription = null;
+    _diagnosticSubscription?.cancel();
+    _diagnosticSubscription = null;
   }
 
   /// Disposes of the listener and closes streams.

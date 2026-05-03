@@ -1,14 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
   // In-memory store for testing
   late Map<String, Map<String, Object?>> store;
+  late FakeSecureKeyStore secureKeyStore;
   late MediaAttachmentRepositoryImpl repo;
 
   setUp(() {
     store = {};
+    secureKeyStore = FakeSecureKeyStore();
 
     repo = MediaAttachmentRepositoryImpl(
       dbInsertMediaAttachment: (row) async {
@@ -91,6 +95,7 @@ void main() {
             ),
           );
       },
+      secureKeyStore: secureKeyStore,
     );
   });
 
@@ -104,6 +109,9 @@ void main() {
     int? height = 1080,
     String downloadStatus = 'pending',
     String createdAt = '2026-02-20T10:00:00.000Z',
+    String? encryptionKeyBase64,
+    String? encryptionNonce,
+    String? encryptionScheme,
   }) {
     return MediaAttachment(
       id: id,
@@ -115,6 +123,9 @@ void main() {
       height: height,
       downloadStatus: downloadStatus,
       createdAt: createdAt,
+      encryptionKeyBase64: encryptionKeyBase64,
+      encryptionNonce: encryptionNonce,
+      encryptionScheme: encryptionScheme,
     );
   }
 
@@ -136,6 +147,158 @@ void main() {
       expect(store.length, 1);
       expect(store['blob-001']!['download_status'], 'done');
     });
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING saveAttachment stores media key in secure storage and only a reference in SQL',
+      () async {
+        await repo.saveAttachment(
+          makeAttachment(
+            encryptionKeyBase64: 'plain-media-key-base64',
+            encryptionNonce: 'nonce-base64',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+
+        final rawKey = store['blob-001']!['encryption_key_base64'] as String?;
+        expect(rawKey, isNot('plain-media-key-base64'));
+        expect(isSecureStoreReference(rawKey), isTrue);
+        expect(
+          rawKey,
+          secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName('blob-001'),
+          ),
+        );
+        expect(
+          await secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName('blob-001'),
+          ),
+          'plain-media-key-base64',
+        );
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING getAttachmentsForMessage hydrates media key from secure storage',
+      () async {
+        await repo.saveAttachment(
+          makeAttachment(
+            encryptionKeyBase64: 'message-media-key-base64',
+            encryptionNonce: 'nonce-base64',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+
+        final result = await repo.getAttachmentsForMessage('msg-001');
+
+        expect(result.single.encryptionKeyBase64, 'message-media-key-base64');
+        expect(
+          store['blob-001']!['encryption_key_base64'],
+          isNot('message-media-key-base64'),
+        );
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING getAttachmentsForMessages hydrates secure media keys',
+      () async {
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-A',
+            messageId: 'msg-A',
+            encryptionKeyBase64: 'media-key-A',
+            encryptionNonce: 'nonce-A',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+        await repo.saveAttachment(
+          makeAttachment(
+            id: 'blob-B',
+            messageId: 'msg-B',
+            encryptionKeyBase64: 'media-key-B',
+            encryptionNonce: 'nonce-B',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        );
+
+        final result = await repo.getAttachmentsForMessages(['msg-A', 'msg-B']);
+
+        expect(result['msg-A']!.single.encryptionKeyBase64, 'media-key-A');
+        expect(result['msg-B']!.single.encryptionKeyBase64, 'media-key-B');
+        expect(
+          isSecureStoreReference(
+            store['blob-A']!['encryption_key_base64'] as String?,
+          ),
+          isTrue,
+        );
+        expect(
+          isSecureStoreReference(
+            store['blob-B']!['encryption_key_base64'] as String?,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING getAttachmentsForMessage clears missing secure media key reference',
+      () async {
+        final secureStoreKey = mediaAttachmentEncryptionKeyStoreName(
+          'blob-missing',
+        );
+        store['blob-missing'] = makeAttachment(
+          id: 'blob-missing',
+          encryptionKeyBase64: secureStoreReferenceForKey(secureStoreKey),
+          encryptionNonce: 'nonce-missing',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ).toMap();
+
+        final result = await repo.getAttachmentsForMessage('msg-001');
+
+        expect(result.single.encryptionKeyBase64, isNull);
+        expect(
+          isSecureStoreReference(result.single.encryptionKeyBase64),
+          false,
+        );
+        expect(result.single.hasEncryptionMetadata, isFalse);
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING getAttachmentsForMessages clears missing secure media key references',
+      () async {
+        final keyA = mediaAttachmentEncryptionKeyStoreName('blob-missing-A');
+        final keyB = mediaAttachmentEncryptionKeyStoreName('blob-missing-B');
+        store['blob-missing-A'] = makeAttachment(
+          id: 'blob-missing-A',
+          messageId: 'msg-A',
+          encryptionKeyBase64: secureStoreReferenceForKey(keyA),
+          encryptionNonce: 'nonce-A',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ).toMap();
+        store['blob-missing-B'] = makeAttachment(
+          id: 'blob-missing-B',
+          messageId: 'msg-B',
+          encryptionKeyBase64: secureStoreReferenceForKey(keyB),
+          encryptionNonce: 'nonce-B',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ).toMap();
+
+        final result = await repo.getAttachmentsForMessages(['msg-A', 'msg-B']);
+
+        expect(result['msg-A']!.single.encryptionKeyBase64, isNull);
+        expect(result['msg-B']!.single.encryptionKeyBase64, isNull);
+        expect(
+          isSecureStoreReference(result['msg-A']!.single.encryptionKeyBase64),
+          false,
+        );
+        expect(
+          isSecureStoreReference(result['msg-B']!.single.encryptionKeyBase64),
+          false,
+        );
+        expect(result['msg-A']!.single.hasEncryptionMetadata, isFalse);
+        expect(result['msg-B']!.single.hasEncryptionMetadata, isFalse);
+      },
+    );
 
     test('getAttachmentsForMessage returns empty list when none', () async {
       final result = await repo.getAttachmentsForMessage('nonexistent');

@@ -1,4 +1,6 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 import '../models/media_attachment.dart';
 import 'media_attachment_repository.dart';
@@ -26,6 +28,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   dbLoadPendingMediaDownloads;
   final Future<List<Map<String, Object?>>> Function({int limit})
   dbLoadUploadPendingAttachments;
+  final SecureKeyStore? secureKeyStore;
 
   MediaAttachmentRepositoryImpl({
     required this.dbInsertMediaAttachment,
@@ -38,6 +41,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
     required this.dbMarkUploadPendingAttachmentsFailedForMessage,
     required this.dbLoadPendingMediaDownloads,
     required this.dbLoadUploadPendingAttachments,
+    this.secureKeyStore,
   });
 
   @override
@@ -53,7 +57,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
     );
 
     try {
-      await dbInsertMediaAttachment(attachment.toMap());
+      await dbInsertMediaAttachment(await _toStorageRow(attachment));
 
       emitFlowEvent(
         layer: 'FL',
@@ -79,7 +83,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
     String messageId,
   ) async {
     final rows = await dbLoadMediaForMessage(messageId);
-    return rows.map((row) => MediaAttachment.fromMap(row)).toList();
+    return _attachmentsFromRows(rows);
   }
 
   @override
@@ -90,8 +94,7 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
 
     final rows = await dbLoadMediaForMessages(messageIds);
     final Map<String, List<MediaAttachment>> result = {};
-    for (final row in rows) {
-      final attachment = MediaAttachment.fromMap(row);
+    for (final attachment in await _attachmentsFromRows(rows)) {
       result.putIfAbsent(attachment.messageId, () => []).add(attachment);
     }
     return result;
@@ -208,12 +211,60 @@ class MediaAttachmentRepositoryImpl implements MediaAttachmentRepository {
   @override
   Future<List<MediaAttachment>> getPendingDownloads() async {
     final rows = await dbLoadPendingMediaDownloads();
-    return rows.map((row) => MediaAttachment.fromMap(row)).toList();
+    return _attachmentsFromRows(rows);
   }
 
   @override
   Future<List<MediaAttachment>> getUploadPendingAttachments() async {
     final rows = await dbLoadUploadPendingAttachments();
-    return rows.map((r) => MediaAttachment.fromMap(r)).toList();
+    return _attachmentsFromRows(rows);
+  }
+
+  Future<Map<String, Object?>> _toStorageRow(MediaAttachment attachment) async {
+    final row = Map<String, Object?>.from(attachment.toMap());
+    final key = attachment.encryptionKeyBase64;
+    final store = secureKeyStore;
+    if (store == null ||
+        key == null ||
+        key.isEmpty ||
+        isSecureStoreReference(key)) {
+      return row;
+    }
+
+    final secureStoreKey = mediaAttachmentEncryptionKeyStoreName(attachment.id);
+    await store.write(secureStoreKey, key);
+    row['encryption_key_base64'] = secureStoreReferenceForKey(secureStoreKey);
+    return row;
+  }
+
+  Future<List<MediaAttachment>> _attachmentsFromRows(
+    List<Map<String, Object?>> rows,
+  ) async {
+    final attachments = <MediaAttachment>[];
+    for (final row in rows) {
+      attachments.add(MediaAttachment.fromMap(await _hydrateRow(row)));
+    }
+    return attachments;
+  }
+
+  Future<Map<String, Object?>> _hydrateRow(Map<String, Object?> row) async {
+    final keyValue = row['encryption_key_base64'] as String?;
+    final store = secureKeyStore;
+    if (keyValue == null || !isSecureStoreReference(keyValue)) {
+      return row;
+    }
+
+    final missingKeyRow = Map<String, Object?>.from(row)
+      ..['encryption_key_base64'] = null;
+    if (store == null) {
+      return missingKeyRow;
+    }
+
+    final hydrated = await store.read(secureStoreKeyFromReference(keyValue));
+    if (hydrated == null) {
+      return missingKeyRow;
+    }
+
+    return Map<String, Object?>.from(row)..['encryption_key_base64'] = hydrated;
   }
 }

@@ -1,17 +1,17 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// 36x36 glass circle search button for opening the search dock.
 class OrbitSearchTrigger extends StatelessWidget {
   final VoidCallback onSearchTap;
 
-  const OrbitSearchTrigger({
-    super.key,
-    required this.onSearchTap,
-  });
+  const OrbitSearchTrigger({super.key, required this.onSearchTap});
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
     return GestureDetector(
       onTap: onSearchTap,
       child: ClipOval(
@@ -22,15 +22,13 @@ class OrbitSearchTrigger extends StatelessWidget {
             height: 44,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: const Color(0x1AFFFFFF), // rgba(255,255,255,0.1)
-              border: Border.all(
-                color: const Color(0x1FFFFFFF), // rgba(255,255,255,0.12)
-              ),
+              color: readableColors.glassSurface,
+              border: Border.all(color: readableColors.glassBorder),
             ),
             child: Icon(
               Icons.search,
               size: 22,
-              color: Colors.white.withValues(alpha: 0.8),
+              color: readableColors.iconPrimary,
             ),
           ),
         ),

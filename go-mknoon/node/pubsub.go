@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math/rand"
@@ -17,6 +19,11 @@ import (
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
 	"github.com/mknoon/go-mknoon/internal"
+)
+
+const (
+	pubsubAuthorizationRejectDiagnosticWindow = time.Minute
+	pubsubAuthorizationRejectHashLength       = 12
 )
 
 // initPubSub creates a new GossipSub instance attached to the node's libp2p host.
@@ -199,14 +206,30 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	}
 
 	// 4. Build GroupEnvelope (v3).
+	senderDeviceId := groupPublishStringOpt(opts, "senderDeviceId")
+	if senderDeviceId == "" {
+		senderDeviceId = senderPeerId
+	}
+	senderTransportPeerId := groupPublishStringOpt(opts, "senderTransportPeerId")
+	if senderTransportPeerId == "" {
+		senderTransportPeerId = senderDeviceId
+	}
+	senderDevicePublicKey := groupPublishStringOpt(opts, "senderDevicePublicKey")
+	if senderDevicePublicKey == "" {
+		senderDevicePublicKey = senderPublicKeyB64
+	}
 	envelope := &internal.GroupEnvelope{
-		Version:         "3",
-		Type:            "group_message",
-		GroupId:         groupId,
-		SenderId:        senderPeerId,
-		SenderPublicKey: senderPublicKeyB64,
-		Signature:       signature,
-		KeyEpoch:        keyInfo.KeyEpoch,
+		Version:               "3",
+		Type:                  "group_message",
+		GroupId:               groupId,
+		SenderId:              senderPeerId,
+		SenderDeviceId:        senderDeviceId,
+		SenderTransportPeerId: senderTransportPeerId,
+		SenderDevicePublicKey: senderDevicePublicKey,
+		SenderKeyPackageId:    groupPublishStringOpt(opts, "senderKeyPackageId"),
+		SenderPublicKey:       senderPublicKeyB64,
+		Signature:             signature,
+		KeyEpoch:              keyInfo.KeyEpoch,
 		Encrypted: internal.GroupEncryptedPayload{
 			Ciphertext: ctB64,
 			Nonce:      nonceB64,
@@ -249,7 +272,7 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 // The reactionJSON is the raw JSON payload (id, messageId, emoji, action, etc.)
 // that gets encrypted inside the v3 group_reaction envelope.
 // All members can publish reactions, including non-admins in announcement groups.
-func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, reactionJSON string) error {
+func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, reactionJSON string, opts ...map[string]interface{}) error {
 	n.mu.RLock()
 	topic, topicOk := n.groupTopics[groupId]
 	config, configOk := n.groupConfigs[groupId]
@@ -280,14 +303,34 @@ func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, sender
 	}
 
 	// Build GroupEnvelope with type "group_reaction".
+	reactionOpts := map[string]interface{}(nil)
+	if len(opts) > 0 {
+		reactionOpts = opts[0]
+	}
+	senderDeviceId := groupPublishStringOpt(reactionOpts, "senderDeviceId")
+	if senderDeviceId == "" {
+		senderDeviceId = senderPeerId
+	}
+	senderTransportPeerId := groupPublishStringOpt(reactionOpts, "senderTransportPeerId")
+	if senderTransportPeerId == "" {
+		senderTransportPeerId = senderDeviceId
+	}
+	senderDevicePublicKey := groupPublishStringOpt(reactionOpts, "senderDevicePublicKey")
+	if senderDevicePublicKey == "" {
+		senderDevicePublicKey = senderPublicKeyB64
+	}
 	envelope := &internal.GroupEnvelope{
-		Version:         "3",
-		Type:            "group_reaction",
-		GroupId:         groupId,
-		SenderId:        senderPeerId,
-		SenderPublicKey: senderPublicKeyB64,
-		Signature:       signature,
-		KeyEpoch:        keyInfo.KeyEpoch,
+		Version:               "3",
+		Type:                  "group_reaction",
+		GroupId:               groupId,
+		SenderId:              senderPeerId,
+		SenderDeviceId:        senderDeviceId,
+		SenderTransportPeerId: senderTransportPeerId,
+		SenderDevicePublicKey: senderDevicePublicKey,
+		SenderKeyPackageId:    groupPublishStringOpt(reactionOpts, "senderKeyPackageId"),
+		SenderPublicKey:       senderPublicKeyB64,
+		Signature:             signature,
+		KeyEpoch:              keyInfo.KeyEpoch,
 		Encrypted: internal.GroupEncryptedPayload{
 			Ciphertext: ctB64,
 			Nonce:      nonceB64,
@@ -415,7 +458,148 @@ func groupEnvelopeMatchesTransportPeer(env *internal.GroupEnvelope, transportPee
 	if env == nil || transportPeerId == "" {
 		return true
 	}
-	return env.SenderId == transportPeerId
+	expectedTransportPeerId := env.SenderTransportPeerId
+	if expectedTransportPeerId == "" {
+		expectedTransportPeerId = env.SenderId
+	}
+	return expectedTransportPeerId == transportPeerId
+}
+
+func activeMemberDeviceForEnvelope(member *GroupMember, env *internal.GroupEnvelope, transportPeerId string) *GroupMemberDevice {
+	if member == nil || env == nil {
+		return nil
+	}
+
+	if len(member.Devices) == 0 {
+		if env.SenderDeviceId != "" && env.SenderDeviceId != member.PeerId {
+			return nil
+		}
+		if env.SenderTransportPeerId != "" && env.SenderTransportPeerId != member.PeerId {
+			return nil
+		}
+		if transportPeerId != "" && transportPeerId != member.PeerId {
+			return nil
+		}
+		if env.SenderDevicePublicKey != "" && env.SenderDevicePublicKey != member.PublicKey {
+			return nil
+		}
+		return &GroupMemberDevice{
+			DeviceId:               member.PeerId,
+			TransportPeerId:        member.PeerId,
+			DeviceSigningPublicKey: member.PublicKey,
+			MlKemPublicKey:         member.MlKemPublicKey,
+			Status:                 "active",
+		}
+	}
+
+	expectedDeviceId := env.SenderDeviceId
+	expectedTransportPeerId := env.SenderTransportPeerId
+	if expectedTransportPeerId == "" {
+		expectedTransportPeerId = transportPeerId
+	}
+	if expectedDeviceId == "" || expectedTransportPeerId == "" {
+		return nil
+	}
+
+	for i := range member.Devices {
+		device := &member.Devices[i]
+		if device.DeviceId != expectedDeviceId {
+			continue
+		}
+		if device.Status != "" && device.Status != "active" {
+			continue
+		}
+		if device.RevokedAt != "" {
+			continue
+		}
+		if device.TransportPeerId != expectedTransportPeerId {
+			return nil
+		}
+		if transportPeerId != "" && device.TransportPeerId != transportPeerId {
+			return nil
+		}
+		if env.SenderDevicePublicKey != "" && env.SenderDevicePublicKey != device.DeviceSigningPublicKey {
+			return nil
+		}
+		if env.SenderKeyPackageId != "" && env.SenderKeyPackageId != device.KeyPackageId {
+			return nil
+		}
+		return device
+	}
+	return nil
+}
+
+func pubsubAuthorizationRejectHash(value string) string {
+	if value == "" {
+		return "none"
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:pubsubAuthorizationRejectHashLength]
+}
+
+func (n *Node) logPubSubValidationReject(reason, groupId string, pid peer.ID, env *internal.GroupEnvelope) {
+	senderId := ""
+	envelopeType := "unknown"
+	keyEpoch := 0
+	if env != nil {
+		senderId = env.SenderId
+		if env.Type != "" {
+			envelopeType = env.Type
+		}
+		keyEpoch = env.KeyEpoch
+	}
+
+	localPeerId := ""
+	if n != nil {
+		n.mu.RLock()
+		localPeerId = n.peerId
+		n.mu.RUnlock()
+	}
+
+	now := time.Now()
+	diagKey := strings.Join([]string{reason, groupId, senderId, pid.String()}, "|")
+	if n != nil {
+		n.pubsubRejectDiagMu.Lock()
+		if n.pubsubRejectDiagLast == nil {
+			n.pubsubRejectDiagLast = make(map[string]time.Time)
+		}
+		if n.pubsubRejectDiagNow != nil {
+			now = n.pubsubRejectDiagNow()
+		}
+		if last, ok := n.pubsubRejectDiagLast[diagKey]; ok && now.Sub(last) < pubsubAuthorizationRejectDiagnosticWindow {
+			n.pubsubRejectDiagMu.Unlock()
+			return
+		}
+		n.pubsubRejectDiagLast[diagKey] = now
+		n.pubsubRejectDiagMu.Unlock()
+	}
+
+	groupHash := pubsubAuthorizationRejectHash(groupId)
+	senderHash := pubsubAuthorizationRejectHash(senderId)
+	transportPeerHash := pubsubAuthorizationRejectHash(pid.String())
+	localPeerHash := pubsubAuthorizationRejectHash(localPeerId)
+
+	log.Printf(
+		"[PUBSUB] Validator: authorization reject reason=%s groupHash=%s senderHash=%s transportPeerHash=%s localPeerHash=%s envelopeType=%s keyEpoch=%d",
+		reason,
+		groupHash,
+		senderHash,
+		transportPeerHash,
+		localPeerHash,
+		envelopeType,
+		keyEpoch,
+	)
+	if n != nil {
+		n.emitEvent("group:validation_rejected", map[string]interface{}{
+			"reason":            reason,
+			"groupHash":         groupHash,
+			"senderHash":        senderHash,
+			"transportPeerHash": transportPeerHash,
+			"localPeerHash":     localPeerHash,
+			"envelopeType":      envelopeType,
+			"keyEpoch":          keyEpoch,
+		})
+	}
 }
 
 // groupTopicValidator returns a topic validator function for a group topic.
@@ -432,26 +616,26 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 
 		// 1. Must be a v3 group envelope (message or reaction).
 		if !internal.IsGroupEnvelope(data) {
-			log.Printf("[PUBSUB] Validator: rejecting non-v3 message on group %s", groupId)
+			n.logPubSubValidationReject("not_v3_envelope", groupId, pid, nil)
 			return pubsub.ValidationReject
 		}
 
 		// 2. Parse envelope.
 		env, err := internal.ParseGroupEnvelope(data)
 		if err != nil {
-			log.Printf("[PUBSUB] Validator: rejecting invalid envelope on group %s: %v", groupId, err)
+			n.logPubSubValidationReject("invalid_envelope", groupId, pid, nil)
 			return pubsub.ValidationReject
 		}
 
 		// 3. Verify groupId matches.
 		if env.GroupId != groupId {
-			log.Printf("[PUBSUB] Validator: rejecting mismatched groupId: got %s, want %s", env.GroupId, groupId)
+			n.logPubSubValidationReject("group_mismatch", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
 		// 4. Bind the claimed sender to the libp2p transport peer id.
 		if !groupEnvelopeMatchesTransportPeer(env, pid.String()) {
-			log.Printf("[PUBSUB] Validator: rejecting sender/transport peer mismatch: sender=%s transport=%s group=%s", env.SenderId, pid.String(), groupId)
+			n.logPubSubValidationReject("peer_mismatch", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
@@ -460,21 +644,26 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 		config, ok := n.groupConfigs[groupId]
 		n.mu.RUnlock()
 		if !ok {
-			log.Printf("[PUBSUB] Validator: rejecting message for unknown group %s", groupId)
+			n.logPubSubValidationReject("unknown_group", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
 		// 6. Find sender in members list.
 		member := findMember(config, env.SenderId)
 		if member == nil {
-			log.Printf("[PUBSUB] Validator: rejecting message from non-member %s in group %s", env.SenderId, groupId)
+			n.logPubSubValidationReject("non_member", groupId, pid, env)
+			return pubsub.ValidationReject
+		}
+		sourceDevice := activeMemberDeviceForEnvelope(member, env, pid.String())
+		if sourceDevice == nil {
+			n.logPubSubValidationReject("unbound_device", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
 		// 7. For announcement groups: only admin can publish messages.
 		//    Reactions are allowed from any member (all members can react).
 		if env.Type == "group_message" && !isAllowedWriter(config, env.SenderId) {
-			log.Printf("[PUBSUB] Validator: rejecting message from non-admin %s in announcement group %s", env.SenderId, groupId)
+			n.logPubSubValidationReject("unauthorized_writer", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
@@ -483,18 +672,12 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 		keyInfo, keyOk := n.groupKeys[groupId]
 		n.mu.RUnlock()
 		if !keyOk {
-			log.Printf("[PUBSUB] Validator: no key info for group %s", groupId)
+			n.logPubSubValidationReject("missing_key", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
-		if !verifyGroupEnvelopeSignature(groupId, member.PublicKey, env, keyInfo, time.Now()) {
-			log.Printf(
-				"[PUBSUB] Validator: invalid signature or epoch from %s in group %s (envelope epoch=%d, current epoch=%d)",
-				env.SenderId,
-				groupId,
-				env.KeyEpoch,
-				keyInfo.KeyEpoch,
-			)
+		if !verifyGroupEnvelopeSignature(groupId, sourceDevice.DeviceSigningPublicKey, env, keyInfo, time.Now()) {
+			n.logPubSubValidationReject("bad_signature_or_epoch", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
@@ -560,10 +743,16 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		// Route by envelope type BEFORE parsing inner payload — reactions
 		// have a different inner schema and must not go through ParseGroupPayload.
 		if env.Type == "group_reaction" {
+			transportPeerId := env.SenderTransportPeerId
+			if transportPeerId == "" {
+				transportPeerId = env.SenderId
+			}
 			reactionEvent := map[string]interface{}{
-				"groupId":  groupId,
-				"senderId": env.SenderId,
-				"reaction": plaintext,
+				"groupId":         groupId,
+				"senderId":        env.SenderId,
+				"senderDeviceId":  env.SenderDeviceId,
+				"transportPeerId": transportPeerId,
+				"reaction":        plaintext,
 			}
 			n.emitEvent("group_reaction:received", reactionEvent)
 			continue
@@ -610,14 +799,35 @@ func buildGroupMessageExtra(messageId string, opts map[string]interface{}) map[s
 	return extra
 }
 
+func groupPublishStringOpt(opts map[string]interface{}, key string) string {
+	if opts == nil {
+		return ""
+	}
+	value, ok := opts[key]
+	if !ok {
+		return ""
+	}
+	str, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return str
+}
+
 func buildGroupMessageReceivedEvent(groupId string, env *internal.GroupEnvelope, payload *internal.GroupMessagePayload) map[string]interface{} {
+	transportPeerId := env.SenderTransportPeerId
+	if transportPeerId == "" {
+		transportPeerId = env.SenderId
+	}
 	event := map[string]interface{}{
-		"groupId":        groupId,
-		"senderId":       env.SenderId,
-		"senderUsername": payload.Username,
-		"keyEpoch":       env.KeyEpoch,
-		"text":           payload.Text,
-		"timestamp":      payload.Timestamp,
+		"groupId":         groupId,
+		"senderId":        env.SenderId,
+		"senderDeviceId":  env.SenderDeviceId,
+		"transportPeerId": transportPeerId,
+		"senderUsername":  payload.Username,
+		"keyEpoch":        env.KeyEpoch,
+		"text":            payload.Text,
+		"timestamp":       payload.Timestamp,
 	}
 	if payload.Extra == nil {
 		return event
@@ -840,14 +1050,32 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 	allowedMembers := make(map[peer.ID]struct{})
 	if config != nil {
 		for _, member := range config.Members {
-			if member.PeerId == "" || member.PeerId == selfId.String() {
+			if len(member.Devices) == 0 {
+				if member.PeerId == "" || member.PeerId == selfId.String() {
+					continue
+				}
+				memberID, err := peer.Decode(member.PeerId)
+				if err != nil {
+					continue
+				}
+				allowedMembers[memberID] = struct{}{}
 				continue
 			}
-			memberID, err := peer.Decode(member.PeerId)
-			if err != nil {
-				continue
+			for _, device := range member.Devices {
+				if device.Status != "" && device.Status != "active" {
+					continue
+				}
+				if device.RevokedAt != "" ||
+					device.TransportPeerId == "" ||
+					device.TransportPeerId == selfId.String() {
+					continue
+				}
+				deviceID, err := peer.Decode(device.TransportPeerId)
+				if err != nil {
+					continue
+				}
+				allowedMembers[deviceID] = struct{}{}
 			}
-			allowedMembers[memberID] = struct{}{}
 		}
 	}
 	newPeers, ignoredNonMembers := filterDiscoveredGroupMembers(newPeers, allowedMembers)

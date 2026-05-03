@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -38,6 +40,9 @@ import '../test/shared/fakes/in_memory_group_message_repository.dart';
 import '../test/shared/fakes/in_memory_group_repository.dart';
 import '../test/shared/fakes/in_memory_media_attachment_repository.dart';
 import '../test/shared/fakes/in_memory_message_repository.dart';
+
+const _fixtureEncryptionKeyBase64 = 'fixture-media-stable-id-key';
+const _fixtureEncryptionNonce = 'fixture-media-stable-id-nonce';
 
 class _StableLocalVoiceP2PService extends core_fake_p2p.FakeP2PService {
   _StableLocalVoiceP2PService({
@@ -347,6 +352,10 @@ List<int> _minimalPngBytes() {
   return base64Decode(
     'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAVlpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IlhNUCBDb3JlIDUuNC4wIj4KICAgPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4KICAgICAgPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIKICAgICAgICAgICAgeG1sbnM6dGlmZj0iaHR0cDovL25zLmFkb2JlLmNvbS90aWZmLzEuMC8iPgogICAgICAgICA8dGlmZjpPcmllbnRhdGlvbj4xPC90aWZmOk9yaWVudGF0aW9uPgogICAgICA8L3JkZjpEZXNjcmlwdGlvbj4KICAgPC9yZGY6UkRGPgo8L3g6eG1wbWV0YT4KTMInWQAAAdVJREFUOBF9Uz1PG0EQfXt3PoNEYgrCh4AiSEnhICQLI0qoqHGN6PIDEE0qmqSNlCapwg9ImTpFAjYIR5DQuECyEFKk2HJhLEJxyN69zcyd116fE29xuzu7772Zt3NC08CIYZ8KMXzRGw71IwxOgpKx/xKEBHZI8aKh8PM2BO+n0sD20xQ8OxMuITlUGEfKNanXjgPtfQ104eRB1+5VdBB2z3kj+NNPGpESK5frCvvVDjK0eU7Kr1d8ZNKid24wjlnwbNL+boEXU8DBcgzuhHFZNqaXgTGHwXukPEnK8wR+l/PxyLeLtuFkMpdgwKXfEq+uZQSeJXvfr/qQpFppKqRdAUnF5p448GltxkAJbMaZAjjtD3kfbVq//NHG1pVEvtKJSmSw7VqvBMNYrks8m3ThUmCzGGB63EHGd3GwJLAy7YFF+vrdEgzYmPhAub74EuBOuGgqhaNsiI2lCXRUiJQ7kDQGdvx8TDJGnXKY9dFsS+qkU3z6+BmtP0EEph4wevEcm5j4djvl2+UvjYU3Gt5bPbdzqGuNVnQxtDppyAOmZQ1+God+hNJ5FcWLG0hKf3HmMXYL60h5bs+LfxLEucVEtmEcpy6OiM2dkQQGYEhE8tekC38BADIeNqhZl4wAAAAASUVORK5CYII=',
   );
+}
+
+String _minimalPngContentHash() {
+  return sha256.convert(_minimalPngBytes()).toString();
 }
 
 String _extensionForMime(String mime) {
@@ -1128,6 +1137,14 @@ void main() {
                       width: width,
                       height: height,
                       durationMs: durationMs,
+                      contentHash:
+                          await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                            localFilePath,
+                          ),
+                      encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+                      encryptionNonce: _fixtureEncryptionNonce,
+                      encryptionScheme:
+                          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                     );
                   },
             ),
@@ -1335,6 +1352,10 @@ void main() {
             localPath: storedRelativePath,
             downloadStatus: 'done',
             createdAt: timestamp.toIso8601String(),
+            contentHash: _minimalPngContentHash(),
+            encryptionKeyBase64: _fixtureEncryptionKeyBase64,
+            encryptionNonce: _fixtureEncryptionNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           ),
         );
 

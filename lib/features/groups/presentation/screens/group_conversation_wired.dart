@@ -43,11 +43,16 @@ import 'package:flutter_app/features/groups/application/retry_failed_group_messa
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
+import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
@@ -98,6 +103,7 @@ class GroupConversationWired extends StatefulWidget {
   final ReactionRepository? reactionRepo;
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
+  final GroupHistoryGapRepairRepository? historyGapRepairRepo;
   final UploadMediaFn uploadMediaFn;
   final int maxAttachmentBudgetBytes;
   final DateTime? notificationTappedAt;
@@ -127,6 +133,7 @@ class GroupConversationWired extends StatefulWidget {
     this.initialText,
     this.reactionRepo,
     this.groupReactionReplayOutboxRepository,
+    this.historyGapRepairRepo,
     this.uploadMediaFn = uploadMedia,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     this.notificationTappedAt,
@@ -156,6 +163,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _isSending = false;
   String? _activeQuoteMessageId;
   String _draftText = '';
+  GroupSecurityStatusViewState? _securityStatus;
+  GroupHistoryGapRepair? _historyGapRepair;
 
   // Media state
   List<PendingComposerMedia> _pendingAttachments = [];
@@ -259,6 +268,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
     _loadIdentity();
     _loadMessages();
+    unawaited(_loadSecurityStatus());
     _startListening();
     _startListeningForReactions();
   }
@@ -464,6 +474,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     if (oldCanWrite && !_canWrite && _activeQuoteMessageId != null) {
       _activeQuoteMessageId = null;
+    }
+    if (widget.group.id != oldWidget.group.id) {
+      unawaited(_loadSecurityStatus());
     }
   }
 
@@ -710,9 +723,55 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
   }
 
+  Future<void> _loadSecurityStatus() async {
+    try {
+      final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
+      final members = await widget.groupRepo.getMembers(widget.group.id);
+      final memberSafety = <GroupMemberIdentitySafety>[];
+      for (final member in members) {
+        try {
+          final contact = await widget.contactRepo.getContact(member.peerId);
+          final safety = GroupMemberIdentitySafety.compare(
+            member: member,
+            savedContact: contact,
+          );
+          if (safety != null) {
+            memberSafety.add(safety);
+          }
+        } catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_CONV_FL_SECURITY_MEMBER_SAFETY_ERROR',
+            details: {
+              'peerId': member.peerId.length > 10
+                  ? member.peerId.substring(0, 10)
+                  : member.peerId,
+              'error': e.toString(),
+            },
+          );
+        }
+      }
+      final securityStatus = GroupSecurityStatusViewState.fromSnapshot(
+        latestKey: latestKey,
+        memberCount: members.length,
+        memberSafety: memberSafety,
+      );
+      if (!mounted) return;
+      setState(() => _securityStatus = securityStatus);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_SECURITY_STATUS_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+  }
+
   Future<void> _loadMessages() async {
     try {
       final messages = await widget.msgRepo.getMessagesPage(widget.group.id);
+      final historyGapRepair = await widget.historyGapRepairRepo
+          ?.getLatestRepairForGroup(widget.group.id);
       if (!mounted) return;
 
       final mediaMap = await _loadResolvedMediaMap(messages);
@@ -722,6 +781,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         _messages = messages;
         _mediaMap = mediaMap;
         _initialLoadDone = true;
+        _historyGapRepair = historyGapRepair;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _emitNotificationTapTimingIfNeeded();
@@ -2116,8 +2176,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     } else {
       updated.add(message);
     }
-    updated.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    _messages = updated;
+    _messages = orderGroupMessagesForTimeline(updated);
   }
 
   void _updateMediaForMessage(
@@ -2870,16 +2929,22 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   Future<void> _refreshVisibleGroup() async {
     final refreshedGroup = await widget.groupRepo.getGroup(widget.group.id);
+    final historyGapRepair = await widget.historyGapRepairRepo
+        ?.getLatestRepairForGroup(widget.group.id);
     if (refreshedGroup == null || !mounted) {
       return;
     }
 
-    setState(() => _group = refreshedGroup);
+    setState(() {
+      _group = refreshedGroup;
+      _historyGapRepair = historyGapRepair;
+    });
   }
 
   Future<void> _refreshAfterInfoRoute() async {
     await _refreshVisibleGroup();
     await _loadMessages();
+    await _loadSecurityStatus();
   }
 
   static String _mimeFromPath(String path) {
@@ -3165,6 +3230,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         canWrite: _canWrite,
         isSending: _isSending,
         uploadProgress: _uploadProgressViewState,
+        securityStatus: _securityStatus,
         onCancelUpload:
             _activeAttachmentUpload == null ||
                 _activeAttachmentUpload!.cancelRequested
@@ -3215,6 +3281,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         isActiveQuoteUnavailable: isActiveQuoteUnavailable,
         onClearQuote: _canWrite ? _onClearQuote : null,
         backlogRetentionNotice: groupBacklogRetentionNoticeFor(_group),
+        historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
+          _historyGapRepair,
+        ),
         backgroundPreference: widget.backgroundPreference,
       ),
     );

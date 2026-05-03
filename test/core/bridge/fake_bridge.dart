@@ -85,6 +85,14 @@ class FakeBridge implements Bridge {
       return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
     }
 
+    if (cmd == 'payload.sign' && !responses.containsKey(cmd)) {
+      return jsonEncode({'ok': true, 'signature': 'fake-signature'});
+    }
+
+    if (cmd == 'payload.verify' && !responses.containsKey(cmd)) {
+      return jsonEncode({'ok': true, 'valid': true});
+    }
+
     if (cmd == 'group.encrypt' && !responses.containsKey(cmd)) {
       final payload = parsed['payload'] as Map<String, dynamic>;
       return jsonEncode({

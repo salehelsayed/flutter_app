@@ -17,7 +17,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 600));
 
       expect(find.text('2 introductions sent'), findsOneWidget);
       expect(find.text('Alice, Bob'), findsOneWidget);

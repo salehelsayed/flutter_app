@@ -20,13 +20,27 @@ const (
 	GroupRoleReader GroupRole = "reader"
 )
 
+// GroupMemberDevice represents one active or revoked device registered under a
+// member/account identity.
+type GroupMemberDevice struct {
+	DeviceId                 string `json:"deviceId"`
+	TransportPeerId          string `json:"transportPeerId"`
+	DeviceSigningPublicKey   string `json:"deviceSigningPublicKey"`
+	MlKemPublicKey           string `json:"mlKemPublicKey,omitempty"`
+	KeyPackageId             string `json:"keyPackageId,omitempty"`
+	KeyPackagePublicMaterial string `json:"keyPackagePublicMaterial,omitempty"`
+	Status                   string `json:"status,omitempty"`
+	RevokedAt                string `json:"revokedAt,omitempty"`
+}
+
 // GroupMember represents a member of a group with their identity and role.
 type GroupMember struct {
-	PeerId         string    `json:"peerId"`
-	Username       string    `json:"username,omitempty"`
-	Role           GroupRole `json:"role"`
-	PublicKey      string    `json:"publicKey"`
-	MlKemPublicKey string    `json:"mlKemPublicKey,omitempty"`
+	PeerId         string              `json:"peerId"`
+	Username       string              `json:"username,omitempty"`
+	Role           GroupRole           `json:"role"`
+	PublicKey      string              `json:"publicKey"`
+	MlKemPublicKey string              `json:"mlKemPublicKey,omitempty"`
+	Devices        []GroupMemberDevice `json:"devices,omitempty"`
 }
 
 // GroupConfig holds the configuration of a group.

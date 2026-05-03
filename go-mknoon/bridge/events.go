@@ -15,6 +15,6 @@ type EventCallback interface {
 	//   "addresses:updated"       — { listenAddresses, circuitAddresses }
 	//   "relay:state"             — { relayState, healthyRelayCount, watchdogRestartCount, ... }
 	//   "media:upload_progress"   — { id, sentBytes, totalBytes, toPeerId }
-	//   "group_message:received"  — { groupId, senderId, senderUsername, keyEpoch, text, timestamp }
+	//   "group_message:received"  — { groupId, senderId, transportPeerId, senderUsername, keyEpoch, text, timestamp }
 	OnEvent(jsonString string)
 }

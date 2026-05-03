@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,31 +38,231 @@ const _testGroupConfig = {
   'createdAt': '2026-03-02T00:00:00.000Z',
 };
 
+const _deviceBoundGroupConfig = {
+  'name': 'Book Club',
+  'groupType': 'chat',
+  'description': 'A group for book lovers',
+  'members': [
+    {
+      'peerId': '12D3KooWAlice',
+      'username': 'Alice',
+      'role': 'admin',
+      'publicKey': 'alicePubKey64',
+      'mlKemPublicKey': 'aliceMlKem64',
+      'devices': [
+        {
+          'deviceId': 'alice-device-1',
+          'transportPeerId': 'alice-device-1',
+          'deviceSigningPublicKey': 'alicePubKey64',
+          'mlKemPublicKey': 'aliceMlKem64',
+          'keyPackageId': 'alice-kp-1',
+          'keyPackagePublicMaterial': 'alice-kpm-1',
+          'status': 'active',
+        },
+      ],
+    },
+    {
+      'peerId': '12D3KooWBob',
+      'username': 'Bob',
+      'role': 'writer',
+      'publicKey': 'bobPubKey64',
+      'mlKemPublicKey': 'bobMlKem64',
+      'devices': [
+        {
+          'deviceId': 'bob-device-1',
+          'transportPeerId': 'bob-device-1',
+          'deviceSigningPublicKey': 'bobPubKey64',
+          'mlKemPublicKey': 'bobMlKem64',
+          'keyPackageId': 'bob-kp-1',
+          'keyPackagePublicMaterial': 'bob-kpm-1',
+          'status': 'active',
+        },
+      ],
+    },
+  ],
+  'createdBy': '12D3KooWAlice',
+  'createdAt': '2026-03-02T00:00:00.000Z',
+};
+
+GroupInviteMembershipFreshnessProof _makeFreshnessProof({
+  required String inviteId,
+  required String groupId,
+  required String? recipientPeerId,
+  required Map<String, dynamic> groupConfig,
+  required int keyEpoch,
+  String? recipientDeviceId,
+  String? recipientTransportPeerId,
+  String? recipientMlKemPublicKey,
+  String? recipientKeyPackageId,
+  String? recipientKeyPackagePublicMaterial,
+  DateTime? issuedAt,
+  DateTime? expiresAt,
+}) {
+  final issuedAtUtc = issuedAt ?? DateTime.utc(2026, 3, 2, 12);
+  final stateHash = buildGroupConfigStateHash(
+    groupId: groupId,
+    groupConfig: groupConfig,
+  );
+  return GroupInviteMembershipFreshnessProof(
+    inviteId: inviteId,
+    groupId: groupId,
+    recipientPeerId: recipientPeerId,
+    recipientDeviceId: recipientDeviceId,
+    recipientTransportPeerId: recipientTransportPeerId,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
+    recipientKeyPackageId: recipientKeyPackageId,
+    recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
+    inviterPeerId: '12D3KooWAlice',
+    inviterPublicKey: 'alicePubKey64',
+    keyEpoch: keyEpoch,
+    groupConfigStateHash: stateHash,
+    membershipWatermark: stateHash,
+    issuedAt: issuedAtUtc,
+    expiresAt: expiresAt ?? issuedAtUtc.add(groupInviteMembershipFreshnessTtl),
+    inviterMemberSnapshot: {
+      'peerId': '12D3KooWAlice',
+      'username': 'Alice',
+      'role': 'admin',
+      'publicKey': 'alicePubKey64',
+      'mlKemPublicKey': 'aliceMlKem64',
+    },
+  );
+}
+
 GroupInvitePayload _makePayload({
   String groupId = 'grp-abc123',
   String? overrideGroupKey,
-  String? recipientPeerId,
+  String? recipientPeerId = '12D3KooWBob',
+  Map<String, dynamic> groupConfig = _testGroupConfig,
+  String assignedRole = 'writer',
+  int keyEpoch = 1,
+  String? recipientDeviceId,
+  String? recipientTransportPeerId,
+  String? recipientMlKemPublicKey,
+  String? recipientKeyPackageId,
+  String? recipientKeyPackagePublicMaterial,
+  DateTime? membershipProofIssuedAt,
+  DateTime? membershipProofExpiresAt,
 }) {
-  return GroupInvitePayload(
+  final issuedAtUtc = (membershipProofIssuedAt ?? DateTime.now().toUtc())
+      .toUtc();
+  final policyExpiresAt = DateTime.utc(2099, 3, 9, 12);
+  final allowedDevices = <String>[];
+  if (recipientDeviceId != null) {
+    allowedDevices.add(recipientDeviceId);
+  } else if (recipientPeerId != null && recipientPeerId.isNotEmpty) {
+    allowedDevices.add(recipientPeerId);
+  }
+  final welcomeKeyPackage =
+      recipientKeyPackageId != null &&
+          recipientKeyPackagePublicMaterial != null &&
+          recipientDeviceId != null &&
+          recipientTransportPeerId != null &&
+          recipientMlKemPublicKey != null
+      ? GroupWelcomeKeyPackage.create(
+          packageId: recipientKeyPackageId,
+          publicMaterial: recipientKeyPackagePublicMaterial,
+          recipientPeerId: '12D3KooWBob',
+          recipientDeviceId: recipientDeviceId,
+          recipientTransportPeerId: recipientTransportPeerId,
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+          inviteId: 'invite-uuid-001',
+          groupId: groupId,
+          keyEpoch: keyEpoch,
+          issuedAt: issuedAtUtc,
+          expiresAt: policyExpiresAt,
+        )
+      : null;
+  final payload = GroupInvitePayload(
     id: 'invite-uuid-001',
     groupId: groupId,
     groupKey: overrideGroupKey ?? 'base64GroupKey==',
-    keyEpoch: 1,
-    groupConfig: _testGroupConfig,
+    keyEpoch: keyEpoch,
+    groupConfig: groupConfig,
     senderPeerId: '12D3KooWAlice',
     senderUsername: 'Alice',
-    timestamp: '2026-03-02T12:00:00.000Z',
+    timestamp: issuedAtUtc.toIso8601String(),
     recipientPeerId: recipientPeerId,
+    recipientDeviceId: recipientDeviceId,
+    recipientTransportPeerId: recipientTransportPeerId,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
+    recipientKeyPackageId: recipientKeyPackageId,
+    recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
+    welcomeKeyPackage: welcomeKeyPackage,
+    invitePolicy: GroupInvitePolicy(
+      expiresAt: policyExpiresAt,
+      allowedDevices: allowedDevices,
+      assignedRole: assignedRole,
+      canInviteOthers: false,
+      joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+      keyEpoch: keyEpoch,
+      welcomeKeyPackageId: welcomeKeyPackage?.packageId,
+      welcomeKeyPackagePublicMaterialHash:
+          welcomeKeyPackage?.publicMaterialHash,
+      welcomeKeyPackageExpiresAt: welcomeKeyPackage?.expiresAt,
+    ),
+    membershipFreshnessProof: _makeFreshnessProof(
+      inviteId: 'invite-uuid-001',
+      groupId: groupId,
+      recipientPeerId: recipientPeerId,
+      recipientDeviceId: recipientDeviceId,
+      recipientTransportPeerId: recipientTransportPeerId,
+      recipientMlKemPublicKey: recipientMlKemPublicKey,
+      recipientKeyPackageId: recipientKeyPackageId,
+      recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
+      groupConfig: groupConfig,
+      keyEpoch: keyEpoch,
+      issuedAt: issuedAtUtc,
+      expiresAt: membershipProofExpiresAt,
+    ),
   );
+  return payload.withInviteSignature(signature: 'signed-invite-by-alice');
 }
 
 ChatMessage _makeV1Message({GroupInvitePayload? payload}) {
   final p = payload ?? _makePayload();
   return ChatMessage(
     from: p.senderPeerId,
-    to: 'myPeerId',
+    to:
+        p.recipientTransportPeerId ??
+        p.recipientDeviceId ??
+        p.recipientPeerId ??
+        'myPeerId',
     content: p.toJson(),
-    timestamp: DateTime.now().toUtc().toIso8601String(),
+    timestamp: p.timestamp,
+    isIncoming: true,
+  );
+}
+
+Map<String, dynamic> _signedPayloadMap(GroupInvitePayload payload) {
+  final payloadMap =
+      (jsonDecode(payload.toJson()) as Map<String, dynamic>)['payload']
+          as Map<String, dynamic>;
+  return {
+    ...payloadMap,
+    'inviteSignature': {
+      'signatureAlgorithm': 'ed25519',
+      'signedPayload': payload.canonicalInviteSignedPayload(),
+      'signature': 'signed-invite-by-alice',
+    },
+  };
+}
+
+ChatMessage _makeSignedV1Message({GroupInvitePayload? payload}) {
+  final p = payload ?? _makePayload();
+  return ChatMessage(
+    from: p.senderPeerId,
+    to:
+        p.recipientTransportPeerId ??
+        p.recipientDeviceId ??
+        p.recipientPeerId ??
+        'myPeerId',
+    content: jsonEncode({
+      'type': 'group_invite',
+      'version': '1',
+      'payload': _signedPayloadMap(p),
+    }),
+    timestamp: p.timestamp,
     isIncoming: true,
   );
 }
@@ -81,9 +283,13 @@ ChatMessage _makeV2Message({
   );
   return ChatMessage(
     from: p.senderPeerId,
-    to: 'myPeerId',
+    to:
+        p.recipientTransportPeerId ??
+        p.recipientDeviceId ??
+        p.recipientPeerId ??
+        'myPeerId',
     content: envelope,
-    timestamp: DateTime.now().toUtc().toIso8601String(),
+    timestamp: p.timestamp,
     isIncoming: true,
   );
 }
@@ -164,6 +370,7 @@ void main() {
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
+          ownPeerId: '12D3KooWBob',
         );
 
         expect(result, equals(HandleGroupInviteResult.success));
@@ -191,6 +398,83 @@ void main() {
     );
 
     test(
+      'rejects device-bound invite with wrong or missing local device identity before side effects',
+      () async {
+        Future<void> expectRejected({
+          required String label,
+          String? ownDeviceId,
+          String? ownTransportPeerId,
+          String? ownKeyPackageId = 'bob-kp-1',
+        }) async {
+          groupRepo = InMemoryGroupRepository();
+          bridge = FakeBridge();
+          final payload = _makePayload(
+            groupId: 'grp-device-$label',
+            groupConfig: _deviceBoundGroupConfig,
+            recipientDeviceId: 'bob-device-1',
+            recipientTransportPeerId: 'bob-device-1',
+            recipientMlKemPublicKey: 'bobMlKem64',
+            recipientKeyPackageId: 'bob-kp-1',
+            recipientKeyPackagePublicMaterial: 'bob-kpm-1',
+          );
+
+          final (result, groupId) = await handleIncomingGroupInvite(
+            message: _makeSignedV1Message(payload: payload),
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownPeerId: '12D3KooWBob',
+            ownDeviceId: ownDeviceId,
+            ownTransportPeerId: ownTransportPeerId,
+            ownMlKemPublicKey: 'bobMlKem64',
+            ownKeyPackageId: ownKeyPackageId,
+            ownKeyPackagePublicMaterial: 'bob-kpm-1',
+          );
+
+          expect(result, HandleGroupInviteResult.invalidPayload, reason: label);
+          expect(groupId, isNull, reason: label);
+          expect(
+            await groupRepo.getGroup(payload.groupId),
+            isNull,
+            reason: label,
+          );
+          expect(
+            await groupRepo.getLatestKey(payload.groupId),
+            isNull,
+            reason: label,
+          );
+          expect(
+            bridge.commandLog,
+            isNot(contains('group:join')),
+            reason: label,
+          );
+        }
+
+        await expectRejected(
+          label: 'missing-device',
+          ownDeviceId: null,
+          ownTransportPeerId: 'bob-device-1',
+        );
+        await expectRejected(
+          label: 'wrong-device',
+          ownDeviceId: 'bob-device-2',
+          ownTransportPeerId: 'bob-device-1',
+        );
+        await expectRejected(
+          label: 'wrong-transport',
+          ownDeviceId: 'bob-device-1',
+          ownTransportPeerId: 'bob-device-2',
+        );
+        await expectRejected(
+          label: 'wrong-key-package',
+          ownDeviceId: 'bob-device-1',
+          ownTransportPeerId: 'bob-device-1',
+          ownKeyPackageId: 'bob-kp-2',
+        );
+      },
+    );
+
+    test(
       'persists avatar metadata and downloaded path when invite carries it',
       () async {
         final groupConfigWithAvatar = {
@@ -199,15 +483,9 @@ void main() {
           'avatarMime': 'image/jpeg',
           'metadataUpdatedAt': '2026-04-05T12:25:00.000Z',
         };
-        final payload = GroupInvitePayload(
-          id: 'invite-uuid-002',
+        final payload = _makePayload(
           groupId: 'grp-avatar',
-          groupKey: 'base64GroupKey==',
-          keyEpoch: 1,
           groupConfig: groupConfigWithAvatar,
-          senderPeerId: '12D3KooWAlice',
-          senderUsername: 'Alice',
-          timestamp: '2026-03-02T12:00:00.000Z',
         );
 
         final (result, groupId) = await handleIncomingGroupInvite(
@@ -215,6 +493,7 @@ void main() {
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
+          ownPeerId: '12D3KooWBob',
           downloadGroupAvatarFn:
               ({
                 required dynamic bridge,
@@ -247,6 +526,7 @@ void main() {
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
+          ownPeerId: '12D3KooWBob',
         );
 
         expect(bridge.lastCommand, equals('group:join'));
@@ -280,6 +560,7 @@ void main() {
         groupRepo: groupRepo,
         contactRepo: contactRepo,
         bridge: bridge,
+        ownPeerId: '12D3KooWBob',
       );
 
       expect(result, equals(HandleGroupInviteResult.duplicateGroup));
@@ -289,8 +570,9 @@ void main() {
       expect(group!.name, equals('Original Name'));
       expect(group.createdBy, equals('12D3KooWOriginal'));
 
-      // Bridge group:join NOT called
-      expect(bridge.lastCommand, isNull);
+      // Signature verification can run, but group:join must not.
+      expect(bridge.commandLog, contains('payload.verify'));
+      expect(bridge.commandLog, isNot(contains('group:join')));
     });
 
     // --- Cycle 4.4 ---
@@ -374,6 +656,7 @@ void main() {
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
+          ownPeerId: '12D3KooWBob',
         );
 
         expect(result, equals(HandleGroupInviteResult.invalidPayload));
@@ -429,6 +712,7 @@ void main() {
         groupRepo: groupRepo,
         contactRepo: contactRepo,
         bridge: bridge,
+        ownPeerId: '12D3KooWBob',
       );
 
       expect(result, equals(HandleGroupInviteResult.unknownSender));
@@ -444,6 +728,7 @@ void main() {
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
+          ownPeerId: '12D3KooWBob',
         );
 
         final group = await groupRepo.getGroup('grp-abc123');
@@ -454,20 +739,39 @@ void main() {
     test(
       'accepts bound invite when recipient peer matches local identity',
       () async {
-        final payload = _makePayload(recipientPeerId: 'myPeerId');
+        final payload = _makePayload(recipientPeerId: '12D3KooWBob');
 
         final (result, groupId) = await handleIncomingGroupInvite(
           message: _makeV1Message(payload: payload),
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: bridge,
-          ownPeerId: 'myPeerId',
+          ownPeerId: '12D3KooWBob',
         );
 
         expect(result, equals(HandleGroupInviteResult.success));
         expect(groupId, equals('grp-abc123'));
         expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
         expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+      },
+    );
+
+    test(
+      'IJ009 rejects signed invite when local peer identity is unavailable before state or join',
+      () async {
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeSignedV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+        );
+
+        expect(result, equals(HandleGroupInviteResult.invalidPayload));
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, equals(0));
+        expect(await groupRepo.getMembers('grp-abc123'), isEmpty);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
       },
     );
 
@@ -480,6 +784,7 @@ void main() {
         groupRepo: groupRepo,
         contactRepo: contactRepo,
         bridge: timeoutBridge,
+        ownPeerId: '12D3KooWBob',
       );
 
       // Group IS still persisted to local DB
@@ -489,6 +794,32 @@ void main() {
 
       expect(result, equals(HandleGroupInviteResult.bridgeError));
     });
+
+    test(
+      'IJ014 repairable join-material failure rolls back direct invite state',
+      () async {
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'STALE_JOIN_MATERIAL',
+          'errorMessage': 'stale welcome key material',
+        };
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeSignedV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, equals(HandleGroupInviteResult.invalidPayload));
+        expect(groupId, isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getMembers('grp-abc123'), isEmpty);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, contains('group:join'));
+      },
+    );
 
     // --- Cycle 4.10 ---
     test('decrypts v2 invite envelope and processes inner payload', () async {
@@ -500,6 +831,7 @@ void main() {
         contactRepo: contactRepo,
         bridge: cryptoBridge,
         ownMlKemSecretKey: 'mySecretKey',
+        ownPeerId: '12D3KooWBob',
       );
 
       expect(result, equals(HandleGroupInviteResult.success));
@@ -558,6 +890,7 @@ void main() {
         groupRepo: groupRepo,
         contactRepo: contactRepo,
         bridge: bridge,
+        ownPeerId: '12D3KooWBob',
       );
 
       expect(result, equals(HandleGroupInviteResult.success));
@@ -602,15 +935,10 @@ void main() {
         'createdAt': '2026-03-02T00:00:00.000Z',
       };
 
-      final payload = GroupInvitePayload(
-        id: 'invite-uuid-003',
+      final payload = _makePayload(
         groupId: 'grp-trio',
-        groupKey: 'trioKey==',
-        keyEpoch: 1,
+        overrideGroupKey: 'trioKey==',
         groupConfig: threePersonConfig,
-        senderPeerId: '12D3KooWAlice',
-        senderUsername: 'Alice',
-        timestamp: '2026-03-02T12:00:00.000Z',
       );
 
       final msg = _makeV1Message(payload: payload);
@@ -620,6 +948,7 @@ void main() {
         groupRepo: groupRepo,
         contactRepo: contactRepo,
         bridge: bridge,
+        ownPeerId: '12D3KooWBob',
       );
 
       expect(result, equals(HandleGroupInviteResult.success));
@@ -738,6 +1067,70 @@ void main() {
     );
 
     test(
+      'IJ001 rejects invite missing first-class policy before group state or join',
+      () async {
+        final payload = _makePayload();
+        final envelope = jsonDecode(payload.toJson()) as Map<String, dynamic>;
+        (envelope['payload'] as Map<String, dynamic>).remove('invitePolicy');
+        final msg = ChatMessage(
+          from: payload.senderPeerId,
+          to: payload.recipientPeerId!,
+          content: jsonEncode(envelope),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: msg,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: payload.recipientPeerId,
+        );
+
+        expect(result, equals(HandleGroupInviteResult.invalidPayload));
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, equals(0));
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'IJ001 rejects contradictory policy before group state or join',
+      () async {
+        final payload = _makePayload();
+        final envelope = jsonDecode(payload.toJson()) as Map<String, dynamic>;
+        final payloadMap = envelope['payload'] as Map<String, dynamic>;
+        (((payloadMap['invitePolicy']
+                    as Map<String, dynamic>)['joinMaterialRef'])
+                as Map<String, dynamic>)['keyEpoch'] =
+            2;
+        final msg = ChatMessage(
+          from: payload.senderPeerId,
+          to: payload.recipientPeerId!,
+          content: jsonEncode(envelope),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: msg,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: payload.recipientPeerId,
+        );
+
+        expect(result, equals(HandleGroupInviteResult.invalidPayload));
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, equals(0));
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
       'handles bridge group:join timeout without losing persisted data',
       () async {
         final timeoutBridge = _TimeoutJoinBridge();
@@ -747,6 +1140,7 @@ void main() {
           groupRepo: groupRepo,
           contactRepo: contactRepo,
           bridge: timeoutBridge,
+          ownPeerId: '12D3KooWBob',
         );
 
         // Result should indicate bridge error.
@@ -769,6 +1163,152 @@ void main() {
         expect(key, isNotNull);
         expect(key!.encryptedKey, equals('base64GroupKey=='));
         expect(key.keyGeneration, equals(1));
+      },
+    );
+
+    test(
+      'IJ002 rejects invalid invite signature before group state or join',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': false};
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeSignedV1Message(),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, HandleGroupInviteResult.invalidPayload);
+        expect(groupId, isNull);
+        expect(bridge.commandLog, contains('payload.verify'));
+        expect(groupRepo.groupCount, 0);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'IJ002 rejects tampered signed invite fields before group state or join',
+      () async {
+        final payload = _makePayload();
+        final signed = _signedPayloadMap(payload);
+        signed['groupKey'] = 'tampered-group-key';
+        final message = ChatMessage(
+          from: payload.senderPeerId,
+          to: payload.recipientPeerId!,
+          content: jsonEncode({
+            'type': 'group_invite',
+            'version': '1',
+            'payload': signed,
+          }),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: message,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+        );
+
+        expect(result, HandleGroupInviteResult.invalidPayload);
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, 0);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    test(
+      'IJ002 rejects signed non-admin or removed inviters before state or join',
+      () async {
+        Future<void> expectRejected(
+          String label,
+          Map<String, dynamic> groupConfig,
+        ) async {
+          groupRepo = InMemoryGroupRepository();
+          bridge = FakeBridge();
+          final payload = _makePayload(groupConfig: groupConfig);
+
+          final (result, groupId) = await handleIncomingGroupInvite(
+            message: _makeSignedV1Message(payload: payload),
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownPeerId: '12D3KooWBob',
+          );
+
+          expect(result, HandleGroupInviteResult.invalidPayload, reason: label);
+          expect(groupId, isNull, reason: label);
+          expect(groupRepo.groupCount, 0, reason: label);
+          expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+          expect(bridge.commandLog, isNot(contains('group:join')));
+        }
+
+        await expectRejected('non-admin without invite override', {
+          ..._testGroupConfig,
+          'members': [
+            {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'writer',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+            },
+            (_testGroupConfig['members'] as List<dynamic>)[1],
+          ],
+        });
+
+        await expectRejected('explicit inviteMembers false', {
+          ..._testGroupConfig,
+          'members': [
+            {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'admin',
+              'permissions': {'inviteMembers': false},
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+            },
+            (_testGroupConfig['members'] as List<dynamic>)[1],
+          ],
+        });
+
+        await expectRejected('removed inviter missing from snapshot', {
+          ..._testGroupConfig,
+          'members': [(_testGroupConfig['members'] as List<dynamic>)[1]],
+        });
+      },
+    );
+
+    test(
+      'PREREQ-INVITER-FRESHNESS rejects stale self-consistent invite before group state or join',
+      () async {
+        final issuedAt = DateTime.utc(2026, 3, 2, 12);
+        final payload = _makePayload(
+          membershipProofIssuedAt: issuedAt,
+          membershipProofExpiresAt: issuedAt.add(
+            groupInviteMembershipFreshnessTtl,
+          ),
+        );
+
+        final (result, groupId) = await handleIncomingGroupInvite(
+          message: _makeSignedV1Message(payload: payload),
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownPeerId: '12D3KooWBob',
+          now: issuedAt.add(groupInviteMembershipFreshnessTtl),
+        );
+
+        expect(result, HandleGroupInviteResult.invalidPayload);
+        expect(groupId, isNull);
+        expect(groupRepo.groupCount, 0);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:join')));
       },
     );
   });

@@ -28,6 +28,7 @@ const _aliceHarness = 'integration_test/routing_smoke_alice_harness.dart';
 const _bobHarness = 'integration_test/routing_smoke_bob_harness.dart';
 const _groupAliceHarness = 'integration_test/group_smoke_alice_harness.dart';
 const _groupBobHarness = 'integration_test/group_smoke_bob_harness.dart';
+const _iosRunnerBundleId = 'com.mknoon.app';
 
 bool _isIosDeviceId(String? id) {
   if (id == null) return false;
@@ -132,6 +133,47 @@ Future<Process> _launchHarness({
   ];
   _log('ORCH', 'Launching $role: flutter ${args.join(' ')}');
   return Process.start('flutter', args);
+}
+
+Future<void> _stopHarnessProcess(Process? process, String label) async {
+  if (process == null) return;
+  _log('ORCH', 'Stopping $label flutter driver...');
+  process.kill();
+  try {
+    await process.exitCode.timeout(const Duration(seconds: 10));
+  } on TimeoutException {
+    _log('ORCH', '$label did not stop after SIGTERM; sending SIGKILL');
+    process.kill(ProcessSignal.sigkill);
+    try {
+      await process.exitCode.timeout(const Duration(seconds: 5));
+    } catch (_) {}
+  }
+}
+
+Future<void> _terminateRunnerApp(String deviceId, String label) async {
+  if (!_isIosDeviceId(deviceId)) return;
+  _log('ORCH', 'Terminating Runner on $label simulator...');
+  try {
+    final result = await Process.run('xcrun', [
+      'simctl',
+      'terminate',
+      deviceId,
+      _iosRunnerBundleId,
+    ]).timeout(const Duration(seconds: 10));
+    final stderrText = '${result.stderr}'.trim();
+    if (result.exitCode != 0 &&
+        !stderrText.contains('Not running') &&
+        !stderrText.contains('No such process')) {
+      _log(
+        'ORCH',
+        'Runner terminate on $label returned ${result.exitCode}: $stderrText',
+      );
+    }
+  } on TimeoutException {
+    _log('ORCH', 'Timed out terminating Runner on $label simulator');
+  } catch (error) {
+    _log('ORCH', 'Failed to terminate Runner on $label simulator: $error');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -561,9 +603,14 @@ Future<void> main(List<String> args) async {
       throw TimeoutException('Orch: timed out waiting for group json: $name');
     }
 
-    // Kill old 1:1 processes
-    alice.kill();
-    bob.kill();
+    // Kill old 1:1 processes and terminate the installed simulator apps.
+    // `flutter drive` can otherwise attach to the still-running old test
+    // isolate when the group harness launches on the same device.
+    await _stopHarnessProcess(alice, 'routing Alice');
+    await _stopHarnessProcess(bob, 'routing Bob');
+    await _terminateRunnerApp(aliceDevice, 'Alice');
+    await _terminateRunnerApp(bobDevice, 'Bob');
+    await Future<void>.delayed(const Duration(seconds: 2));
     alice = null;
     bob = null;
 
@@ -732,8 +779,10 @@ Future<void> main(List<String> args) async {
     print('${'═' * 70}\n');
   } finally {
     _log('ORCH', 'Cleaning up...');
-    alice?.kill();
-    bob?.kill();
+    await _stopHarnessProcess(alice, 'Alice');
+    await _stopHarnessProcess(bob, 'Bob');
+    await _terminateRunnerApp(aliceDevice, 'Alice');
+    await _terminateRunnerApp(bobDevice, 'Bob');
     await aliceLog.flush();
     await aliceLog.close();
     await bobLog.flush();

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/presentation/screens/friend_picker_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../shared/helpers/readability_test_helpers.dart';
 
 void main() {
   late List<ContactModel> friends;
@@ -36,28 +39,36 @@ void main() {
     ValueChanged<String>? onToggleFriend,
     VoidCallback? onSend,
     VoidCallback? onClose,
+    BackgroundReadableColors? readableColors,
   }) {
+    final screen = SizedBox(
+      height: 600,
+      child: FriendPickerScreen(
+        recipientUsername: recipientUsername,
+        availableFriends: availableFriends ?? friends,
+        selectedPeerIds: selectedPeerIds,
+        searchQuery: searchQuery,
+        isSending: isSending,
+        sendCompletedCount: sendCompletedCount,
+        sendTotalCount: sendTotalCount,
+        onSearchChanged: onSearchChanged ?? (_) {},
+        onToggleFriend: onToggleFriend ?? (_) {},
+        onSend: onSend ?? () {},
+        onClose: onClose ?? () {},
+      ),
+    );
+
     return MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
-        body: SizedBox(
-          height: 600,
-          child: FriendPickerScreen(
-            recipientUsername: recipientUsername,
-            availableFriends: availableFriends ?? friends,
-            selectedPeerIds: selectedPeerIds,
-            searchQuery: searchQuery,
-            isSending: isSending,
-            sendCompletedCount: sendCompletedCount,
-            sendTotalCount: sendTotalCount,
-            onSearchChanged: onSearchChanged ?? (_) {},
-            onToggleFriend: onToggleFriend ?? (_) {},
-            onSend: onSend ?? () {},
-            onClose: onClose ?? () {},
-          ),
-        ),
+        body: readableColors == null
+            ? screen
+            : Theme(
+                data: ThemeData(extensions: [readableColors]),
+                child: screen,
+              ),
       ),
     );
   }
@@ -195,6 +206,47 @@ void main() {
     await tester.pump();
 
     expect(closeCalled, isTrue);
+  });
+
+  testWidgets('daylight readable roles are applied across picker content', (
+    tester,
+  ) async {
+    const colors = BackgroundReadableColors.representativeLight;
+
+    await tester.pumpWidget(
+      buildSubject(selectedPeerIds: {'peer-A'}, readableColors: colors),
+    );
+
+    final surfaceContainer = tester.widget<Container>(
+      find
+          .byWidgetPredicate(
+            (widget) =>
+                widget is Container &&
+                widget.decoration is BoxDecoration &&
+                (widget.decoration as BoxDecoration).color ==
+                    colors.surfaceBase,
+          )
+          .first,
+    );
+    final surfaceDecoration = surfaceContainer.decoration as BoxDecoration;
+    expect(surfaceDecoration.color, colors.surfaceBase);
+
+    final headerColor = tester
+        .widget<Text>(find.text('Introduce to Eve'))
+        .style
+        ?.color;
+    final friendColor = tester.widget<Text>(find.text('Alice')).style?.color;
+    final hintColor = tester
+        .widget<TextField>(find.byType(TextField))
+        .decoration
+        ?.hintStyle
+        ?.color;
+
+    expect(headerColor, colors.textPrimary);
+    expect(friendColor, colors.textPrimary);
+    expect(hintColor, colors.placeholderText);
+    expectTextContrast(headerColor!, colors.surfaceBase);
+    expectTextContrast(friendColor!, colors.surfaceBase);
   });
 
   testWidgets('multiple friends can be selected simultaneously', (

@@ -69,10 +69,8 @@ void emitMediaUploadProgressEvent(Map<String, dynamic> data) {
 
 /// Publishes a group diagnostic event to Flutter listeners.
 void emitGroupDiagnosticEvent(String eventName, Map<String, dynamic> data) {
-  _groupDiagnosticEventController.add({
-    'event': eventName,
-    ...Map<String, dynamic>.from(data),
-  });
+  final safeData = sanitizeFlowEventDetails(data);
+  _groupDiagnosticEventController.add({'event': eventName, ...safeData});
 }
 
 /// Calls the bridge to generate a new identity.

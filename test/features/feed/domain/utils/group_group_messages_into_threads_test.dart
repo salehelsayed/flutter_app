@@ -440,6 +440,76 @@ void main() {
       expect(result[0].timestamp, DateTime(2026, 2, 9, 15, 0));
     });
 
+    test('MS003 orders equal-timestamp group feed messages by id', () {
+      final sameTimestamp = DateTime.utc(2026, 4, 30, 12);
+
+      final result = groupGroupMessagesIntoThreads(
+        allGroupMessages: [
+          _makeMsg(
+            id: 'ms003-b',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'B at same time',
+            timestamp: sameTimestamp,
+          ),
+          _makeMsg(
+            id: 'ms003-a',
+            groupId: 'g1',
+            senderPeerId: 'p2',
+            text: 'A at same time',
+            timestamp: sameTimestamp,
+          ),
+        ],
+        groups: [_makeGroup('g1', 'Skewed Group')],
+      );
+
+      expect(result.single.messages.map((message) => message.id), [
+        'ms003-a',
+        'ms003-b',
+      ]);
+      expect(result.single.messages.last.text, 'B at same time');
+    });
+
+    test('MS004 places quoted parent before reply in group feed', () {
+      final parentTimestamp = DateTime.utc(2026, 4, 30, 12, 0, 1);
+      final replyTimestamp = DateTime.utc(2026, 4, 30, 12);
+
+      final result = groupGroupMessagesIntoThreads(
+        allGroupMessages: [
+          _makeMsg(
+            id: 'aa-ms004-reply',
+            groupId: 'g1',
+            senderPeerId: 'p2',
+            text: 'Reply',
+            timestamp: replyTimestamp,
+            quotedMessageId: 'zz-ms004-parent',
+          ),
+          _makeMsg(
+            id: 'zz-ms004-parent',
+            groupId: 'g1',
+            senderPeerId: 'p1',
+            text: 'Parent',
+            timestamp: parentTimestamp,
+          ),
+          _makeMsg(
+            id: 'mm-ms004-peer',
+            groupId: 'g1',
+            senderPeerId: 'p3',
+            text: 'Concurrent peer',
+            timestamp: replyTimestamp,
+          ),
+        ],
+        groups: [_makeGroup('g1', 'Causal Group')],
+      );
+
+      expect(result.single.messages.map((message) => message.id), [
+        'mm-ms004-peer',
+        'zz-ms004-parent',
+        'aa-ms004-reply',
+      ]);
+      expect(result.single.messages.last.quotedMessageId, 'zz-ms004-parent');
+    });
+
     test(
       'ThreadMessage includes senderUsername and senderPeerId from GroupMessage',
       () {

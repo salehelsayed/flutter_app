@@ -184,7 +184,7 @@ Future<Map<String, Object?>> _appendGroupEventLogEntry(
         row['canonical_payload'] == canonicalPayload;
     if (!exactReplay) {
       throw GroupEventLogTamperException(
-        'conflicting replay for source event $sourceEventId',
+        'conflicting_replay source_event=${_safeDiagnosticId(sourceEventId)}',
       );
     }
     return row;
@@ -250,6 +250,11 @@ Future<Map<String, Object?>> _appendGroupEventLogEntry(
 
 String _stableEntryId(String groupId, String sourceEventId) {
   return sha256.convert(utf8.encode('$groupId\u001f$sourceEventId')).toString();
+}
+
+String _safeDiagnosticId(String value) {
+  final digest = sha256.convert(utf8.encode(value)).toString();
+  return digest.substring(0, 12);
 }
 
 String _computeEntryHash({

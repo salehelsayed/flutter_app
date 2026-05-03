@@ -110,6 +110,7 @@ class GoBridgeClient extends Bridge {
     'group:inboxStore': _CmdSpec('groupInboxStore', true),
     'group:inboxRetrieve': _CmdSpec('groupInboxRetrieve', true),
     'group:inboxRetrieveCursor': _CmdSpec('groupInboxRetrieveCursor', true),
+    'group:historyRepairRange': _CmdSpec('groupHistoryRepairRange', true),
     'group:acknowledgeRecovery': _CmdSpec('groupAcknowledgeRecovery', false),
     'group.keygen': _CmdSpec('generateGroupKey', false),
     'group.encrypt': _CmdSpec('groupEncryptMessage', true),
@@ -138,11 +139,12 @@ class GoBridgeClient extends Bridge {
     _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
       _handleEvent,
       onError: (error) {
-        debugPrint('[BRIDGE] ⚠ EventChannel ERROR: $error');
+        final safeError = sanitizeDiagnosticText(error);
+        debugPrint('[BRIDGE] EventChannel ERROR: $safeError');
         emitFlowEvent(
           layer: 'FL',
           event: 'GO_BRIDGE_EVENT_STREAM_ERROR',
-          details: {'error': error.toString()},
+          details: {'error': safeError},
         );
       },
       onDone: () {
@@ -285,7 +287,10 @@ class GoBridgeClient extends Bridge {
               final chatMessage = ChatMessage.fromJson(eventData);
               onMessageReceived!(chatMessage);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error parsing chat message: $e');
+              debugPrint(
+                '[GoBridgeClient] Error parsing chat message: '
+                '${sanitizeDiagnosticText(e)}',
+              );
             }
           }
           break;
@@ -296,7 +301,10 @@ class GoBridgeClient extends Bridge {
               final connState = ConnectionState.fromJson(eventData);
               onPeerConnected!(connState);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error parsing peer connected: $e');
+              debugPrint(
+                '[GoBridgeClient] Error parsing peer connected: '
+                '${sanitizeDiagnosticText(e)}',
+              );
             }
           }
           break;
@@ -308,7 +316,8 @@ class GoBridgeClient extends Bridge {
               onPeerDisconnected!(connState);
             } catch (e) {
               debugPrint(
-                '[GoBridgeClient] Error parsing peer disconnected: $e',
+                '[GoBridgeClient] Error parsing peer disconnected: '
+                '${sanitizeDiagnosticText(e)}',
               );
             }
           }
@@ -357,7 +366,10 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupMessageReceived!(eventData);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error handling group message: $e');
+              debugPrint(
+                '[GoBridgeClient] Error handling group message: '
+                '${sanitizeDiagnosticText(e)}',
+              );
             }
           }
           break;
@@ -367,7 +379,10 @@ class GoBridgeClient extends Bridge {
             try {
               onGroupReactionReceived!(eventData);
             } catch (e) {
-              debugPrint('[GoBridgeClient] Error handling group reaction: $e');
+              debugPrint(
+                '[GoBridgeClient] Error handling group reaction: '
+                '${sanitizeDiagnosticText(e)}',
+              );
             }
           }
           break;
@@ -375,12 +390,14 @@ class GoBridgeClient extends Bridge {
         // Forward Go diagnostic events to FLOW logs for debugging.
         case 'group:decryption_failed':
         case 'group:payload_parse_failed':
+        case 'group:validation_rejected':
         case 'group:discovery':
         case 'group:publish_debug':
         case 'group:dispatcher_pressure':
         case 'group:dispatcher_overflow':
           if (eventName == 'group:decryption_failed' ||
               eventName == 'group:payload_parse_failed' ||
+              eventName == 'group:validation_rejected' ||
               eventName == 'group:dispatcher_pressure' ||
               eventName == 'group:dispatcher_overflow') {
             emitGroupDiagnosticEvent(eventName!, eventData);
@@ -405,7 +422,9 @@ class GoBridgeClient extends Bridge {
           debugPrint('[GoBridgeClient] Unknown push event: $eventName');
       }
     } catch (e) {
-      debugPrint('[GoBridgeClient] Error handling event: $e');
+      debugPrint(
+        '[GoBridgeClient] Error handling event: ${sanitizeDiagnosticText(e)}',
+      );
     }
   }
 
@@ -453,12 +472,14 @@ class GoBridgeClient extends Bridge {
         },
       );
 
-      return result ??
-          jsonEncode({
-            'ok': false,
-            'errorCode': 'NULL_RESPONSE',
-            'errorMessage': 'Native bridge returned null',
-          });
+      if (result == null) {
+        return jsonEncode({
+          'ok': false,
+          'errorCode': 'NULL_RESPONSE',
+          'errorMessage': 'Native bridge returned null',
+        });
+      }
+      return _sanitizeBridgeResult(result);
     } on MissingPluginException catch (e) {
       bridgeStopwatch.stop();
       emitFlowEvent(
@@ -481,7 +502,7 @@ class GoBridgeClient extends Bridge {
           'cmd': cmd,
           'method': spec.methodName,
           'initialized': _initialized,
-          'error': e.message ?? e.toString(),
+          'error': sanitizeDiagnosticText(e.message ?? e.toString()),
         },
       );
       return jsonEncode({
@@ -503,15 +524,22 @@ class GoBridgeClient extends Bridge {
       emitFlowEvent(
         layer: 'FL',
         event: 'GO_BRIDGE_PLATFORM_ERROR',
-        details: {'cmd': cmd, 'error': e.message ?? 'unknown'},
+        details: {
+          'cmd': cmd,
+          'error': sanitizeDiagnosticText(e.message ?? 'unknown'),
+        },
+      );
+      final safeMessage = sanitizeDiagnosticText(
+        e.message ?? 'Platform channel error',
       );
       return jsonEncode({
         'ok': false,
         'errorCode': 'PLATFORM_ERROR',
-        'errorMessage': e.message ?? 'Platform channel error',
+        'errorMessage': safeMessage,
       });
     } catch (e) {
       bridgeStopwatch.stop();
+      final safeError = sanitizeDiagnosticText(e);
       emitFlowEvent(
         layer: 'FL',
         event: 'BRIDGE_CALL_TIMING',
@@ -524,15 +552,33 @@ class GoBridgeClient extends Bridge {
       emitFlowEvent(
         layer: 'FL',
         event: 'GO_BRIDGE_UNEXPECTED_ERROR',
-        details: {'cmd': cmd, 'method': spec.methodName, 'error': e.toString()},
+        details: {'cmd': cmd, 'method': spec.methodName, 'error': safeError},
       );
       return jsonEncode({
         'ok': false,
         'errorCode': 'BRIDGE_EXCEPTION',
-        'errorMessage': e.toString(),
+        'errorMessage': safeError,
       });
     }
   }
+}
+
+String _sanitizeBridgeResult(String result) {
+  try {
+    final decoded = jsonDecode(result);
+    if (decoded is Map<String, dynamic> && decoded['ok'] == false) {
+      final errorMessage = decoded['errorMessage'];
+      if (errorMessage is String) {
+        return jsonEncode({
+          ...decoded,
+          'errorMessage': sanitizeDiagnosticText(errorMessage),
+        });
+      }
+    }
+  } catch (_) {
+    return result;
+  }
+  return result;
 }
 
 class _CmdSpec {
