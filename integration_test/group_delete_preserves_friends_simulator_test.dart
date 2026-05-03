@@ -338,6 +338,55 @@ void main() {
         bridge.commandLog.where((command) => command == 'group:leave'),
         hasLength(1),
       );
+
+      // -- act+assert: open each 1:1 chat through the actual UI and confirm
+      //    every previously-seeded message is rendered. This is the user's
+      //    real-world check — repos can be intact while the UI fails to
+      //    re-bind, so we drive the navigation, not just the assertions.
+      Future<void> openFriendThreadAndExpectMessages({
+        required String friendName,
+        required List<String> expectedMessageTexts,
+      }) async {
+        // Tap the friend's row in Orbit. find.text(name) may match more than
+        // one widget (avatar label + row text), so tap the first hit.
+        await tester.tap(find.text(friendName).first);
+        for (var i = 0; i < 12; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+
+        for (final text in expectedMessageTexts) {
+          expect(
+            find.text(text),
+            findsWidgets,
+            reason:
+                '$friendName conversation must still render "$text" after '
+                'the unrelated group was deleted',
+          );
+        }
+
+        // Pop the conversation route programmatically (no reliance on a
+        // back-button finder that may move with redesigns).
+        final navigator = Navigator.of(
+          tester.element(find.byType(Navigator).last),
+        );
+        navigator.pop();
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
+      await openFriendThreadAndExpectMessages(
+        friendName: 'Alice',
+        expectedMessageTexts: ['hey alice', 'hi bob'],
+      );
+      await openFriendThreadAndExpectMessages(
+        friendName: 'Charlie',
+        expectedMessageTexts: ['yo charlie', 'sup'],
+      );
+
+      // After both round-trips, Orbit should still show both friends.
+      expect(find.text('Alice'), findsWidgets);
+      expect(find.text('Charlie'), findsWidgets);
     },
   );
 }
