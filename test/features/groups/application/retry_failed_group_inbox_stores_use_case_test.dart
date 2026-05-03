@@ -126,6 +126,34 @@ GroupReactionReplayOutboxEntry _makeReactionRetryEntry(
   );
 }
 
+String _signedReplayRetryPayload({
+  required String messageId,
+  String payloadType = 'group_message',
+}) {
+  return jsonEncode({
+    'groupId': 'group-1',
+    'message': jsonEncode({
+      'kind': 'group_offline_replay',
+      'version': 1,
+      'groupId': 'group-1',
+      'payloadType': payloadType,
+      'keyEpoch': 1,
+      'messageId': messageId,
+      'senderPeerId': 'peer-1',
+      'senderDeviceId': 'peer-1',
+      'senderTransportPeerId': 'peer-1',
+      'senderPublicKey': 'pk-1',
+      'recipientSetHash': 'recipient-set-hash',
+      'ciphertext': 'ciphertext-$messageId',
+      'nonce': 'nonce-$messageId',
+      'signatureAlgorithm': 'ed25519',
+      'signedPayload': '{"kind":"group_offline_replay"}',
+      'signature': 'sig-$messageId',
+    }),
+    'recipientPeerIds': ['peer-2'],
+  });
+}
+
 List<String> _inboxStoreMessageIds(FakeBridge bridge) {
   return bridge.sentMessages
       .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
@@ -196,6 +224,11 @@ void main() {
     expect(saved.status, 'sent');
     expect(saved.inboxRetryPayload, isNull);
     expect(bridge.commandLog, contains('group:inboxStore'));
+    final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+    final payload = sent['payload'] as Map<String, dynamic>;
+    expect(payload.containsKey('pushTitle'), isFalse);
+    expect(payload.containsKey('pushBody'), isFalse);
+    expect(payload['recipientPeerIds'], equals(['peer-2']));
 
     final begin = events.firstWhere(
       (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORES_BEGIN',
@@ -221,6 +254,38 @@ void main() {
     expect(timing['details']['retried'], 1);
     expect(timing['details']['limit'], 20);
   });
+
+  test(
+    'EK004 retry preserves signed group offline replay envelope fields',
+    () async {
+      final msg = _makeRetryEligible(
+        'msg-ek004-retry',
+        inboxRetryPayload: _signedReplayRetryPayload(
+          messageId: 'msg-ek004-retry',
+        ),
+      );
+      await msgRepo.saveMessage(msg);
+
+      final retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+      );
+
+      expect(retried, 1);
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      final replayEnvelope =
+          jsonDecode(payload['message'] as String) as Map<String, dynamic>;
+      expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
+      expect(replayEnvelope['signedPayload'], isA<String>());
+      expect(replayEnvelope['signature'], 'sig-msg-ek004-retry');
+      expect(replayEnvelope['senderPeerId'], 'peer-1');
+      expect(replayEnvelope['senderPublicKey'], 'pk-1');
+      expect(payload['recipientPeerIds'], ['peer-2']);
+      final saved = await msgRepo.getMessage('msg-ek004-retry');
+      expect(saved!.inboxRetryPayload, isNull);
+    },
+  );
 
   test('retries eligible pending messages and promotes them to sent', () async {
     final msg = _makeRetryEligible('msg-pending', status: 'pending');

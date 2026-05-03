@@ -38,6 +38,57 @@ func TestGenerateGroupKey_Unique(t *testing.T) {
 	}
 }
 
+func TestSP003GroupKeysAndNoncesUseFreshRandomness(t *testing.T) {
+	const samples = 64
+	seenKeys := make(map[string]struct{}, samples)
+
+	for i := 0; i < samples; i++ {
+		keyB64, err := GenerateGroupKey()
+		if err != nil {
+			t.Fatalf("GenerateGroupKey() #%d error: %v", i+1, err)
+		}
+		keyBytes, err := base64.StdEncoding.DecodeString(keyB64)
+		if err != nil {
+			t.Fatalf("decode group key #%d: %v", i+1, err)
+		}
+		if len(keyBytes) != 32 {
+			t.Fatalf("group key #%d length = %d, want 32", i+1, len(keyBytes))
+		}
+		if _, exists := seenKeys[keyB64]; exists {
+			t.Fatalf("duplicate group key at sample %d", i+1)
+		}
+		seenKeys[keyB64] = struct{}{}
+	}
+
+	fixedKeyB64, err := GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("GenerateGroupKey() for nonce samples error: %v", err)
+	}
+	seenNonces := make(map[string]struct{}, samples)
+	seenCiphertexts := make(map[string]struct{}, samples)
+	for i := 0; i < samples; i++ {
+		ctB64, nonceB64, err := EncryptGroupMessage(fixedKeyB64, "SP-003 stable plaintext")
+		if err != nil {
+			t.Fatalf("EncryptGroupMessage() #%d error: %v", i+1, err)
+		}
+		nonceBytes, err := base64.StdEncoding.DecodeString(nonceB64)
+		if err != nil {
+			t.Fatalf("decode nonce #%d: %v", i+1, err)
+		}
+		if len(nonceBytes) != 12 {
+			t.Fatalf("nonce #%d length = %d, want 12", i+1, len(nonceBytes))
+		}
+		if _, exists := seenNonces[nonceB64]; exists {
+			t.Fatalf("duplicate nonce at sample %d", i+1)
+		}
+		if _, exists := seenCiphertexts[ctB64]; exists {
+			t.Fatalf("duplicate ciphertext at sample %d", i+1)
+		}
+		seenNonces[nonceB64] = struct{}{}
+		seenCiphertexts[ctB64] = struct{}{}
+	}
+}
+
 func TestGroupEncryptDecrypt_RoundTrip(t *testing.T) {
 	keyB64, err := GenerateGroupKey()
 	if err != nil {

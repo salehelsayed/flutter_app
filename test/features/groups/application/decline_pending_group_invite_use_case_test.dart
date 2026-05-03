@@ -21,13 +21,25 @@ void main() {
       groupConfig: {
         'name': 'Book Club',
         'groupType': 'chat',
-        'members': const [],
+        'members': const [
+          {'peerId': '12D3KooWAlice', 'role': 'admin'},
+          {'peerId': '12D3KooWReceiver', 'role': 'writer'},
+        ],
         'createdBy': '12D3KooWAlice',
         'createdAt': createdAt.toIso8601String(),
       },
       senderPeerId: '12D3KooWAlice',
       senderUsername: 'Alice',
       timestamp: inviteTimestamp.toIso8601String(),
+      recipientPeerId: '12D3KooWReceiver',
+      invitePolicy: GroupInvitePolicy(
+        expiresAt: effectiveReceivedAt.add(pendingGroupInviteTtl),
+        allowedDevices: const ['12D3KooWReceiver'],
+        assignedRole: 'writer',
+        canInviteOthers: false,
+        joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+        keyEpoch: 1,
+      ),
     );
     return PendingGroupInvite.fromPayload(
       payload,

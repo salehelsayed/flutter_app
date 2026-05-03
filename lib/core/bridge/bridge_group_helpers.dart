@@ -296,6 +296,10 @@ Future<Map<String, dynamic>> callGroupPublish(
   required String senderPublicKey,
   required String senderPrivateKey,
   String senderUsername = '',
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  String? senderDevicePublicKey,
+  String? senderKeyPackageId,
   String? messageId,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
@@ -318,6 +322,18 @@ Future<Map<String, dynamic>> callGroupPublish(
     'senderPrivateKey': senderPrivateKey,
     'senderUsername': senderUsername,
   };
+  if (senderDeviceId != null && senderDeviceId.isNotEmpty) {
+    payload['senderDeviceId'] = senderDeviceId;
+  }
+  if (senderTransportPeerId != null && senderTransportPeerId.isNotEmpty) {
+    payload['senderTransportPeerId'] = senderTransportPeerId;
+  }
+  if (senderDevicePublicKey != null && senderDevicePublicKey.isNotEmpty) {
+    payload['senderDevicePublicKey'] = senderDevicePublicKey;
+  }
+  if (senderKeyPackageId != null && senderKeyPackageId.isNotEmpty) {
+    payload['senderKeyPackageId'] = senderKeyPackageId;
+  }
   if (messageId != null && messageId.isNotEmpty) {
     payload['messageId'] = messageId;
   }
@@ -370,6 +386,10 @@ Future<Map<String, dynamic>> callGroupPublishReaction(
   required String senderPublicKey,
   required String senderPrivateKey,
   required String reactionPayload,
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  String? senderDevicePublicKey,
+  String? senderKeyPackageId,
   Duration timeout = const Duration(seconds: 10),
 }) async {
   emitFlowEvent(
@@ -388,6 +408,14 @@ Future<Map<String, dynamic>> callGroupPublishReaction(
       'senderPublicKey': senderPublicKey,
       'senderPrivateKey': senderPrivateKey,
       'reactionPayload': reactionPayload,
+      if (senderDeviceId != null && senderDeviceId.isNotEmpty)
+        'senderDeviceId': senderDeviceId,
+      if (senderTransportPeerId != null && senderTransportPeerId.isNotEmpty)
+        'senderTransportPeerId': senderTransportPeerId,
+      if (senderDevicePublicKey != null && senderDevicePublicKey.isNotEmpty)
+        'senderDevicePublicKey': senderDevicePublicKey,
+      if (senderKeyPackageId != null && senderKeyPackageId.isNotEmpty)
+        'senderKeyPackageId': senderKeyPackageId,
     },
   };
 
@@ -769,8 +797,84 @@ Future<List<Map<String, dynamic>>> callGroupInboxRetrieve(
 class GroupInboxPage {
   final List<Map<String, dynamic>> messages;
   final String cursor;
+  final List<GroupInboxHistoryGap> historyGaps;
 
-  const GroupInboxPage({required this.messages, required this.cursor});
+  const GroupInboxPage({
+    required this.messages,
+    required this.cursor,
+    this.historyGaps = const <GroupInboxHistoryGap>[],
+  });
+}
+
+class GroupInboxHistoryGap {
+  final String groupId;
+  final String gapId;
+  final String missingAfterMessageId;
+  final String missingBeforeMessageId;
+  final String expectedRangeHash;
+  final String expectedHeadMessageId;
+  final List<String> candidateSourcePeerIds;
+
+  const GroupInboxHistoryGap({
+    required this.groupId,
+    required this.gapId,
+    required this.missingAfterMessageId,
+    required this.missingBeforeMessageId,
+    required this.expectedRangeHash,
+    required this.expectedHeadMessageId,
+    required this.candidateSourcePeerIds,
+  });
+
+  factory GroupInboxHistoryGap.fromMap(Map<String, dynamic> map) {
+    return GroupInboxHistoryGap(
+      groupId: (map['groupId'] as String?)?.trim() ?? '',
+      gapId: (map['gapId'] as String?)?.trim() ?? '',
+      missingAfterMessageId:
+          (map['missingAfterMessageId'] as String?)?.trim() ?? '',
+      missingBeforeMessageId:
+          (map['missingBeforeMessageId'] as String?)?.trim() ?? '',
+      expectedRangeHash: (map['expectedRangeHash'] as String?)?.trim() ?? '',
+      expectedHeadMessageId:
+          (map['expectedHeadMessageId'] as String?)?.trim() ?? '',
+      candidateSourcePeerIds:
+          (map['candidateSourcePeerIds'] as List<dynamic>?)
+              ?.whereType<String>()
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .toList(growable: false) ??
+          const <String>[],
+    );
+  }
+
+  Map<String, dynamic> toBridgePayload() {
+    return {
+      'groupId': groupId,
+      'gapId': gapId,
+      'missingAfterMessageId': missingAfterMessageId,
+      'missingBeforeMessageId': missingBeforeMessageId,
+      'expectedRangeHash': expectedRangeHash,
+      'expectedHeadMessageId': expectedHeadMessageId,
+      'candidateSourcePeerIds': candidateSourcePeerIds,
+    };
+  }
+}
+
+class GroupHistoryRepairRangeResult {
+  final String groupId;
+  final String gapId;
+  final String sourcePeerId;
+  final String rangeHash;
+  final String headMessageId;
+  final List<Map<String, dynamic>> messages;
+
+  const GroupHistoryRepairRangeResult({
+    required this.groupId,
+    required this.gapId,
+    required this.sourcePeerId,
+    required this.rangeHash,
+    required this.headMessageId,
+    required this.messages,
+  });
 }
 
 /// Calls the bridge to retrieve messages from the group inbox using
@@ -829,6 +933,7 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
             .toList() ??
         [];
     final nextCursor = response['cursor'] as String? ?? '';
+    final historyGaps = _parseGroupInboxHistoryGaps(response);
 
     emitFlowEvent(
       layer: 'FL',
@@ -837,14 +942,145 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
         'ok': response['ok'],
         'count': messages.length,
         'hasMore': nextCursor.isNotEmpty,
+        'historyGapCount': historyGaps.length,
       },
     );
 
-    return GroupInboxPage(messages: messages, cursor: nextCursor);
+    return GroupInboxPage(
+      messages: messages,
+      cursor: nextCursor,
+      historyGaps: historyGaps,
+    );
   } on TimeoutException {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
+      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+    );
+    rethrow;
+  }
+}
+
+List<GroupInboxHistoryGap> _parseGroupInboxHistoryGaps(
+  Map<String, dynamic> response,
+) {
+  final rawList = response['historyGaps'];
+  if (rawList is List) {
+    return rawList
+        .whereType<Map>()
+        .map(
+          (raw) => GroupInboxHistoryGap.fromMap(Map<String, dynamic>.from(raw)),
+        )
+        .where(_isValidHistoryGap)
+        .toList(growable: false);
+  }
+
+  final rawSingle = response['historyGap'];
+  if (rawSingle is Map) {
+    final gap = GroupInboxHistoryGap.fromMap(
+      Map<String, dynamic>.from(rawSingle),
+    );
+    return _isValidHistoryGap(gap)
+        ? <GroupInboxHistoryGap>[gap]
+        : const <GroupInboxHistoryGap>[];
+  }
+
+  return const <GroupInboxHistoryGap>[];
+}
+
+bool _isValidHistoryGap(GroupInboxHistoryGap gap) {
+  return gap.groupId.isNotEmpty &&
+      gap.gapId.isNotEmpty &&
+      gap.missingAfterMessageId.isNotEmpty &&
+      gap.missingBeforeMessageId.isNotEmpty &&
+      gap.expectedRangeHash.isNotEmpty &&
+      gap.expectedHeadMessageId.isNotEmpty &&
+      gap.candidateSourcePeerIds.isNotEmpty;
+}
+
+Future<GroupHistoryRepairRangeResult> callGroupHistoryRepairRange(
+  Bridge bridge, {
+  required GroupInboxHistoryGap gap,
+  required String sourcePeerId,
+  int limit = 50,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_HISTORY_REPAIR_RANGE_REQUEST',
+    details: {
+      'groupId': gap.groupId.length > 8
+          ? gap.groupId.substring(0, 8)
+          : gap.groupId,
+      'gapId': gap.gapId.length > 8 ? gap.gapId.substring(0, 8) : gap.gapId,
+      'sourcePeerId': sourcePeerId.length > 8
+          ? sourcePeerId.substring(0, 8)
+          : sourcePeerId,
+      'limit': limit,
+    },
+  );
+
+  final request = {
+    'cmd': 'group:historyRepairRange',
+    'payload': {
+      ...gap.toBridgePayload(),
+      'sourcePeerId': sourcePeerId,
+      'limit': limit,
+    },
+  };
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout);
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+
+    if (response['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_HISTORY_REPAIR_RANGE_RESPONSE',
+        details: {
+          'ok': false,
+          'errorCode': response['errorCode'],
+          'errorMessage': response['errorMessage'],
+        },
+      );
+      throw BridgeCommandException(
+        'group:historyRepairRange',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
+
+    final messages =
+        (response['messages'] as List<dynamic>?)
+            ?.map((m) => Map<String, dynamic>.from(m as Map))
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    final result = GroupHistoryRepairRangeResult(
+      groupId: response['groupId'] as String? ?? gap.groupId,
+      gapId: response['gapId'] as String? ?? gap.gapId,
+      sourcePeerId: response['sourcePeerId'] as String? ?? sourcePeerId,
+      rangeHash: response['rangeHash'] as String? ?? '',
+      headMessageId: response['headMessageId'] as String? ?? '',
+      messages: messages,
+    );
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_HISTORY_REPAIR_RANGE_RESPONSE',
+      details: {
+        'ok': true,
+        'count': result.messages.length,
+        'hasRangeHash': result.rangeHash.isNotEmpty,
+      },
+    );
+
+    return result;
+  } on TimeoutException {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_HISTORY_REPAIR_RANGE_RESPONSE',
       details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
     );
     rethrow;

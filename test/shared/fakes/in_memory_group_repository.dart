@@ -94,16 +94,7 @@ class InMemoryGroupRepository implements GroupRepository {
   ) async {
     final member = _members[groupId]?[peerId];
     if (member != null) {
-      _members[groupId]![peerId] = GroupMember(
-        groupId: member.groupId,
-        peerId: member.peerId,
-        username: member.username,
-        role: role,
-        permissions: member.permissions,
-        publicKey: member.publicKey,
-        mlKemPublicKey: member.mlKemPublicKey,
-        joinedAt: member.joinedAt,
-      );
+      _members[groupId]![peerId] = member.copyWith(role: role);
     }
   }
 

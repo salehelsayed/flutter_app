@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 
 /// Banner shown at the top of a conversation to prompt introductions.
 ///
@@ -18,32 +19,43 @@ class IntroBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final accentColor = readableColors.isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF1DB954);
+    final onAccentColor = readableColors.isLightSurface
+        ? Colors.white
+        : Colors.black;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0x1A1DB954), // green tinted bg
+        color: readableColors.isLightSurface
+            ? const Color(0xFFE5F4EA)
+            : const Color(0x1A1DB954),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0x331DB954)),
+        border: Border.all(
+          color: readableColors.isLightSurface
+              ? const Color(0xFF78B58D)
+              : const Color(0x331DB954),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Help $contactUsername meet your circle',
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: Color(0xF2FFFFFF),
+              color: readableColors.textPrimary,
             ),
           ),
           const SizedBox(height: 4),
           Text(
             'Introduce them to friends who might click',
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.white.withValues(alpha: 0.5),
-            ),
+            style: TextStyle(fontSize: 13, color: readableColors.textMuted),
           ),
           const SizedBox(height: 12),
           Row(
@@ -55,8 +67,8 @@ class IntroBanner extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: onMakeIntroductions,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1DB954),
-                      foregroundColor: Colors.black,
+                      backgroundColor: accentColor,
+                      foregroundColor: onAccentColor,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
@@ -81,7 +93,7 @@ class IntroBanner extends StatelessWidget {
                   'Maybe later',
                   style: TextStyle(
                     fontSize: 13,
-                    color: Colors.white.withValues(alpha: 0.4),
+                    color: readableColors.textMuted,
                   ),
                 ),
               ),

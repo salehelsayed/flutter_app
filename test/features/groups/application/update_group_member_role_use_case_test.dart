@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -55,6 +56,58 @@ void main() {
   tearDown(() {
     groupRecoveryGate.resetForTest();
   });
+
+  test(
+    'PREREQ-SIGNED-COMMIT-AUDIT builds signed member_role_updated payload before publish',
+    () async {
+      final eventAt = DateTime.utc(2026, 5, 1, 12, 3);
+      final groupConfig = {
+        'name': 'Admin Group',
+        'groupType': 'chat',
+        'members': [
+          {
+            'peerId': 'peer-admin',
+            'username': 'Admin',
+            'role': 'admin',
+            'publicKey': 'pk-admin',
+          },
+          {
+            'peerId': 'peer-writer',
+            'username': 'Writer',
+            'role': 'admin',
+            'publicKey': 'pk-writer',
+          },
+        ],
+        'createdBy': 'peer-admin',
+        'createdAt': adminGroup.createdAt.toUtc().toIso8601String(),
+      };
+      final signed = await signGroupSystemTransitionPayload(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        transitionType: 'member_role_updated',
+        sourceEventId: 'role-audit-1',
+        eventAt: eventAt,
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorSigningPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        systemPayload: {
+          '__sys': 'member_role_updated',
+          'member': {
+            'peerId': 'peer-writer',
+            'username': 'Writer',
+            'role': 'admin',
+            'publicKey': 'pk-writer',
+          },
+          'groupConfig': groupConfig,
+        },
+      );
+
+      expect(signed[signedGroupTransitionAuditField], isNotNull);
+      expect(bridge.commandLog, contains('payload.sign'));
+    },
+  );
 
   test('promotes member to admin and syncs bridge config', () async {
     await updateGroupMemberRole(
@@ -282,6 +335,65 @@ void main() {
       expect(bridge.commandLog, isEmpty);
     },
   );
+
+  test('writer with manage-roles permission cannot demote an admin', () async {
+    const groupId = 'group-custom-manage-no-admin-touch';
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'Managed Group',
+        type: GroupType.chat,
+        topicName: 'topic-managed-no-admin-touch',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-manager',
+        username: 'Manager',
+        role: MemberRole.writer,
+        permissions: const GroupMemberPermissions(manageRoles: true),
+        publicKey: 'pk-manager',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    await expectLater(
+      updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        memberPeerId: 'peer-admin',
+        role: MemberRole.writer,
+        selfPeerId: 'peer-manager',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('cannot grant roles or permissions'),
+        ),
+      ),
+    );
+
+    final admin = await groupRepo.getMember(groupId, 'peer-admin');
+    expect(admin, isNotNull);
+    expect(admin!.role, MemberRole.admin);
+    expect(bridge.commandLog, isEmpty);
+  });
 
   test(
     'rechecks revoked manage-roles permission before applying queued role update',

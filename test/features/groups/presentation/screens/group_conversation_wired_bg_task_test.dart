@@ -147,6 +147,13 @@ class _OrderRecordingBridge extends FakeBridge {
           'messageId': publishMessageId,
           'topicPeers': publishTopicPeers,
         });
+      case 'payload.sign':
+        return jsonEncode({
+          'ok': true,
+          'signature': 'signed-by-bg-task-bridge',
+        });
+      case 'payload.verify':
+        return jsonEncode({'ok': true, 'valid': true});
       case 'group:inboxStore':
         return jsonEncode({'ok': true});
       default:
@@ -543,7 +550,10 @@ void main() {
       );
 
       await _sendText(tester, 'upload throws');
-      await pumpUntil(tester, () => bridge.commandLog.contains('bg:end'));
+      await pumpUntilAsyncWorkSettles(
+        tester,
+        () => bridge.commandLog.contains('bg:end'),
+      );
 
       expect(bridge.commandLog, contains('bg:begin'));
       expect(bridge.commandLog, contains('bg:end'));
@@ -1036,10 +1046,7 @@ void main() {
           group: _makeAnnouncementGroup(role: GroupRole.admin),
         );
 
-        final sendFuture = await _startTextSend(
-          tester,
-          'Announcement online',
-        );
+        final sendFuture = await _startTextSend(tester, 'Announcement online');
         await pumpUntil(
           tester,
           () => bridge.commandLog.contains('group:inboxStore'),
@@ -1103,10 +1110,7 @@ void main() {
           group: _makeAnnouncementGroup(role: GroupRole.admin),
         );
 
-        final sendFuture = await _startTextSend(
-          tester,
-          'Announcement offline',
-        );
+        final sendFuture = await _startTextSend(tester, 'Announcement offline');
         await pumpUntil(
           tester,
           () => bridge.commandLog.contains('group:inboxStore'),

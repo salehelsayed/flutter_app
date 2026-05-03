@@ -58,15 +58,18 @@ type Node struct {
 	eventDispatcher *EventDispatcher
 
 	// PubSub / Group messaging
-	pubsub            *pubsub.PubSub
-	groupTopics       map[string]*pubsub.Topic
-	groupSubs         map[string]*pubsub.Subscription
-	groupConfigs      map[string]*GroupConfig
-	groupKeys         map[string]*GroupKeyInfo
-	groupSubCtx       map[string]context.CancelFunc
-	groupDiscoveryCtx map[string]context.CancelFunc // per-group rendezvous discovery loop cancellation
-	groupDialBackoff  map[string]groupPeerDialState
-	groupRecoverySem  chan struct{}
+	pubsub               *pubsub.PubSub
+	groupTopics          map[string]*pubsub.Topic
+	groupSubs            map[string]*pubsub.Subscription
+	groupConfigs         map[string]*GroupConfig
+	groupKeys            map[string]*GroupKeyInfo
+	groupSubCtx          map[string]context.CancelFunc
+	groupDiscoveryCtx    map[string]context.CancelFunc // per-group rendezvous discovery loop cancellation
+	groupDialBackoff     map[string]groupPeerDialState
+	groupRecoverySem     chan struct{}
+	pubsubRejectDiagMu   sync.Mutex
+	pubsubRejectDiagLast map[string]time.Time
+	pubsubRejectDiagNow  func() time.Time
 
 	// Test seams for startup timing behavior.
 	warmRelayConnectionHook            func(peer.AddrInfo) error
@@ -173,6 +176,7 @@ func NewNode() *Node {
 		relaySessionMgr:       NewRelaySessionManager(),
 		groupDialBackoff:      make(map[string]groupPeerDialState),
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
+		pubsubRejectDiagLast:  make(map[string]time.Time),
 		pendingDirectConfirms: make(map[string]chan bool),
 	}
 }
@@ -185,6 +189,7 @@ func New(cb EventCallback) *Node {
 		relaySessionMgr:       NewRelaySessionManager(),
 		groupDialBackoff:      make(map[string]groupPeerDialState),
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
+		pubsubRejectDiagLast:  make(map[string]time.Time),
 		pendingDirectConfirms: make(map[string]chan bool),
 	}
 }

@@ -1,4 +1,4 @@
-import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -14,6 +14,29 @@ import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart'
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
+
+Map<String, dynamic> _replayEnvelopeFromRetryPayload(String retryPayload) {
+  final payload = jsonDecode(retryPayload) as Map<String, dynamic>;
+  return jsonDecode(payload['message'] as String) as Map<String, dynamic>;
+}
+
+void _expectSignedReactionReplayEnvelope(Map<String, dynamic> envelope) {
+  expect(envelope['kind'], 'group_offline_replay');
+  expect(envelope['payloadType'], 'group_reaction');
+  expect(envelope['senderPeerId'], 'peer-1');
+  expect(envelope['senderPublicKey'], 'pk-1');
+  expect(envelope['signatureAlgorithm'], 'ed25519');
+  expect(envelope['signedPayload'], isA<String>());
+  expect(envelope['signature'], isA<String>());
+  final signedPayload =
+      jsonDecode(envelope['signedPayload'] as String) as Map<String, dynamic>;
+  expect(signedPayload['kind'], 'group_offline_replay');
+  expect(signedPayload['payloadType'], 'group_reaction');
+  expect(signedPayload['senderPeerId'], 'peer-1');
+  expect(signedPayload['senderSigningPublicKey'], 'pk-1');
+  expect(signedPayload['messageId'], envelope['messageId']);
+  expect(signedPayload['plaintextHash'], isA<String>());
+}
 
 void main() {
   late FakeBridge bridge;
@@ -352,36 +375,42 @@ void main() {
     expect(stored, isEmpty);
   });
 
-  test('successful replay store marks the durable outbox row stored', () async {
-    final (result, reaction) = await sendGroupReaction(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      reactionRepo: reactionRepo,
-      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
-      groupId: 'group-1',
-      messageId: 'msg-1',
-      emoji: '🔥',
-      senderPeerId: 'peer-1',
-      senderPublicKey: 'pk-1',
-      senderPrivateKey: 'sk-1',
-    );
+  test(
+    'EK004 stores signed offline replay envelope for group_reaction add',
+    () async {
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
 
-    expect(result, SendGroupReactionResult.success);
-    expect(reaction, isNotNull);
+      expect(result, SendGroupReactionResult.success);
+      expect(reaction, isNotNull);
 
-    await pumpEventQueue();
+      await pumpEventQueue();
 
-    final entry = await reactionReplayOutboxRepo.getEntry(reaction!.id);
-    expect(entry, isNotNull);
-    expect(entry!.groupId, 'group-1');
-    expect(entry.messageId, 'msg-1');
-    expect(entry.senderPeerId, 'peer-1');
-    expect(entry.emoji, '🔥');
-    expect(entry.action, 'add');
-    expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
-    expect(bridge.commandLog, contains('group:inboxStore'));
-  });
+      final entry = await reactionReplayOutboxRepo.getEntry(reaction!.id);
+      expect(entry, isNotNull);
+      expect(entry!.groupId, 'group-1');
+      expect(entry.messageId, 'msg-1');
+      expect(entry.senderPeerId, 'peer-1');
+      expect(entry.emoji, '🔥');
+      expect(entry.action, 'add');
+      expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+      expect(bridge.commandLog, contains('group:inboxStore'));
+      _expectSignedReactionReplayEnvelope(
+        _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload),
+      );
+    },
+  );
 
   test(
     'replay store failure still returns success and leaves a failed durable row',

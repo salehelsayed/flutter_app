@@ -287,6 +287,38 @@ Future<Map<String, dynamic>?> _sendAndCapture({
   return timings.first['details'] as Map<String, dynamic>;
 }
 
+Future<ContactModel> _generateUnreachableContact({
+  required GoBridgeClient bridge,
+  required String username,
+}) async {
+  final identityResponse = await bridge.send(
+    jsonEncode({'cmd': 'identity.generate', 'payload': {}}),
+  );
+  final identityResult = jsonDecode(identityResponse) as Map<String, dynamic>;
+  if (identityResult['ok'] != true) {
+    throw StateError('identity.generate for $username failed: $identityResult');
+  }
+  final identity = identityResult['identity'] as Map<String, dynamic>;
+
+  final mlKemResponse = await bridge.send(
+    jsonEncode({'cmd': 'mlkem.keygen', 'payload': {}}),
+  );
+  final mlKemResult = jsonDecode(mlKemResponse) as Map<String, dynamic>;
+  if (mlKemResult['ok'] != true) {
+    throw StateError('mlkem.keygen for $username failed: $mlKemResult');
+  }
+
+  return ContactModel(
+    peerId: identity['peerId'] as String,
+    publicKey: identity['publicKey'] as String,
+    rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+    username: username,
+    signature: 'sig-$username',
+    scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: mlKemResult['publicKey'] as String,
+  );
+}
+
 Map<String, dynamic> _timingJson(Map<String, dynamic>? d) {
   if (d == null) return {'outcome': 'no_timing'};
   return {
@@ -589,15 +621,21 @@ void main() {
     // ════════════════════════════════════════════════════════════════
     await _waitForSignal('s7_go');
     print('\n--- S7: All-paths-fail ---');
+    final s7Contact = await _generateUnreachableContact(
+      bridge: bridge,
+      username: 'AllPathsFailSmoke',
+    );
+    await contactRepo.addContact(s7Contact);
     final s7Events = await _captureFlowEvents(() async {
       await sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
-        targetPeerId: '12D3KooWAllPathsFailSmokePeer000000000000000',
+        targetPeerId: s7Contact.peerId,
         text: 'S7: all fail msg',
         senderPeerId: ownPeerId,
         senderUsername: 'Alice',
         bridge: bridge,
+        recipientMlKemPublicKey: s7Contact.mlKemPublicKey,
       );
     });
     final s7Timings = _filter(s7Events, 'CHAT_MSG_SEND_TIMING');

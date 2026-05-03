@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// Two side-by-side QR action cards at the bottom of the friends list.
@@ -54,16 +55,28 @@ class _ActionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final cardSurface = readableColors.isLightSurface
+        ? const Color(0xFFE5F4EA)
+        : const Color(0x141DB954);
+    final cardBorder = readableColors.isLightSurface
+        ? const Color(0xFF78B58D)
+        : const Color(0x331DB954);
+    final iconSurface = readableColors.isLightSurface
+        ? const Color(0xFFD2EBDC)
+        : const Color(0x331DB954);
+    final accentColor = readableColors.isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF1DB954);
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
         decoration: BoxDecoration(
-          color: const Color(0x141DB954), // rgba(29,185,84,0.08)
+          color: cardSurface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: const Color(0x331DB954), // rgba(29,185,84,0.2)
-          ),
+          border: Border.all(color: cardBorder),
         ),
         child: Column(
           children: [
@@ -71,27 +84,24 @@ class _ActionCard extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: const Color(0x331DB954), // rgba(29,185,84,0.2)
+                color: iconSurface,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, size: 22, color: const Color(0xFF1DB954)),
+              child: Icon(icon, size: 22, color: accentColor),
             ),
             const SizedBox(height: 10),
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: Color(0xF2FFFFFF), // rgba(255,255,255,0.95)
+                color: readableColors.textPrimary,
               ),
             ),
             const SizedBox(height: 4),
             Text(
               subtitle,
-              style: const TextStyle(
-                fontSize: 11,
-                color: Color(0x66FFFFFF), // rgba(255,255,255,0.4)
-              ),
+              style: TextStyle(fontSize: 11, color: readableColors.textMuted),
               textAlign: TextAlign.center,
             ),
           ],

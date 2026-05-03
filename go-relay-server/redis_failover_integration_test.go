@@ -235,7 +235,7 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 			}
 		}
 	case "group_cursor":
-		messages, nextCursor := stores.GroupInbox.RetrieveWithCursor(req.GroupID, req.Cursor, req.Limit)
+		messages, nextCursor, _ := stores.GroupInbox.RetrieveWithCursor(req.GroupID, req.Cursor, req.Limit)
 		resp.NextCursor = nextCursor
 		resp.Messages = make([]string, 0, len(messages))
 		for _, message := range messages {

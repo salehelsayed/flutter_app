@@ -4,11 +4,14 @@ import 'dart:convert';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/features/groups/application/revoke_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
@@ -74,6 +77,24 @@ Map<String, dynamic> _makeGroupConfig({
   };
 }
 
+GroupInvitePolicy _makeInvitePolicy({
+  required String recipientPeerId,
+  String assignedRole = 'writer',
+  DateTime? expiresAt,
+  int keyEpoch = _keyEpoch,
+  GroupInviteReusePolicy reusePolicy = GroupInviteReusePolicy.singleUse,
+}) {
+  return GroupInvitePolicy(
+    expiresAt: expiresAt ?? DateTime.utc(2099, 3, 9, 12),
+    allowedDevices: [recipientPeerId],
+    assignedRole: assignedRole,
+    canInviteOthers: false,
+    joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+    keyEpoch: keyEpoch,
+    reusePolicy: reusePolicy,
+  );
+}
+
 ContactModel _adminContact() {
   return const ContactModel(
     peerId: _adminPeerId,
@@ -106,6 +127,75 @@ Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
   );
   return (jsonDecode(inboxMsg) as Map<String, dynamic>)['payload']
       as Map<String, dynamic>;
+}
+
+Future<InMemoryGroupRepository> _repoFromConfig(
+  Map<String, dynamic> groupConfig, {
+  String groupId = _groupId,
+}) async {
+  final repo = InMemoryGroupRepository();
+  final createdAt =
+      DateTime.tryParse(groupConfig['createdAt'] as String? ?? '')?.toUtc() ??
+      DateTime.utc(2026, 3, 2);
+  await repo.saveGroup(
+    GroupModel(
+      id: groupId,
+      name: groupConfig['name'] as String? ?? 'Test Group',
+      type: GroupType.fromValue(groupConfig['groupType'] as String? ?? 'chat'),
+      topicName: '/mknoon/group/$groupId',
+      description: groupConfig['description'] as String?,
+      createdAt: createdAt,
+      createdBy: groupConfig['createdBy'] as String? ?? _adminPeerId,
+      myRole: GroupRole.admin,
+      lastMembershipEventAt: createdAt,
+      lastMetadataEventAt: createdAt,
+    ),
+  );
+  for (final member in groupConfig['members'] as List<dynamic>? ?? const []) {
+    await repo.saveMember(
+      GroupMember.fromConfigMap(
+        groupId: groupId,
+        map: Map<String, dynamic>.from(member as Map),
+        joinedAt: createdAt,
+      ),
+    );
+  }
+  return repo;
+}
+
+GroupInviteMembershipFreshnessProof _makeFreshnessProof({
+  required String inviteId,
+  required String groupId,
+  required String? recipientPeerId,
+  required Map<String, dynamic> groupConfig,
+  required int keyEpoch,
+  required DateTime issuedAt,
+  DateTime? expiresAt,
+}) {
+  final stateHash = buildGroupConfigStateHash(
+    groupId: groupId,
+    groupConfig: groupConfig,
+  );
+  return GroupInviteMembershipFreshnessProof(
+    inviteId: inviteId,
+    groupId: groupId,
+    recipientPeerId: recipientPeerId,
+    inviterPeerId: _adminPeerId,
+    inviterPublicKey: 'adminPubKey64',
+    keyEpoch: keyEpoch,
+    groupConfigStateHash: stateHash,
+    membershipWatermark: stateHash,
+    issuedAt: issuedAt.toUtc(),
+    expiresAt:
+        expiresAt ?? issuedAt.toUtc().add(groupInviteMembershipFreshnessTtl),
+    inviterMemberSnapshot: {
+      'peerId': _adminPeerId,
+      'username': 'Admin',
+      'role': 'admin',
+      'publicKey': 'adminPubKey64',
+      'mlKemPublicKey': _adminMlKemPublicKey,
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -168,9 +258,12 @@ void main() {
       final sendResult = await sendGroupInvite(
         p2pService: adminP2P,
         bridge: adminBridge,
+        groupRepo: await _repoFromConfig(groupConfig),
         recipientPeerId: _receiverPeerId,
         recipientMlKemPublicKey: _receiverMlKemPublicKey,
         senderPeerId: _adminPeerId,
+        senderPublicKey: 'adminPubKey64',
+        senderPrivateKey: 'adminPrivKey64',
         senderUsername: 'Admin',
         groupId: _groupId,
         groupKey: _groupKey,
@@ -190,6 +283,17 @@ void main() {
         isNotNull,
         reason: 'Sent message should be a v2 encrypted envelope',
       );
+      final cleartextEnvelope = Map<String, dynamic>.from(v2Envelope!)
+        ..remove('encrypted');
+      expect(cleartextEnvelope.toString(), isNot(contains('invitePolicy')));
+      final encrypted = v2Envelope['encrypted'] as Map<String, dynamic>;
+      final inner =
+          jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+      final policy = inner['invitePolicy'] as Map<String, dynamic>;
+      expect(policy['allowedDevices'], [_receiverPeerId]);
+      expect(policy['invitePermissions']['assignedRole'], 'writer');
+      expect(policy['joinMaterialRef']['kind'], 'inlineGroupKey');
+      expect(policy['joinMaterialRef']['keyEpoch'], _keyEpoch);
 
       // --- Receiver side setup ---
       final receiverBridge = PassthroughCryptoBridge();
@@ -213,6 +317,7 @@ void main() {
         contactRepo: receiverContactRepo,
         bridge: receiverBridge,
         ownMlKemSecretKey: _receiverMlKemSecretKey,
+        ownPeerId: _receiverPeerId,
       );
 
       // --- Assertions ---
@@ -364,9 +469,12 @@ void main() {
         final sendInviteResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
+          groupRepo: await _repoFromConfig(groupConfig, groupId: groupId),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: groupId,
           groupKey: _groupKey,
@@ -396,6 +504,7 @@ void main() {
           contactRepo: receiverContactRepo,
           bridge: receiverBridge,
           ownMlKemSecretKey: _receiverMlKemSecretKey,
+          ownPeerId: _receiverPeerId,
         );
 
         expect(handleResult, HandleGroupInviteResult.success);
@@ -509,7 +618,7 @@ void main() {
           senderPublicKey: 'adminPubKey64',
           senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
-          sendP2PMessage: (_, __) async => true,
+          sendP2PMessage: (_, _) async => true,
         );
 
         expect(rotatedKey, isNotNull);
@@ -554,9 +663,12 @@ void main() {
         final sendResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
+          groupRepo: await _repoFromConfig(rejoinConfig),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: _groupId,
           groupKey: rotatedKey.encryptedKey,
@@ -601,6 +713,7 @@ void main() {
           contactRepo: receiverContactRepo,
           bridge: receiverBridge,
           ownMlKemSecretKey: _receiverMlKemSecretKey,
+          ownPeerId: _receiverPeerId,
         );
 
         expect(handleResult, equals(HandleGroupInviteResult.success));
@@ -720,7 +833,7 @@ void main() {
           senderPublicKey: 'adminPubKey64',
           senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
-          sendP2PMessage: (_, __) async => true,
+          sendP2PMessage: (_, _) async => true,
         );
 
         expect(rotatedKey, isNotNull);
@@ -765,9 +878,12 @@ void main() {
         final sendResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
+          groupRepo: await _repoFromConfig(rejoinConfig, groupId: groupId),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: groupId,
           groupKey: rotatedKey.encryptedKey,
@@ -829,6 +945,7 @@ void main() {
           contactRepo: receiverContactRepo,
           bridge: receiverBridge,
           ownMlKemSecretKey: _receiverMlKemSecretKey,
+          ownPeerId: _receiverPeerId,
         );
 
         expect(handleResult, equals(HandleGroupInviteResult.success));
@@ -899,9 +1016,12 @@ void main() {
       final sendResult = await sendGroupInvite(
         p2pService: adminP2P,
         bridge: adminBridge,
+        groupRepo: await _repoFromConfig(groupConfig),
         recipientPeerId: _receiverPeerId,
         recipientMlKemPublicKey: _receiverMlKemPublicKey,
         senderPeerId: _adminPeerId,
+        senderPublicKey: 'adminPubKey64',
+        senderPrivateKey: 'adminPrivKey64',
         senderUsername: 'Admin',
         groupId: _groupId,
         groupKey: _groupKey,
@@ -947,6 +1067,7 @@ void main() {
         contactRepo: receiverContactRepo,
         bridge: receiverBridge,
         ownMlKemSecretKey: _receiverMlKemSecretKey,
+        ownPeerId: _receiverPeerId,
       );
 
       expect(handleResult, equals(HandleGroupInviteResult.success));
@@ -982,9 +1103,12 @@ void main() {
         final sendResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
+          groupRepo: await _repoFromConfig(groupConfig),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: _groupId,
           groupKey: _groupKey,
@@ -1015,6 +1139,7 @@ void main() {
           contactRepo: receiverContactRepo,
           bridge: receiverBridge,
           ownMlKemSecretKey: _receiverMlKemSecretKey,
+          ownPeerId: _receiverPeerId,
         );
 
         expect(handleResult, equals(HandleGroupInviteResult.unknownSender));
@@ -1047,9 +1172,12 @@ void main() {
         final sendResult = await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
+          groupRepo: await _repoFromConfig(groupConfig),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: _groupId,
           groupKey: _groupKey,
@@ -1093,6 +1221,7 @@ void main() {
           contactRepo: receiverContactRepo,
           bridge: receiverBridge,
           ownMlKemSecretKey: _receiverMlKemSecretKey,
+          ownPeerId: _receiverPeerId,
         );
 
         expect(handleResult, equals(HandleGroupInviteResult.duplicateGroup));
@@ -1146,9 +1275,12 @@ void main() {
       final sendResult = await sendGroupInvite(
         p2pService: adminP2P,
         bridge: adminBridge,
+        groupRepo: await _repoFromConfig(groupConfig),
         recipientPeerId: _receiverPeerId,
         recipientMlKemPublicKey: _receiverMlKemPublicKey,
         senderPeerId: _adminPeerId,
+        senderPublicKey: 'adminPubKey64',
+        senderPrivateKey: 'adminPrivKey64',
         senderUsername: 'Admin',
         groupId: _groupId,
         groupKey: _groupKey,
@@ -1179,6 +1311,7 @@ void main() {
         contactRepo: receiverContactRepo,
         bridge: receiverBridge,
         ownMlKemSecretKey: _receiverMlKemSecretKey,
+        ownPeerId: _receiverPeerId,
       );
 
       expect(handleResult, equals(HandleGroupInviteResult.success));
@@ -1229,17 +1362,18 @@ void main() {
         final receiverPendingInviteRepo =
             InMemoryPendingGroupInviteRepository();
         final receiverMsgRepo = InMemoryGroupMessageRepository();
-        final receiverContactRepo = FakeContactRepository();
-        receiverContactRepo.seed([_adminContact()]);
+        final receiverContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
 
         final listener = GroupInviteListener(
           groupInviteStream: groupInviteStreamController.stream,
           groupRepo: receiverGroupRepo,
-          pendingInviteRepo: receiverPendingInviteRepo,
           contactRepo: receiverContactRepo,
+          pendingInviteRepo: receiverPendingInviteRepo,
           bridge: receiverBridge,
           msgRepo: receiverMsgRepo,
           getOwnMlKemSecretKey: () async => _receiverMlKemSecretKey,
+          getOwnPeerId: () async => _receiverPeerId,
         );
 
         final pendingInviteFuture = listener.pendingInviteStream.first;
@@ -1256,9 +1390,12 @@ void main() {
         await sendGroupInvite(
           p2pService: adminP2P,
           bridge: adminBridge,
+          groupRepo: await _repoFromConfig(groupConfig),
           recipientPeerId: _receiverPeerId,
           recipientMlKemPublicKey: _receiverMlKemPublicKey,
           senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
           senderUsername: 'Admin',
           groupId: _groupId,
           groupKey: _groupKey,
@@ -1286,10 +1423,17 @@ void main() {
         expect(pendingInvite.groupId, equals(_groupId));
         expect(pendingInvite.groupName, equals('Test Group'));
         expect(await receiverGroupRepo.getGroup(_groupId), isNull);
+        final pendingPayload = pendingInvite.toPayload();
+        expect(pendingPayload, isNotNull);
+        expect(pendingPayload!.invitePolicy.allowedDevices, [_receiverPeerId]);
+        expect(pendingPayload.invitePolicy.assignedRole, 'writer');
+        expect(pendingPayload.invitePolicy.keyEpoch, _keyEpoch);
+        expect(pendingInvite.expiresAt, pendingPayload.invitePolicy.expiresAt);
 
         final (acceptResult, joinedGroup) = await acceptPendingGroupInvite(
           pendingInviteRepo: receiverPendingInviteRepo,
           groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
           msgRepo: receiverMsgRepo,
           bridge: receiverBridge,
           groupId: _groupId,
@@ -1327,6 +1471,364 @@ void main() {
     );
 
     test(
+      'IJ005 multi-use direct credential replay is duplicate-safe',
+      () async {
+        final receivedAt = DateTime.utc(2026, 4, 30, 12);
+        final receiverBridge = FakeBridge();
+        final receiverGroupRepo = InMemoryGroupRepository();
+        final receiverPendingInviteRepo =
+            InMemoryPendingGroupInviteRepository();
+        final receiverMsgRepo = InMemoryGroupMessageRepository();
+        final receiverContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
+
+        final replayableInvite = PendingGroupInvite.fromPayload(
+          GroupInvitePayload(
+            id: 'invite-multi-use-replay',
+            groupId: _groupId,
+            groupKey: _groupKey,
+            keyEpoch: _keyEpoch,
+            groupConfig: _makeGroupConfig(),
+            senderPeerId: _adminPeerId,
+            senderUsername: 'Admin',
+            timestamp: receivedAt.toIso8601String(),
+            recipientPeerId: _receiverPeerId,
+            invitePolicy: _makeInvitePolicy(
+              recipientPeerId: _receiverPeerId,
+              expiresAt: receivedAt.add(pendingGroupInviteTtl),
+              reusePolicy: GroupInviteReusePolicy.multiUse,
+            ),
+            membershipFreshnessProof: _makeFreshnessProof(
+              inviteId: 'invite-multi-use-replay',
+              groupId: _groupId,
+              recipientPeerId: _receiverPeerId,
+              groupConfig: _makeGroupConfig(),
+              keyEpoch: _keyEpoch,
+              issuedAt: receivedAt,
+            ),
+          ).withInviteSignature(signature: 'signed-invite-by-admin'),
+          receivedAt: receivedAt,
+        );
+
+        await receiverPendingInviteRepo.savePendingInvite(replayableInvite);
+        final (firstResult, firstGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: receiverPendingInviteRepo,
+          groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          groupId: _groupId,
+          now: receivedAt.add(const Duration(minutes: 1)),
+        );
+
+        expect(firstResult, AcceptPendingGroupInviteResult.success);
+        expect(firstGroup, isNotNull);
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNull,
+        );
+        expect(
+          await receiverPendingInviteRepo.getConsumedInvite(
+            'invite-multi-use-replay',
+          ),
+          isNull,
+        );
+        expect(receiverGroupRepo.groupCount, 1);
+        expect(await receiverGroupRepo.getMembers(_groupId), hasLength(2));
+        expect(await receiverGroupRepo.getLatestKey(_groupId), isNotNull);
+
+        await receiverPendingInviteRepo.savePendingInvite(replayableInvite);
+        final (replayResult, replayGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: receiverPendingInviteRepo,
+          groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          groupId: _groupId,
+          now: receivedAt.add(const Duration(minutes: 2)),
+        );
+
+        expect(replayResult, AcceptPendingGroupInviteResult.duplicateGroup);
+        expect(replayGroup, isNull);
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNull,
+        );
+        expect(receiverGroupRepo.groupCount, 1);
+        expect(await receiverGroupRepo.getMembers(_groupId), hasLength(2));
+        expect(await receiverGroupRepo.getLatestKey(_groupId), isNotNull);
+        expect(
+          receiverBridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(1),
+        );
+        expect(
+          await receiverPendingInviteRepo.getConsumedInvite(
+            'invite-multi-use-replay',
+          ),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'IJ003 revoked invite removes pending state and delayed direct plus mailbox copies stay rejected',
+      () async {
+        final groupInviteStreamController =
+            StreamController<ChatMessage>.broadcast();
+
+        final receiverBridge = PassthroughCryptoBridge();
+        final receiverGroupRepo = InMemoryGroupRepository();
+        final receiverPendingInviteRepo =
+            InMemoryPendingGroupInviteRepository();
+        final receiverMsgRepo = InMemoryGroupMessageRepository();
+        final receiverContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
+
+        final listener = GroupInviteListener(
+          groupInviteStream: groupInviteStreamController.stream,
+          groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
+          pendingInviteRepo: receiverPendingInviteRepo,
+          bridge: receiverBridge,
+          msgRepo: receiverMsgRepo,
+          getOwnMlKemSecretKey: () async => _receiverMlKemSecretKey,
+          getOwnPeerId: () async => _receiverPeerId,
+        );
+        addTearDown(listener.dispose);
+        addTearDown(groupInviteStreamController.close);
+
+        listener.start();
+
+        final adminBridge = PassthroughCryptoBridge();
+        final adminP2P = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        addTearDown(adminP2P.dispose);
+        final groupConfig = _makeGroupConfig();
+
+        final sendResult = await sendGroupInvite(
+          p2pService: adminP2P,
+          bridge: adminBridge,
+          groupRepo: await _repoFromConfig(groupConfig),
+          recipientPeerId: _receiverPeerId,
+          recipientMlKemPublicKey: _receiverMlKemPublicKey,
+          senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
+          senderUsername: 'Admin',
+          groupId: _groupId,
+          groupKey: _groupKey,
+          keyEpoch: _keyEpoch,
+          groupConfig: groupConfig,
+        );
+        expect(sendResult, SendGroupInviteResult.success);
+
+        final inviteContent = adminP2P.lastSendMessageContent!;
+        final inviteEnvelope =
+            jsonDecode(inviteContent) as Map<String, dynamic>;
+        final inviteId = inviteEnvelope['id'] as String;
+
+        final pendingInviteFuture = listener.pendingInviteStream.first;
+        groupInviteStreamController.add(
+          ChatMessage(
+            from: _adminPeerId,
+            to: _receiverPeerId,
+            content: inviteContent,
+            timestamp: DateTime.utc(2026, 4, 30, 12).toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        final pendingInvite = await pendingInviteFuture.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(pendingInvite.inviteId, inviteId);
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNotNull,
+        );
+
+        final revokeResult = await sendGroupInviteRevocation(
+          p2pService: adminP2P,
+          bridge: adminBridge,
+          inviteId: inviteId,
+          groupId: _groupId,
+          recipientPeerId: _receiverPeerId,
+          recipientMlKemPublicKey: _receiverMlKemPublicKey,
+          senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
+          groupConfig: groupConfig,
+          now: DateTime.utc(2026, 4, 30, 12, 5),
+        );
+        expect(revokeResult, SendGroupInviteRevocationResult.success);
+
+        final revocationContent = adminP2P.lastSendMessageContent!;
+        final refreshFuture = listener.pendingInviteStream.firstWhere(
+          (invite) => invite.inviteId == inviteId,
+        );
+        groupInviteStreamController.add(
+          ChatMessage(
+            from: _adminPeerId,
+            to: _receiverPeerId,
+            content: revocationContent,
+            timestamp: DateTime.utc(2026, 4, 30, 12, 5).toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        await refreshFuture.timeout(const Duration(seconds: 5));
+
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNull,
+        );
+        expect(
+          await receiverPendingInviteRepo.getRevokedInvite(inviteId),
+          isNotNull,
+        );
+        expect(await receiverGroupRepo.getGroup(_groupId), isNull);
+        expect(await receiverGroupRepo.getLatestKey(_groupId), isNull);
+
+        groupInviteStreamController.add(
+          ChatMessage(
+            from: _adminPeerId,
+            to: _receiverPeerId,
+            content: inviteContent,
+            timestamp: DateTime.utc(2026, 4, 30, 12, 10).toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        groupInviteStreamController.add(
+          ChatMessage(
+            from: _adminPeerId,
+            to: _receiverPeerId,
+            content: inviteContent,
+            timestamp: DateTime.utc(2026, 4, 30, 12, 15).toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(
+          await receiverPendingInviteRepo.getPendingInvite(_groupId),
+          isNull,
+        );
+        expect(await receiverGroupRepo.getGroup(_groupId), isNull);
+        expect(await receiverGroupRepo.getLatestKey(_groupId), isNull);
+
+        final (acceptResult, acceptedGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: receiverPendingInviteRepo,
+          groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
+          msgRepo: receiverMsgRepo,
+          bridge: receiverBridge,
+          groupId: _groupId,
+        );
+
+        expect(acceptResult, AcceptPendingGroupInviteResult.notFound);
+        expect(acceptedGroup, isNull);
+        expect(
+          await receiverPendingInviteRepo.getConsumedInvite(inviteId),
+          isNull,
+        );
+        expect(await receiverGroupRepo.getGroup(_groupId), isNull);
+        expect(await receiverGroupRepo.getLatestKey(_groupId), isNull);
+        expect(receiverBridge.commandLog, isNot(contains('group:join')));
+        expect(receiverMsgRepo.count, 0);
+      },
+    );
+
+    test(
+      'PREREQ-INVITER-FRESHNESS offline invite after inviter removal is rejected',
+      () async {
+        final adminBridge = PassthroughCryptoBridge();
+        final adminP2P = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        addTearDown(adminP2P.dispose);
+        final groupConfig = _makeGroupConfig();
+        final adminGroupRepo = await _repoFromConfig(groupConfig);
+
+        final sendResult = await sendGroupInvite(
+          p2pService: adminP2P,
+          bridge: adminBridge,
+          groupRepo: adminGroupRepo,
+          recipientPeerId: _receiverPeerId,
+          recipientMlKemPublicKey: _receiverMlKemPublicKey,
+          senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
+          senderUsername: 'Admin',
+          groupId: _groupId,
+          groupKey: _groupKey,
+          keyEpoch: _keyEpoch,
+          groupConfig: groupConfig,
+        );
+        expect(sendResult, SendGroupInviteResult.success);
+
+        await adminGroupRepo.removeMember(_groupId, _adminPeerId);
+
+        final replayedEnvelope = GroupInvitePayload.parseEncryptedEnvelope(
+          adminP2P.lastSendMessageContent!,
+        )!;
+        final replayedEncrypted =
+            replayedEnvelope['encrypted'] as Map<String, dynamic>;
+        final replayedInner =
+            jsonDecode(replayedEncrypted['ciphertext'] as String)
+                as Map<String, dynamic>;
+        final originalInviteTimestamp = DateTime.parse(
+          replayedInner['timestamp'] as String,
+        ).toUtc();
+        final replayedAfterFreshnessWindow = originalInviteTimestamp
+            .add(groupInviteMembershipFreshnessTtl)
+            .add(const Duration(seconds: 1));
+        final receiverGroupRepo = InMemoryGroupRepository();
+        final receiverPendingRepo = InMemoryPendingGroupInviteRepository();
+        final receiverMsgRepo = InMemoryGroupMessageRepository();
+        final receiverContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
+        final stream = StreamController<ChatMessage>.broadcast();
+        final receiverBridge = PassthroughCryptoBridge();
+        final listener = GroupInviteListener(
+          groupInviteStream: stream.stream,
+          groupRepo: receiverGroupRepo,
+          pendingInviteRepo: receiverPendingRepo,
+          contactRepo: receiverContactRepo,
+          bridge: receiverBridge,
+          msgRepo: receiverMsgRepo,
+          getOwnMlKemSecretKey: () async => _receiverMlKemSecretKey,
+          getOwnPeerId: () async => _receiverPeerId,
+          now: () => replayedAfterFreshnessWindow,
+        );
+        final pendingInvites = <PendingGroupInvite>[];
+        listener.pendingInviteStream.listen(pendingInvites.add);
+        listener.start();
+        addTearDown(() async {
+          listener.dispose();
+          await stream.close();
+        });
+
+        stream.add(
+          ChatMessage(
+            from: _adminPeerId,
+            to: _receiverPeerId,
+            content: adminP2P.lastSendMessageContent!,
+            timestamp: originalInviteTimestamp.toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(pendingInvites, isEmpty);
+        expect(receiverPendingRepo.count, 0);
+        expect(await receiverPendingRepo.getPendingInvite(_groupId), isNull);
+        expect(await receiverGroupRepo.getGroup(_groupId), isNull);
+        expect(await receiverGroupRepo.getLatestKey(_groupId), isNull);
+        expect(receiverBridge.commandLog, isNot(contains('group:join')));
+        expect(receiverMsgRepo.count, 0);
+      },
+    );
+
+    test(
       'accept publishes a durable join event that existing members can render',
       () async {
         final receiverBridge = PassthroughCryptoBridge();
@@ -1334,6 +1836,8 @@ void main() {
         final receiverPendingInviteRepo =
             InMemoryPendingGroupInviteRepository();
         final receiverMsgRepo = InMemoryGroupMessageRepository();
+        final receiverContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
 
         await receiverPendingInviteRepo.savePendingInvite(
           PendingGroupInvite.fromPayload(
@@ -1346,7 +1850,17 @@ void main() {
               senderPeerId: _adminPeerId,
               senderUsername: 'Admin',
               timestamp: DateTime.now().toUtc().toIso8601String(),
-            ),
+              recipientPeerId: _receiverPeerId,
+              invitePolicy: _makeInvitePolicy(recipientPeerId: _receiverPeerId),
+              membershipFreshnessProof: _makeFreshnessProof(
+                inviteId: 'invite-join-event',
+                groupId: _groupId,
+                recipientPeerId: _receiverPeerId,
+                groupConfig: _makeGroupConfig(),
+                keyEpoch: _keyEpoch,
+                issuedAt: DateTime.now().toUtc(),
+              ),
+            ).withInviteSignature(signature: 'signed-invite-by-admin'),
             receivedAt: DateTime.now().toUtc(),
           ),
         );
@@ -1399,6 +1913,7 @@ void main() {
         final (acceptResult, _) = await acceptPendingGroupInvite(
           pendingInviteRepo: receiverPendingInviteRepo,
           groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
           msgRepo: receiverMsgRepo,
           bridge: receiverBridge,
           groupId: _groupId,
@@ -1450,6 +1965,8 @@ void main() {
         final receiverPendingInviteRepo =
             InMemoryPendingGroupInviteRepository();
         final receiverMsgRepo = InMemoryGroupMessageRepository();
+        final receiverContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
         final adminGroupRepo = InMemoryGroupRepository();
         final adminMsgRepo = InMemoryGroupMessageRepository();
         final adminGroup = GroupModel(
@@ -1516,7 +2033,17 @@ void main() {
               senderPeerId: _adminPeerId,
               senderUsername: 'Admin',
               timestamp: DateTime.now().toUtc().toIso8601String(),
-            ),
+              recipientPeerId: _receiverPeerId,
+              invitePolicy: _makeInvitePolicy(recipientPeerId: _receiverPeerId),
+              membershipFreshnessProof: _makeFreshnessProof(
+                inviteId: 'invite-bridge-error',
+                groupId: _groupId,
+                recipientPeerId: _receiverPeerId,
+                groupConfig: _makeGroupConfig(),
+                keyEpoch: _keyEpoch,
+                issuedAt: DateTime.now().toUtc(),
+              ),
+            ).withInviteSignature(signature: 'signed-invite-by-admin'),
             receivedAt: DateTime.now().toUtc(),
           ),
         );
@@ -1529,6 +2056,7 @@ void main() {
         final (acceptResult, group) = await acceptPendingGroupInvite(
           pendingInviteRepo: receiverPendingInviteRepo,
           groupRepo: receiverGroupRepo,
+          contactRepo: receiverContactRepo,
           msgRepo: receiverMsgRepo,
           bridge: receiverBridge,
           groupId: _groupId,
@@ -1589,22 +2117,30 @@ void main() {
             .toUtc()
             .subtract(const Duration(minutes: 2))
             .toIso8601String();
+        final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+          bridge: receiverBridge,
+          groupRepo: receiverGroupRepo,
+          groupId: _groupId,
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: jsonEncode({
+            'groupId': _groupId,
+            'messageId': 'bridge-error-recovered-msg',
+            'senderId': _adminPeerId,
+            'senderUsername': 'Admin',
+            'keyEpoch': _keyEpoch,
+            'text': 'Recovered after bridge error',
+            'timestamp': replayTimestamp,
+          }),
+          messageId: 'bridge-error-recovered-msg',
+          senderPeerId: _adminPeerId,
+          senderPublicKey: 'adminPubKey64',
+          senderPrivateKey: 'adminPrivKey64',
+        );
         receiverBridge.responses['group:join'] = {'ok': true};
         receiverBridge.responses['group:inboxRetrieveCursor'] = {
           'ok': true,
           'messages': [
-            {
-              'from': _adminPeerId,
-              'message': jsonEncode({
-                'groupId': _groupId,
-                'messageId': 'bridge-error-recovered-msg',
-                'senderId': _adminPeerId,
-                'senderUsername': 'Admin',
-                'keyEpoch': _keyEpoch,
-                'text': 'Recovered after bridge error',
-                'timestamp': replayTimestamp,
-              }),
-            },
+            {'from': _adminPeerId, 'message': replayEnvelope},
           ],
           'cursor': '',
         };
@@ -1705,7 +2241,27 @@ void main() {
               senderPeerId: _adminPeerId,
               senderUsername: 'Admin',
               timestamp: receivedAt.toIso8601String(),
-            ),
+              recipientPeerId: inviteId == 'invite-charlie'
+                  ? charliePeerId
+                  : davePeerId,
+              invitePolicy: _makeInvitePolicy(
+                recipientPeerId: inviteId == 'invite-charlie'
+                    ? charliePeerId
+                    : davePeerId,
+                expiresAt: receivedAt.add(pendingGroupInviteTtl),
+                keyEpoch: keyEpoch,
+              ),
+              membershipFreshnessProof: _makeFreshnessProof(
+                inviteId: inviteId,
+                groupId: groupId,
+                recipientPeerId: inviteId == 'invite-charlie'
+                    ? charliePeerId
+                    : davePeerId,
+                groupConfig: groupConfig,
+                keyEpoch: keyEpoch,
+                issuedAt: receivedAt,
+              ),
+            ).withInviteSignature(signature: 'signed-invite-by-admin'),
             receivedAt: receivedAt,
           );
         }
@@ -1716,6 +2272,10 @@ void main() {
         final daveGroupRepo = InMemoryGroupRepository();
         final charlieMsgRepo = InMemoryGroupMessageRepository();
         final daveMsgRepo = InMemoryGroupMessageRepository();
+        final charlieContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
+        final daveContactRepo = FakeContactRepository()
+          ..seed([_adminContact()]);
         final charlieBridge = FakeBridge();
         final daveBridge = FakeBridge();
 
@@ -1730,6 +2290,7 @@ void main() {
           acceptPendingGroupInvite(
             pendingInviteRepo: charliePendingRepo,
             groupRepo: charlieGroupRepo,
+            contactRepo: charlieContactRepo,
             msgRepo: charlieMsgRepo,
             bridge: charlieBridge,
             groupId: groupId,
@@ -1742,6 +2303,7 @@ void main() {
           acceptPendingGroupInvite(
             pendingInviteRepo: davePendingRepo,
             groupRepo: daveGroupRepo,
+            contactRepo: daveContactRepo,
             msgRepo: daveMsgRepo,
             bridge: daveBridge,
             groupId: groupId,

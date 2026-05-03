@@ -1,15 +1,20 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/database/helpers/group_invite_consumptions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_revocations_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_welcome_key_package_tombstones_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/055_group_invite_revocations.dart';
 import 'package:flutter_app/core/database/migrations/056_group_invite_consumptions.dart';
+import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
 import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package_tombstone.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
 
@@ -35,11 +40,23 @@ void main() {
         'groupType': 'chat',
         'createdBy': 'peer-admin',
         'createdAt': createdAt.toIso8601String(),
-        'members': const [],
+        'members': const [
+          {'peerId': 'peer-admin', 'role': 'admin'},
+          {'peerId': 'peer-recipient', 'role': 'writer'},
+        ],
       },
       senderPeerId: 'peer-admin',
       senderUsername: 'Admin',
       timestamp: inviteTimestamp.toIso8601String(),
+      recipientPeerId: 'peer-recipient',
+      invitePolicy: GroupInvitePolicy(
+        expiresAt: effectiveReceivedAt.add(pendingGroupInviteTtl),
+        allowedDevices: const ['peer-recipient'],
+        assignedRole: 'writer',
+        canInviteOthers: false,
+        joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+        keyEpoch: 1,
+      ),
     );
     return PendingGroupInvite.fromPayload(
       payload,
@@ -57,6 +74,7 @@ void main() {
     await runPendingGroupInvitesMigration(db);
     await runGroupInviteRevocationsMigration(db);
     await runGroupInviteConsumptionsMigration(db);
+    await runGroupWelcomeKeyPackageTombstonesMigration(db);
     repo = PendingGroupInviteRepositoryImpl(
       dbUpsertPendingGroupInvite: (row) => dbUpsertPendingGroupInvite(db, row),
       dbLoadPendingGroupInvites: () => dbLoadPendingGroupInvites(db),
@@ -78,6 +96,21 @@ void main() {
           dbDeleteExpiredGroupInviteRevocations(db, cutoff),
       dbDeleteExpiredGroupInviteConsumptions: (cutoff) =>
           dbDeleteExpiredGroupInviteConsumptions(db, cutoff),
+      dbUpsertGroupWelcomeKeyPackageTombstone: (row) =>
+          dbUpsertGroupWelcomeKeyPackageTombstone(db, row),
+      dbLoadGroupWelcomeKeyPackageTombstone:
+          ({
+            required packageId,
+            required recipientDeviceId,
+            required groupId,
+          }) => dbLoadGroupWelcomeKeyPackageTombstone(
+            db,
+            packageId: packageId,
+            recipientDeviceId: recipientDeviceId,
+            groupId: groupId,
+          ),
+      dbDeleteExpiredGroupWelcomeKeyPackageTombstones: (cutoff) =>
+          dbDeleteExpiredGroupWelcomeKeyPackageTombstones(db, cutoff),
     );
   });
 
@@ -232,6 +265,80 @@ void main() {
         expect(deleted, 1);
         expect(await repo.getConsumedInvite('expired-invite'), isNull);
         expect(await repo.getConsumedInvite('fresh-invite'), isNotNull);
+      },
+    );
+
+    test(
+      'EK011 saves package tombstones idempotently and loads active rows',
+      () async {
+        final consumedAt = DateTime.utc(2026, 4, 29, 12);
+        final tombstone = GroupWelcomeKeyPackageTombstone(
+          packageId: 'package-1',
+          recipientDeviceId: 'device-1',
+          groupId: 'group-1',
+          inviteId: 'invite-1',
+          publicMaterialHash: 'a'.padRight(64, 'a'),
+          consumedAt: consumedAt,
+          expiresAt: consumedAt.add(const Duration(days: 7)),
+        );
+
+        await repo.saveWelcomeKeyPackageTombstone(tombstone);
+        await repo.saveWelcomeKeyPackageTombstone(
+          tombstone.copyWith(inviteId: 'invite-1-duplicate'),
+        );
+
+        final stored = await repo.getWelcomeKeyPackageTombstone(
+          packageId: 'package-1',
+          recipientDeviceId: 'device-1',
+          groupId: 'group-1',
+        );
+        expect(stored, isNotNull);
+        expect(stored!.inviteId, 'invite-1-duplicate');
+        expect(stored.isActiveAt(DateTime.utc(2026, 5, 1)), isTrue);
+      },
+    );
+
+    test(
+      'EK011 file-backed package tombstone survives close and reopen',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'welcome_package_tombstone_',
+        );
+        addTearDown(() async {
+          if (await tempDir.exists()) {
+            await tempDir.delete(recursive: true);
+          }
+        });
+        final path = '${tempDir.path}/identity.db';
+        final consumedAt = DateTime.utc(2026, 4, 29, 12);
+
+        var fileDb = await openDatabase(path, version: 1);
+        await runGroupWelcomeKeyPackageTombstonesMigration(fileDb);
+        await dbUpsertGroupWelcomeKeyPackageTombstone(
+          fileDb,
+          GroupWelcomeKeyPackageTombstone(
+            packageId: 'package-file-backed',
+            recipientDeviceId: 'device-1',
+            groupId: 'group-1',
+            inviteId: 'invite-1',
+            publicMaterialHash: 'b'.padRight(64, 'b'),
+            consumedAt: consumedAt,
+            expiresAt: consumedAt.add(const Duration(days: 7)),
+          ).toMap(),
+        );
+        await fileDb.close();
+
+        fileDb = await openDatabase(path, version: 1);
+        addTearDown(fileDb.close);
+        final stored = await dbLoadGroupWelcomeKeyPackageTombstone(
+          fileDb,
+          packageId: 'package-file-backed',
+          recipientDeviceId: 'device-1',
+          groupId: 'group-1',
+        );
+
+        expect(stored, isNotNull);
+        expect(stored!['invite_id'], 'invite-1');
       },
     );
   });

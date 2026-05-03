@@ -61,6 +61,30 @@ func TestGenerateIdentity_ProducesUniquePeerIds(t *testing.T) {
 	}
 }
 
+func TestSP003GenerateIdentityUsesFreshMnemonicEntropy(t *testing.T) {
+	const samples = 16
+	seenPeerIds := make(map[string]struct{}, samples)
+	seenMnemonics := make(map[string]struct{}, samples)
+
+	for i := 0; i < samples; i++ {
+		id, err := GenerateIdentity()
+		if err != nil {
+			t.Fatalf("GenerateIdentity() #%d returned error: %v", i+1, err)
+		}
+		if words := strings.Fields(id.Mnemonic12); len(words) != 12 {
+			t.Fatalf("identity #%d mnemonic word count = %d, want 12", i+1, len(words))
+		}
+		if _, exists := seenPeerIds[id.PeerId]; exists {
+			t.Fatalf("duplicate peer id at sample %d", i+1)
+		}
+		if _, exists := seenMnemonics[id.Mnemonic12]; exists {
+			t.Fatalf("duplicate mnemonic at sample %d", i+1)
+		}
+		seenPeerIds[id.PeerId] = struct{}{}
+		seenMnemonics[id.Mnemonic12] = struct{}{}
+	}
+}
+
 // Test 3: RestoreIdentity from same mnemonic produces identical PeerId, PublicKey, PrivateKey.
 func TestRestoreIdentity_SameMnemonicProducesIdenticalIdentity(t *testing.T) {
 	original, err := GenerateIdentity()

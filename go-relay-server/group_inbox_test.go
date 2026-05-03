@@ -174,7 +174,7 @@ func TestGroupInboxStore_CursorPaginationExactOnceAcrossPages(t *testing.T) {
 	cursor := ""
 	pageCount := 0
 	for {
-		msgs, nextCursor := store.RetrieveWithCursor("group-exact", cursor, 7)
+		msgs, nextCursor, _ := store.RetrieveWithCursor("group-exact", cursor, 7)
 		if len(msgs) == 0 {
 			break
 		}
@@ -208,7 +208,7 @@ func TestGroupInboxStore_CursorPaginationExactOnceAcrossPages(t *testing.T) {
 	var secondPass []groupInboxMessage
 	cursor = ""
 	for {
-		msgs, nextCursor := store.RetrieveWithCursor("group-exact", cursor, 10)
+		msgs, nextCursor, _ := store.RetrieveWithCursor("group-exact", cursor, 10)
 		if len(msgs) == 0 {
 			break
 		}
@@ -248,7 +248,7 @@ func TestGroupInboxStore_CursorPaginationStableAcrossInstances(t *testing.T) {
 	cursor := ""
 	pageCount := 0
 	for {
-		msgs, nextCursor := storeB.RetrieveWithCursor("group-1", cursor, 3)
+		msgs, nextCursor, _ := storeB.RetrieveWithCursor("group-1", cursor, 3)
 		if len(msgs) == 0 {
 			break
 		}

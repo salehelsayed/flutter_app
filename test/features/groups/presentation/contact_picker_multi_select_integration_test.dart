@@ -111,6 +111,8 @@ void main() {
         peerId: 'peer-admin',
         username: 'Admin',
         role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        mlKemPublicKey: 'mlkem-pk-admin',
         joinedAt: DateTime.now().toUtc(),
       ),
     );

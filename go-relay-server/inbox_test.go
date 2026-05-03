@@ -72,6 +72,7 @@ type inboxStreamEnv struct {
 	server    host.Host
 	sender    host.Host
 	recipient host.Host
+	intruder  host.Host
 }
 
 func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInboxStore) *inboxStreamEnv {
@@ -87,6 +88,10 @@ func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInbox
 		t.Fatal(err)
 	}
 	recipient, err := mn.GenPeer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	intruder, err := mn.GenPeer()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,12 +111,14 @@ func setupInboxStreamEnv(t *testing.T, inbox *InboxStore, groupInbox *GroupInbox
 		server.Close()
 		sender.Close()
 		recipient.Close()
+		intruder.Close()
 	})
 
 	return &inboxStreamEnv{
 		server:    server,
 		sender:    sender,
 		recipient: recipient,
+		intruder:  intruder,
 	}
 }
 
@@ -1154,6 +1161,284 @@ func TestHandleInboxStream_GroupStoreFansOutPushToRecipientsWithTokens(t *testin
 	case <-recorder.sentSignal:
 		t.Fatal("duplicate store re-fanned out push sends")
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestHandleInboxStream_GroupStoreRejectsSpoofedFromPeer(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderPeer := env.sender.ID().String()
+	recipientPeer := env.recipient.ID().String()
+
+	stream, err := env.intruder.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open group_store stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action:           "group_store",
+		GroupId:          "group-auth",
+		From:             senderPeer,
+		Message:          `{"kind":"group_offline_replay","messageId":"spoofed"}`,
+		RecipientPeerIds: []string{recipientPeer},
+	})
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "ERROR" || resp.Error != "not authorized" {
+		t.Fatalf("spoofed group_store response = %#v, want not authorized error", resp)
+	}
+
+	if stored := groupInbox.Retrieve("group-auth", 0); len(stored) != 0 {
+		t.Fatalf("spoofed group_store persisted %d message(s)", len(stored))
+	}
+}
+
+func TestHandleInboxStream_GroupRetrieveFiltersByRecipientAuthorization(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderPeer := env.sender.ID().String()
+	recipientPeer := env.recipient.ID().String()
+
+	store := func(id string, recipients []string) {
+		t.Helper()
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open group_store stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:           "group_store",
+			GroupId:          "group-auth",
+			From:             senderPeer,
+			Message:          fmt.Sprintf(`{"kind":"group_offline_replay","messageId":%q}`, id),
+			RecipientPeerIds: recipients,
+		})
+		resp := recvInboxResp(t, stream)
+		if resp.Status != "OK" {
+			t.Fatalf("group_store(%s) status = %q error=%q, want OK", id, resp.Status, resp.Error)
+		}
+	}
+
+	retrieveFrom := func(from host.Host) inboxResponse {
+		t.Helper()
+		stream, err := from.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open group_retrieve stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "group_retrieve",
+			GroupId: "group-auth",
+		})
+		return recvInboxResp(t, stream)
+	}
+
+	store("msg-recipient", []string{recipientPeer})
+
+	recipientResp := retrieveFrom(env.recipient)
+	if recipientResp.Status != "OK" || len(recipientResp.GroupMessages) != 1 {
+		t.Fatalf("recipient retrieve = %#v, want one authorized message", recipientResp)
+	}
+	if !strings.Contains(recipientResp.GroupMessages[0].Message, "msg-recipient") {
+		t.Fatalf("recipient got wrong message: %#v", recipientResp.GroupMessages)
+	}
+
+	intruderResp := retrieveFrom(env.intruder)
+	if intruderResp.Status != "NO_MESSAGES" || len(intruderResp.GroupMessages) != 0 {
+		t.Fatalf("intruder retrieve = %#v, want NO_MESSAGES", intruderResp)
+	}
+
+	senderResp := retrieveFrom(env.sender)
+	if senderResp.Status != "OK" || len(senderResp.GroupMessages) != 1 {
+		t.Fatalf("sender retrieve = %#v, want sender to read own stored replay", senderResp)
+	}
+}
+
+func TestHandleInboxStream_GroupRetrieveCursorSkipsUnauthorizedMessages(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderPeer := env.sender.ID().String()
+	recipientPeer := env.recipient.ID().String()
+	intruderPeer := env.intruder.ID().String()
+
+	store := func(id string, recipients []string) {
+		t.Helper()
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open group_store stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:           "group_store",
+			GroupId:          "group-cursor-auth",
+			From:             senderPeer,
+			Message:          fmt.Sprintf(`{"kind":"group_offline_replay","messageId":%q}`, id),
+			RecipientPeerIds: recipients,
+		})
+		resp := recvInboxResp(t, stream)
+		if resp.Status != "OK" {
+			t.Fatalf("group_store(%s) status = %q error=%q, want OK", id, resp.Status, resp.Error)
+		}
+	}
+
+	retrieveCursor := func(cursor string, limit int) inboxResponse {
+		t.Helper()
+		stream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open group_retrieve_cursor stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "group_retrieve_cursor",
+			GroupId: "group-cursor-auth",
+			Cursor:  cursor,
+			Limit:   limit,
+		})
+		return recvInboxResp(t, stream)
+	}
+
+	store("recipient-1", []string{recipientPeer})
+	store("intruder-only", []string{intruderPeer})
+	store("recipient-2", []string{recipientPeer})
+
+	first := retrieveCursor("", 1)
+	if first.Status != "OK" || len(first.GroupMessages) != 1 || first.NextCursor == "" {
+		t.Fatalf("first cursor response = %#v, want one message and next cursor", first)
+	}
+	if !strings.Contains(first.GroupMessages[0].Message, "recipient-1") {
+		t.Fatalf("first cursor returned unauthorized or wrong message: %#v", first.GroupMessages)
+	}
+
+	second := retrieveCursor(first.NextCursor, 1)
+	if second.Status != "OK" || len(second.GroupMessages) != 1 || second.NextCursor != "" {
+		t.Fatalf("second cursor response = %#v, want final authorized message", second)
+	}
+	if !strings.Contains(second.GroupMessages[0].Message, "recipient-2") {
+		t.Fatalf("second cursor returned unauthorized or wrong message: %#v", second.GroupMessages)
+	}
+}
+
+func TestGroupInboxStore_RetrieveCursorReportsHistoryGapForMissingCursor(t *testing.T) {
+	store := NewGroupInboxStore(500, 7*24*time.Hour)
+	if err := store.StoreWithPushRecipients(
+		"group-gap",
+		"peer-source",
+		`{"kind":"group_offline_replay","messageId":"repair-1"}`,
+		[]string{"peer-reader"},
+	); err != nil {
+		t.Fatalf("StoreWithPushRecipients: %v", err)
+	}
+
+	messages, _, historyGaps := store.RetrieveWithCursorAuthorized(
+		"group-gap",
+		"stale-cursor",
+		10,
+		"peer-reader",
+	)
+	if len(messages) != 1 {
+		t.Fatalf("expected one repair candidate message, got %d", len(messages))
+	}
+	if len(historyGaps) != 1 {
+		t.Fatalf("expected one history gap, got %#v", historyGaps)
+	}
+
+	gap := historyGaps[0]
+	if gap.GroupId != "group-gap" || gap.MissingAfterMessageId != "stale-cursor" {
+		t.Fatalf("unexpected gap boundary: %#v", gap)
+	}
+	if gap.ExpectedHeadMessageId != messages[0].ID || gap.MissingBeforeMessageId != messages[0].ID {
+		t.Fatalf("gap head/before should target returned repair head: gap=%#v msg=%#v", gap, messages[0])
+	}
+	if gap.ExpectedRangeHash != computeGroupHistoryRangeHash(messages) {
+		t.Fatalf("range hash = %q, want %q", gap.ExpectedRangeHash, computeGroupHistoryRangeHash(messages))
+	}
+	if !containsPeer(gap.CandidateSourcePeerIds, "peer-source") ||
+		!containsPeer(gap.CandidateSourcePeerIds, "peer-reader") {
+		t.Fatalf("candidate sources should include sender and recipient, got %#v", gap.CandidateSourcePeerIds)
+	}
+}
+
+func TestHandleInboxStream_GroupHistoryGapAndRepairRangeJSON(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	senderPeer := env.sender.ID().String()
+	recipientPeer := env.recipient.ID().String()
+
+	if err := groupInbox.StoreWithPushRecipients(
+		"group-gap-json",
+		senderPeer,
+		`{"kind":"group_offline_replay","messageId":"repair-json-1"}`,
+		[]string{recipientPeer},
+	); err != nil {
+		t.Fatalf("StoreWithPushRecipients: %v", err)
+	}
+
+	retrieveStream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open group_retrieve_cursor stream: %v", err)
+	}
+	sendInboxReq(t, retrieveStream, inboxRequest{
+		Action:  "group_retrieve_cursor",
+		GroupId: "group-gap-json",
+		Cursor:  "stale-cursor",
+		Limit:   10,
+	})
+	retrieveResp := recvInboxResp(t, retrieveStream)
+	_ = retrieveStream.Close()
+
+	if retrieveResp.Status != "OK" || len(retrieveResp.GroupMessages) != 1 {
+		t.Fatalf("retrieve response = %#v, want one message", retrieveResp)
+	}
+	if len(retrieveResp.HistoryGaps) != 1 {
+		t.Fatalf("retrieve response missing historyGaps: %#v", retrieveResp)
+	}
+	gap := retrieveResp.HistoryGaps[0]
+
+	repairStream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open group_history_repair_range stream: %v", err)
+	}
+	sendInboxReq(t, repairStream, inboxRequest{
+		Action:                 "group_history_repair_range",
+		GroupId:                gap.GroupId,
+		GapId:                  gap.GapId,
+		SourcePeerId:           senderPeer,
+		MissingAfterMessageId:  gap.MissingAfterMessageId,
+		MissingBeforeMessageId: gap.MissingBeforeMessageId,
+		ExpectedRangeHash:      gap.ExpectedRangeHash,
+		ExpectedHeadMessageId:  gap.ExpectedHeadMessageId,
+		Limit:                  10,
+	})
+	repairResp := recvInboxResp(t, repairStream)
+	_ = repairStream.Close()
+
+	if repairResp.Status != "OK" || len(repairResp.GroupMessages) != 1 {
+		t.Fatalf("repair response = %#v, want one replay envelope", repairResp)
+	}
+	if repairResp.RangeHash != gap.ExpectedRangeHash {
+		t.Fatalf("repair rangeHash = %q, want %q", repairResp.RangeHash, gap.ExpectedRangeHash)
+	}
+	if repairResp.HeadMessageId != gap.ExpectedHeadMessageId {
+		t.Fatalf("repair headMessageId = %q, want %q", repairResp.HeadMessageId, gap.ExpectedHeadMessageId)
+	}
+	if repairResp.GroupId != gap.GroupId || repairResp.GapId != gap.GapId || repairResp.SourcePeerId != senderPeer {
+		t.Fatalf("repair metadata mismatch: %#v", repairResp)
 	}
 }
 

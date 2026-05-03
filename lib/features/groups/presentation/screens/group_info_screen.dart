@@ -4,6 +4,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_member_row.dart';
@@ -32,6 +33,7 @@ class GroupInfoScreen extends StatelessWidget {
   final ValueChanged<GroupMember>? onToggleAdminRole;
   final VoidCallback? onAddMember;
   final BackgroundPreference backgroundPreference;
+  final GroupSecurityStatusViewState? securityStatus;
 
   const GroupInfoScreen({
     super.key,
@@ -52,6 +54,7 @@ class GroupInfoScreen extends StatelessWidget {
     this.onToggleAdminRole,
     this.onAddMember,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.securityStatus,
   });
 
   @override
@@ -78,6 +81,16 @@ class GroupInfoScreen extends StatelessWidget {
                         const SizedBox(height: 24),
                         // Members section
                         _buildMembersSection(context),
+                        if (securityStatus != null) ...[
+                          const SizedBox(height: 16),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: _buildSecurityStatusCard(
+                              context,
+                              securityStatus!,
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 32),
                         if (!group.isDissolved &&
                             isAdmin &&
@@ -206,6 +219,116 @@ class GroupInfoScreen extends StatelessWidget {
           ],
           const SizedBox(height: 20),
           _buildMutePreferenceCard(context),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSecurityStatusCard(
+    BuildContext context,
+    GroupSecurityStatusViewState status,
+  ) {
+    final readableColors = context.backgroundReadableColors;
+    final secureAccent = _greenAccent(readableColors);
+    final warningAccent = _amberAccent(readableColors);
+    final danger = _dangerColor(readableColors);
+    final reviewAccent = status.hasIdentityWarnings
+        ? warningAccent
+        : secureAccent;
+
+    return Container(
+      key: const ValueKey('group-security-status-card'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: readableColors.surfaceRaised,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: readableColors.divider, width: 0.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: secureAccent.withOpacity(
+                    readableColors.isLightSurface ? 0.08 : 0.14,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.shield_outlined, color: secureAccent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Security',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: readableColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      status.encryptionLabel,
+                      key: const ValueKey('group-security-encryption-state'),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: readableColors.textSecondary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _SecurityStatusLine(
+            key: const ValueKey('group-security-key-state'),
+            icon: status.hasCurrentKey
+                ? Icons.lock_outline
+                : Icons.lock_open_outlined,
+            title: status.keyEpochLabel,
+            color: status.hasCurrentKey ? secureAccent : danger,
+          ),
+          if (status.hasKeyChangeWarning) ...[
+            const SizedBox(height: 10),
+            _SecurityStatusLine(
+              key: const ValueKey('group-security-key-change-warning'),
+              icon: Icons.sync_lock_outlined,
+              title: 'Key change visible',
+              subtitle: status.keyEpochLabel,
+              color: warningAccent,
+            ),
+          ],
+          const SizedBox(height: 10),
+          _SecurityStatusLine(
+            key: const ValueKey('group-security-verification-state'),
+            icon: status.hasIdentityWarnings
+                ? Icons.warning_amber_rounded
+                : Icons.verified_user_outlined,
+            title: status.verificationLabel,
+            subtitle: status.verificationDetailLabel,
+            color: reviewAccent,
+          ),
+          if (status.hasIdentityWarnings) ...[
+            const SizedBox(height: 10),
+            _SecurityStatusLine(
+              key: const ValueKey('group-security-identity-warning'),
+              icon: Icons.report_problem_outlined,
+              title: 'Verification warning',
+              subtitle:
+                  '${status.identityWarningCount} ${status.identityWarningCount == 1 ? 'identity has' : 'identities have'} changed. Review safety numbers below.',
+              color: warningAccent,
+            ),
+          ],
         ],
       ),
     );
@@ -587,9 +710,70 @@ class GroupInfoScreen extends StatelessWidget {
         : const Color(0xFFFFC857);
   }
 
+  Color _greenAccent(BackgroundReadableColors readableColors) {
+    return readableColors.isLightSurface
+        ? const Color(0xFF116A3A)
+        : const Color(0xFF7BD88F);
+  }
+
   Color _dangerColor(BackgroundReadableColors readableColors) {
     return readableColors.isLightSurface
         ? const Color(0xFF9D1C12)
         : const Color(0xFFFFB3AD);
+  }
+}
+
+class _SecurityStatusLine extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Color color;
+
+  const _SecurityStatusLine({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: color, size: 18),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: readableColors.textPrimary,
+                  height: 1.25,
+                ),
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: readableColors.textSecondary,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package_tombstone.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository.dart';
 
@@ -8,6 +9,8 @@ class InMemoryPendingGroupInviteRepository
   final Map<String, PendingGroupInvite> _invites = {};
   final Map<String, GroupInviteRevocation> _revocations = {};
   final Map<String, GroupInviteConsumption> _consumptions = {};
+  final Map<String, GroupWelcomeKeyPackageTombstone>
+  _welcomeKeyPackageTombstones = {};
 
   @override
   Future<void> savePendingInvite(PendingGroupInvite invite) async {
@@ -22,6 +25,18 @@ class InMemoryPendingGroupInviteRepository
   @override
   Future<void> saveConsumedInvite(GroupInviteConsumption consumption) async {
     _consumptions[consumption.inviteId] = consumption;
+  }
+
+  @override
+  Future<void> saveWelcomeKeyPackageTombstone(
+    GroupWelcomeKeyPackageTombstone tombstone,
+  ) async {
+    _welcomeKeyPackageTombstones[_tombstoneKey(
+          packageId: tombstone.packageId,
+          recipientDeviceId: tombstone.recipientDeviceId,
+          groupId: tombstone.groupId,
+        )] =
+        tombstone;
   }
 
   @override
@@ -50,6 +65,19 @@ class InMemoryPendingGroupInviteRepository
   @override
   Future<GroupInviteConsumption?> getConsumedInvite(String inviteId) async {
     return _consumptions[inviteId];
+  }
+
+  @override
+  Future<GroupWelcomeKeyPackageTombstone?> getWelcomeKeyPackageTombstone({
+    required String packageId,
+    required String recipientDeviceId,
+    required String groupId,
+  }) async {
+    return _welcomeKeyPackageTombstones[_tombstoneKey(
+      packageId: packageId,
+      recipientDeviceId: recipientDeviceId,
+      groupId: groupId,
+    )];
   }
 
   @override
@@ -93,9 +121,38 @@ class InMemoryPendingGroupInviteRepository
     return expired.length;
   }
 
+  @override
+  Future<int> deleteExpiredWelcomeKeyPackageTombstones(DateTime now) async {
+    final expired = _welcomeKeyPackageTombstones.values
+        .where((tombstone) => !tombstone.isActiveAt(now))
+        .map(
+          (tombstone) => _tombstoneKey(
+            packageId: tombstone.packageId,
+            recipientDeviceId: tombstone.recipientDeviceId,
+            groupId: tombstone.groupId,
+          ),
+        )
+        .toList(growable: false);
+    for (final key in expired) {
+      _welcomeKeyPackageTombstones.remove(key);
+    }
+    return expired.length;
+  }
+
   int get count => _invites.length;
 
   int get revokedCount => _revocations.length;
 
   int get consumedCount => _consumptions.length;
+
+  int get welcomeKeyPackageTombstoneCount =>
+      _welcomeKeyPackageTombstones.length;
+
+  static String _tombstoneKey({
+    required String packageId,
+    required String recipientDeviceId,
+    required String groupId,
+  }) {
+    return '$packageId\x1f$recipientDeviceId\x1f$groupId';
+  }
 }

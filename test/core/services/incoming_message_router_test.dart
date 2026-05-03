@@ -50,7 +50,11 @@ class FakeP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -322,6 +326,42 @@ void main() {
         expect(groupInvites.first.content, contains('"type":"group_invite"'));
       },
     );
+
+    test('routes group_invite_revocation to groupInviteStream', () async {
+      final groupInvites = <ChatMessage>[];
+      final unknowns = <ChatMessage>[];
+      router.groupInviteStream.listen(groupInvites.add);
+      router.unknownMessageStream.listen(unknowns.add);
+
+      p2pService.inject(
+        ChatMessage(
+          from: 'peer-a',
+          to: 'peer-b',
+          content: jsonEncode({
+            'type': 'group_invite_revocation',
+            'version': '1',
+            'id': 'invite-1',
+            'senderPeerId': 'peer-a',
+            'encrypted': {
+              'kem': 'fakeKem',
+              'ciphertext': 'fakeCt',
+              'nonce': 'fakeNonce',
+            },
+          }),
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          isIncoming: true,
+        ),
+      );
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(groupInvites, hasLength(1));
+      expect(
+        groupInvites.first.content,
+        contains('"type":"group_invite_revocation"'),
+      );
+      expect(unknowns, isEmpty);
+    });
 
     test(
       'message_reaction not routed to chatMessageStream or unknownMessageStream',

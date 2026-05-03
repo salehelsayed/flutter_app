@@ -12,21 +12,26 @@ type GroupEncryptedPayload struct {
 }
 
 // GroupEnvelope is the v3 group message wire format.
-// {
-//   "version": "3", "type": "group_message",
-//   "groupId": "...", "senderId": "...", "senderPublicKey": "...",
-//   "signature": "...", "keyEpoch": 0,
-//   "encrypted": { "ciphertext": "...", "nonce": "..." }
-// }
+//
+//	{
+//	  "version": "3", "type": "group_message",
+//	  "groupId": "...", "senderId": "...", "senderPublicKey": "...",
+//	  "signature": "...", "keyEpoch": 0,
+//	  "encrypted": { "ciphertext": "...", "nonce": "..." }
+//	}
 type GroupEnvelope struct {
-	Version         string                `json:"version"`
-	Type            string                `json:"type"`
-	GroupId         string                `json:"groupId"`
-	SenderId        string                `json:"senderId"`
-	SenderPublicKey string                `json:"senderPublicKey"`
-	Signature       string                `json:"signature"`
-	KeyEpoch        int                   `json:"keyEpoch"`
-	Encrypted       GroupEncryptedPayload `json:"encrypted"`
+	Version               string                `json:"version"`
+	Type                  string                `json:"type"`
+	GroupId               string                `json:"groupId"`
+	SenderId              string                `json:"senderId"`
+	SenderDeviceId        string                `json:"senderDeviceId,omitempty"`
+	SenderTransportPeerId string                `json:"senderTransportPeerId,omitempty"`
+	SenderDevicePublicKey string                `json:"senderDevicePublicKey,omitempty"`
+	SenderKeyPackageId    string                `json:"senderKeyPackageId,omitempty"`
+	SenderPublicKey       string                `json:"senderPublicKey"`
+	Signature             string                `json:"signature"`
+	KeyEpoch              int                   `json:"keyEpoch"`
+	Encrypted             GroupEncryptedPayload `json:"encrypted"`
 }
 
 // GroupMessagePayload is the inner payload that gets encrypted inside a group

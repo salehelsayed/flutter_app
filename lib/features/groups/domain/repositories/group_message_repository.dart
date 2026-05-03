@@ -1,11 +1,15 @@
 import '../models/group_message.dart';
+import '../models/group_message_receipt.dart';
 
 /// Repository interface for managing group messages.
 abstract class GroupMessageRepository {
   /// Saves a message to the database. Replaces if ID already exists.
   Future<void> saveMessage(GroupMessage message);
 
-  /// Retrieves a page of messages for a group, ordered by timestamp ASC.
+  /// Retrieves a page of messages for a group in deterministic timeline order.
+  ///
+  /// Unrelated messages are ordered by timestamp ASC, id ASC. Quoted replies
+  /// are placed after their quoted parent when both rows are loaded.
   ///
   /// Returns at most [limit] messages starting at [offset].
   Future<List<GroupMessage>> getMessagesPage(
@@ -65,6 +69,40 @@ abstract class GroupMessageRepository {
     String senderPeerId,
   ) async => null;
 
+  /// Returns the latest persisted synthetic system-event timestamp for a
+  /// deterministic target row, if one exists.
+  Future<DateTime?> getLatestSystemEventTimestampForTarget(
+    String groupId, {
+    required String eventType,
+    required String targetId,
+  }) async {
+    final prefix = 'sys-$eventType:$groupId:$targetId:';
+    const pageSize = 500;
+    var offset = 0;
+    DateTime? latest;
+    while (true) {
+      final page = await getMessagesPage(
+        groupId,
+        limit: pageSize,
+        offset: offset,
+      );
+      for (final message in page) {
+        if (!message.id.startsWith(prefix)) {
+          continue;
+        }
+        final timestamp = message.timestamp.toUtc();
+        if (latest == null || timestamp.isAfter(latest)) {
+          latest = timestamp;
+        }
+      }
+      if (page.length < pageSize) {
+        break;
+      }
+      offset += page.length;
+    }
+    return latest;
+  }
+
   /// Retrieves all outgoing messages with status='failed'.
   ///
   /// Used by the retry service to find messages that need re-sending.
@@ -90,4 +128,29 @@ abstract class GroupMessageRepository {
 
   /// Updates (or clears) the wire_envelope for a message.
   Future<void> updateWireEnvelope(String id, String? envelope);
+
+  /// Loads the durable group inbox cursor for the next replay request.
+  Future<String?> getInboxCursor(String groupId) async => null;
+
+  /// Loads durable group message receipts for a message.
+  Future<List<GroupMessageReceipt>> getReceiptsForMessage(
+    String groupId,
+    String messageId, {
+    String? receiptType,
+  }) async => const [];
+
+  /// Runs inbox page application through one repository-owned transaction.
+  ///
+  /// Implementations without durable transaction support fall back to applying
+  /// through this repository and do not advance durable cursor/receipt state.
+  Future<void> runInboxPageTransaction({
+    required String groupId,
+    required String nextCursor,
+    required Future<void> Function(GroupMessageRepository transactionRepo)
+    apply,
+    List<GroupMessageReceipt> receipts = const [],
+    List<String> markReadMessageIds = const [],
+  }) async {
+    await apply(this);
+  }
 }

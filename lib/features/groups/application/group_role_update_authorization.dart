@@ -18,10 +18,10 @@ bool canApplyGroupMemberRoleUpdate({
     return false;
   }
 
-  if (actor.role != MemberRole.admin &&
-      newRole == MemberRole.admin &&
-      existingRole != MemberRole.admin) {
-    return false;
+  if (actor.role != MemberRole.admin) {
+    if (newRole == MemberRole.admin || existingRole == MemberRole.admin) {
+      return false;
+    }
   }
 
   if (requestedPermissions == null) {

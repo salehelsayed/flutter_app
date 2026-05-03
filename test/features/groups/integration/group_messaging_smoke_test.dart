@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -157,6 +158,10 @@ void main() {
         charlie.start();
         diana.start();
 
+        await admin.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await admin.broadcastMemberAdded(groupId: groupId, newMember: diana);
+        await pump();
+
         // -- act: each user sends one message --
         await admin.sendGroupMessage(groupId: groupId, text: 'From Admin');
         await pump();
@@ -170,7 +175,9 @@ void main() {
         // -- assert --
         // Each user should have 4 total messages: 1 outgoing + 3 incoming
         for (final user in [admin, bob, charlie, diana]) {
-          final messages = await user.loadGroupMessages(groupId);
+          final messages = (await user.loadGroupMessages(
+            groupId,
+          )).where((message) => !message.id.startsWith('sys-')).toList();
           expect(
             messages,
             hasLength(4),
@@ -191,23 +198,267 @@ void main() {
           );
         }
 
-        // Verify specific texts for Admin's incoming
-        final adminIncoming = (await admin.loadGroupMessages(
-          groupId,
-        )).where((m) => m.isIncoming).map((m) => m.text).toSet();
-        expect(adminIncoming, {'From Bob', 'From Charlie', 'From Diana'});
+        Future<void> expectIncomingFromEveryOtherMember(
+          GroupTestUser recipient,
+          Map<String, String> expectedSenderPeerIdsByText,
+          Map<String, String> expectedSenderUsernamesByText,
+        ) async {
+          final incoming = (await recipient.loadGroupMessages(groupId))
+              .where((m) => m.isIncoming && !m.id.startsWith('sys-'))
+              .toList();
+          expect(
+            incoming,
+            hasLength(expectedSenderPeerIdsByText.length),
+            reason:
+                '${recipient.username} should receive each other member once',
+          );
+          expect(
+            incoming.map((m) => m.text).toSet(),
+            expectedSenderPeerIdsByText.keys.toSet(),
+            reason: '${recipient.username} should receive the expected texts',
+          );
+          expect(
+            incoming.map((m) => m.senderPeerId).toSet(),
+            expectedSenderPeerIdsByText.values.toSet(),
+            reason:
+                '${recipient.username} should receive from the expected peers',
+          );
 
-        // Verify Bob's incoming
-        final bobIncoming = (await bob.loadGroupMessages(
-          groupId,
-        )).where((m) => m.isIncoming).map((m) => m.text).toSet();
-        expect(bobIncoming, {'From Admin', 'From Charlie', 'From Diana'});
+          for (final expected in expectedSenderPeerIdsByText.entries) {
+            final matchingMessages = incoming
+                .where(
+                  (m) =>
+                      m.text == expected.key &&
+                      m.senderPeerId == expected.value &&
+                      m.senderUsername ==
+                          expectedSenderUsernamesByText[expected.key],
+                )
+                .toList();
+            expect(
+              matchingMessages,
+              hasLength(1),
+              reason:
+                  '${recipient.username} should receive "${expected.key}" '
+                  'exactly once from ${expected.value}',
+            );
+          }
+        }
+
+        await expectIncomingFromEveryOtherMember(
+          admin,
+          {
+            'From Bob': 'bob-peer',
+            'From Charlie': 'charlie-peer',
+            'From Diana': 'diana-peer',
+          },
+          {
+            'From Bob': 'Bob',
+            'From Charlie': 'Charlie',
+            'From Diana': 'Diana',
+          },
+        );
+        await expectIncomingFromEveryOtherMember(
+          bob,
+          {
+            'From Admin': 'admin-peer',
+            'From Charlie': 'charlie-peer',
+            'From Diana': 'diana-peer',
+          },
+          {
+            'From Admin': 'Admin',
+            'From Charlie': 'Charlie',
+            'From Diana': 'Diana',
+          },
+        );
+        await expectIncomingFromEveryOtherMember(
+          charlie,
+          {
+            'From Admin': 'admin-peer',
+            'From Bob': 'bob-peer',
+            'From Diana': 'diana-peer',
+          },
+          {
+            'From Admin': 'Admin',
+            'From Bob': 'Bob',
+            'From Diana': 'Diana',
+          },
+        );
+        await expectIncomingFromEveryOtherMember(
+          diana,
+          {
+            'From Admin': 'admin-peer',
+            'From Bob': 'bob-peer',
+            'From Charlie': 'charlie-peer',
+          },
+          {
+            'From Admin': 'Admin',
+            'From Bob': 'Bob',
+            'From Charlie': 'Charlie',
+          },
+        );
 
         // -- cleanup --
         admin.dispose();
         bob.dispose();
         charlie.dispose();
         diana.dispose();
+      },
+    );
+
+    test(
+      'MS002 live fake-network delivery stores and checks transport binding',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'ms002-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'ms002-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-ms002-live-binding';
+        await alice.createGroup(groupId: groupId, name: 'MS002 Live');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        alice.start();
+        bob.start();
+
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: 'MS002 bound live message',
+          messageId: 'ms002-live-bound',
+        );
+        await pump();
+
+        final stored = await bob.msgRepo.getMessage('ms002-live-bound');
+        expect(stored, isNotNull);
+        expect(stored!.senderPeerId, alice.peerId);
+        expect(stored.transportPeerId, alice.peerId);
+
+        await network.publish(groupId, alice.peerId, {
+          'groupId': groupId,
+          'senderId': alice.peerId,
+          'transportPeerId': 'ms002-attacker-peer',
+          'senderUsername': alice.username,
+          'keyEpoch': 0,
+          'text': 'MS002 spoofed live message',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'messageId': 'ms002-live-spoof',
+        }, senderDeviceId: alice.deviceId);
+        await pump();
+
+        expect(await bob.msgRepo.getMessage('ms002-live-spoof'), isNull);
+      },
+    );
+
+    test(
+      'MS003 live skewed timestamps clamp far future and keep latest sane',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'ms003-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'ms003-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'ms003-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-ms003-live-skew';
+        await alice.createGroup(groupId: groupId, name: 'MS003 Live');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        final beforeReceive = DateTime.now().toUtc();
+        final past = beforeReceive.subtract(const Duration(minutes: 10));
+        final current = beforeReceive;
+        final nearFuture = beforeReceive.add(const Duration(minutes: 3));
+        final farFuture = beforeReceive.add(const Duration(days: 2));
+
+        Future<void> publishSkewed({
+          required String id,
+          required String text,
+          required DateTime timestamp,
+        }) {
+          return network.publish(groupId, charlie.peerId, {
+            'groupId': groupId,
+            'senderId': charlie.peerId,
+            'senderUsername': charlie.username,
+            'keyEpoch': 0,
+            'text': text,
+            'timestamp': timestamp.toIso8601String(),
+            'messageId': id,
+          }, senderDeviceId: charlie.deviceId);
+        }
+
+        await publishSkewed(
+          id: 'ms003-live-past',
+          text: 'Past skew',
+          timestamp: past,
+        );
+        await publishSkewed(
+          id: 'ms003-live-far',
+          text: 'Far future skew',
+          timestamp: farFuture,
+        );
+        await publishSkewed(
+          id: 'ms003-live-current',
+          text: 'Current clock',
+          timestamp: current,
+        );
+        await publishSkewed(
+          id: 'ms003-live-near',
+          text: 'Near future clock',
+          timestamp: nearFuture,
+        );
+        await pump();
+
+        Future<void> expectSkewSafe(GroupTestUser recipient) async {
+          final messages = (await recipient.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id.startsWith('ms003-live-')).toList();
+          expect(messages.map((message) => message.id), [
+            'ms003-live-past',
+            'ms003-live-current',
+            'ms003-live-far',
+            'ms003-live-near',
+          ]);
+
+          final clamped = messages.singleWhere(
+            (message) => message.id == 'ms003-live-far',
+          );
+          expect(clamped.timestamp.isBefore(farFuture), isTrue);
+          expect(clamped.timestamp.isBefore(nearFuture), isTrue);
+          expect(
+            (await recipient.msgRepo.getLatestMessage(groupId))!.id,
+            'ms003-live-near',
+          );
+        }
+
+        await expectSkewSafe(alice);
+        await expectSkewSafe(bob);
       },
     );
 
@@ -265,7 +516,7 @@ void main() {
     );
 
     test(
-      'concurrent A/B/C sends and quoted replies converge to deterministic order',
+      'MS004 concurrent A/B/C sends and quoted replies converge to deterministic order',
       () async {
         final alice = GroupTestUser.create(
           peerId: 'alice-peer',
@@ -291,6 +542,9 @@ void main() {
         alice.start();
         bob.start();
         charlie.start();
+
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
 
         final concurrentAt = DateTime.utc(2026, 4, 29, 12);
         final sent = await Future.wait([
@@ -320,41 +574,43 @@ void main() {
             groupId: groupId,
             text: 'Reply to A',
             quotedMessageId: sent[0]!.id,
-            messageId: 'ms004-reply-b-to-a',
-            timestamp: concurrentAt.add(const Duration(milliseconds: 1)),
+            messageId: 'ms004-0-reply-b-to-a',
+            timestamp: concurrentAt,
           ),
           charlie.sendGroupMessage(
             groupId: groupId,
             text: 'Reply to B',
             quotedMessageId: sent[1]!.id,
-            messageId: 'ms004-reply-c-to-b',
-            timestamp: concurrentAt.add(const Duration(milliseconds: 1)),
+            messageId: 'ms004-0-reply-c-to-b',
+            timestamp: concurrentAt,
           ),
         ]);
         await pump();
 
         Future<void> expectConverged(GroupTestUser user) async {
-          final messages = await user.loadGroupMessages(groupId);
+          final messages = (await user.loadGroupMessages(
+            groupId,
+          )).where((message) => !message.id.startsWith('sys-')).toList();
           expect(
             messages.map((message) => message.id).toList(),
             [
               'ms004-a',
               'ms004-b',
               'ms004-c',
-              'ms004-reply-b-to-a',
-              'ms004-reply-c-to-b',
+              'ms004-0-reply-b-to-a',
+              'ms004-0-reply-c-to-b',
             ],
             reason: '${user.username} should render the same stable order',
           );
           expect(
             messages
-                .singleWhere((message) => message.id == 'ms004-reply-b-to-a')
+                .singleWhere((message) => message.id == 'ms004-0-reply-b-to-a')
                 .quotedMessageId,
             'ms004-a',
           );
           expect(
             messages
-                .singleWhere((message) => message.id == 'ms004-reply-c-to-b')
+                .singleWhere((message) => message.id == 'ms004-0-reply-c-to-b')
                 .quotedMessageId,
             'ms004-b',
           );
@@ -363,6 +619,150 @@ void main() {
         await expectConverged(alice);
         await expectConverged(bob);
         await expectConverged(charlie);
+
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'MS018 rotation race preserves message epochs under out-of-order live delivery',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+
+        const groupId = 'group-ms018-rotation-race';
+        await alice.createGroup(groupId: groupId, name: 'MS-018');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        Future<void> saveKey(GroupTestUser user, int epoch) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: 'ms018-key-$epoch',
+              createdAt: DateTime.utc(2026, 4, 29, 12, epoch),
+            ),
+          );
+        }
+
+        await Future.wait([
+          saveKey(alice, 1),
+          saveKey(bob, 1),
+          saveKey(charlie, 1),
+        ]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        network.holdDeliveriesFor(charlie.deviceId);
+
+        final before = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'Before rotation commit',
+          messageId: 'ms018-before',
+          timestamp: DateTime.utc(2026, 4, 29, 12),
+        );
+        expect(before.$1.name, 'success');
+        expect(before.$2!.keyGeneration, 1);
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'ms018-key-2',
+          'keyEpoch': 2,
+        };
+        alice.bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'ms018-key-rotated',
+          'topicPeers': 2,
+        };
+        final rotatedKey = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+        );
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+        expect((await bob.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+
+        final during = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'During remote rotation before local commit',
+          messageId: 'ms018-during',
+          timestamp: DateTime.utc(2026, 4, 29, 12, 0, 1),
+        );
+        expect(during.$1.name, 'success');
+        expect(during.$2!.keyGeneration, 1);
+
+        await Future.wait([saveKey(bob, 2), saveKey(charlie, 2)]);
+
+        final after = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'After local rotation commit',
+          messageId: 'ms018-after',
+          timestamp: DateTime.utc(2026, 4, 29, 12, 0, 2),
+        );
+        expect(after.$1.name, 'success');
+        expect(after.$2!.keyGeneration, 2);
+        await pump();
+
+        expect(network.heldDeliveryCountFor(charlie.deviceId), 3);
+
+        Future<void> expectEpochs(
+          GroupTestUser user, {
+          required bool incoming,
+        }) async {
+          final messages = await user.loadGroupMessages(groupId);
+          final byId = {
+            for (final message in messages)
+              if (message.id.startsWith('ms018-')) message.id: message,
+          };
+
+          expect(
+            byId.keys.toSet(),
+            {'ms018-before', 'ms018-during', 'ms018-after'},
+            reason: '${user.username} should have exactly the MS018 messages',
+          );
+          expect(byId['ms018-before']!.keyGeneration, 1);
+          expect(byId['ms018-during']!.keyGeneration, 1);
+          expect(byId['ms018-after']!.keyGeneration, 2);
+          expect(
+            byId.values.map((message) => message.isIncoming).toSet(),
+            {incoming},
+            reason: '${user.username} incoming/outgoing state should be stable',
+          );
+        }
+
+        await expectEpochs(bob, incoming: false);
+        await expectEpochs(alice, incoming: true);
+
+        await network.releaseHeldDeliveriesFor(charlie.deviceId, reverse: true);
+        await pump();
+
+        await expectEpochs(charlie, incoming: true);
 
         alice.dispose();
         bob.dispose();

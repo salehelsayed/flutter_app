@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
@@ -75,6 +77,30 @@ void main() {
 
     expect(bridge.commandLog, contains('group:leave'));
   });
+
+  test(
+    'LP003 normal leave dispatches group leave and clears local state',
+    () async {
+      await leaveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+      );
+
+      final leaveMessages = bridge.sentMessages.where((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:leave';
+      }).toList();
+      expect(leaveMessages, hasLength(1));
+      final leavePayload =
+          (jsonDecode(leaveMessages.single) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      expect(leavePayload['groupId'], 'group-1');
+      expect(await groupRepo.getGroup('group-1'), isNull);
+      expect(await groupRepo.getMembers('group-1'), isEmpty);
+      expect(await groupRepo.getLatestKey('group-1'), isNull);
+    },
+  );
 
   test('blocks sole admin from leaving', () async {
     const groupId = 'group-admin-only';

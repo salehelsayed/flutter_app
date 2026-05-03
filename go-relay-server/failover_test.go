@@ -228,7 +228,7 @@ func TestTwoRelayServers_SharedGroupCursorContinuation(t *testing.T) {
 	}
 
 	// First page of 3 through relay A.
-	msgs1, cursor1 := rp.groupInboxA.RetrieveWithCursor("group-1", "", 3)
+	msgs1, cursor1, _ := rp.groupInboxA.RetrieveWithCursor("group-1", "", 3)
 	if len(msgs1) != 3 {
 		t.Fatalf("expected 3 in first page, got %d", len(msgs1))
 	}
@@ -240,7 +240,7 @@ func TestTwoRelayServers_SharedGroupCursorContinuation(t *testing.T) {
 	}
 
 	// "Relay A goes down." Continue through relay B using cursor from A.
-	msgs2, cursor2 := rp.groupInboxB.RetrieveWithCursor("group-1", cursor1, 3)
+	msgs2, cursor2, _ := rp.groupInboxB.RetrieveWithCursor("group-1", cursor1, 3)
 	if len(msgs2) != 3 {
 		t.Fatalf("expected 3 in second page (from B), got %d", len(msgs2))
 	}
@@ -249,7 +249,7 @@ func TestTwoRelayServers_SharedGroupCursorContinuation(t *testing.T) {
 	}
 
 	// Final page through relay B.
-	msgs3, cursor3 := rp.groupInboxB.RetrieveWithCursor("group-1", cursor2, 3)
+	msgs3, cursor3, _ := rp.groupInboxB.RetrieveWithCursor("group-1", cursor2, 3)
 	if len(msgs3) != 2 {
 		t.Fatalf("expected 2 in final page, got %d", len(msgs3))
 	}

@@ -73,7 +73,7 @@ void main() {
       );
 
       final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color?.a, closeTo(0.35, 0.01));
+      expect(repeatIcon.color?.a, closeTo(0.69, 0.01));
       expect(find.text('James passed this along'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('post-share-count')),

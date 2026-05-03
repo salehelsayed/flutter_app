@@ -14,9 +14,12 @@ import 'package:flutter_app/features/conversation/presentation/widgets/message_c
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
+import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -80,6 +83,8 @@ void main() {
     ValueChanged<String>? onSend,
     String? initialText,
     GroupBacklogRetentionNotice? backlogRetentionNotice,
+    GroupHistoryGapRepairNotice? historyGapRepairNotice,
+    GroupSecurityStatusViewState? securityStatus,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
   }) {
@@ -113,6 +118,8 @@ void main() {
           onReactionSelected: onReactionSelected,
           initialText: initialText,
           backlogRetentionNotice: backlogRetentionNotice,
+          historyGapRepairNotice: historyGapRepairNotice,
+          securityStatus: securityStatus,
           backgroundPreference: backgroundPreference,
         ),
       ),
@@ -163,6 +170,83 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets(
+    'PREREQ-FUTURE-EPOCH-KEY-REPAIR renders pending and finalized repair placeholders safely',
+    (tester) async {
+      final pending = GroupMessage(
+        id: 'msg-pending-repair',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: groupPendingKeyRepairPlaceholderText,
+        timestamp: DateTime.now().toUtc(),
+        keyGeneration: 8,
+        status: groupPendingKeyRepairStatusPendingKey,
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc(),
+      );
+      final finalized = GroupMessage(
+        id: 'msg-finalized-repair',
+        groupId: 'group-1',
+        senderPeerId: 'peer-3',
+        senderUsername: 'Bob',
+        text: groupUndecryptablePlaceholderText,
+        timestamp: DateTime.now().toUtc(),
+        keyGeneration: 8,
+        status: groupPendingKeyRepairStatusUndecryptable,
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc(),
+      );
+
+      await tester.pumpWidget(buildTestWidget(messages: [pending, finalized]));
+
+      expect(find.text(groupPendingKeyRepairPlaceholderText), findsOneWidget);
+      expect(find.text(groupUndecryptablePlaceholderText), findsOneWidget);
+      expect(find.textContaining('Future epoch replay'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('failed-media-retry-msg-pending-repair')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-delete-msg-pending-repair')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-retry-msg-finalized-repair')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('failed-media-delete-msg-finalized-repair')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'shows security status strip for encryption and review warnings',
+    (tester) async {
+      const securityStatus = GroupSecurityStatusViewState(
+        hasCurrentKey: true,
+        keyEpoch: 2,
+        memberCount: 2,
+        verifiedMemberCount: 1,
+        identityWarningCount: 1,
+        unverifiedMemberCount: 0,
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(securityStatus: securityStatus, initialLoadDone: true),
+      );
+
+      expect(
+        find.byKey(const ValueKey('group-conversation-security-strip')),
+        findsOneWidget,
+      );
+      expect(find.text('Encrypted - key epoch 2'), findsOneWidget);
+      expect(find.text('1 member needs verification review'), findsOneWidget);
+    },
+  );
 
   testWidgets('renders sender identity with UserAvatar in conversation rows', (
     tester,
@@ -361,6 +445,7 @@ void main() {
     String id = 'video-1',
     String messageId = '',
     String downloadStatus = 'pending',
+    String? localPath,
   }) {
     return MediaAttachment(
       id: id,
@@ -371,6 +456,7 @@ void main() {
       width: 1280,
       height: 720,
       durationMs: 12_000,
+      localPath: localPath,
       downloadStatus: downloadStatus,
       contentHash: _validContentHash,
       encryptionKeyBase64: _validEncryptionKey,
@@ -384,6 +470,7 @@ void main() {
     String id = 'audio-1',
     String messageId = '',
     String downloadStatus = 'pending',
+    String? localPath,
   }) {
     return MediaAttachment(
       id: id,
@@ -392,6 +479,7 @@ void main() {
       size: 2048,
       mediaType: 'audio',
       durationMs: 4200,
+      localPath: localPath,
       downloadStatus: downloadStatus,
       contentHash: _validContentHash,
       encryptionKeyBase64: _validEncryptionKey,
@@ -607,6 +695,19 @@ void main() {
     expect(find.byType(AudioPlayerWidget), findsOneWidget);
     expect(find.text('--:--'), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(
+      buildTestWidget(messages: [mediaMessage], initialLoadDone: true),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('post-join text plus media'), findsOneWidget);
+    expect(messageRow(mediaMessage.id), findsOneWidget);
+    expect(find.byType(VideoThumbnailOverlay), findsOneWidget);
+    expect(find.byType(AudioPlayerWidget), findsOneWidget);
+    expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
   });
 
   testWidgets('renders active quote preview and dismisses it', (tester) async {
@@ -809,6 +910,90 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Hello everyone!'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'PREREQ-HISTORY-GAP-REPAIR shows active failed and repaired gap state separately from retention expiry',
+    (tester) async {
+      GroupHistoryGapRepair repair(String status) => GroupHistoryGapRepair(
+        groupId: 'group-1',
+        gapId: 'gap-1',
+        missingAfterMessageId: 'msg-before',
+        missingBeforeMessageId: 'msg-after',
+        expectedRangeHash: 'range-hash',
+        expectedHeadMessageId: 'msg-after',
+        candidateSourcePeerIds: const ['peer-2'],
+        status: status,
+        createdAt: DateTime.utc(2026, 5, 1, 12),
+        updatedAt: DateTime.utc(2026, 5, 1, 12),
+      );
+
+      final retentionGroup = testGroup.copyWith(
+        lastBacklogExpiredAt: DateTime.utc(2026, 4, 5, 12),
+      );
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          group: retentionGroup,
+          initialLoadDone: true,
+          backlogRetentionNotice: groupBacklogRetentionNoticeFor(
+            retentionGroup,
+          ),
+          historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
+            repair(groupHistoryGapRepairStatusRepairing),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('group-backlog-retention-banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('group-history-gap-repair-banner')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Some missed messages are being repaired from trusted group members.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Repairing missed messages'), findsOneWidget);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          initialLoadDone: true,
+          historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
+            repair(groupHistoryGapRepairStatusFailed),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.text(
+          'Some missed messages could not be repaired from trusted group members.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('History repair needed'), findsOneWidget);
+
+      await tester.pumpWidget(
+        buildTestWidget(
+          initialLoadDone: true,
+          historyGapRepairNotice: groupHistoryGapRepairNoticeFor(
+            repair(groupHistoryGapRepairStatusRepaired),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.text('Missed messages were repaired and verified.'),
+        findsOneWidget,
+      );
+      expect(find.text('Messages repaired'), findsOneWidget);
     },
   );
 

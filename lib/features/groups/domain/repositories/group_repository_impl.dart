@@ -1,5 +1,6 @@
-import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../models/group_key_info.dart';
 import '../models/group_member.dart';
@@ -44,6 +45,7 @@ class GroupRepositoryImpl implements GroupRepository {
   dbLoadAllGroupKeys;
   final Future<void> Function(String groupId, int minKeyGenerationToKeep)?
   dbDeleteGroupKeysBeforeGeneration;
+  final SecureKeyStore? groupKeyStore;
   final SecureKeyStore? pushSharedKeyStore;
 
   GroupRepositoryImpl({
@@ -67,6 +69,7 @@ class GroupRepositoryImpl implements GroupRepository {
     required this.dbDeleteAllGroupKeys,
     this.dbLoadAllGroupKeys,
     this.dbDeleteGroupKeysBeforeGeneration,
+    this.groupKeyStore,
     this.pushSharedKeyStore,
   });
 
@@ -184,8 +187,11 @@ class GroupRepositoryImpl implements GroupRepository {
 
   @override
   Future<void> saveKey(GroupKeyInfo key) async {
-    await dbInsertGroupKey(key.toMap());
-    await _mirrorGroupKeyForPush(key);
+    await dbInsertGroupKey(await _toStorageRow(key));
+    final hydratedKey = await _hydrateGroupKey(key);
+    if (hydratedKey != null) {
+      await _mirrorGroupKeyForPush(hydratedKey);
+    }
     await _pruneObsoleteKeys(key.groupId);
   }
 
@@ -193,7 +199,7 @@ class GroupRepositoryImpl implements GroupRepository {
   Future<GroupKeyInfo?> getLatestKey(String groupId) async {
     final row = await dbLoadLatestGroupKey(groupId);
     if (row == null) return null;
-    return GroupKeyInfo.fromMap(row);
+    return _groupKeyFromRow(row);
   }
 
   @override
@@ -203,19 +209,21 @@ class GroupRepositoryImpl implements GroupRepository {
   ) async {
     final row = await dbLoadGroupKeyByGeneration(groupId, generation);
     if (row == null) return null;
-    return GroupKeyInfo.fromMap(row);
+    return _groupKeyFromRow(row);
   }
 
   @override
   Future<void> removeAllKeys(String groupId) async {
     final existingKeys =
-        pushSharedKeyStore == null || dbLoadAllGroupKeys == null
+        (pushSharedKeyStore == null && groupKeyStore == null) ||
+            dbLoadAllGroupKeys == null
         ? const <Map<String, Object?>>[]
         : await dbLoadAllGroupKeys!(groupId);
     await dbDeleteAllGroupKeys(groupId);
     for (final row in existingKeys) {
       final key = GroupKeyInfo.fromMap(row);
       await _deleteGroupKeyMirror(key);
+      await _deleteGroupKeyMaterial(key);
     }
   }
 
@@ -232,7 +240,11 @@ class GroupRepositoryImpl implements GroupRepository {
       }
       final keyRows = await dbLoadAllGroupKeys!(groupId);
       for (final row in keyRows) {
-        await _mirrorGroupKeyForPush(GroupKeyInfo.fromMap(row));
+        final key = await _groupKeyFromRow(row);
+        if (key == null) {
+          continue;
+        }
+        await _mirrorGroupKeyForPush(key);
       }
     }
   }
@@ -264,12 +276,63 @@ class GroupRepositoryImpl implements GroupRepository {
     await deleteBeforeGeneration(groupId, minKeyGenerationToKeep);
     for (final key in obsoleteKeys) {
       await _deleteGroupKeyMirror(key);
+      await _deleteGroupKeyMaterial(key);
     }
+  }
+
+  Future<Map<String, Object?>> _toStorageRow(GroupKeyInfo key) async {
+    final row = Map<String, Object?>.from(key.toMap());
+    final store = groupKeyStore;
+    if (store == null ||
+        key.encryptedKey.isEmpty ||
+        isSecureStoreReference(key.encryptedKey)) {
+      return row;
+    }
+
+    final secureStoreKey = groupKeyMaterialStoreName(
+      key.groupId,
+      key.keyGeneration,
+    );
+    await store.write(secureStoreKey, key.encryptedKey);
+    row['encrypted_key'] = secureStoreReferenceForKey(secureStoreKey);
+    return row;
+  }
+
+  Future<GroupKeyInfo?> _groupKeyFromRow(Map<String, Object?> row) async {
+    return _hydrateGroupKey(GroupKeyInfo.fromMap(row));
+  }
+
+  Future<GroupKeyInfo?> _hydrateGroupKey(GroupKeyInfo key) async {
+    final store = groupKeyStore;
+    if (!isSecureStoreReference(key.encryptedKey)) {
+      return key;
+    }
+
+    if (store == null) {
+      return null;
+    }
+
+    final hydrated = await store.read(
+      secureStoreKeyFromReference(key.encryptedKey),
+    );
+    if (hydrated == null) {
+      return null;
+    }
+
+    return GroupKeyInfo(
+      groupId: key.groupId,
+      keyGeneration: key.keyGeneration,
+      encryptedKey: hydrated,
+      createdAt: key.createdAt,
+    );
   }
 
   Future<void> _mirrorGroupKeyForPush(GroupKeyInfo key) async {
     final store = pushSharedKeyStore;
     if (store == null) {
+      return;
+    }
+    if (isSecureStoreReference(key.encryptedKey)) {
       return;
     }
 
@@ -316,5 +379,16 @@ class GroupRepositoryImpl implements GroupRepository {
         },
       );
     }
+  }
+
+  Future<void> _deleteGroupKeyMaterial(GroupKeyInfo key) async {
+    final store = groupKeyStore;
+    if (store == null) {
+      return;
+    }
+
+    await store.delete(
+      groupKeyMaterialStoreName(key.groupId, key.keyGeneration),
+    );
   }
 }

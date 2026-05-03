@@ -218,121 +218,137 @@ void main() {
     });
   });
 
-  test('mixed share skips oversized GIFs while keeping valid sibling media', () async {
-    final identityRepository = FakeIdentityRepository()..seed(_makeIdentity());
-    final tempDir = await Directory.systemTemp.createTemp(
-      'share_batch_gif_mixed_',
-    );
-    addTearDown(() async {
-      if (await tempDir.exists()) {
-        await tempDir.delete(recursive: true);
-      }
-    });
-    final oversizedGif = File('${tempDir.path}/too-big.gif');
-    final oversizedGifHandle = oversizedGif.openSync(mode: FileMode.write);
-    oversizedGifHandle.truncateSync(kMaxGifFileSize + 1);
-    oversizedGifHandle.closeSync();
-    final jpg = File('${tempDir.path}/valid.jpg')..writeAsBytesSync([1, 2, 3]);
+  test(
+    'mixed share skips oversized GIFs while keeping valid sibling media',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final tempDir = await Directory.systemTemp.createTemp(
+        'share_batch_gif_mixed_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final oversizedGif = File('${tempDir.path}/too-big.gif');
+      final oversizedGifHandle = oversizedGif.openSync(mode: FileMode.write);
+      oversizedGifHandle.truncateSync(kMaxGifFileSize + 1);
+      oversizedGifHandle.closeSync();
+      final jpg = File('${tempDir.path}/valid.jpg')
+        ..writeAsBytesSync([1, 2, 3]);
 
-    List<PendingComposerMedia>? deliveredMedia;
-    final coordinator = DefaultShareBatchDeliveryCoordinator(
-      identityRepository: identityRepository,
-      contactRepository: InMemoryContactRepository(),
-      messageRepository: InMemoryMessageRepository(),
-      mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
-      groupRepository: InMemoryGroupRepository(),
-      groupMessageRepository: InMemoryGroupMessageRepository(),
-      bridge: FakeBridge(),
-      p2pService: FakeP2PService(),
-      mediaFileManager: FakeMediaFileManager(),
-      imageProcessor: _imageProcessor(),
-      sendToContactFn:
-          ({
-            required identity,
-            required shareIntent,
-            required contact,
-            required processedMedia,
-          }) async {
-            deliveredMedia = processedMedia;
-            return ShareBatchTargetResult(
-              target: ShareTargetSelection.contact(contact),
-              status: ShareBatchTargetStatus.sent,
-              detail: 'Sent.',
-            );
-          },
-    );
+      List<PendingComposerMedia>? deliveredMedia;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+            }) async {
+              deliveredMedia = processedMedia;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
 
-    final result = await coordinator.deliver(
-      shareIntent: ShareIntent(
-        type: ShareIntentType.files,
-        filePaths: [oversizedGif.path, jpg.path],
-      ),
-      targets: [ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice'))],
-    );
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [oversizedGif.path, jpg.path],
+        ),
+        targets: [
+          ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+        ],
+      );
 
-    expect(result.skippedOversizedGifCount, 1);
-    expect(result.skippedOversizedGifReason, 'GIF files over 25 MB were skipped.');
-    expect(deliveredMedia, isNotNull);
-    expect(deliveredMedia, hasLength(1));
-    expect(deliveredMedia!.single.file.path, jpg.path);
-  });
+      expect(result.skippedOversizedGifCount, 1);
+      expect(
+        result.skippedOversizedGifReason,
+        'GIF files over 25 MB were skipped.',
+      );
+      expect(deliveredMedia, isNotNull);
+      expect(deliveredMedia, hasLength(1));
+      expect(deliveredMedia!.single.file.path, jpg.path);
+    },
+  );
 
-  test('large JPEGs are not rejected by the GIF-only share-batch guard', () async {
-    final identityRepository = FakeIdentityRepository()..seed(_makeIdentity());
-    final tempDir = await Directory.systemTemp.createTemp(
-      'share_batch_non_gif_',
-    );
-    addTearDown(() async {
-      if (await tempDir.exists()) {
-        await tempDir.delete(recursive: true);
-      }
-    });
-    final oversizedJpg = File('${tempDir.path}/large-photo.jpg');
-    final oversizedJpgHandle = oversizedJpg.openSync(mode: FileMode.write);
-    oversizedJpgHandle.truncateSync(kMaxGifFileSize + 1);
-    oversizedJpgHandle.closeSync();
+  test(
+    'large JPEGs are not rejected by the GIF-only share-batch guard',
+    () async {
+      final identityRepository = FakeIdentityRepository()
+        ..seed(_makeIdentity());
+      final tempDir = await Directory.systemTemp.createTemp(
+        'share_batch_non_gif_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+      final oversizedJpg = File('${tempDir.path}/large-photo.jpg');
+      final oversizedJpgHandle = oversizedJpg.openSync(mode: FileMode.write);
+      oversizedJpgHandle.truncateSync(kMaxGifFileSize + 1);
+      oversizedJpgHandle.closeSync();
 
-    List<PendingComposerMedia>? deliveredMedia;
-    final coordinator = DefaultShareBatchDeliveryCoordinator(
-      identityRepository: identityRepository,
-      contactRepository: InMemoryContactRepository(),
-      messageRepository: InMemoryMessageRepository(),
-      mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
-      groupRepository: InMemoryGroupRepository(),
-      groupMessageRepository: InMemoryGroupMessageRepository(),
-      bridge: FakeBridge(),
-      p2pService: FakeP2PService(),
-      mediaFileManager: FakeMediaFileManager(),
-      imageProcessor: _imageProcessor(),
-      sendToContactFn:
-          ({
-            required identity,
-            required shareIntent,
-            required contact,
-            required processedMedia,
-          }) async {
-            deliveredMedia = processedMedia;
-            return ShareBatchTargetResult(
-              target: ShareTargetSelection.contact(contact),
-              status: ShareBatchTargetStatus.sent,
-              detail: 'Sent.',
-            );
-          },
-    );
+      List<PendingComposerMedia>? deliveredMedia;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: FakeP2PService(),
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+            }) async {
+              deliveredMedia = processedMedia;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
 
-    final result = await coordinator.deliver(
-      shareIntent: ShareIntent(
-        type: ShareIntentType.files,
-        filePaths: [oversizedJpg.path],
-      ),
-      targets: [ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice'))],
-    );
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: [oversizedJpg.path],
+        ),
+        targets: [
+          ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+        ],
+      );
 
-    expect(result.skippedOversizedGifCount, 0);
-    expect(deliveredMedia, isNotNull);
-    expect(deliveredMedia, hasLength(1));
-    expect(deliveredMedia!.single.file.path, oversizedJpg.path);
-  });
+      expect(result.skippedOversizedGifCount, 0);
+      expect(deliveredMedia, isNotNull);
+      expect(deliveredMedia, hasLength(1));
+      expect(deliveredMedia!.single.file.path, oversizedJpg.path);
+    },
+  );
 
   test(
     'text-only group share wraps publish in a background task and stays sent on durable success',
@@ -556,6 +572,8 @@ class _GroupShareBgBridge extends FakeBridge {
           'ciphertext': payload['plaintext'],
           'nonce': 'share-group-fake-nonce',
         });
+      case 'payload.sign':
+        return jsonEncode({'ok': true, 'signature': 'share-group-signature'});
       case 'group:publish':
         return jsonEncode({
           'ok': true,

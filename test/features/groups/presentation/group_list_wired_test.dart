@@ -4,11 +4,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -16,6 +21,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/presentation/screens/group_list_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -110,6 +116,16 @@ final testIdentity = IdentityModel(
   updatedAt: DateTime.now().toUtc().toIso8601String(),
 );
 
+const aliceContact = ContactModel(
+  peerId: '12D3KooWAlice',
+  publicKey: 'alicePubKey64',
+  rendezvous: '/ip4/0.0.0.0',
+  username: 'Alice',
+  signature: 'sig',
+  scannedAt: '2026-01-01T00:00:00Z',
+  mlKemPublicKey: 'aliceMlKem64',
+);
+
 GroupModel makeGroup({required String id, required String name}) => GroupModel(
   id: id,
   name: name,
@@ -139,40 +155,188 @@ GroupMessage makeMessage({
   createdAt: DateTime.now().toUtc(),
 );
 
+GroupInviteMembershipFreshnessProof makeInviteFreshnessProof({
+  required String inviteId,
+  required String groupId,
+  required String? recipientPeerId,
+  required Map<String, dynamic> groupConfig,
+  required DateTime issuedAt,
+  String? recipientDeviceId,
+  String? recipientTransportPeerId,
+  String? recipientMlKemPublicKey,
+  String? recipientKeyPackageId,
+  String? recipientKeyPackagePublicMaterial,
+}) {
+  final stateHash = buildGroupConfigStateHash(
+    groupId: groupId,
+    groupConfig: groupConfig,
+  );
+  return GroupInviteMembershipFreshnessProof(
+    inviteId: inviteId,
+    groupId: groupId,
+    recipientPeerId: recipientPeerId,
+    recipientDeviceId: recipientDeviceId,
+    recipientTransportPeerId: recipientTransportPeerId,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
+    recipientKeyPackageId: recipientKeyPackageId,
+    recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
+    inviterPeerId: '12D3KooWAlice',
+    inviterPublicKey: 'alicePubKey64',
+    keyEpoch: 1,
+    groupConfigStateHash: stateHash,
+    membershipWatermark: stateHash,
+    issuedAt: issuedAt.toUtc(),
+    expiresAt: issuedAt.toUtc().add(groupInviteMembershipFreshnessTtl),
+    inviterMemberSnapshot: const {
+      'peerId': '12D3KooWAlice',
+      'username': 'Alice',
+      'role': 'admin',
+      'publicKey': 'alicePubKey64',
+      'mlKemPublicKey': 'aliceMlKem64',
+    },
+  );
+}
+
+Future<Map<String, dynamic>> makeSignedReplayInboxMessage({
+  required FakeBridge bridge,
+  required InMemoryGroupRepository groupRepo,
+  required String groupId,
+  required String payloadType,
+  required Map<String, dynamic> plaintextPayload,
+  required String messageId,
+}) async {
+  final envelope = await buildGroupOfflineReplayEnvelope(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    groupId: groupId,
+    payloadType: payloadType,
+    plaintext: jsonEncode(plaintextPayload),
+    messageId: messageId,
+    senderPeerId: '12D3KooWAlice',
+    senderPublicKey: 'alicePubKey64',
+    senderPrivateKey: 'alicePrivateKey64',
+    keyInfo: GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: 1,
+      encryptedKey: 'base64-key',
+      createdAt: DateTime.utc(2026, 3, 2),
+    ),
+  );
+  return {'from': '12D3KooWAlice', 'message': envelope};
+}
+
 PendingGroupInvite makePendingInvite({
   String groupId = 'grp-abc123',
   String groupName = 'Book Club',
   DateTime? receivedAt,
   String? overrideGroupKey,
+  String? recipientDeviceId,
 }) {
   final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc()).toUtc();
   final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
   final inviteTimestamp = createdAt.add(const Duration(minutes: 5));
+  final packageId = recipientDeviceId == null
+      ? null
+      : defaultGroupWelcomeKeyPackageIdForDevice(recipientDeviceId);
+  final packageMaterial = recipientDeviceId == null
+      ? null
+      : testIdentity.mlKemPublicKey;
+  final welcomeKeyPackage =
+      recipientDeviceId != null && packageId != null && packageMaterial != null
+      ? GroupWelcomeKeyPackage.create(
+          packageId: packageId,
+          publicMaterial: packageMaterial,
+          recipientPeerId: testIdentity.peerId,
+          recipientDeviceId: recipientDeviceId,
+          recipientTransportPeerId: recipientDeviceId,
+          recipientMlKemPublicKey: testIdentity.mlKemPublicKey!,
+          inviteId: 'invite-$groupId',
+          groupId: groupId,
+          keyEpoch: 1,
+          issuedAt: inviteTimestamp,
+          expiresAt: effectiveReceivedAt.add(pendingGroupInviteTtl),
+        )
+      : null;
+  final Map<String, dynamic> groupConfig = {
+    'name': groupName,
+    'groupType': 'chat',
+    'description': 'Invite description',
+    'members': [
+      {
+        'peerId': '12D3KooWAlice',
+        'username': 'Alice',
+        'role': 'admin',
+        'publicKey': 'alicePubKey64',
+        'mlKemPublicKey': 'aliceMlKem64',
+      },
+      {
+        'peerId': testIdentity.peerId,
+        'username': testIdentity.username,
+        'role': 'writer',
+        'publicKey': testIdentity.publicKey,
+        'mlKemPublicKey': testIdentity.mlKemPublicKey,
+        if (recipientDeviceId != null)
+          'devices': [
+            {
+              'deviceId': recipientDeviceId,
+              'transportPeerId': recipientDeviceId,
+              'deviceSigningPublicKey': testIdentity.publicKey,
+              'mlKemPublicKey': testIdentity.mlKemPublicKey,
+              'keyPackageId': packageId,
+              'keyPackagePublicMaterial': packageMaterial,
+              'status': 'active',
+            },
+          ],
+      },
+    ],
+    'createdBy': '12D3KooWAlice',
+    'createdAt': createdAt.toIso8601String(),
+  };
   final payload = GroupInvitePayload(
     id: 'invite-$groupId',
     groupId: groupId,
     groupKey: overrideGroupKey ?? 'base64-key',
     keyEpoch: 1,
-    groupConfig: {
-      'name': groupName,
-      'groupType': 'chat',
-      'description': 'Invite description',
-      'members': [
-        {
-          'peerId': '12D3KooWAlice',
-          'username': 'Alice',
-          'role': 'admin',
-          'publicKey': 'alicePubKey64',
-          'mlKemPublicKey': 'aliceMlKem64',
-        },
-      ],
-      'createdBy': '12D3KooWAlice',
-      'createdAt': createdAt.toIso8601String(),
-    },
+    groupConfig: groupConfig,
     senderPeerId: '12D3KooWAlice',
     senderUsername: 'Alice',
     timestamp: inviteTimestamp.toIso8601String(),
-  );
+    recipientPeerId: testIdentity.peerId,
+    recipientDeviceId: recipientDeviceId,
+    recipientTransportPeerId: recipientDeviceId,
+    recipientMlKemPublicKey: recipientDeviceId == null
+        ? null
+        : testIdentity.mlKemPublicKey,
+    recipientKeyPackageId: packageId,
+    recipientKeyPackagePublicMaterial: packageMaterial,
+    welcomeKeyPackage: welcomeKeyPackage,
+    invitePolicy: GroupInvitePolicy(
+      expiresAt: effectiveReceivedAt.add(pendingGroupInviteTtl),
+      allowedDevices: [recipientDeviceId ?? testIdentity.peerId],
+      assignedRole: 'writer',
+      canInviteOthers: false,
+      joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+      keyEpoch: 1,
+      welcomeKeyPackageId: welcomeKeyPackage?.packageId,
+      welcomeKeyPackagePublicMaterialHash:
+          welcomeKeyPackage?.publicMaterialHash,
+      welcomeKeyPackageExpiresAt: welcomeKeyPackage?.expiresAt,
+    ),
+    membershipFreshnessProof: makeInviteFreshnessProof(
+      inviteId: 'invite-$groupId',
+      groupId: groupId,
+      recipientPeerId: testIdentity.peerId,
+      recipientDeviceId: recipientDeviceId,
+      recipientTransportPeerId: recipientDeviceId,
+      recipientMlKemPublicKey: recipientDeviceId == null
+          ? null
+          : testIdentity.mlKemPublicKey,
+      recipientKeyPackageId: packageId,
+      recipientKeyPackagePublicMaterial: packageMaterial,
+      groupConfig: groupConfig,
+      issuedAt: inviteTimestamp,
+    ),
+  ).withInviteSignature(signature: 'signed-invite-by-alice');
 
   return PendingGroupInvite.fromPayload(
     payload,
@@ -208,6 +372,7 @@ void main() {
       groupRepo = InMemoryGroupRepository();
       msgRepo = InMemoryGroupMessageRepository();
       contactRepo = InMemoryContactRepository();
+      contactRepo.addTestContact(aliceContact);
       bridge = FakeBridge();
       identityRepo = FakeIdentityRepository(identity: testIdentity);
       p2pService = FakeP2PService();
@@ -422,6 +587,55 @@ void main() {
     );
 
     testWidgets(
+      'GL-005 renders only persisted groups and valid pending invites, not public preview stream events',
+      (tester) async {
+        final activeGroup = makeGroup(id: 'g-active', name: 'Active Private');
+        await groupRepo.saveGroup(activeGroup);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        expect(find.text('Active Private'), findsOneWidget);
+        expect(find.text('Public Catalog Group'), findsNothing);
+        expect(find.text('Public Preview Invite'), findsNothing);
+
+        inviteStreamController.add(
+          makeGroup(id: 'g-public-preview', name: 'Public Catalog Group'),
+        );
+        pendingInviteStreamController.add(
+          makePendingInvite(
+            groupId: 'grp-public-preview',
+            groupName: 'Public Preview Invite',
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Active Private'), findsOneWidget);
+        expect(find.text('Public Catalog Group'), findsNothing);
+        expect(find.text('Public Preview Invite'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('pending-group-invite-grp-public-preview')),
+          findsNothing,
+        );
+
+        final validInvite = makePendingInvite(
+          groupId: 'grp-valid-private',
+          groupName: 'Valid Private Invite',
+        );
+        await pendingInviteRepo.savePendingInvite(validInvite);
+        pendingInviteStreamController.add(validInvite);
+        await pumpFrames(tester, count: 20);
+
+        expect(find.text('Active Private'), findsOneWidget);
+        expect(find.text('Valid Private Invite'), findsOneWidget);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${validInvite.groupId}')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'accepting a pending invite joins the group and removes the row',
       (tester) async {
         final backlogTimestamp = DateTime.now()
@@ -443,39 +657,40 @@ void main() {
         );
         addTearDown(replayListener.dispose);
         await pendingInviteRepo.savePendingInvite(invite);
+        final offlineMessage = await makeSignedReplayInboxMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: invite.groupId,
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintextPayload: {
+            'groupId': invite.groupId,
+            'messageId': 'offline-msg-1',
+            'senderId': '12D3KooWAlice',
+            'senderUsername': 'Alice',
+            'keyEpoch': 1,
+            'text': 'Welcome back',
+            'timestamp': backlogTimestamp,
+          },
+          messageId: 'offline-msg-1',
+        );
+        final offlineReaction = await makeSignedReplayInboxMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: invite.groupId,
+          payloadType: groupOfflineReplayPayloadTypeReaction,
+          plaintextPayload: {
+            'id': 'invite-reaction-1',
+            'messageId': 'offline-msg-1',
+            'emoji': '👍',
+            'action': 'add',
+            'senderPeerId': '12D3KooWAlice',
+            'timestamp': reactionTimestamp,
+          },
+          messageId: 'invite-reaction-1',
+        );
         bridge.responses['group:inboxRetrieveCursor'] = {
           'ok': true,
-          'messages': [
-            {
-              'from': '12D3KooWAlice',
-              'message': jsonEncode({
-                'groupId': invite.groupId,
-                'messageId': 'offline-msg-1',
-                'senderId': '12D3KooWAlice',
-                'senderUsername': 'Alice',
-                'keyEpoch': 1,
-                'text': 'Welcome back',
-                'timestamp': backlogTimestamp,
-              }),
-            },
-            {
-              'from': '12D3KooWAlice',
-              'message': jsonEncode({
-                'groupId': invite.groupId,
-                'type': 'group_reaction',
-                'senderId': '12D3KooWAlice',
-                'reaction': jsonEncode({
-                  'id': 'invite-reaction-1',
-                  'messageId': 'offline-msg-1',
-                  'emoji': '👍',
-                  'action': 'add',
-                  'senderPeerId': '12D3KooWAlice',
-                  'timestamp': reactionTimestamp,
-                }),
-                'timestamp': reactionTimestamp,
-              }),
-            },
-          ],
+          'messages': [offlineMessage, offlineReaction],
           'cursor': '',
         };
 
@@ -511,6 +726,50 @@ void main() {
         expect(reactions, hasLength(1));
         expect(reactions.single.senderPeerId, '12D3KooWAlice');
         expect(reactions.single.emoji, '👍');
+      },
+    );
+
+    testWidgets(
+      'EK011 accepts a key-package-bound pending invite through wired local package id',
+      (tester) async {
+        const localDeviceId = 'peer-admin-device-1';
+        p2pService.emitState(
+          const NodeState(peerId: localDeviceId, isStarted: true),
+        );
+        final invite = makePendingInvite(
+          groupId: 'grp-package-accept',
+          groupName: 'Package Room',
+          recipientDeviceId: localDeviceId,
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(find.text('Package Room'), findsOneWidget);
+        expect(find.text('Joined Package Room'), findsOneWidget);
+
+        final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
+          packageId: defaultGroupWelcomeKeyPackageIdForDevice(localDeviceId)!,
+          recipientDeviceId: localDeviceId,
+          groupId: invite.groupId,
+        );
+        expect(tombstone, isNotNull);
+        expect(tombstone!.inviteId, invite.inviteId);
       },
     );
 
@@ -580,6 +839,41 @@ void main() {
         );
         expect(find.text('Invite needs fresh key material'), findsOneWidget);
         expect(bridge.commandLog, isNot(contains('group:join')));
+      },
+    );
+
+    testWidgets(
+      'IJ014 repairable join-material failure keeps pending invite visible',
+      (tester) async {
+        final invite = makePendingInvite();
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'WELCOME_DECRYPT_FAILED',
+          'errorMessage': 'undecryptable welcome key material',
+        };
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNull);
+        expect(await groupRepo.getLatestKey(invite.groupId), isNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsOneWidget,
+        );
+        expect(find.text('Invite needs fresh key material'), findsOneWidget);
+        expect(bridge.commandLog, contains('group:join'));
+        expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
       },
     );
 

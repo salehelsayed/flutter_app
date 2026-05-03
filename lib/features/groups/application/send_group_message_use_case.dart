@@ -54,6 +54,37 @@ _loadGroupSendMembership({
 
 String _defaultGroupMessageIdFactory() => const Uuid().v4();
 
+GroupMemberDeviceIdentity? _resolveOutgoingSenderDevice({
+  required GroupMember? senderMember,
+  required String senderPublicKey,
+  String? requestedDeviceId,
+  String? requestedTransportPeerId,
+}) {
+  if (senderMember == null || senderMember.devices.isEmpty) {
+    return null;
+  }
+
+  final normalizedDeviceId = requestedDeviceId?.trim();
+  final normalizedTransportPeerId = requestedTransportPeerId?.trim();
+
+  for (final device in senderMember.activeDevices) {
+    if (normalizedDeviceId != null &&
+        normalizedDeviceId.isNotEmpty &&
+        device.deviceId != normalizedDeviceId) {
+      continue;
+    }
+    if (normalizedTransportPeerId != null &&
+        normalizedTransportPeerId.isNotEmpty &&
+        device.transportPeerId != normalizedTransportPeerId) {
+      continue;
+    }
+    if (device.deviceSigningPublicKey == senderPublicKey) {
+      return device;
+    }
+  }
+  return null;
+}
+
 bool _sameOptionalString(String? left, String? right) =>
     (left == null || left.isEmpty ? null : left) ==
     (right == null || right.isEmpty ? null : right);
@@ -346,6 +377,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   required String senderPublicKey,
   required String senderPrivateKey,
   required String senderUsername,
+  String? senderDeviceId,
+  String? senderTransportPeerId,
   String? messageId,
   GroupMessageIdFactory? messageIdFactory,
   DateTime? timestamp,
@@ -512,8 +545,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.error, null);
   }
   final keyEpoch = latestKey?.keyGeneration ?? 0;
-
-  final mediaJson = groupMediaAttachments?.map((a) => a.toJson()).toList();
   final sendMembership = await sendMembershipFuture;
   final members = sendMembership.members;
   if (members.isNotEmpty &&
@@ -529,12 +560,51 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     return (SendGroupMessageResult.unauthorized, null);
   }
+  GroupMember? senderMember;
+  for (final member in members) {
+    if (member.peerId == senderPeerId) {
+      senderMember = member;
+      break;
+    }
+  }
+  final resolvedSenderDevice = _resolveOutgoingSenderDevice(
+    senderMember: senderMember,
+    senderPublicKey: senderPublicKey,
+    requestedDeviceId: senderDeviceId,
+    requestedTransportPeerId: senderTransportPeerId,
+  );
+  if (senderMember?.devices.isNotEmpty == true &&
+      resolvedSenderDevice == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_UNBOUND_DEVICE',
+      details: {'reason': 'sender_device_not_registered'},
+    );
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'sender_device_not_registered'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final resolvedSenderDeviceId = senderDeviceId?.trim().isNotEmpty == true
+      ? senderDeviceId!.trim()
+      : resolvedSenderDevice?.deviceId ?? senderPeerId;
+  final resolvedSenderTransportPeerId =
+      senderTransportPeerId?.trim().isNotEmpty == true
+      ? senderTransportPeerId!.trim()
+      : resolvedSenderDevice?.transportPeerId ?? resolvedSenderDeviceId;
+  final resolvedSenderDevicePublicKey =
+      resolvedSenderDevice?.deviceSigningPublicKey ?? senderPublicKey;
+
+  final mediaJson = groupMediaAttachments?.map((a) => a.toJson()).toList();
   final recipientPeerIds = sendMembership.recipientPeerIds;
   // 3b. Build wireEnvelope (plaintext publish params for retry — NO senderPrivateKey)
   final wireEnvelope = jsonEncode({
     'groupId': groupId,
     'text': sanitizedText,
     'senderPeerId': senderPeerId,
+    'senderDeviceId': resolvedSenderDeviceId,
+    'transportPeerId': resolvedSenderTransportPeerId,
     'senderPublicKey': senderPublicKey,
     'senderUsername': senderUsername,
     'messageId': resolvedMessageId,
@@ -547,6 +617,8 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   final inboxPayload = jsonEncode({
     'groupId': groupId,
     'senderId': senderPeerId,
+    'senderDeviceId': resolvedSenderDeviceId,
+    'transportPeerId': resolvedSenderTransportPeerId,
     'senderUsername': senderUsername,
     'keyEpoch': keyEpoch,
     'text': sanitizedText,
@@ -566,8 +638,15 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         groupId: groupId,
         payloadType: groupOfflineReplayPayloadTypeMessage,
         plaintext: inboxPayload,
+        senderPeerId: senderPeerId,
+        senderPublicKey: resolvedSenderDevicePublicKey,
+        senderPrivateKey: senderPrivateKey,
         keyInfo: latestKey,
         messageId: resolvedMessageId,
+        senderDeviceId: resolvedSenderDeviceId,
+        senderTransportPeerId: resolvedSenderTransportPeerId,
+        senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
+        recipientPeerIds: recipientPeerIds,
       );
       inboxRetryPayload = jsonEncode({
         'groupId': groupId,
@@ -599,6 +678,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     id: resolvedMessageId,
     groupId: groupId,
     senderPeerId: senderPeerId,
+    transportPeerId: resolvedSenderTransportPeerId,
     senderUsername: senderUsername,
     text: sanitizedText,
     timestamp: now,
@@ -626,6 +706,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderPublicKey: senderPublicKey,
     senderPrivateKey: senderPrivateKey,
     senderUsername: senderUsername,
+    senderDeviceId: resolvedSenderDeviceId,
+    senderTransportPeerId: resolvedSenderTransportPeerId,
+    senderDevicePublicKey: resolvedSenderDevicePublicKey,
     messageId: resolvedMessageId,
     quotedMessageId: quotedMessageId,
     media: mediaJson,

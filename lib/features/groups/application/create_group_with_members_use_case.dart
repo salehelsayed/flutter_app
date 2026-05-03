@@ -10,6 +10,7 @@ import 'package:flutter_app/features/groups/application/add_group_member_use_cas
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -115,6 +116,10 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     appendGroupEventLogEntry: appendGroupEventLogEntry,
     description: description,
   );
+  final preTransitionStateHash = await buildGroupTransitionStateHash(
+    groupRepo,
+    group.id,
+  );
 
   // 3. Add each contact as a writer member
   final addedMembers = <GroupMember>[];
@@ -174,21 +179,38 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   }
 
   // 5. Broadcast members_added system message
-  final sysMessage = jsonEncode({
-    '__sys': 'members_added',
-    'members': addedMembers
-        .map(
-          (m) => {
-            'peerId': m.peerId,
-            'username': m.username,
-            'role': m.role.toValue(),
-            'publicKey': m.publicKey,
-            if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
-          },
-        )
-        .toList(),
-    'groupConfig': groupConfig,
-  });
+  final publishedAt = DateTime.now().toUtc();
+  final sourceEventId =
+      'members_added:${group.id}:${identity.peerId}:${publishedAt.microsecondsSinceEpoch}';
+  final sysPayload = await signGroupSystemTransitionPayload(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    groupId: group.id,
+    transitionType: 'members_added',
+    sourceEventId: sourceEventId,
+    eventAt: publishedAt,
+    actorPeerId: identity.peerId,
+    actorUsername: identity.username,
+    actorSigningPublicKey: identity.publicKey,
+    actorPrivateKey: identity.privateKey,
+    preTransitionStateHash: preTransitionStateHash,
+    systemPayload: {
+      '__sys': 'members_added',
+      'members': addedMembers
+          .map(
+            (m) => {
+              'peerId': m.peerId,
+              'username': m.username,
+              'role': m.role.toValue(),
+              'publicKey': m.publicKey,
+              if (m.mlKemPublicKey != null) 'mlKemPublicKey': m.mlKemPublicKey,
+            },
+          )
+          .toList(),
+      'groupConfig': groupConfig,
+    },
+  );
+  final sysMessage = jsonEncode(sysPayload);
 
   var membersAddedPublishFailed = false;
   try {
@@ -200,6 +222,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       senderPublicKey: identity.publicKey,
       senderPrivateKey: identity.privateKey,
       senderUsername: identity.username,
+      messageId: sourceEventId,
     );
     if (publishResult['ok'] != true) {
       membersAddedPublishFailed = true;
@@ -234,7 +257,10 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
     inviteBatchResult = await sendGroupInvitesInParallel(
       p2pService: p2pService,
       bridge: bridge,
+      groupRepo: groupRepo,
       senderPeerId: identity.peerId,
+      senderPublicKey: identity.publicKey,
+      senderPrivateKey: identity.privateKey,
       senderUsername: identity.username,
       groupId: group.id,
       groupKey: keyInfo.encryptedKey,

@@ -159,7 +159,7 @@ void main() {
       expect(find.text('4'), findsOneWidget);
       expect(
         tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
-        closeTo(0.35, 0.01),
+        closeTo(0.69, 0.01),
       );
 
       await postRepository.savePostOrigin(
@@ -185,7 +185,7 @@ void main() {
       expect(find.text('6'), findsOneWidget);
       expect(
         tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
-        closeTo(0.35, 0.01),
+        closeTo(0.69, 0.01),
       );
     },
   );
@@ -237,7 +237,7 @@ void main() {
       expect(find.text('4'), findsOneWidget);
       expect(
         tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
-        closeTo(0.35, 0.01),
+        closeTo(0.69, 0.01),
       );
 
       await postRepository.savePostOrigin(
@@ -263,7 +263,7 @@ void main() {
       expect(find.text('6'), findsOneWidget);
       expect(
         tester.widget<Icon>(find.byIcon(Icons.repeat)).color?.a,
-        closeTo(0.35, 0.01),
+        closeTo(0.69, 0.01),
       );
     },
   );

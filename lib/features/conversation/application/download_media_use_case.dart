@@ -13,8 +13,48 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 /// Downloads a media blob from the relay and saves it locally.
 ///
 /// Called lazily when the UI needs to display a media item.
-final Map<String, Future<MediaAttachment?>> _inFlightMediaDownloads =
-    <String, Future<MediaAttachment?>>{};
+final Map<_MediaDownloadInFlightKey, Future<MediaAttachment?>>
+_inFlightMediaDownloads =
+    <_MediaDownloadInFlightKey, Future<MediaAttachment?>>{};
+
+class _MediaDownloadInFlightKey {
+  const _MediaDownloadInFlightKey({
+    required this.bridge,
+    required this.mediaAttachmentRepo,
+    required this.mediaFileManager,
+    required this.contactPeerId,
+    required this.attachmentId,
+    required this.mime,
+  });
+
+  final Bridge bridge;
+  final MediaAttachmentRepository mediaAttachmentRepo;
+  final MediaFileManager mediaFileManager;
+  final String contactPeerId;
+  final String attachmentId;
+  final String mime;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _MediaDownloadInFlightKey &&
+        identical(bridge, other.bridge) &&
+        identical(mediaAttachmentRepo, other.mediaAttachmentRepo) &&
+        identical(mediaFileManager, other.mediaFileManager) &&
+        contactPeerId == other.contactPeerId &&
+        attachmentId == other.attachmentId &&
+        mime == other.mime;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    identityHashCode(bridge),
+    identityHashCode(mediaAttachmentRepo),
+    identityHashCode(mediaFileManager),
+    contactPeerId,
+    attachmentId,
+    mime,
+  );
+}
 
 Future<MediaAttachment?> downloadMedia({
   required Bridge bridge,
@@ -24,7 +64,14 @@ Future<MediaAttachment?> downloadMedia({
   required String contactPeerId,
   bool enforceGroupMediaPolicy = false,
 }) async {
-  final inFlightKey = '$contactPeerId|${attachment.id}|${attachment.mime}';
+  final inFlightKey = _MediaDownloadInFlightKey(
+    bridge: bridge,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    mediaFileManager: mediaFileManager,
+    contactPeerId: contactPeerId,
+    attachmentId: attachment.id,
+    mime: attachment.mime,
+  );
   final inFlight = _inFlightMediaDownloads[inFlightKey];
   if (inFlight != null) {
     return inFlight;

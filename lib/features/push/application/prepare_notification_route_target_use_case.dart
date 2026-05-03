@@ -4,7 +4,10 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_open_use_case.dart';
 
@@ -14,6 +17,8 @@ Future<void> prepareNotificationRouteTarget({
   required Bridge bridge,
   required GroupRepository? groupRepository,
   required GroupMessageRepository? groupMessageRepository,
+  GroupPendingKeyRepairRepository? pendingKeyRepairRepository,
+  GroupHistoryGapRepairRepository? historyGapRepairRepository,
   GroupMessageListener? groupMessageListener,
   required MediaAttachmentRepository mediaAttachmentRepository,
   required ReactionRepository? reactionRepository,
@@ -36,6 +41,9 @@ Future<void> prepareNotificationRouteTarget({
         groupMessageListener: groupMessageListener,
         mediaAttachmentRepo: mediaAttachmentRepository,
         reactionRepo: reactionRepository,
+        pendingKeyRepairRepo: pendingKeyRepairRepository,
+        historyGapRepairRepo: historyGapRepairRepository,
+        requestGroupKeyRepair: emitGroupKeyRepairRequest,
       );
     },
   );

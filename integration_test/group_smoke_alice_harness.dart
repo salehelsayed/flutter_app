@@ -15,6 +15,7 @@ import 'package:integration_test/integration_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -196,24 +197,45 @@ void main() {
       };
     }
 
-    // Helper: wait for incoming group message in Bob's repo (Alice checks her own)
-    Future<bool> waitForGroupMsg(
+    // Helper: wait for incoming group message in Alice's repo.
+    Future<Map<String, dynamic>?> waitForGroupMsg(
       String substring, {
       Duration timeout = const Duration(seconds: 30),
     }) async {
+      final sw = Stopwatch()..start();
       final deadline = DateTime.now().add(timeout);
+      var nextDrainAt = DateTime.fromMillisecondsSinceEpoch(0);
       while (DateTime.now().isBefore(deadline)) {
+        if (DateTime.now().isAfter(nextDrainAt)) {
+          nextDrainAt = DateTime.now().add(const Duration(seconds: 2));
+          try {
+            await drainGroupOfflineInboxForGroup(
+              bridge: stack.bridge,
+              groupRepo: stack.groupRepo,
+              msgRepo: stack.groupMsgRepo,
+              groupId: groupId,
+              groupMessageListener: stack.groupListener,
+              selfPeerId: stack.identity.peerId,
+            );
+          } catch (e) {
+            print('[ALICE-G] waitForGroupMsg drain error: $e');
+          }
+        }
         final msgs = await stack.groupMsgRepo.getMessagesPage(groupId);
-        if (msgs.any(
-          (m) =>
-              m.text.contains(substring) &&
-              m.senderPeerId != stack.identity.peerId,
-        )) {
-          return true;
+        for (final m in msgs) {
+          if (m.text.contains(substring) &&
+              m.senderPeerId != stack.identity.peerId) {
+            sw.stop();
+            return {
+              'e2eMs': sw.elapsedMilliseconds,
+              'text': m.text,
+              'senderPeerId': m.senderPeerId,
+            };
+          }
         }
         await Future<void>.delayed(const Duration(milliseconds: 250));
       }
-      return false;
+      return null;
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -248,7 +270,7 @@ void main() {
 
     await _waitForSignal('g3_bob_msg2');
     final gotBobMsg2 = await waitForGroupMsg('G3: bob group msg 2');
-    print('[ALICE-G] G3: received bob msg 2: $gotBobMsg2');
+    print('[ALICE-G] G3: received bob msg 2: ${gotBobMsg2 != null}');
 
     final g3a3 = await sendGroup('G3: alice group msg 3');
     _writeJson('g3_alice_msg3', g3a3);
@@ -340,6 +362,7 @@ void main() {
       senderPublicKey: stack.identity.publicKey,
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
+      sendP2PMessage: stack.p2pService.sendMessage,
     );
     g7RotSw.stop();
     print(

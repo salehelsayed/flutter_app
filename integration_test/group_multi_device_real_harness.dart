@@ -71,8 +71,22 @@ import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart
 import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
+import 'package:flutter_app/core/database/migrations/054_group_reaction_replay_outbox.dart';
+import 'package:flutter_app/core/database/migrations/055_group_invite_revocations.dart';
+import 'package:flutter_app/core/database/migrations/056_group_invite_consumptions.dart';
+import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
+import 'package:flutter_app/core/database/migrations/058_media_attachment_integrity_columns.dart';
+import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
+import 'package:flutter_app/core/database/migrations/060_group_event_log.dart';
+import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
+import 'package:flutter_app/core/database/migrations/063_group_pending_key_repairs.dart';
+import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
+import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
+import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
@@ -80,6 +94,7 @@ import 'package:flutter_app/features/groups/application/add_group_member_use_cas
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
@@ -234,7 +249,7 @@ Future<sqlcipher.Database> _openTestDatabase({
   return openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: dbName,
-    version: 53,
+    version: 66,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -288,6 +303,19 @@ Future<sqlcipher.Database> _openTestDatabase({
       await runPendingGroupInvitesMigration(db);
       await runGroupsDissolveColumnsMigration(db);
       await runGroupsBacklogRetentionColumnsMigration(db);
+      await runGroupReactionReplayOutboxMigration(db);
+      await runGroupInviteRevocationsMigration(db);
+      await runGroupInviteConsumptionsMigration(db);
+      await runGroupMemberPermissionsMigration(db);
+      await runMediaAttachmentIntegrityColumnsMigration(db);
+      await runMediaAttachmentEncryptionColumnsMigration(db);
+      await runGroupEventLogMigration(db);
+      await runGroupMessageTransportPeerIdMigration(db);
+      await runGroupMemberDeviceIdentitiesMigration(db);
+      await runGroupPendingKeyRepairsMigration(db);
+      await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      await runGroupHistoryGapRepairsMigration(db);
+      await runGroupSyncReceiptsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -346,6 +374,27 @@ Future<sqlcipher.Database> _openTestDatabase({
       if (oldVersion < 51) await runPendingGroupInvitesMigration(db);
       if (oldVersion < 52) await runGroupsDissolveColumnsMigration(db);
       if (oldVersion < 53) await runGroupsBacklogRetentionColumnsMigration(db);
+      if (oldVersion < 54) await runGroupReactionReplayOutboxMigration(db);
+      if (oldVersion < 55) await runGroupInviteRevocationsMigration(db);
+      if (oldVersion < 56) await runGroupInviteConsumptionsMigration(db);
+      if (oldVersion < 57) await runGroupMemberPermissionsMigration(db);
+      if (oldVersion < 58) {
+        await runMediaAttachmentIntegrityColumnsMigration(db);
+      }
+      if (oldVersion < 59) {
+        await runMediaAttachmentEncryptionColumnsMigration(db);
+      }
+      if (oldVersion < 60) await runGroupEventLogMigration(db);
+      if (oldVersion < 61) {
+        await runGroupMessageTransportPeerIdMigration(db);
+      }
+      if (oldVersion < 62) await runGroupMemberDeviceIdentitiesMigration(db);
+      if (oldVersion < 63) await runGroupPendingKeyRepairsMigration(db);
+      if (oldVersion < 64) {
+        await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      }
+      if (oldVersion < 65) await runGroupHistoryGapRepairsMigration(db);
+      if (oldVersion < 66) await runGroupSyncReceiptsMigration(db);
     },
   );
 }
@@ -359,6 +408,8 @@ class GroupMultiDeviceTestStack {
   final ContactRepositoryImpl contactRepo;
   final GroupRepositoryImpl groupRepo;
   final GroupMessageRepositoryImpl groupMsgRepo;
+  final IncomingMessageRouter messageRouter;
+  final GroupKeyUpdateListener groupKeyUpdateListener;
   final GroupMessageListener groupListener;
   final StreamController<Map<String, dynamic>> groupStreamController;
   final FakeNotificationService notificationService;
@@ -374,6 +425,8 @@ class GroupMultiDeviceTestStack {
     required this.contactRepo,
     required this.groupRepo,
     required this.groupMsgRepo,
+    required this.messageRouter,
+    required this.groupKeyUpdateListener,
     required this.groupListener,
     required this.groupStreamController,
     required this.notificationService,
@@ -382,6 +435,8 @@ class GroupMultiDeviceTestStack {
   });
 
   Future<void> teardown() async {
+    groupKeyUpdateListener.dispose();
+    messageRouter.dispose();
     groupListener.dispose();
     await groupStreamController.close();
     await p2pService.stopNode();
@@ -560,6 +615,15 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
 
   final notificationService = FakeNotificationService();
   await notificationService.initialize();
+  final messageRouter = IncomingMessageRouter(p2pService: p2pService);
+  final groupKeyUpdateListener = GroupKeyUpdateListener(
+    groupKeyUpdateStream: messageRouter.groupKeyUpdateStream,
+    groupRepo: groupRepo,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async => updatedIdentity.mlKemSecretKey,
+    getOwnPeerId: () async => updatedIdentity.peerId,
+    getOwnDeviceId: () async => p2pService.currentState.peerId,
+  );
   final groupStreamController =
       StreamController<Map<String, dynamic>>.broadcast();
   bridge.onGroupMessageReceived = (data) {
@@ -575,6 +639,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     groupConversationTracker: ActiveConversationTracker(),
     getAppLifecycleState: () => AppLifecycleState.paused,
   );
+  messageRouter.start();
+  groupKeyUpdateListener.start();
   groupListener.start(groupStreamController.stream);
 
   return GroupMultiDeviceTestStack(
@@ -586,6 +652,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     contactRepo: contactRepo,
     groupRepo: groupRepo,
     groupMsgRepo: groupMsgRepo,
+    messageRouter: messageRouter,
+    groupKeyUpdateListener: groupKeyUpdateListener,
     groupListener: groupListener,
     groupStreamController: groupStreamController,
     notificationService: notificationService,
@@ -871,6 +939,9 @@ Future<void> _runPrimaryScenario() async {
         'text': membersAddedSystemPayload,
         'timestamp': membershipEventAt.toIso8601String(),
       }),
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
     );
     await waitForSharedSignal(_signalName('sibling_membership_verified'));
 

@@ -10,8 +10,11 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -35,6 +38,9 @@ Future<bool?> handleAppResumed({
   GroupRepository? groupRepo,
   GroupMessageRepository? groupMsgRepo,
   GroupMessageListener? groupMessageListener,
+  GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+  GroupHistoryGapRepairRepository? historyGapRepairRepo,
+  RequestGroupKeyRepair? requestGroupKeyRepair,
   MediaAttachmentRepository? mediaAttachmentRepo,
   ReactionRepository? reactionRepo,
   NearbyLocationService? nearbyLocationService,
@@ -190,6 +196,9 @@ Future<bool?> handleAppResumed({
           groupMessageListener: groupMessageListener,
           mediaAttachmentRepo: mediaAttachmentRepo,
           reactionRepo: reactionRepo,
+          pendingKeyRepairRepo: pendingKeyRepairRepo,
+          historyGapRepairRepo: historyGapRepairRepo,
+          requestGroupKeyRepair: requestGroupKeyRepair,
         );
         final groupDrainMs = DateTime.now()
             .difference(groupDrainStart)

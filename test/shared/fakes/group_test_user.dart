@@ -71,6 +71,18 @@ class GroupTestUser {
        _incomingController = incomingController,
        _incomingReactionController = incomingReactionController;
 
+  GroupMemberDeviceIdentity get deviceIdentity => _deviceIdentityFor(deviceId);
+
+  GroupMemberDeviceIdentity _deviceIdentityFor(String deviceId) =>
+      GroupMemberDeviceIdentity(
+        deviceId: deviceId,
+        transportPeerId: deviceId,
+        deviceSigningPublicKey: publicKey,
+        mlKemPublicKey: 'mlkem-$deviceId',
+        keyPackageId: 'key-package-$deviceId',
+        keyPackagePublicMaterial: 'key-package-public-$deviceId',
+      );
+
   factory GroupTestUser.create({
     required String peerId,
     required String username,
@@ -167,15 +179,12 @@ class GroupTestUser {
     );
     await groupRepo.saveGroup(group);
 
-    await groupRepo.saveMember(
-      GroupMember(
-        groupId: groupId,
-        peerId: peerId,
-        username: username,
-        role: MemberRole.admin,
-        publicKey: publicKey,
-        joinedAt: now,
-      ),
+    await _saveMemberIdentity(
+      repo: groupRepo,
+      groupId: groupId,
+      user: this,
+      role: MemberRole.admin,
+      joinedAt: now,
     );
 
     subscribeToGroup(groupId);
@@ -195,15 +204,12 @@ class GroupTestUser {
     final now = (joinedAt ?? DateTime.now()).toUtc();
 
     // Save member to admin's local repo
-    await groupRepo.saveMember(
-      GroupMember(
-        groupId: groupId,
-        peerId: invitee.peerId,
-        username: invitee.username,
-        role: MemberRole.writer,
-        publicKey: invitee.publicKey,
-        joinedAt: now,
-      ),
+    await _saveMemberIdentity(
+      repo: groupRepo,
+      groupId: groupId,
+      user: invitee,
+      role: MemberRole.writer,
+      joinedAt: now,
     );
 
     // Save group + members to invitee's repos (simulates invite acceptance)
@@ -217,6 +223,13 @@ class GroupTestUser {
       for (final m in members) {
         await invitee.groupRepo.saveMember(m);
       }
+      await _saveMemberIdentity(
+        repo: invitee.groupRepo,
+        groupId: groupId,
+        user: invitee,
+        role: MemberRole.writer,
+        joinedAt: now,
+      );
     }
 
     // Subscribe invitee on the network
@@ -266,18 +279,7 @@ class GroupTestUser {
       'name': group!.name,
       'groupType': group.type.toValue(),
       if (group.description != null) 'description': group.description,
-      'members': allMembers
-          .map(
-            (member) => {
-              'peerId': member.peerId,
-              'username': member.username,
-              'role': member.role.toValue(),
-              'publicKey': member.publicKey,
-              if (member.mlKemPublicKey != null)
-                'mlKemPublicKey': member.mlKemPublicKey,
-            },
-          )
-          .toList(),
+      'members': allMembers.map((member) => member.toConfigJson()).toList(),
       'createdBy': group.createdBy,
       'createdAt': group.createdAt.toUtc().toIso8601String(),
     };
@@ -291,6 +293,10 @@ class GroupTestUser {
         'publicKey': updatedMember?.publicKey ?? existingMember.publicKey,
         if (updatedMember?.mlKemPublicKey != null)
           'mlKemPublicKey': updatedMember!.mlKemPublicKey,
+        if ((updatedMember?.devices ?? existingMember.devices).isNotEmpty)
+          'devices': (updatedMember?.devices ?? existingMember.devices)
+              .map((device) => device.toJson())
+              .toList(),
       },
       'groupConfig': groupConfig,
     });
@@ -326,16 +332,7 @@ class GroupTestUser {
         'groupType': group.type.toValue(),
         if (group.description != null) 'description': group.description,
         'members': remainingMembers
-            .map(
-              (member) => {
-                'peerId': member.peerId,
-                'username': member.username,
-                'role': member.role.toValue(),
-                'publicKey': member.publicKey,
-                if (member.mlKemPublicKey != null)
-                  'mlKemPublicKey': member.mlKemPublicKey,
-              },
-            )
+            .map((member) => member.toConfigJson())
             .toList(),
         'createdBy': group.createdBy,
         'createdAt': group.createdAt.toUtc().toIso8601String(),
@@ -394,6 +391,7 @@ class GroupTestUser {
       id: resolvedMessageId,
       groupId: groupId,
       senderPeerId: peerId,
+      transportPeerId: deviceId,
       senderUsername: username,
       text: text,
       timestamp: now,
@@ -455,6 +453,8 @@ class GroupTestUser {
         groupId: groupId,
         text: text,
         senderPeerId: peerId,
+        senderDeviceId: deviceId,
+        senderTransportPeerId: deviceId,
         senderPublicKey: publicKey,
         senderPrivateKey: privateKey,
         senderUsername: username,
@@ -522,6 +522,9 @@ class GroupTestUser {
       actorUsername: username,
       actorPublicKey: publicKey,
       actorPrivateKey: privateKey,
+      actorDeviceId: deviceId,
+      actorTransportPeerId: deviceId,
+      actorKeyPackageId: deviceIdentity.keyPackageId,
       dissolvedAt: dissolvedAt,
     );
 
@@ -545,6 +548,7 @@ class GroupTestUser {
         'timestamp':
             group.dissolvedAt?.toUtc().toIso8601String() ??
             DateTime.now().toUtc().toIso8601String(),
+        'messageId': publishPayload['messageId'] as String? ?? '',
       }, senderDeviceId: deviceId);
 
       for (final member in members) {
@@ -658,16 +662,7 @@ class GroupTestUser {
       'name': group!.name,
       'groupType': group.type.toValue(),
       if (group.description != null) 'description': group.description,
-      'members': remainingMembers
-          .map(
-            (m) => {
-              'peerId': m.peerId,
-              'username': m.username,
-              'role': m.role.toValue(),
-              'publicKey': m.publicKey,
-            },
-          )
-          .toList(),
+      'members': remainingMembers.map((m) => m.toConfigJson()).toList(),
       'createdBy': group.createdBy,
       'createdAt': group.createdAt.toUtc().toIso8601String(),
     };
@@ -704,16 +699,7 @@ class GroupTestUser {
       'name': group!.name,
       'groupType': group.type.toValue(),
       if (group.description != null) 'description': group.description,
-      'members': allMembers
-          .map(
-            (m) => {
-              'peerId': m.peerId,
-              'username': m.username,
-              'role': m.role.toValue(),
-              'publicKey': m.publicKey,
-            },
-          )
-          .toList(),
+      'members': allMembers.map((m) => m.toConfigJson()).toList(),
       'createdBy': group.createdBy,
       'createdAt': group.createdAt.toUtc().toIso8601String(),
     };
@@ -725,6 +711,8 @@ class GroupTestUser {
         'username': newMember.username,
         'role': 'writer',
         'publicKey': newMember.publicKey,
+        'mlKemPublicKey': 'mlkem-${newMember.peerId}',
+        'devices': [newMember.deviceIdentity.toJson()],
       },
       'groupConfig': groupConfig,
     });
@@ -753,5 +741,41 @@ class GroupTestUser {
   String _nextGroupMessageId(DateTime timestamp) {
     final sequence = _messageSequence++;
     return '${peerId}_${timestamp.microsecondsSinceEpoch}_$sequence';
+  }
+
+  static Future<void> _saveMemberIdentity({
+    required InMemoryGroupRepository repo,
+    required String groupId,
+    required GroupTestUser user,
+    required MemberRole role,
+    required DateTime joinedAt,
+  }) async {
+    final existing = await repo.getMember(groupId, user.peerId);
+    final registeredDeviceIds = user._network.registeredDeviceIdsFor(
+      user.peerId,
+    );
+    final deviceIds = registeredDeviceIds.isEmpty
+        ? <String>{user.deviceId}
+        : registeredDeviceIds;
+    final devicesById = {
+      for (final device
+          in existing?.devices ?? const <GroupMemberDeviceIdentity>[])
+        device.deviceId: device,
+      for (final deviceId in deviceIds)
+        deviceId: user._deviceIdentityFor(deviceId),
+    };
+    await repo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: user.peerId,
+        username: user.username,
+        role: existing?.role ?? role,
+        permissions: existing?.permissions ?? GroupMemberPermissions.empty,
+        publicKey: user.publicKey,
+        mlKemPublicKey: existing?.mlKemPublicKey ?? 'mlkem-${user.peerId}',
+        devices: devicesById.values.toList(growable: false),
+        joinedAt: existing?.joinedAt ?? joinedAt,
+      ),
+    );
   }
 }

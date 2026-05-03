@@ -3,7 +3,10 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/groups/application/broadcast_voluntary_leave_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
@@ -12,11 +15,13 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../identity/domain/repositories/fake_identity_repository.dart';
 
 Map<String, dynamic> _lastGroupInboxStorePayload(FakeBridge bridge) {
   final inboxMsg = bridge.sentMessages.lastWhere(
@@ -199,6 +204,17 @@ void main() {
         myRole: GroupRole.member,
       ),
     );
+    await receiverGroupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: adminPeerId,
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        mlKemPublicKey: 'mlkem-pk-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
     final listener = GroupKeyUpdateListener(
       groupKeyUpdateStream: controller.stream,
@@ -212,8 +228,17 @@ void main() {
     // ciphertext as plaintext, so we put the key JSON in ciphertext)
     final keyPayload = jsonEncode({
       'groupId': groupId,
+      'sourcePeerId': adminPeerId,
       'keyGeneration': 2,
       'encryptedKey': 'rotated-key-abc',
+      'signatureAlgorithm': groupKeyUpdateSignatureAlgorithm,
+      'signedPayload': canonicalGroupKeyUpdateSignedPayload(
+        groupId: groupId,
+        sourcePeerId: adminPeerId,
+        keyGeneration: 2,
+        encryptedKey: 'rotated-key-abc',
+      ),
+      'signature': 'fake-signature',
     });
     final envelope = jsonEncode({
       'encrypted': {
@@ -341,6 +366,106 @@ void main() {
   });
 
   test(
+    'EK004 voluntary leave stores signed member_removed replay envelope',
+    () async {
+      const leaverPeerId = 'peer-alice';
+      final createdAt = DateTime.now().toUtc();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Test Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdAt: createdAt,
+          createdBy: adminPeerId,
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: leaverPeerId,
+          username: 'Alice',
+          role: MemberRole.writer,
+          permissions: const GroupMemberPermissions(rotateKeys: true),
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-pk-alice',
+          joinedAt: createdAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: adminPeerId,
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          mlKemPublicKey: 'mlkem-pk-admin',
+          joinedAt: createdAt.add(const Duration(seconds: 1)),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'initial-key-epoch-1',
+          createdAt: createdAt,
+        ),
+      );
+      bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'rotated-leave-key-abc',
+        'keyEpoch': 2,
+      };
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'leave-sys-msg-id',
+      };
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          IdentityModel(
+            peerId: leaverPeerId,
+            publicKey: 'pk-alice',
+            privateKey: 'sk-alice',
+            mnemonic12:
+                'one two three four five six seven eight nine ten eleven twelve',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            username: 'Alice',
+            createdAt: createdAt.toIso8601String(),
+            updatedAt: createdAt.toIso8601String(),
+          ),
+        );
+
+      final result = await broadcastVoluntaryLeaveAndRotateKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        group: (await groupRepo.getGroup(groupId))!,
+        identityRepo: identityRepo,
+        msgRepo: InMemoryGroupMessageRepository(),
+        sendP2PMessage: (_, _) async => true,
+      );
+
+      expect(result.didBroadcast, isTrue);
+      final leaveInboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        leaveInboxPayload['recipientPeerIds'],
+        unorderedEquals(<String>[adminPeerId, 'peer-bob']),
+      );
+      final leaveReplayEnvelope =
+          jsonDecode(leaveInboxPayload['message'] as String)
+              as Map<String, dynamic>;
+      expect(leaveReplayEnvelope['kind'], 'group_offline_replay');
+      expect(leaveReplayEnvelope['payloadType'], 'group_message');
+      expect(leaveReplayEnvelope['keyEpoch'], 1);
+      expect(leaveReplayEnvelope['senderPeerId'], leaverPeerId);
+      expect(leaveReplayEnvelope['senderPublicKey'], 'pk-alice');
+      expect(leaveReplayEnvelope['signatureAlgorithm'], 'ed25519');
+      expect(leaveReplayEnvelope['signedPayload'], isA<String>());
+      expect(leaveReplayEnvelope['signature'], isA<String>());
+    },
+  );
+
+  test(
     'voluntary leave rotation excludes leaver and remaining members send on rotated epoch',
     () async {
       const leaverPeerId = 'peer-alice';
@@ -352,6 +477,7 @@ void main() {
       final adminController = StreamController<ChatMessage>.broadcast();
       final bobController = StreamController<ChatMessage>.broadcast();
       final adminMsgRepo = InMemoryGroupMessageRepository();
+      final leaverMsgRepo = InMemoryGroupMessageRepository();
 
       Future<void> seedRemainingRepo({
         required InMemoryGroupRepository repo,
@@ -377,6 +503,18 @@ void main() {
             publicKey: 'pk-admin',
             mlKemPublicKey: 'mlkem-pk-admin',
             joinedAt: createdAt,
+          ),
+        );
+        await repo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: leaverPeerId,
+            username: 'Alice',
+            role: MemberRole.writer,
+            permissions: const GroupMemberPermissions(rotateKeys: true),
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            joinedAt: createdAt.add(const Duration(seconds: 1)),
           ),
         );
         await repo.saveMember(
@@ -431,12 +569,16 @@ void main() {
         groupRepo: adminRepo,
         bridge: adminBridge,
         getOwnMlKemSecretKey: () async => 'admin-mlkem-secret',
+        getOwnPeerId: () async => adminPeerId,
+        getOwnDeviceId: () async => adminPeerId,
       )..start();
       final bobListener = GroupKeyUpdateListener(
         groupKeyUpdateStream: bobController.stream,
         groupRepo: bobRepo,
         bridge: bobBridge,
         getOwnMlKemSecretKey: () async => 'bob-mlkem-secret',
+        getOwnPeerId: () async => 'peer-bob',
+        getOwnDeviceId: () async => 'peer-bob',
       )..start();
       addTearDown(() async {
         adminListener.dispose();
@@ -450,22 +592,44 @@ void main() {
         'groupKey': 'rotated-leave-key-abc',
         'keyEpoch': 2,
       };
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'leave-sys-msg-id',
+      };
       final keyUpdates = <(String, String)>[];
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          IdentityModel(
+            peerId: leaverPeerId,
+            publicKey: 'pk-alice',
+            privateKey: 'sk-alice',
+            mnemonic12:
+                'one two three four five six seven eight nine ten eleven twelve',
+            mlKemPublicKey: 'mlkem-pk-alice',
+            username: 'Alice',
+            createdAt: createdAt.toIso8601String(),
+            updatedAt: createdAt.toIso8601String(),
+          ),
+        );
 
-      final rotatedKey = await rotateAndDistributeGroupKey(
+      final leaveResult = await broadcastVoluntaryLeaveAndRotateKey(
         bridge: bridge,
         groupRepo: groupRepo,
-        groupId: groupId,
-        selfPeerId: leaverPeerId,
-        senderPublicKey: 'pk-alice',
-        senderPrivateKey: 'sk-alice',
-        senderUsername: 'Alice',
+        group: (await groupRepo.getGroup(groupId))!,
+        identityRepo: identityRepo,
+        msgRepo: leaverMsgRepo,
         sendP2PMessage: (peerId, message) async {
           keyUpdates.add((peerId, message));
           return true;
         },
       );
 
+      final rotatedKey = leaveResult.rotatedKey;
+      expect(leaveResult.didBroadcast, isTrue);
+      expect(
+        leaveResult.remainingPeerIds,
+        unorderedEquals(<String>[adminPeerId, 'peer-bob']),
+      );
       expect(rotatedKey, isNotNull);
       expect(rotatedKey!.keyGeneration, 2);
       expect(
@@ -476,6 +640,22 @@ void main() {
         keyUpdates.map((entry) => entry.$1),
         isNot(contains(leaverPeerId)),
       );
+      final leaveInboxPayload = _lastGroupInboxStorePayload(bridge);
+      expect(
+        leaveInboxPayload['recipientPeerIds'],
+        unorderedEquals(<String>[adminPeerId, 'peer-bob']),
+      );
+      final leaveReplayEnvelope =
+          jsonDecode(leaveInboxPayload['message'] as String)
+              as Map<String, dynamic>;
+      expect(leaveReplayEnvelope['kind'], 'group_offline_replay');
+      expect(leaveReplayEnvelope['payloadType'], 'group_message');
+      expect(leaveReplayEnvelope['keyEpoch'], 1);
+      expect(leaveReplayEnvelope['senderPeerId'], leaverPeerId);
+      expect(leaveReplayEnvelope['senderPublicKey'], 'pk-alice');
+      expect(leaveReplayEnvelope['signatureAlgorithm'], 'ed25519');
+      expect(leaveReplayEnvelope['signedPayload'], isA<String>());
+      expect(leaveReplayEnvelope['signature'], isA<String>());
 
       for (final update in keyUpdates) {
         final controller = update.$1 == adminPeerId
@@ -504,6 +684,8 @@ void main() {
       expect(adminBridge.commandLog, contains('group:updateKey'));
       expect(bobBridge.commandLog, contains('group:updateKey'));
 
+      await adminRepo.removeMember(groupId, leaverPeerId);
+      await bobRepo.removeMember(groupId, leaverPeerId);
       await leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: groupId);
 
       expect(await groupRepo.getGroup(groupId), isNull);
@@ -543,6 +725,48 @@ void main() {
           jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
       expect(inboxEnvelope['keyEpoch'], 2);
       expect(inboxEnvelope['messageId'], 'msg-post-voluntary-leave');
+
+      final normalDrainRetrieveCount = bridge.commandLog
+          .where((command) => command == 'group:inboxRetrieveCursor')
+          .length;
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: leaverMsgRepo,
+      );
+      expect(
+        bridge.commandLog
+            .where((command) => command == 'group:inboxRetrieveCursor')
+            .length,
+        normalDrainRetrieveCount,
+      );
+
+      bridge.responses['group:inboxRetrieveCursor'] = {
+        'ok': true,
+        'messages': [
+          {
+            'from': adminPeerId,
+            'timestamp': DateTime.now().toUtc().toIso8601String(),
+            'message': inboxPayload['message'],
+          },
+        ],
+        'cursor': '',
+      };
+      await drainGroupOfflineInboxForGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: leaverMsgRepo,
+        groupId: groupId,
+      );
+
+      final leaverFutureMessage = await leaverMsgRepo.getMessage(
+        'msg-post-voluntary-leave',
+      );
+      expect(leaverFutureMessage, isNotNull);
+      expect(leaverFutureMessage!.text, groupUndecryptablePlaceholderText);
+      expect(leaverFutureMessage.text, isNot('After voluntary leave'));
+      expect(leaverFutureMessage.keyGeneration, 2);
+      expect(leaverFutureMessage.status, 'undecryptable');
     },
   );
 }

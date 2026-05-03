@@ -3,8 +3,6 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
-import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
-import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_bridge.dart';
@@ -1036,6 +1034,54 @@ void main() {
       expect(payload['groupId'], equals('grp-inbox-cursor'));
       expect(payload['cursor'], equals('opaque-prev-cursor'));
       expect(payload['limit'], equals(25));
+    });
+
+    test('parses valid history gap metadata from cursor response', () async {
+      bridge.responses['group:inboxRetrieveCursor'] = {
+        'ok': true,
+        'messages': <Map<String, dynamic>>[],
+        'cursor': '',
+        'historyGaps': [
+          {
+            'groupId': 'grp-gap',
+            'gapId': 'gap-1',
+            'missingAfterMessageId': 'msg-before-gap',
+            'missingBeforeMessageId': 'msg-after-gap',
+            'expectedRangeHash': 'range-hash',
+            'expectedHeadMessageId': 'msg-after-gap',
+            'candidateSourcePeerIds': [' peer-source ', ''],
+          },
+          {
+            'groupId': 'grp-gap',
+            'gapId': '',
+            'missingAfterMessageId': 'msg-before-gap',
+            'missingBeforeMessageId': 'msg-after-gap',
+            'expectedRangeHash': 'range-hash',
+            'expectedHeadMessageId': 'msg-after-gap',
+            'candidateSourcePeerIds': ['peer-source'],
+          },
+        ],
+      };
+
+      final page = await callGroupInboxRetrieveWithCursor(
+        bridge,
+        'grp-gap',
+        'stale-cursor',
+        10,
+      );
+
+      expect(page.messages, isEmpty);
+      expect(page.cursor, isEmpty);
+      expect(page.historyGaps, hasLength(1));
+
+      final gap = page.historyGaps.single;
+      expect(gap.groupId, equals('grp-gap'));
+      expect(gap.gapId, equals('gap-1'));
+      expect(gap.missingAfterMessageId, equals('msg-before-gap'));
+      expect(gap.missingBeforeMessageId, equals('msg-after-gap'));
+      expect(gap.expectedRangeHash, equals('range-hash'));
+      expect(gap.expectedHeadMessageId, equals('msg-after-gap'));
+      expect(gap.candidateSourcePeerIds, equals(['peer-source']));
     });
 
     test('rethrows TimeoutException on timeout', () async {

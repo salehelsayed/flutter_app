@@ -3,7 +3,10 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../../utils/flow_event_emitter.dart';
 
 /// Inserts a group message into the database.
-Future<void> dbInsertGroupMessage(Database db, Map<String, Object?> row) async {
+Future<void> dbInsertGroupMessage(
+  DatabaseExecutor db,
+  Map<String, Object?> row,
+) async {
   final id = row['id'] as String? ?? '';
 
   emitFlowEvent(
@@ -38,7 +41,7 @@ Future<void> dbInsertGroupMessage(Database db, Map<String, Object?> row) async {
 ///
 /// Returns at most [limit] messages starting at [offset].
 Future<List<Map<String, Object?>>> dbLoadGroupMessagesPage(
-  Database db,
+  DatabaseExecutor db,
   String groupId, {
   int limit = 50,
   int offset = 0,
@@ -83,7 +86,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupMessagesPage(
 
 /// Loads all messages for a group, ordered by timestamp ASC, id ASC.
 Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
-  Database db,
+  DatabaseExecutor db,
   String groupId,
 ) async {
   emitFlowEvent(
@@ -122,7 +125,7 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
 /// Loads the timestamp of the latest synthetic `member_removed` message for a
 /// removed sender in a group.
 Future<String?> dbLoadLatestGroupRemovalTimestampForSender(
-  Database db,
+  DatabaseExecutor db,
   String groupId,
   String senderPeerId,
 ) async {
@@ -140,7 +143,7 @@ Future<String?> dbLoadLatestGroupRemovalTimestampForSender(
 
 /// Loads the latest message for a group (most recent by timestamp, then id).
 Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
-  Database db,
+  DatabaseExecutor db,
   String groupId,
 ) async {
   emitFlowEvent(
@@ -190,7 +193,7 @@ Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
 /// Returns one row per group that has at least one message. Groups with no
 /// messages are omitted so callers can provide their own zero-value fallback.
 Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
-  Database db,
+  DatabaseExecutor db,
   List<String> groupIds,
 ) async {
   if (groupIds.isEmpty) return const [];
@@ -203,6 +206,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
       latest.id AS latest_id,
       latest.group_id AS latest_group_id,
       latest.sender_peer_id AS latest_sender_peer_id,
+      latest.transport_peer_id AS latest_transport_peer_id,
       latest.sender_username AS latest_sender_username,
       latest.text AS latest_text,
       latest.timestamp AS latest_timestamp,
@@ -239,7 +243,10 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
 }
 
 /// Loads a single group message by ID.
-Future<Map<String, Object?>?> dbLoadGroupMessage(Database db, String id) async {
+Future<Map<String, Object?>?> dbLoadGroupMessage(
+  DatabaseExecutor db,
+  String id,
+) async {
   try {
     final results = await db.query(
       'group_messages',
@@ -255,7 +262,7 @@ Future<Map<String, Object?>?> dbLoadGroupMessage(Database db, String id) async {
 
 /// Updates the status of a group message by ID.
 Future<void> dbUpdateGroupMessageStatus(
-  Database db,
+  DatabaseExecutor db,
   String id,
   String status,
 ) async {
@@ -289,7 +296,7 @@ Future<void> dbUpdateGroupMessageStatus(
 }
 
 /// Returns the total number of messages in a group.
-Future<int> dbCountGroupMessages(Database db, String groupId) async {
+Future<int> dbCountGroupMessages(DatabaseExecutor db, String groupId) async {
   try {
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM group_messages WHERE group_id = ?',
@@ -302,7 +309,10 @@ Future<int> dbCountGroupMessages(Database db, String groupId) async {
 }
 
 /// Returns the number of unread incoming messages in a group.
-Future<int> dbCountUnreadGroupMessages(Database db, String groupId) async {
+Future<int> dbCountUnreadGroupMessages(
+  DatabaseExecutor db,
+  String groupId,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_COUNT_UNREAD_START',
@@ -336,7 +346,7 @@ Future<int> dbCountUnreadGroupMessages(Database db, String groupId) async {
 }
 
 /// Returns the total number of unread incoming messages across all groups.
-Future<int> dbCountTotalUnreadGroupMessages(Database db) async {
+Future<int> dbCountTotalUnreadGroupMessages(DatabaseExecutor db) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_COUNT_TOTAL_UNREAD_START',
@@ -367,7 +377,10 @@ Future<int> dbCountTotalUnreadGroupMessages(Database db) async {
 }
 
 /// Marks all unread incoming messages for a group as read.
-Future<int> dbMarkGroupMessagesAsRead(Database db, String groupId) async {
+Future<int> dbMarkGroupMessagesAsRead(
+  DatabaseExecutor db,
+  String groupId,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_MARK_READ_START',
@@ -402,7 +415,7 @@ Future<int> dbMarkGroupMessagesAsRead(Database db, String groupId) async {
 
 /// Returns true if a group message with the same content already exists.
 Future<bool> dbExistsGroupMessageByContent(
-  Database db,
+  DatabaseExecutor db,
   String groupId,
   String senderPeerId,
   String text,
@@ -418,7 +431,10 @@ Future<bool> dbExistsGroupMessageByContent(
 }
 
 /// Deletes all group messages for a group. Returns the number deleted.
-Future<int> dbDeleteGroupMessagesForGroup(Database db, String groupId) async {
+Future<int> dbDeleteGroupMessagesForGroup(
+  DatabaseExecutor db,
+  String groupId,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_DELETE_FOR_GROUP_START',
@@ -452,7 +468,7 @@ Future<int> dbDeleteGroupMessagesForGroup(Database db, String groupId) async {
 }
 
 /// Deletes a single group message by ID.
-Future<void> dbDeleteGroupMessage(Database db, String id) async {
+Future<void> dbDeleteGroupMessage(DatabaseExecutor db, String id) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MESSAGES_DB_DELETE_START',
@@ -481,7 +497,7 @@ Future<void> dbDeleteGroupMessage(Database db, String id) async {
 ///
 /// Returns raw row maps ordered by timestamp ASC, limited to [limit].
 Future<List<Map<String, dynamic>>> dbLoadStuckSendingGroupMessages(
-  Database db, {
+  DatabaseExecutor db, {
   required DateTime olderThan,
   int limit = 50,
 }) async {
@@ -496,7 +512,7 @@ Future<List<Map<String, dynamic>>> dbLoadStuckSendingGroupMessages(
 ///
 /// Returns raw row maps ordered by timestamp ASC.
 Future<List<Map<String, dynamic>>> dbLoadFailedOutgoingGroupMessages(
-  Database db, {
+  DatabaseExecutor db, {
   int? limit,
 }) async {
   final sql = StringBuffer(
@@ -514,7 +530,7 @@ Future<List<Map<String, dynamic>>> dbLoadFailedOutgoingGroupMessages(
 ///
 /// Returns raw row maps ordered by timestamp ASC, limited to [limit].
 Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
-  Database db, {
+  DatabaseExecutor db, {
   int limit = 50,
 }) async {
   return db.rawQuery(
@@ -530,7 +546,7 @@ Future<List<Map<String, dynamic>>> dbLoadGroupMessagesWithFailedInboxStore(
 ///
 /// Returns the number of rows affected.
 Future<int> dbTransitionGroupSendingToFailed(
-  Database db, {
+  DatabaseExecutor db, {
   DateTime? olderThan,
 }) async {
   if (olderThan == null) {
@@ -548,7 +564,7 @@ Future<int> dbTransitionGroupSendingToFailed(
 
 /// Updates the inbox_stored flag for a group message.
 Future<void> dbUpdateGroupMessageInboxStored(
-  Database db,
+  DatabaseExecutor db,
   String id, {
   required bool stored,
 }) async {
@@ -560,7 +576,7 @@ Future<void> dbUpdateGroupMessageInboxStored(
 
 /// Updates (or clears) the inbox_retry_payload for a group message.
 Future<void> dbUpdateGroupMessageInboxRetryPayload(
-  Database db,
+  DatabaseExecutor db,
   String id,
   String? inboxRetryPayload,
 ) async {
@@ -572,7 +588,7 @@ Future<void> dbUpdateGroupMessageInboxRetryPayload(
 
 /// Updates (or clears) the wire_envelope for a group message.
 Future<void> dbUpdateGroupMessageWireEnvelope(
-  Database db,
+  DatabaseExecutor db,
   String id,
   String? wireEnvelope,
 ) async {

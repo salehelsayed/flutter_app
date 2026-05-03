@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -37,6 +38,7 @@ void main() {
           null,
         );
     flowEventLoggingEnabled = kDebugMode;
+    debugSetFlowEventSink(null);
     debugPrint = debugPrintThrottled;
   });
 
@@ -118,6 +120,7 @@ void main() {
       'group:inboxStore': 'groupInboxStore',
       'group:inboxRetrieve': 'groupInboxRetrieve',
       'group:inboxRetrieveCursor': 'groupInboxRetrieveCursor',
+      'group:historyRepairRange': 'groupHistoryRepairRange',
       'group.encrypt': 'groupEncryptMessage',
       'group.decrypt': 'groupDecryptMessage',
     };
@@ -155,6 +158,59 @@ void main() {
       expect(lastCall!.method, equals('restoreIdentity'));
       expect(lastCall!.arguments, isNull);
     });
+
+    test(
+      'history repair helper routes typed payload and parses response',
+      () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                return jsonEncode({
+                  'ok': true,
+                  'groupId': 'group-1',
+                  'gapId': 'gap-1',
+                  'sourcePeerId': 'peer-source',
+                  'rangeHash': 'range-hash',
+                  'headMessageId': 'msg-after',
+                  'messages': [
+                    {
+                      'from': 'peer-sender',
+                      'message': '{"text":"hello"}',
+                      'timestamp': '2026-05-01T12:00:00.000Z',
+                    },
+                  ],
+                });
+              },
+            );
+
+        final result = await callGroupHistoryRepairRange(
+          client,
+          gap: const GroupInboxHistoryGap(
+            groupId: 'group-1',
+            gapId: 'gap-1',
+            missingAfterMessageId: 'msg-before',
+            missingBeforeMessageId: 'msg-after',
+            expectedRangeHash: 'range-hash',
+            expectedHeadMessageId: 'msg-after',
+            candidateSourcePeerIds: ['peer-source'],
+          ),
+          sourcePeerId: 'peer-source',
+          limit: 7,
+        );
+
+        expect(lastCall!.method, 'groupHistoryRepairRange');
+        final payload =
+            jsonDecode(lastCall!.arguments as String) as Map<String, dynamic>;
+        expect(payload['groupId'], 'group-1');
+        expect(payload['gapId'], 'gap-1');
+        expect(payload['sourcePeerId'], 'peer-source');
+        expect(payload['limit'], 7);
+        expect(result.rangeHash, 'range-hash');
+        expect(result.messages, hasLength(1));
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -229,6 +285,92 @@ void main() {
       expect(lastCall, isNotNull);
       expect(lastCall!.method, equals('startNode'));
     });
+
+    test(
+      'ER005 PlatformException redacts secrets in response and flow logs',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                throw PlatformException(
+                  code: 'GO_ERROR',
+                  message:
+                      'dial failed privateKeyHex=deadbeef '
+                      'ciphertext=raw-ciphertext-blob '
+                      '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelayPeer',
+                );
+              },
+            );
+
+        final response = await client.send(
+          jsonEncode({
+            'cmd': 'node:start',
+            'payload': {
+              'privateKeyHex': 'deadbeef',
+              'relayAddresses': [
+                '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelayPeer',
+              ],
+            },
+          }),
+        );
+
+        final decoded = jsonDecode(response) as Map<String, dynamic>;
+        final encodedResponse = jsonEncode(decoded);
+        final encodedFlow = jsonEncode(flowEvents);
+
+        expect(decoded['ok'], isFalse);
+        expect(decoded['errorCode'], equals('PLATFORM_ERROR'));
+        for (final payload in [encodedResponse, encodedFlow]) {
+          expect(payload, isNot(contains('deadbeef')));
+          expect(payload, isNot(contains('raw-ciphertext-blob')));
+          expect(payload, isNot(contains('/ip4/10.0.0.1')));
+          expect(payload, contains('[redacted]'));
+          expect(payload, contains('[redacted:multiaddr]'));
+        }
+      },
+    );
+
+    test(
+      'ER005 ok false bridge responses redact native error messages',
+      () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                return jsonEncode({
+                  'ok': false,
+                  'errorCode': 'GROUP_ERROR',
+                  'errorMessage':
+                      'group decrypt failed secretKey=mlkem-secret '
+                      'nonce=nonce-secret /dns/relay.example/tcp/4001/p2p/peer',
+                });
+              },
+            );
+
+        final response = await client.send(
+          jsonEncode({
+            'cmd': 'group.decrypt',
+            'payload': {'ciphertext': 'raw-ciphertext-blob'},
+          }),
+        );
+
+        final decoded = jsonDecode(response) as Map<String, dynamic>;
+        final encodedResponse = jsonEncode(decoded);
+
+        expect(decoded['ok'], isFalse);
+        expect(decoded['errorCode'], equals('GROUP_ERROR'));
+        expect(encodedResponse, isNot(contains('mlkem-secret')));
+        expect(encodedResponse, isNot(contains('nonce-secret')));
+        expect(encodedResponse, isNot(contains('/dns/relay.example')));
+        expect(encodedResponse, contains('[redacted]'));
+        expect(encodedResponse, contains('[redacted:multiaddr]'));
+      },
+    );
 
     test('PlatformException with null message uses fallback text', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -437,6 +579,43 @@ void main() {
     );
 
     test(
+      'ER005 group diagnostic stream redacts sensitive payload fields',
+      () async {
+        final eventFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:decryption_failed',
+            'data': {
+              'groupHash': 'safe-group-hash',
+              'ciphertext': 'raw-ciphertext-blob',
+              'nonce': 'nonce-secret',
+              'peerId': '12D3KooWLongSensitivePeerIdentifier',
+              'errorMessage':
+                  'failed secretKey=mlkem-secret '
+                  '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelayPeer',
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        final encoded = jsonEncode(received);
+
+        expect(received['event'], 'group:decryption_failed');
+        expect(received['groupHash'], 'safe-group-hash');
+        expect(encoded, isNot(contains('raw-ciphertext-blob')));
+        expect(encoded, isNot(contains('nonce-secret')));
+        expect(encoded, isNot(contains('12D3KooWLongSensitivePeerIdentifier')));
+        expect(encoded, isNot(contains('mlkem-secret')));
+        expect(encoded, isNot(contains('/ip4/10.0.0.1')));
+        expect(encoded, contains('[redacted]'));
+        expect(encoded, contains('[redacted:multiaddr]'));
+      },
+    );
+
+    test(
       'group payload parse failure push event reaches diagnostics stream without invoking group message callback',
       () async {
         var groupMessageCalls = 0;
@@ -464,6 +643,48 @@ void main() {
         expect(received['groupId'], 'group-parse');
         expect(received['senderId'], 'peer-3');
         expect(received['envelopeType'], 'group_message');
+        expect(groupMessageCalls, 0);
+      },
+    );
+
+    test(
+      'group validation reject push event reaches diagnostics stream without invoking group message callback',
+      () async {
+        var groupMessageCalls = 0;
+        client.onGroupMessageReceived = (_) {
+          groupMessageCalls++;
+        };
+
+        final eventFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:validation_rejected',
+            'data': {
+              'reason': 'bad_signature_or_epoch',
+              'groupHash': '123456789abc',
+              'senderHash': 'abcdef123456',
+              'transportPeerHash': '456789abcdef',
+              'localPeerHash': 'fedcba987654',
+              'envelopeType': 'group_message',
+              'keyEpoch': 2,
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        expect(received['event'], 'group:validation_rejected');
+        expect(received['reason'], 'bad_signature_or_epoch');
+        expect(received['groupHash'], '123456789abc');
+        expect(received['senderHash'], 'abcdef123456');
+        expect(received['transportPeerHash'], '456789abcdef');
+        expect(received['localPeerHash'], 'fedcba987654');
+        expect(received['envelopeType'], 'group_message');
+        expect(received['keyEpoch'], 2);
+        expect(received.containsKey('groupId'), isFalse);
+        expect(received.containsKey('senderId'), isFalse);
         expect(groupMessageCalls, 0);
       },
     );
@@ -527,7 +748,7 @@ void main() {
   // ---------------------------------------------------------------------------
   // Total command coverage sanity check
   // ---------------------------------------------------------------------------
-  test('all 50 commands are covered', () async {
+  test('all 51 commands are covered', () async {
     // Exhaustive list of every command in _cmdMap.
     final allCmds = [
       // Identity
@@ -587,13 +808,14 @@ void main() {
       'group:inboxStore',
       'group:inboxRetrieve',
       'group:inboxRetrieveCursor',
+      'group:historyRepairRange',
       'group:acknowledgeRecovery',
       'group.keygen',
       'group.encrypt',
       'group.decrypt',
     ];
 
-    expect(allCmds, hasLength(50));
+    expect(allCmds, hasLength(51));
 
     for (final cmd in allCmds) {
       final request = jsonEncode({

@@ -10,6 +10,7 @@ void main() {
       String role = 'writer',
       String? publicKey = 'pk-base64',
       String? mlKemPublicKey = 'mlkem-base64',
+      String? devicesJson,
       String joinedAt = '2026-01-15T12:00:00.000Z',
     }) {
       return {
@@ -19,6 +20,7 @@ void main() {
         'role': role,
         'public_key': publicKey,
         'ml_kem_public_key': mlKemPublicKey,
+        if (devicesJson != null) 'devices_json': devicesJson,
         'joined_at': joinedAt,
       };
     }
@@ -53,6 +55,73 @@ void main() {
 
       expect(a, equals(b));
       expect(a, isNot(equals(c)));
+    });
+
+    test('device roster round-trip preserves active and revoked devices', () {
+      final member = GroupMember(
+        groupId: 'group-1',
+        peerId: 'member-b',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'member-pk',
+        mlKemPublicKey: 'legacy-mlkem',
+        joinedAt: DateTime.parse('2026-01-15T12:00:00.000Z'),
+        devices: [
+          const GroupMemberDeviceIdentity(
+            deviceId: 'bob-phone',
+            transportPeerId: '12D3KooWBobPhone',
+            deviceSigningPublicKey: 'device-pk-phone',
+            mlKemPublicKey: 'mlkem-phone',
+            keyPackageId: 'kp-phone',
+            keyPackagePublicMaterial: 'kp-pub-phone',
+          ),
+          GroupMemberDeviceIdentity(
+            deviceId: 'bob-tablet',
+            transportPeerId: '12D3KooWBobTablet',
+            deviceSigningPublicKey: 'device-pk-tablet',
+            mlKemPublicKey: 'mlkem-tablet',
+            keyPackageId: 'kp-tablet',
+            keyPackagePublicMaterial: 'kp-pub-tablet',
+            status: GroupMemberDeviceStatus.revoked,
+            revokedAt: DateTime.parse('2026-01-16T12:00:00.000Z'),
+          ),
+        ],
+      );
+
+      final row = member.toMap();
+      final parsed = GroupMember.fromMap(Map<String, dynamic>.from(row));
+
+      expect(parsed.devices, hasLength(2));
+      expect(parsed.activeDevices.single.deviceId, 'bob-phone');
+      expect(
+        parsed.findDeviceByTransportPeerId('12D3KooWBobPhone')?.keyPackageId,
+        'kp-phone',
+      );
+      expect(parsed.findDeviceById('bob-tablet'), isNull);
+      expect(parsed.findDeviceById('bob-tablet', activeOnly: false), isNotNull);
+    });
+
+    test('legacy fallback device is explicit and member equality stays scoped', () {
+      final legacy = GroupMember.fromMap(makeMap(peerId: 'member-legacy'));
+
+      expect(legacy.devices, isEmpty);
+      expect(legacy.activeDevices, isEmpty);
+      expect(legacy.activeDevicesWithLegacyFallback(), hasLength(1));
+      expect(
+        legacy.activeDevicesWithLegacyFallback().single.transportPeerId,
+        'member-legacy',
+      );
+
+      final sameMemberWithDevice = legacy.copyWith(
+        devices: [
+          const GroupMemberDeviceIdentity(
+            deviceId: 'new-device',
+            transportPeerId: '12D3KooWNewDevice',
+            deviceSigningPublicKey: 'device-pk',
+          ),
+        ],
+      );
+      expect(legacy, equals(sameMemberWithDevice));
     });
   });
 }

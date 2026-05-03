@@ -8,6 +8,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
     as group_send;
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
@@ -38,6 +39,73 @@ class _DownloadWritingBridge extends FakeBridge {
       return jsonEncode({'ok': true, 'id': payload['id'], 'size': 4});
     }
     return super.send(message);
+  }
+}
+
+class _FailingDownloadBridge extends _DownloadWritingBridge {
+  _FailingDownloadBridge({required Set<String> failingBlobIds})
+    : _failingBlobIds = failingBlobIds;
+
+  final Set<String> _failingBlobIds;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'media:download') {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final blobId = payload['id'] as String;
+      if (_failingBlobIds.contains(blobId)) {
+        sendCallCount++;
+        lastSentMessage = message;
+        sentMessages.add(message);
+        lastCommand = cmd;
+        commandLog.add(cmd!);
+        return jsonEncode({
+          'ok': false,
+          'id': blobId,
+          'errorMessage': 'forced download failure for $blobId',
+        });
+      }
+    }
+    return super.send(message);
+  }
+}
+
+class _ScopedMediaFileManager extends FakeMediaFileManager {
+  _ScopedMediaFileManager(String scope)
+    : _root = Directory(p.join(Directory.systemTemp.path, 'test_docs', scope));
+
+  final Directory _root;
+
+  @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final relativePath = relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
+    final absolutePath = p.join(_root.path, relativePath);
+    final file = File(absolutePath);
+    await file.parent.create(recursive: true);
+    return absolutePath;
+  }
+
+  @override
+  Future<String> resolveStoredPath(String storedPath) async {
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
+        storedPath.startsWith('media\\') ||
+        storedPath.startsWith('post_media/') ||
+        storedPath.startsWith('post_media\\')) {
+      return p.join(_root.path, storedPath);
+    }
+    return storedPath;
   }
 }
 
@@ -134,6 +202,28 @@ void main() {
     fail('Expected downloaded media attachments for ${user.username}');
   }
 
+  Future<void> waitForAttachmentStatus({
+    required GroupTestUser user,
+    required String messageId,
+    required String expectedStatus,
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    while (DateTime.now().isBefore(deadline)) {
+      final attachments = await user.mediaAttachmentRepo
+          .getAttachmentsForMessage(messageId);
+      if (attachments.length == 1 &&
+          attachments.single.downloadStatus == expectedStatus) {
+        return;
+      }
+      await pump();
+    }
+
+    fail(
+      'Expected attachment $messageId to reach $expectedStatus for '
+      '${user.username}',
+    );
+  }
+
   Future<void> saveLatestKey({
     required GroupTestUser user,
     required String groupId,
@@ -149,7 +239,7 @@ void main() {
     );
   }
 
-  Future<void> expectSingleAttachment({
+  Future<MediaAttachment> expectSingleAttachment({
     required GroupTestUser user,
     required String groupId,
     required String messageText,
@@ -172,10 +262,23 @@ void main() {
     expect(actual.height, sent.height, reason: user.username);
     expect(actual.durationMs, sent.durationMs, reason: user.username);
     expect(actual.waveform, sent.waveform, reason: user.username);
+    expect(actual.contentHash, sent.contentHash, reason: user.username);
+    expect(
+      actual.encryptionKeyBase64,
+      sent.encryptionKeyBase64,
+      reason: user.username,
+    );
+    expect(actual.encryptionNonce, sent.encryptionNonce, reason: user.username);
+    expect(
+      actual.encryptionScheme,
+      sent.encryptionScheme,
+      reason: user.username,
+    );
     if (expectDownloaded) {
       expect(actual.downloadStatus, 'done', reason: user.username);
       expect(actual.localPath, isNotNull, reason: user.username);
     }
+    return actual;
   }
 
   Future<void> expectOutgoingAttachment({
@@ -202,11 +305,15 @@ void main() {
     expect(actual.height, sent.height);
     expect(actual.durationMs, sent.durationMs);
     expect(actual.waveform, sent.waveform);
+    expect(actual.contentHash, sent.contentHash);
+    expect(actual.encryptionKeyBase64, sent.encryptionKeyBase64);
+    expect(actual.encryptionNonce, sent.encryptionNonce);
+    expect(actual.encryptionScheme, sent.encryptionScheme);
   }
 
   group('Existing-member group media fan-out', () {
     test(
-      'discussion members receive image, video, and voice descriptors',
+      'discussion members independently download image, video, and voice for every eligible recipient',
       () async {
         final alice = GroupTestUser.create(
           peerId: 'alice-media-fanout-peer',
@@ -218,14 +325,14 @@ void main() {
           username: 'Bob',
           network: network,
           bridge: _DownloadWritingBridge(),
-          mediaFileManager: FakeMediaFileManager(),
+          mediaFileManager: _ScopedMediaFileManager('bob-existing-fanout'),
         );
         final charlie = GroupTestUser.create(
           peerId: 'charlie-media-fanout-peer',
           username: 'Charlie',
           network: network,
           bridge: _DownloadWritingBridge(),
-          mediaFileManager: FakeMediaFileManager(),
+          mediaFileManager: _ScopedMediaFileManager('charlie-existing-fanout'),
         );
         addTearDown(() {
           alice.dispose();
@@ -296,19 +403,21 @@ void main() {
         expect(voiceResult, group_send.SendGroupMessageResult.success);
         expect(voiceMessage, isNotNull);
 
-        await waitForDownloads(user: bob, expectedCount: 3);
-        await waitForDownloadedAttachments(
-          user: bob,
-          groupId: groupId,
-          messageTexts: const [
-            'existing-member image',
-            'existing-member video',
-            'existing-member voice',
-          ],
-        );
+        const mediaTexts = [
+          'existing-member image',
+          'existing-member video',
+          'existing-member voice',
+        ];
+        for (final receiver in [bob, charlie]) {
+          await waitForDownloads(user: receiver, expectedCount: 3);
+          await waitForDownloadedAttachments(
+            user: receiver,
+            groupId: groupId,
+            messageTexts: mediaTexts,
+          );
+        }
 
         for (final receiver in [bob, charlie]) {
-          final expectDownloaded = receiver == bob;
           final incoming = (await receiver.loadGroupMessages(
             groupId,
           )).where((message) => message.isIncoming).toList();
@@ -352,28 +461,242 @@ void main() {
             groupId: groupId,
             messageText: 'existing-member image',
             sent: image,
-            expectDownloaded: expectDownloaded,
+            expectDownloaded: true,
           );
           await expectSingleAttachment(
             user: receiver,
             groupId: groupId,
             messageText: 'existing-member video',
             sent: video,
-            expectDownloaded: expectDownloaded,
+            expectDownloaded: true,
           );
           await expectSingleAttachment(
             user: receiver,
             groupId: groupId,
             messageText: 'existing-member voice',
             sent: voice,
-            expectDownloaded: expectDownloaded,
+            expectDownloaded: true,
           );
         }
 
-        expect(
-          bob.bridge.commandLog.where((cmd) => cmd == 'media:download'),
-          hasLength(3),
+        for (final receiver in [bob, charlie]) {
+          expect(
+            receiver.bridge.commandLog.where((cmd) => cmd == 'media:download'),
+            hasLength(3),
+            reason: receiver.username,
+          );
+        }
+      },
+    );
+
+    test(
+      'one recipient media download failure remains observable per recipient',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-one-recipient-failure-peer',
+          username: 'Alice',
+          network: network,
         );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-one-recipient-failure-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager(
+            'bob-one-recipient-failure',
+          ),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-one-recipient-failure-peer',
+          username: 'Charlie',
+          network: network,
+          bridge: _FailingDownloadBridge(
+            failingBlobIds: {'blob-one-recipient-failure-image'},
+          ),
+          mediaFileManager: _ScopedMediaFileManager(
+            'charlie-one-recipient-failure',
+          ),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-existing-media-one-recipient-failure';
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'One Recipient Media Failure',
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        final image = attachment(
+          id: 'blob-one-recipient-failure-image',
+          mime: 'image/jpeg',
+          size: 4,
+          width: 640,
+          height: 480,
+        );
+        final (imageResult, imageMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'one-recipient-failure image',
+              mediaAttachments: [image],
+            );
+        expect(imageResult, group_send.SendGroupMessageResult.success);
+        expect(imageMessage, isNotNull);
+
+        final video = attachment(
+          id: 'blob-one-recipient-failure-video',
+          mime: 'video/mp4',
+          size: 4,
+          width: 1280,
+          height: 720,
+          durationMs: 12_000,
+        );
+        final (videoResult, videoMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'one-recipient-failure video',
+              mediaAttachments: [video],
+            );
+        expect(videoResult, group_send.SendGroupMessageResult.success);
+        expect(videoMessage, isNotNull);
+
+        final voice = attachment(
+          id: 'blob-one-recipient-failure-voice',
+          mime: 'audio/mp4',
+          size: 4,
+          durationMs: 3500,
+          waveform: const <double>[0.1, 0.4, 0.2],
+        );
+        final (voiceResult, voiceMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'one-recipient-failure voice',
+              mediaAttachments: [voice],
+            );
+        expect(voiceResult, group_send.SendGroupMessageResult.success);
+        expect(voiceMessage, isNotNull);
+
+        for (final receiver in [bob, charlie]) {
+          await waitForDownloads(user: receiver, expectedCount: 3);
+        }
+        await waitForDownloadedAttachments(
+          user: bob,
+          groupId: groupId,
+          messageTexts: const [
+            'one-recipient-failure image',
+            'one-recipient-failure video',
+            'one-recipient-failure voice',
+          ],
+        );
+        await waitForDownloadedAttachments(
+          user: charlie,
+          groupId: groupId,
+          messageTexts: const [
+            'one-recipient-failure video',
+            'one-recipient-failure voice',
+          ],
+        );
+
+        for (final receiver in [bob, charlie]) {
+          final incoming = (await receiver.loadGroupMessages(
+            groupId,
+          )).where((message) => message.isIncoming).toList();
+          expect(
+            incoming
+                .where(
+                  (message) => message.text == 'one-recipient-failure image',
+                )
+                .single
+                .id,
+            imageMessage!.id,
+            reason: receiver.username,
+          );
+          expect(
+            incoming
+                .where(
+                  (message) => message.text == 'one-recipient-failure video',
+                )
+                .single
+                .id,
+            videoMessage!.id,
+            reason: receiver.username,
+          );
+          expect(
+            incoming
+                .where(
+                  (message) => message.text == 'one-recipient-failure voice',
+                )
+                .single
+                .id,
+            voiceMessage!.id,
+            reason: receiver.username,
+          );
+        }
+
+        await expectSingleAttachment(
+          user: bob,
+          groupId: groupId,
+          messageText: 'one-recipient-failure image',
+          sent: image,
+          expectDownloaded: true,
+        );
+        await expectSingleAttachment(
+          user: bob,
+          groupId: groupId,
+          messageText: 'one-recipient-failure video',
+          sent: video,
+          expectDownloaded: true,
+        );
+        await expectSingleAttachment(
+          user: bob,
+          groupId: groupId,
+          messageText: 'one-recipient-failure voice',
+          sent: voice,
+          expectDownloaded: true,
+        );
+
+        final charlieImage = await expectSingleAttachment(
+          user: charlie,
+          groupId: groupId,
+          messageText: 'one-recipient-failure image',
+          sent: image,
+          expectDownloaded: false,
+        );
+        expect(charlieImage.downloadStatus, kMediaDownloadStatusFailed);
+        expect(charlieImage.downloadStatus, isNot(kMediaDownloadStatusDone));
+        expect(charlieImage.localPath, isNull);
+        await expectSingleAttachment(
+          user: charlie,
+          groupId: groupId,
+          messageText: 'one-recipient-failure video',
+          sent: video,
+          expectDownloaded: true,
+        );
+        await expectSingleAttachment(
+          user: charlie,
+          groupId: groupId,
+          messageText: 'one-recipient-failure voice',
+          sent: voice,
+          expectDownloaded: true,
+        );
+
+        for (final receiver in [bob, charlie]) {
+          expect(
+            receiver.bridge.commandLog.where((cmd) => cmd == 'media:download'),
+            hasLength(3),
+            reason: receiver.username,
+          );
+        }
       },
     );
 
@@ -661,6 +984,11 @@ void main() {
         });
 
         await waitForDownloads(user: bob, expectedCount: 1);
+        await waitForAttachmentStatus(
+          user: bob,
+          messageId: 'msg-tampered-fake-network',
+          expectedStatus: kMediaDownloadStatusIntegrityFailed,
+        );
 
         final received = (await bob.loadGroupMessages(
           groupId,
@@ -688,21 +1016,21 @@ void main() {
     );
 
     test(
-      'newly-added discussion member sends image, video, and voice to existing members',
+      'newly-added discussion member media reaches every eligible recipient',
       () async {
         final alice = GroupTestUser.create(
           peerId: 'alice-new-member-media-send-peer',
           username: 'Alice',
           network: network,
           bridge: _DownloadWritingBridge(),
-          mediaFileManager: FakeMediaFileManager(),
+          mediaFileManager: _ScopedMediaFileManager('alice-new-member-send'),
         );
         final charlie = GroupTestUser.create(
           peerId: 'charlie-new-member-media-send-peer',
           username: 'Charlie',
           network: network,
           bridge: _DownloadWritingBridge(),
-          mediaFileManager: FakeMediaFileManager(),
+          mediaFileManager: _ScopedMediaFileManager('charlie-new-member-send'),
         );
         final bob = GroupTestUser.create(
           peerId: 'bob-new-member-media-send-peer',
@@ -780,16 +1108,19 @@ void main() {
         expect(voiceResult, group_send.SendGroupMessageResult.success);
         expect(voiceMessage, isNotNull);
 
-        await waitForDownloads(user: alice, expectedCount: 3);
-        await waitForDownloadedAttachments(
-          user: alice,
-          groupId: groupId,
-          messageTexts: const [
-            'new-member image',
-            'new-member video',
-            'new-member voice',
-          ],
-        );
+        const mediaTexts = [
+          'new-member image',
+          'new-member video',
+          'new-member voice',
+        ];
+        for (final receiver in [alice, charlie]) {
+          await waitForDownloads(user: receiver, expectedCount: 3);
+          await waitForDownloadedAttachments(
+            user: receiver,
+            groupId: groupId,
+            messageTexts: mediaTexts,
+          );
+        }
 
         await expectOutgoingAttachment(
           user: bob,
@@ -811,7 +1142,6 @@ void main() {
         );
 
         for (final receiver in [alice, charlie]) {
-          final expectDownloaded = receiver == alice;
           final incoming = (await receiver.loadGroupMessages(
             groupId,
           )).where((message) => message.isIncoming).toList();
@@ -833,6 +1163,20 @@ void main() {
             imageMessage!.id,
             reason: receiver.username,
           );
+          final receivedImage = incoming
+              .where((message) => message.text == 'new-member image')
+              .single;
+          expect(
+            receivedImage.senderPeerId,
+            bob.peerId,
+            reason: receiver.username,
+          );
+          expect(
+            receivedImage.senderUsername,
+            bob.username,
+            reason: receiver.username,
+          );
+          expect(receivedImage.keyGeneration, epoch, reason: receiver.username);
           expect(
             incoming
                 .where((message) => message.text == 'new-member video')
@@ -841,6 +1185,20 @@ void main() {
             videoMessage!.id,
             reason: receiver.username,
           );
+          final receivedVideo = incoming
+              .where((message) => message.text == 'new-member video')
+              .single;
+          expect(
+            receivedVideo.senderPeerId,
+            bob.peerId,
+            reason: receiver.username,
+          );
+          expect(
+            receivedVideo.senderUsername,
+            bob.username,
+            reason: receiver.username,
+          );
+          expect(receivedVideo.keyGeneration, epoch, reason: receiver.username);
           expect(
             incoming
                 .where((message) => message.text == 'new-member voice')
@@ -849,34 +1207,274 @@ void main() {
             voiceMessage!.id,
             reason: receiver.username,
           );
+          final receivedVoice = incoming
+              .where((message) => message.text == 'new-member voice')
+              .single;
+          expect(
+            receivedVoice.senderPeerId,
+            bob.peerId,
+            reason: receiver.username,
+          );
+          expect(
+            receivedVoice.senderUsername,
+            bob.username,
+            reason: receiver.username,
+          );
+          expect(receivedVoice.keyGeneration, epoch, reason: receiver.username);
 
           await expectSingleAttachment(
             user: receiver,
             groupId: groupId,
             messageText: 'new-member image',
             sent: image,
-            expectDownloaded: expectDownloaded,
+            expectDownloaded: true,
           );
           await expectSingleAttachment(
             user: receiver,
             groupId: groupId,
             messageText: 'new-member video',
             sent: video,
-            expectDownloaded: expectDownloaded,
+            expectDownloaded: true,
           );
           await expectSingleAttachment(
             user: receiver,
             groupId: groupId,
             messageText: 'new-member voice',
             sent: voice,
-            expectDownloaded: expectDownloaded,
+            expectDownloaded: true,
           );
         }
 
-        expect(
-          alice.bridge.commandLog.where((cmd) => cmd == 'media:download'),
-          hasLength(3),
+        for (final receiver in [alice, charlie]) {
+          expect(
+            receiver.bridge.commandLog.where((cmd) => cmd == 'media:download'),
+            hasLength(3),
+            reason: receiver.username,
+          );
+        }
+      },
+    );
+
+    test(
+      'existing non-creator discussion member media reaches creator and every eligible recipient',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-existing-non-creator-media-peer',
+          username: 'Alice',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager(
+            'alice-existing-non-creator-send',
+          ),
         );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-existing-non-creator-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager(
+            'bob-existing-non-creator-send',
+          ),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-existing-non-creator-media-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-existing-non-creator-media-send';
+        const epoch = 6;
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'Existing Non Creator Media Send',
+        );
+        await saveLatestKey(user: alice, groupId: groupId, epoch: epoch);
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: epoch);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: epoch);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        final image = attachment(
+          id: 'blob-existing-non-creator-image',
+          mime: 'image/jpeg',
+          size: 4,
+          width: 800,
+          height: 600,
+        );
+        final (imageResult, imageMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'existing-non-creator image',
+              mediaAttachments: [image],
+            );
+        expect(imageResult, group_send.SendGroupMessageResult.success);
+        expect(imageMessage, isNotNull);
+
+        final video = attachment(
+          id: 'blob-existing-non-creator-video',
+          mime: 'video/mp4',
+          size: 4,
+          width: 1920,
+          height: 1080,
+          durationMs: 18_000,
+        );
+        final (videoResult, videoMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'existing-non-creator video',
+              mediaAttachments: [video],
+            );
+        expect(videoResult, group_send.SendGroupMessageResult.success);
+        expect(videoMessage, isNotNull);
+
+        final voice = attachment(
+          id: 'blob-existing-non-creator-voice',
+          mime: 'audio/mp4',
+          size: 4,
+          durationMs: 4200,
+          waveform: const <double>[0.2, 0.5, 0.3, 0.6],
+        );
+        final (voiceResult, voiceMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'existing-non-creator voice',
+              mediaAttachments: [voice],
+            );
+        expect(voiceResult, group_send.SendGroupMessageResult.success);
+        expect(voiceMessage, isNotNull);
+
+        const mediaTexts = [
+          'existing-non-creator image',
+          'existing-non-creator video',
+          'existing-non-creator voice',
+        ];
+        for (final receiver in [alice, bob]) {
+          await waitForDownloads(user: receiver, expectedCount: 3);
+          await waitForDownloadedAttachments(
+            user: receiver,
+            groupId: groupId,
+            messageTexts: mediaTexts,
+          );
+        }
+
+        await expectOutgoingAttachment(
+          user: charlie,
+          groupId: groupId,
+          messageText: 'existing-non-creator image',
+          sent: image,
+        );
+        await expectOutgoingAttachment(
+          user: charlie,
+          groupId: groupId,
+          messageText: 'existing-non-creator video',
+          sent: video,
+        );
+        await expectOutgoingAttachment(
+          user: charlie,
+          groupId: groupId,
+          messageText: 'existing-non-creator voice',
+          sent: voice,
+        );
+
+        for (final receiver in [alice, bob]) {
+          final incoming = (await receiver.loadGroupMessages(
+            groupId,
+          )).where((message) => message.isIncoming).toList();
+          expect(
+            incoming.map((message) => message.text),
+            containsAllInOrder(mediaTexts),
+            reason: receiver.username,
+          );
+
+          final receivedImage = incoming
+              .where((message) => message.text == 'existing-non-creator image')
+              .single;
+          expect(receivedImage.id, imageMessage!.id, reason: receiver.username);
+          expect(
+            receivedImage.senderPeerId,
+            charlie.peerId,
+            reason: receiver.username,
+          );
+          expect(
+            receivedImage.senderUsername,
+            charlie.username,
+            reason: receiver.username,
+          );
+          expect(receivedImage.keyGeneration, epoch, reason: receiver.username);
+
+          final receivedVideo = incoming
+              .where((message) => message.text == 'existing-non-creator video')
+              .single;
+          expect(receivedVideo.id, videoMessage!.id, reason: receiver.username);
+          expect(
+            receivedVideo.senderPeerId,
+            charlie.peerId,
+            reason: receiver.username,
+          );
+          expect(
+            receivedVideo.senderUsername,
+            charlie.username,
+            reason: receiver.username,
+          );
+          expect(receivedVideo.keyGeneration, epoch, reason: receiver.username);
+
+          final receivedVoice = incoming
+              .where((message) => message.text == 'existing-non-creator voice')
+              .single;
+          expect(receivedVoice.id, voiceMessage!.id, reason: receiver.username);
+          expect(
+            receivedVoice.senderPeerId,
+            charlie.peerId,
+            reason: receiver.username,
+          );
+          expect(
+            receivedVoice.senderUsername,
+            charlie.username,
+            reason: receiver.username,
+          );
+          expect(receivedVoice.keyGeneration, epoch, reason: receiver.username);
+
+          await expectSingleAttachment(
+            user: receiver,
+            groupId: groupId,
+            messageText: 'existing-non-creator image',
+            sent: image,
+            expectDownloaded: true,
+          );
+          await expectSingleAttachment(
+            user: receiver,
+            groupId: groupId,
+            messageText: 'existing-non-creator video',
+            sent: video,
+            expectDownloaded: true,
+          );
+          await expectSingleAttachment(
+            user: receiver,
+            groupId: groupId,
+            messageText: 'existing-non-creator voice',
+            sent: voice,
+            expectDownloaded: true,
+          );
+        }
+
+        for (final receiver in [alice, bob]) {
+          expect(
+            receiver.bridge.commandLog.where((cmd) => cmd == 'media:download'),
+            hasLength(3),
+            reason: receiver.username,
+          );
+        }
       },
     );
   });

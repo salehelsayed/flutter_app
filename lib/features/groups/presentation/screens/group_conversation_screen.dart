@@ -18,6 +18,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bu
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
+import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_dissolved_badge.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_type_badge.dart';
@@ -76,7 +77,9 @@ class GroupConversationScreen extends StatelessWidget {
   final bool isActiveQuoteUnavailable;
   final VoidCallback? onClearQuote;
   final GroupBacklogRetentionNotice? backlogRetentionNotice;
+  final GroupHistoryGapRepairNotice? historyGapRepairNotice;
   final BackgroundPreference backgroundPreference;
+  final GroupSecurityStatusViewState? securityStatus;
 
   const GroupConversationScreen({
     super.key,
@@ -124,7 +127,9 @@ class GroupConversationScreen extends StatelessWidget {
     this.isActiveQuoteUnavailable = false,
     this.onClearQuote,
     this.backlogRetentionNotice,
+    this.historyGapRepairNotice,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.securityStatus,
   });
 
   ConversationComposerViewState get _legacyComposerState =>
@@ -155,10 +160,17 @@ class GroupConversationScreen extends StatelessWidget {
             return Column(
               children: [
                 _buildHeader(context),
+                if (securityStatus != null)
+                  _buildSecurityStrip(context, securityStatus!),
                 if (backlogRetentionNotice != null)
                   _buildBacklogRetentionBanner(
                     context,
                     backlogRetentionNotice!,
+                  ),
+                if (historyGapRepairNotice != null)
+                  _buildHistoryGapRepairBanner(
+                    context,
+                    historyGapRepairNotice!,
                   ),
                 if (uploadProgress != null)
                   UploadProgressBanner(
@@ -307,12 +319,14 @@ class GroupConversationScreen extends StatelessWidget {
   Widget _buildEmptyState(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final notice = backlogRetentionNotice;
+    final repairNotice = historyGapRepairNotice;
     final emptyTitle = group.isDissolved
         ? 'No messages yet'
-        : (notice?.emptyTitle ?? 'No messages yet');
+        : (repairNotice?.emptyTitle ?? notice?.emptyTitle ?? 'No messages yet');
     final emptySubtitle = group.isDissolved
         ? 'This group has been dissolved. New messages are disabled.'
-        : (notice?.emptySubtitle ??
+        : (repairNotice?.emptySubtitle ??
+              notice?.emptySubtitle ??
               (canWrite
                   ? 'Send a message to start the conversation'
                   : 'Waiting for messages'));
@@ -385,6 +399,137 @@ class GroupConversationScreen extends StatelessWidget {
                 height: 1.35,
                 color: readableColors.textSecondary,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryGapRepairBanner(
+    BuildContext context,
+    GroupHistoryGapRepairNotice notice,
+  ) {
+    final readableColors = context.backgroundReadableColors;
+    final activeAccent = readableColors.isLightSurface
+        ? const Color(0xFF155E75)
+        : const Color(0xFF67E8F9);
+    final failedAccent = readableColors.isLightSurface
+        ? const Color(0xFF9F1239)
+        : const Color(0xFFFDA4AF);
+    final repairedAccent = readableColors.isLightSurface
+        ? const Color(0xFF116A3A)
+        : const Color(0xFF7BD88F);
+    final accent = switch (notice.kind) {
+      GroupHistoryGapRepairNoticeKind.active => activeAccent,
+      GroupHistoryGapRepairNoticeKind.failed => failedAccent,
+      GroupHistoryGapRepairNoticeKind.repaired => repairedAccent,
+    };
+    final icon = switch (notice.kind) {
+      GroupHistoryGapRepairNoticeKind.active => Icons.sync_rounded,
+      GroupHistoryGapRepairNoticeKind.failed => Icons.error_outline_rounded,
+      GroupHistoryGapRepairNoticeKind.repaired => Icons.verified_rounded,
+    };
+
+    return Container(
+      key: const ValueKey('group-history-gap-repair-banner'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: accent.withOpacity(readableColors.isLightSurface ? 0.08 : 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: accent.withOpacity(
+            readableColors.isLightSurface ? 0.24 : 0.20,
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: accent),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              notice.bannerText,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.35,
+                color: readableColors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSecurityStrip(
+    BuildContext context,
+    GroupSecurityStatusViewState status,
+  ) {
+    final readableColors = context.backgroundReadableColors;
+    final secureAccent = readableColors.isLightSurface
+        ? const Color(0xFF116A3A)
+        : const Color(0xFF7BD88F);
+    final warningAccent = readableColors.isLightSurface
+        ? const Color(0xFF8A4A00)
+        : const Color(0xFFFFC857);
+    final accent = status.hasIdentityWarnings || !status.hasCurrentKey
+        ? warningAccent
+        : secureAccent;
+
+    return Container(
+      key: const ValueKey('group-conversation-security-strip'),
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: accent.withOpacity(readableColors.isLightSurface ? 0.08 : 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: accent.withOpacity(
+            readableColors.isLightSurface ? 0.24 : 0.20,
+          ),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            status.hasIdentityWarnings
+                ? Icons.warning_amber_rounded
+                : Icons.lock_outline,
+            size: 18,
+            color: accent,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  status.compactEncryptionLabel,
+                  key: const ValueKey('group-conversation-security-encryption'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: readableColors.textPrimary,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  status.compactReviewLabel,
+                  key: const ValueKey('group-conversation-security-review'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: readableColors.textSecondary,
+                    height: 1.3,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

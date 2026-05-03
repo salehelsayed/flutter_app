@@ -1,4 +1,4 @@
-import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,6 +13,29 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../test/features/conversation/domain/repositories/fake_reaction_repository.dart';
+
+Map<String, dynamic> _replayEnvelopeFromRetryPayload(String retryPayload) {
+  final payload = jsonDecode(retryPayload) as Map<String, dynamic>;
+  return jsonDecode(payload['message'] as String) as Map<String, dynamic>;
+}
+
+void _expectSignedReactionReplayEnvelope(Map<String, dynamic> envelope) {
+  expect(envelope['kind'], 'group_offline_replay');
+  expect(envelope['payloadType'], 'group_reaction');
+  expect(envelope['senderPeerId'], 'peer-1');
+  expect(envelope['senderPublicKey'], 'pk-1');
+  expect(envelope['signatureAlgorithm'], 'ed25519');
+  expect(envelope['signedPayload'], isA<String>());
+  expect(envelope['signature'], isA<String>());
+  final signedPayload =
+      jsonDecode(envelope['signedPayload'] as String) as Map<String, dynamic>;
+  expect(signedPayload['kind'], 'group_offline_replay');
+  expect(signedPayload['payloadType'], 'group_reaction');
+  expect(signedPayload['senderPeerId'], 'peer-1');
+  expect(signedPayload['senderSigningPublicKey'], 'pk-1');
+  expect(signedPayload['messageId'], envelope['messageId']);
+  expect(signedPayload['plaintextHash'], isA<String>());
+}
 
 void main() {
   late FakeBridge bridge;
@@ -168,7 +191,7 @@ void main() {
   );
 
   test(
-    'successful remove replay store marks the durable outbox row stored',
+    'EK004 stores signed offline replay envelope for group_reaction remove',
     () async {
       final result = await removeGroupReaction(
         bridge: bridge,
@@ -194,6 +217,9 @@ void main() {
       expect(entry.emoji, '👍');
       expect(entry.action, 'remove');
       expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+      _expectSignedReactionReplayEnvelope(
+        _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload),
+      );
     },
   );
 

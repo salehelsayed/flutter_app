@@ -267,6 +267,52 @@ func TestEncrypt_DifferentEncryptionsDiffer(t *testing.T) {
 	}
 }
 
+func TestSP003ContactRequestEphemeralSaltAndNonceFreshness(t *testing.T) {
+	pub, _ := testEd25519Keys()
+	recipientPubB64 := base64.StdEncoding.EncodeToString(pub)
+	seenEphemeralSalts := make(map[string]struct{}, 32)
+	seenNonces := make(map[string]struct{}, 32)
+	seenCiphertexts := make(map[string]struct{}, 32)
+
+	for i := 0; i < 32; i++ {
+		enc, err := EncryptContactRequest(
+			recipientPubB64,
+			"SP-003 stable contact request",
+			"msg-sp003",
+			"2026-05-01T00:00:00Z",
+		)
+		if err != nil {
+			t.Fatalf("EncryptContactRequest() #%d error: %v", i+1, err)
+		}
+		ephBytes, err := base64.StdEncoding.DecodeString(enc.EphemeralPublicKey)
+		if err != nil {
+			t.Fatalf("decode ephemeral salt #%d: %v", i+1, err)
+		}
+		if len(ephBytes) != 32 {
+			t.Fatalf("ephemeral salt #%d length = %d, want 32", i+1, len(ephBytes))
+		}
+		nonceBytes, err := base64.StdEncoding.DecodeString(enc.Nonce)
+		if err != nil {
+			t.Fatalf("decode nonce #%d: %v", i+1, err)
+		}
+		if len(nonceBytes) != 12 {
+			t.Fatalf("nonce #%d length = %d, want 12", i+1, len(nonceBytes))
+		}
+		if _, exists := seenEphemeralSalts[enc.EphemeralPublicKey]; exists {
+			t.Fatalf("duplicate ephemeral HKDF salt at sample %d", i+1)
+		}
+		if _, exists := seenNonces[enc.Nonce]; exists {
+			t.Fatalf("duplicate nonce at sample %d", i+1)
+		}
+		if _, exists := seenCiphertexts[enc.Ciphertext]; exists {
+			t.Fatalf("duplicate ciphertext at sample %d", i+1)
+		}
+		seenEphemeralSalts[enc.EphemeralPublicKey] = struct{}{}
+		seenNonces[enc.Nonce] = struct{}{}
+		seenCiphertexts[enc.Ciphertext] = struct{}{}
+	}
+}
+
 func TestDecrypt_WrongPrivateKey(t *testing.T) {
 	pub, _ := testEd25519Keys()
 	_, priv2 := testEd25519Keys2()

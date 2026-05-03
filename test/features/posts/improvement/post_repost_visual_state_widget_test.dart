@@ -93,7 +93,7 @@ void main() {
       expect(find.text('4'), findsOneWidget);
 
       final repeatIcon = tester.widget<Icon>(find.byIcon(Icons.repeat));
-      expect(repeatIcon.color?.a, closeTo(0.35, 0.01));
+      expect(repeatIcon.color?.a, closeTo(0.69, 0.01));
       expect(find.text('Bob'), findsOneWidget);
     },
   );

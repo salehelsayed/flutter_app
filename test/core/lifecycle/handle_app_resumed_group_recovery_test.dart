@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
@@ -220,47 +221,46 @@ void main() {
         final now = DateTime.utc(2026, 4, 5, 12);
         final removalEventAt = now.add(const Duration(minutes: 1));
         const groupId = 'group-stale-admin';
-        final bridge = _BlockingDrainBridge(
-          messages: [
-            {
-              'groupId': groupId,
-              'senderId': 'peer-other-admin',
-              'senderUsername': 'OtherAdmin',
-              'keyEpoch': 1,
-              'text': jsonEncode({
-                '__sys': 'member_removed',
-                'member': {
-                  'peerId': 'my-peer',
-                  'username': 'Self',
-                  'role': 'admin',
-                  'publicKey': 'pk-self',
-                },
-                'groupConfig': {
-                  'name': 'Recovery Group',
-                  'groupType': 'chat',
-                  'members': [
-                    {
-                      'peerId': 'peer-other-admin',
-                      'username': 'OtherAdmin',
-                      'role': 'admin',
-                      'publicKey': 'pk-other-admin',
-                    },
-                    {
-                      'peerId': 'peer-bystander',
-                      'username': 'Bystander',
-                      'role': 'writer',
-                      'publicKey': 'pk-bystander',
-                    },
-                  ],
-                  'createdBy': 'peer-other-admin',
-                  'createdAt': now.toIso8601String(),
-                },
-              }),
-              'timestamp': removalEventAt.toIso8601String(),
-              'messageId': 'sys-remove-self',
+        final bridge = _BlockingDrainBridge(messages: []);
+        final removalPayload = {
+          'groupId': groupId,
+          'senderId': 'peer-other-admin',
+          'senderUsername': 'OtherAdmin',
+          'senderDeviceId': 'peer-other-admin',
+          'transportPeerId': 'peer-other-admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {
+              'peerId': 'my-peer',
+              'username': 'Self',
+              'role': 'admin',
+              'publicKey': 'pk-self',
             },
-          ],
-        );
+            'groupConfig': {
+              'name': 'Recovery Group',
+              'groupType': 'chat',
+              'members': [
+                {
+                  'peerId': 'peer-other-admin',
+                  'username': 'OtherAdmin',
+                  'role': 'admin',
+                  'publicKey': 'pk-other-admin',
+                },
+                {
+                  'peerId': 'peer-bystander',
+                  'username': 'Bystander',
+                  'role': 'writer',
+                  'publicKey': 'pk-bystander',
+                },
+              ],
+              'createdBy': 'peer-other-admin',
+              'createdAt': now.toIso8601String(),
+            },
+          }),
+          'timestamp': removalEventAt.toIso8601String(),
+          'messageId': 'sys-remove-self',
+        };
         final listener = GroupMessageListener(
           groupRepo: groupRepo,
           msgRepo: groupMsgRepo,
@@ -317,6 +317,23 @@ void main() {
             joinedAt: now,
           ),
         );
+        bridge.messages.add({
+          'from': 'peer-other-admin',
+          'message': await buildGroupOfflineReplayEnvelope(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: groupId,
+            payloadType: groupOfflineReplayPayloadTypeMessage,
+            plaintext: jsonEncode(removalPayload),
+            senderPeerId: 'peer-other-admin',
+            senderPublicKey: 'pk-other-admin',
+            senderPrivateKey: 'sk-other-admin',
+            messageId: 'sys-remove-self',
+            senderDeviceId: 'peer-other-admin',
+            senderTransportPeerId: 'peer-other-admin',
+            recipientPeerIds: const ['my-peer'],
+          ),
+        });
 
         final resumeFuture = handleAppResumed(
           bridge: bridge,

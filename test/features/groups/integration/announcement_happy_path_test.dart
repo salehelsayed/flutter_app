@@ -256,6 +256,25 @@ void main() {
       expect(storedReactions.single.emoji, '👍');
       expect(storedReactions.single.senderPeerId, reader.peerId);
 
+      final adminGroupBeforeDissolve = await admin.groupRepo.getGroup(
+        created.id,
+      );
+      final readerRoleBeforeDissolve =
+          (await reader.groupRepo.getGroup(created.id))?.myRole ??
+          GroupRole.member;
+      if (adminGroupBeforeDissolve != null) {
+        await reader.groupRepo.updateGroup(
+          adminGroupBeforeDissolve.copyWith(myRole: readerRoleBeforeDissolve),
+        );
+      }
+      for (final member in await admin.groupRepo.getMembers(created.id)) {
+        await reader.groupRepo.saveMember(member);
+      }
+      final adminLatestKey = await admin.groupRepo.getLatestKey(created.id);
+      if (adminLatestKey != null) {
+        await reader.groupRepo.saveKey(adminLatestKey);
+      }
+
       final (dissolveResult, _) = await admin.dissolveGroupViaBridge(
         groupId: created.id,
       );

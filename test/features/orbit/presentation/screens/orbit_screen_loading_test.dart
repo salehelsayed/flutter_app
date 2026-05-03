@@ -4,6 +4,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/daylight_lagoon_background.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
@@ -97,11 +98,17 @@ void main() {
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
     BackgroundReadableTone? readableToneOverride,
+    OrbitIntrosViewData? introsData,
+    int introCount = 0,
+    int pendingGroupInviteCount = 0,
+    int? reviewCount,
   }) {
     final mergedItems = <OrbitItem>[
       ...friends.map(OrbitFriendItem.new),
       ...groups.map(OrbitGroupItem.new),
     ];
+    final effectiveReviewCount =
+        reviewCount ?? introCount + pendingGroupInviteCount;
     final headerNotifier = ValueNotifier(
       OrbitHeaderProjection(allFriends: friends),
     );
@@ -112,6 +119,10 @@ void main() {
         groups: groups,
         mergedItems: mergedItems,
         activeCount: mergedItems.length,
+        introCount: introCount,
+        pendingGroupInviteCount: pendingGroupInviteCount,
+        reviewCount: effectiveReviewCount,
+        introsData: introsData,
         filterTab: filterTab,
         searchActive: searchActive,
         showLoadingPlaceholders: showLoadingPlaceholders,
@@ -332,6 +343,61 @@ void main() {
         chevronIcons.map((icon) => icon.color),
         contains(colors.iconMuted),
       );
+    });
+
+    testWidgets('daylight lagoon keeps intro list content readable', (
+      tester,
+    ) async {
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      setPhoneSurface(tester);
+
+      final intro = IntroductionModel(
+        id: 'intro-light-readable',
+        introducerId: 'peer-noor',
+        recipientId: 'peer-me',
+        introducedId: 'peer-riley',
+        introducerUsername: 'Noor',
+        recipientUsername: 'Me',
+        introducedUsername: 'Riley Intro',
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+      );
+      final introsData = OrbitIntrosViewData(
+        groupedIntros: {
+          'peer-noor': [intro],
+        },
+        introducerUsernames: const {'peer-noor': 'Noor'},
+        ownPeerId: 'peer-me',
+        onAccept: (_) {},
+        onPass: (_) {},
+      );
+
+      await tester.pumpWidget(
+        buildOrbitScreen(
+          filterTab: 'intros',
+          backgroundPreference: BackgroundPreference.daylightLagoon,
+          introsData: introsData,
+          introCount: 1,
+          reviewCount: 1,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(DaylightLagoonBackground), findsOneWidget);
+      expect(find.text('Riley Intro'), findsOneWidget);
+      expect(find.text('Introduced by'), findsOneWidget);
+
+      final colors = BackgroundReadableColors.representativeLight;
+      final introNameColor = textColorFor(tester, 'Riley Intro')!;
+      final attributionColor = textColorFor(tester, 'Introduced by')!;
+      final headerColor = textColorFor(tester, 'From')!;
+
+      expect(introNameColor, colors.textPrimary);
+      expect(attributionColor, colors.textMuted);
+      expect(headerColor, colors.textSecondary);
+      expectTextContrast(introNameColor, colors.surfaceSubtle);
+      expectTextContrast(attributionColor, colors.surfaceSubtle);
+      expectTextContrast(headerColor, Colors.white);
     });
 
     testWidgets(

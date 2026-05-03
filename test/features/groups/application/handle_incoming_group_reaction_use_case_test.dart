@@ -223,7 +223,7 @@ void main() {
   });
 
   test(
-    'still processes reaction from unknown sender (stale member list)',
+    'rejects reaction from unknown sender without storing ghost reaction',
     () async {
       final (result, change) = await handleIncomingGroupReaction(
         groupRepo: groupRepo,
@@ -233,9 +233,10 @@ void main() {
         reactionJson: makeReactionJson(senderPeerId: 'unknown-peer'),
       );
 
-      // Should succeed — unknown sender is logged but not rejected
-      expect(result, HandleGroupReactionResult.success);
-      expect(change, isNotNull);
+      expect(result, HandleGroupReactionResult.unknownSender);
+      expect(change, isNull);
+      expect(reactionRepo.reactions, isEmpty);
+      expect(reactionRepo.saveReactionCallCount, 0);
     },
   );
 

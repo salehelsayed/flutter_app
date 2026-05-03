@@ -1,19 +1,42 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_banner.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../../shared/helpers/readability_test_helpers.dart';
+
 void main() {
   group('IntroBanner', () {
+    Widget wrapBanner({
+      required String contactUsername,
+      required VoidCallback onMakeIntroductions,
+      required VoidCallback onMaybeLater,
+      BackgroundReadableColors? readableColors,
+    }) {
+      final banner = IntroBanner(
+        contactUsername: contactUsername,
+        onMakeIntroductions: onMakeIntroductions,
+        onMaybeLater: onMaybeLater,
+      );
+
+      return MaterialApp(
+        home: Scaffold(
+          body: readableColors == null
+              ? banner
+              : Theme(
+                  data: ThemeData(extensions: [readableColors]),
+                  child: banner,
+                ),
+        ),
+      );
+    }
+
     testWidgets('renders banner with contact username', (tester) async {
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntroBanner(
-              contactUsername: 'Alice',
-              onMakeIntroductions: () {},
-              onMaybeLater: () {},
-            ),
-          ),
+        wrapBanner(
+          contactUsername: 'Alice',
+          onMakeIntroductions: () {},
+          onMaybeLater: () {},
         ),
       );
 
@@ -26,19 +49,16 @@ void main() {
       expect(find.text('Maybe later'), findsOneWidget);
     });
 
-    testWidgets('"Make introductions" button triggers callback',
-        (tester) async {
+    testWidgets('"Make introductions" button triggers callback', (
+      tester,
+    ) async {
       var tapped = false;
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntroBanner(
-              contactUsername: 'Bob',
-              onMakeIntroductions: () => tapped = true,
-              onMaybeLater: () {},
-            ),
-          ),
+        wrapBanner(
+          contactUsername: 'Bob',
+          onMakeIntroductions: () => tapped = true,
+          onMaybeLater: () {},
         ),
       );
 
@@ -52,14 +72,10 @@ void main() {
       var dismissed = false;
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: IntroBanner(
-              contactUsername: 'Charlie',
-              onMakeIntroductions: () {},
-              onMaybeLater: () => dismissed = true,
-            ),
-          ),
+        wrapBanner(
+          contactUsername: 'Charlie',
+          onMakeIntroductions: () {},
+          onMaybeLater: () => dismissed = true,
         ),
       );
 
@@ -67,6 +83,37 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(dismissed, isTrue);
+    });
+
+    testWidgets('uses readable text colors on the daylight theme', (
+      tester,
+    ) async {
+      const colors = BackgroundReadableColors.representativeLight;
+      const lightBannerSurface = Color(0xFFE5F4EA);
+
+      await tester.pumpWidget(
+        wrapBanner(
+          contactUsername: 'Alice',
+          onMakeIntroductions: () {},
+          onMaybeLater: () {},
+          readableColors: colors,
+        ),
+      );
+
+      final title = tester.widget<Text>(
+        find.text('Help Alice meet your circle'),
+      );
+      final subtitle = tester.widget<Text>(
+        find.text('Introduce them to friends who might click'),
+      );
+      final maybeLater = tester.widget<Text>(find.text('Maybe later'));
+
+      expect(title.style?.color, colors.textPrimary);
+      expect(subtitle.style?.color, colors.textMuted);
+      expect(maybeLater.style?.color, colors.textMuted);
+      expectTextContrast(title.style!.color!, lightBannerSurface);
+      expectTextContrast(subtitle.style!.color!, lightBannerSurface);
+      expectTextContrast(maybeLater.style!.color!, lightBannerSurface);
     });
   });
 }

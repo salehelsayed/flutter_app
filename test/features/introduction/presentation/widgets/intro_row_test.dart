@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../../shared/helpers/readability_test_helpers.dart';
+
 void main() {
   final now = DateTime.now().toUtc().toIso8601String();
 
-  Text _textWidget(WidgetTester tester, String text) {
+  Text textWidget(WidgetTester tester, String text) {
     return tester.widget<Text>(find.text(text));
   }
 
-  IntroductionModel _makeIntro({
+  IntroductionModel makeIntro({
     IntroductionOverallStatus status = IntroductionOverallStatus.pending,
     String introducerUsername = 'Alice',
   }) {
@@ -36,22 +39,30 @@ void main() {
     IntroductionStatus? ownPartyStatus,
     String? waitingForUsername,
     bool isProcessing = false,
+    BackgroundReadableColors? readableColors,
   }) {
+    final body = IntroRow(
+      introduction: introduction,
+      displayUsername:
+          displayUsername ?? introduction.introducedUsername ?? 'Unknown',
+      displayPeerId: introduction.introducedId,
+      showActions: showActions,
+      isProcessing: isProcessing,
+      onAccept: onAccept,
+      onPass: onPass,
+      onSendMessage: onSendMessage,
+      ownPartyStatus: ownPartyStatus,
+      waitingForUsername: waitingForUsername,
+    );
+
     return MaterialApp(
       home: Scaffold(
-        body: IntroRow(
-          introduction: introduction,
-          displayUsername:
-              displayUsername ?? introduction.introducedUsername ?? 'Unknown',
-          displayPeerId: introduction.introducedId,
-          showActions: showActions,
-          isProcessing: isProcessing,
-          onAccept: onAccept,
-          onPass: onPass,
-          onSendMessage: onSendMessage,
-          ownPartyStatus: ownPartyStatus,
-          waitingForUsername: waitingForUsername,
-        ),
+        body: readableColors == null
+            ? body
+            : Theme(
+                data: ThemeData(extensions: [readableColors]),
+                child: body,
+              ),
       ),
     );
   }
@@ -60,7 +71,7 @@ void main() {
     testWidgets('pending state shows Accept and Pass buttons', (tester) async {
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(),
+          introduction: makeIntro(),
           showActions: true,
           onAccept: () {},
           onPass: () {},
@@ -78,7 +89,7 @@ void main() {
     ) async {
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(),
+          introduction: makeIntro(),
           showActions: true,
           isProcessing: true,
           onAccept: () {},
@@ -102,7 +113,7 @@ void main() {
     testWidgets('accepted state shows Connected label', (tester) async {
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(
+          introduction: makeIntro(
             status: IntroductionOverallStatus.mutualAccepted,
           ),
           showActions: false,
@@ -121,7 +132,7 @@ void main() {
 
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(
+          introduction: makeIntro(
             status: IntroductionOverallStatus.mutualAccepted,
           ),
           showActions: false,
@@ -145,7 +156,7 @@ void main() {
     ) async {
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(status: IntroductionOverallStatus.pending),
+          introduction: makeIntro(status: IntroductionOverallStatus.pending),
           showActions: false,
           ownPartyStatus: IntroductionStatus.accepted,
           waitingForUsername: 'Charlie',
@@ -161,7 +172,7 @@ void main() {
     testWidgets('passed state shows Passed label', (tester) async {
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(status: IntroductionOverallStatus.passed),
+          introduction: makeIntro(status: IntroductionOverallStatus.passed),
           showActions: false,
         ),
       );
@@ -176,7 +187,7 @@ void main() {
     ) async {
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(
+          introduction: makeIntro(
             status: IntroductionOverallStatus.alreadyConnected,
           ),
           showActions: false,
@@ -192,7 +203,7 @@ void main() {
     testWidgets('shows introducer attribution', (tester) async {
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(introducerUsername: 'Alice'),
+          introduction: makeIntro(introducerUsername: 'Alice'),
           showActions: true,
           onAccept: () {},
           onPass: () {},
@@ -203,13 +214,50 @@ void main() {
       expect(find.text('Alice'), findsOneWidget);
     });
 
+    testWidgets('uses light readable colors for the daylight theme', (
+      tester,
+    ) async {
+      const colors = BackgroundReadableColors.representativeLight;
+
+      await tester.pumpWidget(
+        buildWidget(
+          introduction: makeIntro(introducerUsername: 'Alice'),
+          showActions: true,
+          onAccept: () {},
+          onPass: () {},
+          readableColors: colors,
+        ),
+      );
+
+      final rowContainer = tester.widget<Container>(
+        find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is Container &&
+                  widget.padding ==
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            )
+            .first,
+      );
+      final decoration = rowContainer.decoration as BoxDecoration;
+      expect(decoration.color, colors.surfaceSubtle);
+      expect(decoration.border?.top.color, colors.border);
+
+      final nameColor = textWidget(tester, 'Charlie').style?.color;
+      final attributionColor = textWidget(tester, 'Introduced by').style?.color;
+      expect(nameColor, colors.textPrimary);
+      expect(attributionColor, colors.textMuted);
+      expectTextContrast(nameColor!, colors.surfaceSubtle);
+      expectTextContrast(attributionColor!, colors.surfaceSubtle);
+    });
+
     testWidgets('displayUsername uses RTL for Arabic-first mixed text', (
       tester,
     ) async {
       const username = 'ليلى Alpha';
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(),
+          introduction: makeIntro(),
           displayUsername: username,
           showActions: true,
           onAccept: () {},
@@ -217,7 +265,7 @@ void main() {
         ),
       );
 
-      expect(_textWidget(tester, username).textDirection, TextDirection.rtl);
+      expect(textWidget(tester, username).textDirection, TextDirection.rtl);
     });
 
     testWidgets('displayUsername uses LTR for English-first mixed text', (
@@ -226,7 +274,7 @@ void main() {
       const username = 'Alpha ليلى';
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(),
+          introduction: makeIntro(),
           displayUsername: username,
           showActions: true,
           onAccept: () {},
@@ -234,7 +282,7 @@ void main() {
         ),
       );
 
-      expect(_textWidget(tester, username).textDirection, TextDirection.ltr);
+      expect(textWidget(tester, username).textDirection, TextDirection.ltr);
     });
 
     testWidgets('introducer attribution keeps Arabic-first username explicit', (
@@ -244,14 +292,14 @@ void main() {
 
       await tester.pumpWidget(
         buildWidget(
-          introduction: _makeIntro(introducerUsername: introducer),
+          introduction: makeIntro(introducerUsername: introducer),
           showActions: true,
           onAccept: () {},
           onPass: () {},
         ),
       );
 
-      expect(_textWidget(tester, introducer).textDirection, TextDirection.rtl);
+      expect(textWidget(tester, introducer).textDirection, TextDirection.rtl);
       expect(
         tester.getTopLeft(find.text('Introduced by')).dx,
         lessThan(tester.getTopLeft(find.text(introducer)).dx),
@@ -265,17 +313,14 @@ void main() {
 
         await tester.pumpWidget(
           buildWidget(
-            introduction: _makeIntro(introducerUsername: introducer),
+            introduction: makeIntro(introducerUsername: introducer),
             showActions: true,
             onAccept: () {},
             onPass: () {},
           ),
         );
 
-        expect(
-          _textWidget(tester, introducer).textDirection,
-          TextDirection.ltr,
-        );
+        expect(textWidget(tester, introducer).textDirection, TextDirection.ltr);
         expect(
           tester.getTopLeft(find.text('Introduced by')).dx,
           lessThan(tester.getTopLeft(find.text(introducer)).dx),

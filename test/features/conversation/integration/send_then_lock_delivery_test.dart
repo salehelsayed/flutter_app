@@ -93,15 +93,24 @@ class BobTestHarness {
     expect(messages.last.isIncoming, isTrue);
   }
 
-  void expectNotificationCount(int count, {String? reason}) {
+  Future<void> expectNotificationCount(int count, {String? reason}) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (shownNotifications.length < count &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
     expect(shownNotifications, hasLength(count), reason: reason);
   }
 
-  void expectLatestNotification({
+  Future<void> expectLatestNotification({
     required String contactPeerId,
     required String body,
     String? senderUsername,
-  }) {
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (shownNotifications.isEmpty && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
     expect(shownNotifications, isNotEmpty);
     final last = shownNotifications.last;
     expect(last.contactPeerId, contactPeerId);
@@ -173,8 +182,11 @@ class _WifiFirstVoiceP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) =>
-      _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
@@ -289,7 +301,11 @@ class _WidgetVoiceP2PService implements P2PService {
   }) async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
@@ -746,7 +762,7 @@ void main() {
           alice.peerId,
           'Stuck in sending',
         );
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Stuck in sending',
           senderUsername: 'Alice',
@@ -831,7 +847,7 @@ void main() {
         expect(recoveredAttachments.single.downloadStatus, 'done');
 
         await bobHarness.expectMessageCount(alice.peerId, 1);
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Photo',
           senderUsername: 'Alice',
@@ -902,7 +918,7 @@ void main() {
         expect(recoveredAttachment.waveform, [0.1, 0.5, 0.8, 0.3, 0.6]);
 
         await bobHarness.expectMessageCount(alice.peerId, 1);
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Voice message',
           senderUsername: 'Alice',
@@ -1028,10 +1044,12 @@ void main() {
         expect(recoveredAttachment.downloadStatus, 'done');
 
         await bobHarness.expectMessageCount(alice.peerId, 1);
-        bobHarness.expectLatestNotification(
-          contactPeerId: alice.peerId,
-          body: 'Voice message',
-          senderUsername: 'Alice',
+        await tester.runAsync(
+          () => bobHarness.expectLatestNotification(
+            contactPeerId: alice.peerId,
+            body: 'Voice message',
+            senderUsername: 'Alice',
+          ),
         );
       },
     );
@@ -1059,8 +1077,8 @@ void main() {
         alice.peerId,
         'Hello from locked phone',
       );
-      bobHarness.expectNotificationCount(1);
-      bobHarness.expectLatestNotification(
+      await bobHarness.expectNotificationCount(1);
+      await bobHarness.expectLatestNotification(
         contactPeerId: alice.peerId,
         body: 'Hello from locked phone',
         senderUsername: 'Alice',
@@ -1199,7 +1217,7 @@ void main() {
           alice.peerId,
           'Direct-first test',
         );
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Direct-first test',
           senderUsername: 'Alice',
@@ -1257,7 +1275,7 @@ void main() {
           alice.peerId,
           'Killed mid-send',
         );
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Killed mid-send',
           senderUsername: 'Alice',
@@ -1316,7 +1334,7 @@ void main() {
           alice.peerId,
           'Switch then lock',
         );
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Switch then lock',
           senderUsername: 'Alice',
@@ -1502,7 +1520,7 @@ void main() {
           alice.peerId,
           'Rapid cycle test',
         );
-        bobHarness.expectNotificationCount(
+        await bobHarness.expectNotificationCount(
           1,
           reason: 'Rapid resume cycles must not duplicate notifications',
         );
@@ -1527,7 +1545,7 @@ void main() {
         expect(result, SendChatMessageResult.success);
         await waitForBob();
 
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Listen to this',
           senderUsername: 'Alice',
@@ -1550,7 +1568,7 @@ void main() {
         expect(result, SendChatMessageResult.success);
         await waitForBob();
 
-        bobHarness.expectLatestNotification(
+        await bobHarness.expectLatestNotification(
           contactPeerId: alice.peerId,
           body: 'Look at this',
           senderUsername: 'Alice',

@@ -324,6 +324,15 @@ func newMemoryGroupInboxBackend(maxPerGroup int, ttl time.Duration) *memoryGroup
 }
 
 func (b *memoryGroupInboxBackend) Store(groupId string, from string, message string) error {
+	return b.StoreWithRecipients(groupId, from, message, nil)
+}
+
+func (b *memoryGroupInboxBackend) StoreWithRecipients(
+	groupId string,
+	from string,
+	message string,
+	recipientPeerIds []string,
+) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -338,10 +347,11 @@ func (b *memoryGroupInboxBackend) Store(groupId string, from string, message str
 
 	b.idCounter++
 	msgs = append(msgs, groupInboxMessage{
-		From:      from,
-		Message:   message,
-		Timestamp: time.Now().UnixMilli(),
-		ID:        fmt.Sprintf("%d", b.idCounter),
+		From:             from,
+		Message:          message,
+		Timestamp:        time.Now().UnixMilli(),
+		ID:               fmt.Sprintf("%d", b.idCounter),
+		RecipientPeerIds: normalizePeerIds(recipientPeerIds),
 	})
 	b.messages[groupId] = msgs
 	return nil
@@ -370,27 +380,27 @@ func (b *memoryGroupInboxBackend) RetrieveSince(groupId string, sinceTimestamp i
 	return result
 }
 
-func (b *memoryGroupInboxBackend) RetrieveCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string) {
+func (b *memoryGroupInboxBackend) RetrieveCursor(groupId string, cursor string, limit int) ([]groupInboxMessage, string, []groupInboxHistoryGap) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	msgs := b.messages[groupId]
 	if len(msgs) == 0 {
-		return nil, ""
+		return nil, "", nil
 	}
 
 	// Parse cursor — the cursor is the ID of the last seen message.
 	var startIdx int
+	cursorFound := cursor == ""
 	if cursor != "" {
-		found := false
 		for i, m := range msgs {
 			if m.ID == cursor {
 				startIdx = i + 1
-				found = true
+				cursorFound = true
 				break
 			}
 		}
-		if !found {
+		if !cursorFound {
 			// Cursor not found: start from beginning.
 			startIdx = 0
 		}
@@ -420,7 +430,7 @@ func (b *memoryGroupInboxBackend) RetrieveCursor(groupId string, cursor string, 
 		}
 	}
 
-	return result, nextCursor
+	return result, nextCursor, buildGroupInboxHistoryGaps(groupId, cursor, cursorFound, result)
 }
 
 func (b *memoryGroupInboxBackend) Prune() {

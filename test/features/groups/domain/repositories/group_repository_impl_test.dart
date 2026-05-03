@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
+import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -21,6 +23,7 @@ import '../../../../core/secure_storage/fake_secure_key_store.dart';
 void main() {
   late Database db;
   late GroupRepositoryImpl repo;
+  late FakeSecureKeyStore groupKeyStore;
   late FakeSecureKeyStore sharedPushKeyStore;
 
   setUpAll(() {
@@ -39,6 +42,8 @@ void main() {
     await runGroupsDissolveColumnsMigration(db);
     await runGroupsBacklogRetentionColumnsMigration(db);
     await runGroupMemberPermissionsMigration(db);
+    await runGroupMemberDeviceIdentitiesMigration(db);
+    groupKeyStore = FakeSecureKeyStore();
     sharedPushKeyStore = FakeSecureKeyStore();
 
     repo = GroupRepositoryImpl(
@@ -72,6 +77,7 @@ void main() {
             groupId,
             minKeyGenerationToKeep,
           ),
+      groupKeyStore: groupKeyStore,
       pushSharedKeyStore: sharedPushKeyStore,
     );
   });
@@ -385,6 +391,139 @@ void main() {
   // --- Key tests ---
 
   group('Keys', () {
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING saveKey stores group key material in secure storage and only a reference in SQL',
+      () async {
+        await repo.saveKey(makeKey(keyGeneration: 9));
+
+        final rows = await db.query(
+          'group_keys',
+          where: 'group_id = ? AND key_generation = ?',
+          whereArgs: ['group-1', 9],
+        );
+        final rawKey = rows.single['encrypted_key'] as String;
+
+        expect(rawKey, isNot('base64-key-9'));
+        expect(isSecureStoreReference(rawKey), isTrue);
+        expect(
+          rawKey,
+          secureStoreReferenceForKey(groupKeyMaterialStoreName('group-1', 9)),
+        );
+        expect(
+          await groupKeyStore.read(groupKeyMaterialStoreName('group-1', 9)),
+          'base64-key-9',
+        );
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING getLatestKey and getKeyByGeneration hydrate group key material',
+      () async {
+        await repo.saveKey(makeKey(keyGeneration: 1));
+        await repo.saveKey(makeKey(keyGeneration: 2));
+
+        final latest = await repo.getLatestKey('group-1');
+        final first = await repo.getKeyByGeneration('group-1', 1);
+        final rawRows = await db.query(
+          'group_keys',
+          where: 'group_id = ?',
+          whereArgs: ['group-1'],
+        );
+
+        expect(latest, isNotNull);
+        expect(latest!.keyGeneration, 2);
+        expect(latest.encryptedKey, 'base64-key-2');
+        expect(first, isNotNull);
+        expect(first!.encryptedKey, 'base64-key-1');
+        expect(
+          rawRows.map((row) => row['encrypted_key'] as String),
+          everyElement(startsWith(secureStoreReferencePrefix)),
+        );
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING mirrorAllKeysToSecureStore writes hydrated material, not SQL reference text',
+      () async {
+        await repo.saveGroup(makeGroup());
+        final secureStoreKey = groupKeyMaterialStoreName('group-1', 11);
+        await groupKeyStore.write(secureStoreKey, 'base64-key-11');
+        await dbInsertGroupKey(db, {
+          'group_id': 'group-1',
+          'key_generation': 11,
+          'encrypted_key': secureStoreReferenceForKey(secureStoreKey),
+          'created_at': now.toIso8601String(),
+        });
+
+        await repo.mirrorAllKeysToSecureStore();
+
+        expect(
+          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 11)),
+          'base64-key-11',
+        );
+        expect(
+          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 11)),
+          isNot(secureStoreReferenceForKey(secureStoreKey)),
+        );
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING getLatestKey and getKeyByGeneration fail closed when secure material is missing',
+      () async {
+        await dbInsertGroupKey(db, {
+          'group_id': 'group-1',
+          'key_generation': 1,
+          'encrypted_key': secureStoreReferenceForKey(
+            groupKeyMaterialStoreName('group-1', 1),
+          ),
+          'created_at': now.toIso8601String(),
+        });
+        await dbInsertGroupKey(db, {
+          'group_id': 'group-1',
+          'key_generation': 2,
+          'encrypted_key': secureStoreReferenceForKey(
+            groupKeyMaterialStoreName('group-1', 2),
+          ),
+          'created_at': now.toIso8601String(),
+        });
+
+        final latest = await repo.getLatestKey('group-1');
+        final first = await repo.getKeyByGeneration('group-1', 1);
+
+        expect(latest, isNull);
+        expect(first, isNull);
+      },
+    );
+
+    test(
+      'PREREQ-SECRET-STORAGE-WRAPPING mirrorAllKeysToSecureStore skips missing secure material',
+      () async {
+        await repo.saveGroup(makeGroup());
+        final secureStoreKey = groupKeyMaterialStoreName('group-1', 12);
+        final reference = secureStoreReferenceForKey(secureStoreKey);
+        await dbInsertGroupKey(db, {
+          'group_id': 'group-1',
+          'key_generation': 12,
+          'encrypted_key': reference,
+          'created_at': now.toIso8601String(),
+        });
+
+        await repo.mirrorAllKeysToSecureStore();
+
+        expect(
+          await sharedPushKeyStore.containsKey(
+            sharedGroupPushKeyName('group-1', 12),
+          ),
+          isFalse,
+        );
+        expect(
+          await sharedPushKeyStore.read(sharedGroupPushKeyName('group-1', 12)),
+          isNot(reference),
+        );
+      },
+    );
+
     test('saveKey and getLatestKey round-trip', () async {
       await repo.saveKey(makeKey(keyGeneration: 1));
       await repo.saveKey(makeKey(keyGeneration: 3));

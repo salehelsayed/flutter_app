@@ -134,4 +134,77 @@ void main() {
     expect(violations, hasLength(1));
     expect(violations.single.reason, 'entry_hash_mismatch');
   });
+
+  test(
+    'PREREQ-SIGNED-COMMIT-AUDIT detects conflicting signed transition forks without leaking secrets',
+    () async {
+      final signedPayload = canonicalizeGroupEventLogPayload({
+        'schemaVersion': 1,
+        'transitionType': 'member_role_updated',
+        'groupId': 'group-1',
+        'sourceEventId': 'role-transition-1',
+        'eventAt': '2026-05-01T12:00:00.000Z',
+        'actor': {'peerId': 'peer-admin', 'signingPublicKey': 'pk-admin'},
+        'transitionSubject': {
+          'member': {'peerId': 'peer-bob', 'role': 'admin'},
+        },
+        'preTransitionStateHash': 'pre-state-hash',
+        'transitionOutputHash': 'post-state-hash',
+      });
+      final audit = {
+        'schemaVersion': 1,
+        'transitionType': 'member_role_updated',
+        'groupId': 'group-1',
+        'sourceEventId': 'role-transition-1',
+        'eventAt': '2026-05-01T12:00:00.000Z',
+        'signatureAlgorithm': 'ed25519',
+        'signedPayload': signedPayload,
+        'signature': 'raw-signature-secret',
+      };
+
+      await dbAppendGroupEventLogEntry(
+        db,
+        groupId: 'group-1',
+        eventType: 'member_role_updated',
+        sourcePeerId: 'peer-admin',
+        sourceEventId: 'role-transition-1',
+        sourceTimestamp: '2026-05-01T12:00:00.000Z',
+        payload: {'groupId': 'group-1', 'signedTransitionAudit': audit},
+      );
+
+      await expectLater(
+        () => dbAppendGroupEventLogEntry(
+          db,
+          groupId: 'group-1',
+          eventType: 'member_role_updated',
+          sourcePeerId: 'peer-admin',
+          sourceEventId: 'role-transition-1',
+          sourceTimestamp: '2026-05-01T12:00:00.000Z',
+          payload: {
+            'groupId': 'group-1',
+            'signedTransitionAudit': {
+              ...audit,
+              'signedPayload': signedPayload.replaceAll(
+                'peer-bob',
+                'peer-carol',
+              ),
+            },
+          },
+        ),
+        throwsA(
+          isA<GroupEventLogTamperException>()
+              .having(
+                (error) => error.message,
+                'message',
+                contains('conflicting_replay'),
+              )
+              .having(
+                (error) => error.message,
+                'message',
+                isNot(contains('raw-signature-secret')),
+              ),
+        ),
+      );
+    },
+  );
 }

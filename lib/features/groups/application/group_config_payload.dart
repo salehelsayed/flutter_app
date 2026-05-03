@@ -41,20 +41,7 @@ Map<String, dynamic> buildGroupConfigPayload(
     'avatarMime': group.avatarMime,
     'metadataUpdatedAt': group.lastMetadataEventAt?.toUtc().toIso8601String(),
     groupConfigVersionField: configVersion,
-    'members': members
-        .map(
-          (member) => {
-            'peerId': member.peerId,
-            'username': member.username,
-            'role': member.role.toValue(),
-            if (member.permissions.hasOverrides)
-              'permissions': member.permissions.toJson(),
-            'publicKey': member.publicKey,
-            if (member.mlKemPublicKey != null)
-              'mlKemPublicKey': member.mlKemPublicKey,
-          },
-        )
-        .toList(),
+    'members': members.map((member) => member.toConfigJson()).toList(),
     'createdBy': group.createdBy,
     'createdAt': group.createdAt.toUtc().toIso8601String(),
   };
@@ -266,6 +253,37 @@ Map<String, Object?> _canonicalMemberForHash(Map<dynamic, dynamic> member) {
     'permissions': _canonicalPermissions(member['permissions']),
     'publicKey': member['publicKey'] as String?,
     'mlKemPublicKey': member['mlKemPublicKey'] as String?,
+    'devices': _canonicalDevices(member['devices']),
+  };
+}
+
+List<Map<String, Object?>>? _canonicalDevices(Object? raw) {
+  if (raw is! List) {
+    return null;
+  }
+  final devices =
+      raw
+          .whereType<Map<dynamic, dynamic>>()
+          .map(_canonicalDeviceForHash)
+          .toList()
+        ..sort((a, b) {
+          final aDeviceId = a['deviceId'] as String? ?? '';
+          final bDeviceId = b['deviceId'] as String? ?? '';
+          return aDeviceId.compareTo(bDeviceId);
+        });
+  return devices.isEmpty ? null : devices;
+}
+
+Map<String, Object?> _canonicalDeviceForHash(Map<dynamic, dynamic> device) {
+  return {
+    'deviceId': device['deviceId'] as String?,
+    'transportPeerId': device['transportPeerId'] as String?,
+    'deviceSigningPublicKey': device['deviceSigningPublicKey'] as String?,
+    'mlKemPublicKey': device['mlKemPublicKey'] as String?,
+    'keyPackageId': device['keyPackageId'] as String?,
+    'keyPackagePublicMaterial': device['keyPackagePublicMaterial'] as String?,
+    'status': device['status'] as String?,
+    'revokedAt': device['revokedAt'] as String?,
   };
 }
 

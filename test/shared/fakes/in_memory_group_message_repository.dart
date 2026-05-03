@@ -1,15 +1,24 @@
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_thread_summary_repository.dart';
+import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.dart';
 
 /// In-memory [GroupMessageRepository] for integration tests.
 class InMemoryGroupMessageRepository
     implements GroupMessageRepository, GroupThreadSummaryRepository {
   final Map<String, GroupMessage> _messages = {};
+  final Map<String, String> _inboxCursors = {};
+  final Map<String, GroupMessageReceipt> _receipts = {};
+  final Set<String> failSaveMessageIds = {};
+  bool failInboxPageTransaction = false;
 
   @override
   Future<void> saveMessage(GroupMessage message) async {
+    if (failSaveMessageIds.contains(message.id)) {
+      throw StateError('simulated save failure for ${message.id}');
+    }
     _messages[message.id] = message;
   }
 
@@ -20,10 +29,10 @@ class InMemoryGroupMessageRepository
     int offset = 0,
   }) async {
     var messages = _messages.values.where((m) => m.groupId == groupId).toList();
-    messages.sort(_compareMessagesDescending);
+    messages.sort(compareGroupMessagesDescending);
     // Apply offset and limit, then reverse to ASC order
     final page = messages.skip(offset).take(limit).toList();
-    return page.reversed.toList();
+    return orderGroupMessagesForTimeline(page.reversed);
   }
 
   @override
@@ -37,7 +46,7 @@ class InMemoryGroupMessageRepository
         .where((m) => m.groupId == groupId)
         .toList();
     if (messages.isEmpty) return null;
-    messages.sort(_compareMessagesDescending);
+    messages.sort(compareGroupMessagesDescending);
     return messages.first;
   }
 
@@ -55,7 +64,25 @@ class InMemoryGroupMessageRepository
         )
         .toList();
     if (messages.isEmpty) return null;
-    messages.sort(_compareMessagesDescending);
+    messages.sort(compareGroupMessagesDescending);
+    return messages.first.timestamp.toUtc();
+  }
+
+  @override
+  Future<DateTime?> getLatestSystemEventTimestampForTarget(
+    String groupId, {
+    required String eventType,
+    required String targetId,
+  }) async {
+    final prefix = 'sys-$eventType:$groupId:$targetId:';
+    final messages = _messages.values
+        .where(
+          (message) =>
+              message.groupId == groupId && message.id.startsWith(prefix),
+        )
+        .toList();
+    if (messages.isEmpty) return null;
+    messages.sort(compareGroupMessagesDescending);
     return messages.first.timestamp.toUtc();
   }
 
@@ -128,7 +155,7 @@ class InMemoryGroupMessageRepository
     final failed = _messages.values
         .where((m) => !m.isIncoming && m.status == 'failed')
         .toList();
-    failed.sort(_compareMessagesAscending);
+    failed.sort(compareGroupMessagesAscending);
     return failed;
   }
 
@@ -176,7 +203,7 @@ class InMemoryGroupMessageRepository
   Future<GroupThreadSummary> getGroupThreadSummary(String groupId) async {
     final messages =
         _messages.values.where((message) => message.groupId == groupId).toList()
-          ..sort(_compareMessagesDescending);
+          ..sort(compareGroupMessagesDescending);
     return GroupThreadSummary(
       groupId: groupId,
       unreadCount: messages
@@ -196,7 +223,7 @@ class InMemoryGroupMessageRepository
           _messages.values
               .where((message) => message.groupId == groupId)
               .toList()
-            ..sort(_compareMessagesDescending);
+            ..sort(compareGroupMessagesDescending);
       summaries[groupId] = GroupThreadSummary(
         groupId: groupId,
         unreadCount: messages
@@ -221,7 +248,7 @@ class InMemoryGroupMessageRepository
               m.inboxRetryPayload != null,
         )
         .toList();
-    eligible.sort(_compareMessagesAscending);
+    eligible.sort(compareGroupMessagesAscending);
     return eligible.take(limit).toList();
   }
 
@@ -249,17 +276,78 @@ class InMemoryGroupMessageRepository
     }
   }
 
+  @override
+  Future<String?> getInboxCursor(String groupId) async =>
+      _inboxCursors[groupId];
+
+  @override
+  Future<List<GroupMessageReceipt>> getReceiptsForMessage(
+    String groupId,
+    String messageId, {
+    String? receiptType,
+  }) async {
+    final receipts = _receipts.values
+        .where(
+          (receipt) =>
+              receipt.groupId == groupId &&
+              receipt.messageId == messageId &&
+              (receiptType == null || receipt.receiptType == receiptType),
+        )
+        .toList();
+    receipts.sort((a, b) {
+      final typeCompare = a.receiptType.compareTo(b.receiptType);
+      if (typeCompare != 0) return typeCompare;
+      return a.memberPeerId.compareTo(b.memberPeerId);
+    });
+    return receipts;
+  }
+
+  @override
+  Future<void> runInboxPageTransaction({
+    required String groupId,
+    required String nextCursor,
+    required Future<void> Function(GroupMessageRepository transactionRepo)
+    apply,
+    List<GroupMessageReceipt> receipts = const [],
+    List<String> markReadMessageIds = const [],
+  }) async {
+    final messageSnapshot = Map<String, GroupMessage>.from(_messages);
+    final cursorSnapshot = Map<String, String>.from(_inboxCursors);
+    final receiptSnapshot = Map<String, GroupMessageReceipt>.from(_receipts);
+    try {
+      await apply(this);
+      if (failInboxPageTransaction) {
+        throw StateError('simulated inbox transaction failure');
+      }
+      for (final receipt in receipts) {
+        _receipts[_receiptKey(receipt)] = receipt;
+      }
+      final now = DateTime.now().toUtc();
+      for (final messageId in markReadMessageIds) {
+        final message = _messages[messageId];
+        if (message != null && message.groupId == groupId) {
+          _messages[messageId] = message.copyWith(
+            readAt: message.readAt ?? now,
+          );
+        }
+      }
+      _inboxCursors[groupId] = nextCursor;
+    } catch (_) {
+      _messages
+        ..clear()
+        ..addAll(messageSnapshot);
+      _inboxCursors
+        ..clear()
+        ..addAll(cursorSnapshot);
+      _receipts
+        ..clear()
+        ..addAll(receiptSnapshot);
+      rethrow;
+    }
+  }
+
   int get count => _messages.length;
-}
 
-int _compareMessagesAscending(GroupMessage a, GroupMessage b) {
-  final timestampCompare = a.timestamp.compareTo(b.timestamp);
-  if (timestampCompare != 0) return timestampCompare;
-  return a.id.compareTo(b.id);
-}
-
-int _compareMessagesDescending(GroupMessage a, GroupMessage b) {
-  final timestampCompare = b.timestamp.compareTo(a.timestamp);
-  if (timestampCompare != 0) return timestampCompare;
-  return b.id.compareTo(a.id);
+  String _receiptKey(GroupMessageReceipt receipt) =>
+      '${receipt.groupId}:${receipt.messageId}:${receipt.receiptType}:${receipt.memberPeerId}';
 }

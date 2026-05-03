@@ -53,6 +53,179 @@ enum GroupMemberPermission {
   }
 }
 
+enum GroupMemberDeviceStatus {
+  active,
+  revoked;
+
+  String toValue() => name;
+
+  static GroupMemberDeviceStatus fromValue(String? value) {
+    switch (value) {
+      case 'active':
+        return GroupMemberDeviceStatus.active;
+      case 'revoked':
+        return GroupMemberDeviceStatus.revoked;
+      default:
+        return GroupMemberDeviceStatus.active;
+    }
+  }
+}
+
+/// First-class identity for one registered device under a group member.
+///
+/// [GroupMember.peerId] remains the account/member identity. Device identities
+/// bind transport Peer ID, signing key, and key-package material for send,
+/// replay, and admission checks.
+class GroupMemberDeviceIdentity {
+  final String deviceId;
+  final String transportPeerId;
+  final String deviceSigningPublicKey;
+  final String? mlKemPublicKey;
+  final String? keyPackageId;
+  final String? keyPackagePublicMaterial;
+  final GroupMemberDeviceStatus status;
+  final DateTime? revokedAt;
+
+  const GroupMemberDeviceIdentity({
+    required this.deviceId,
+    required this.transportPeerId,
+    required this.deviceSigningPublicKey,
+    this.mlKemPublicKey,
+    this.keyPackageId,
+    this.keyPackagePublicMaterial,
+    this.status = GroupMemberDeviceStatus.active,
+    this.revokedAt,
+  });
+
+  bool get isActive =>
+      status == GroupMemberDeviceStatus.active && revokedAt == null;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'deviceId': deviceId,
+      'transportPeerId': transportPeerId,
+      'deviceSigningPublicKey': deviceSigningPublicKey,
+      if (mlKemPublicKey != null && mlKemPublicKey!.isNotEmpty)
+        'mlKemPublicKey': mlKemPublicKey,
+      if (keyPackageId != null && keyPackageId!.isNotEmpty)
+        'keyPackageId': keyPackageId,
+      if (keyPackagePublicMaterial != null &&
+          keyPackagePublicMaterial!.isNotEmpty)
+        'keyPackagePublicMaterial': keyPackagePublicMaterial,
+      'status': status.toValue(),
+      if (revokedAt != null) 'revokedAt': revokedAt!.toUtc().toIso8601String(),
+    };
+  }
+
+  static GroupMemberDeviceIdentity? fromJson(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final deviceId = _readString(value, 'deviceId');
+    final transportPeerId =
+        _readString(value, 'transportPeerId') ??
+        _readString(value, 'transportPeerID') ??
+        _readString(value, 'peerId');
+    final signingPublicKey =
+        _readString(value, 'deviceSigningPublicKey') ??
+        _readString(value, 'signingPublicKey') ??
+        _readString(value, 'devicePublicKey') ??
+        _readString(value, 'publicKey');
+    if (deviceId == null ||
+        deviceId.isEmpty ||
+        transportPeerId == null ||
+        transportPeerId.isEmpty ||
+        signingPublicKey == null ||
+        signingPublicKey.isEmpty) {
+      return null;
+    }
+
+    return GroupMemberDeviceIdentity(
+      deviceId: deviceId,
+      transportPeerId: transportPeerId,
+      deviceSigningPublicKey: signingPublicKey,
+      mlKemPublicKey: _readString(value, 'mlKemPublicKey'),
+      keyPackageId:
+          _readString(value, 'keyPackageId') ??
+          _readString(value, 'keyPackageHash'),
+      keyPackagePublicMaterial:
+          _readString(value, 'keyPackagePublicMaterial') ??
+          _readString(value, 'keyPackagePublicKey'),
+      status: GroupMemberDeviceStatus.fromValue(_readString(value, 'status')),
+      revokedAt: _parseOptionalDateTime(_readString(value, 'revokedAt')),
+    );
+  }
+
+  static List<GroupMemberDeviceIdentity> listFromJson(Object? value) {
+    if (value is! List) {
+      return const <GroupMemberDeviceIdentity>[];
+    }
+    return value
+        .map(GroupMemberDeviceIdentity.fromJson)
+        .whereType<GroupMemberDeviceIdentity>()
+        .toList(growable: false);
+  }
+
+  static List<GroupMemberDeviceIdentity> listFromJsonString(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return const <GroupMemberDeviceIdentity>[];
+    }
+    try {
+      return listFromJson(jsonDecode(value));
+    } catch (_) {
+      return const <GroupMemberDeviceIdentity>[];
+    }
+  }
+
+  static String? listToJsonString(List<GroupMemberDeviceIdentity> devices) {
+    if (devices.isEmpty) {
+      return null;
+    }
+    return jsonEncode(devices.map((device) => device.toJson()).toList());
+  }
+
+  GroupMemberDeviceIdentity copyWith({
+    String? deviceId,
+    String? transportPeerId,
+    String? deviceSigningPublicKey,
+    String? mlKemPublicKey,
+    String? keyPackageId,
+    String? keyPackagePublicMaterial,
+    GroupMemberDeviceStatus? status,
+    DateTime? revokedAt,
+    bool clearRevokedAt = false,
+  }) {
+    return GroupMemberDeviceIdentity(
+      deviceId: deviceId ?? this.deviceId,
+      transportPeerId: transportPeerId ?? this.transportPeerId,
+      deviceSigningPublicKey:
+          deviceSigningPublicKey ?? this.deviceSigningPublicKey,
+      mlKemPublicKey: mlKemPublicKey ?? this.mlKemPublicKey,
+      keyPackageId: keyPackageId ?? this.keyPackageId,
+      keyPackagePublicMaterial:
+          keyPackagePublicMaterial ?? this.keyPackagePublicMaterial,
+      status: status ?? this.status,
+      revokedAt: clearRevokedAt ? null : revokedAt ?? this.revokedAt,
+    );
+  }
+
+  static String? _readString(Map<dynamic, dynamic> value, String key) {
+    final raw = value[key];
+    if (raw is! String) {
+      return null;
+    }
+    final trimmed = raw.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  static DateTime? _parseOptionalDateTime(String? value) {
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return DateTime.tryParse(value)?.toUtc();
+  }
+}
+
 class GroupMemberPermissions {
   final bool? inviteMembers;
   final bool? removeMembers;
@@ -191,6 +364,9 @@ class GroupMember {
   /// Base64-encoded ML-KEM-768 public key of the member.
   final String? mlKemPublicKey;
 
+  /// First-class registered devices for this member.
+  final List<GroupMemberDeviceIdentity> devices;
+
   /// When this member joined the group.
   final DateTime joinedAt;
 
@@ -202,8 +378,108 @@ class GroupMember {
     this.permissions = GroupMemberPermissions.empty,
     this.publicKey,
     this.mlKemPublicKey,
+    this.devices = const <GroupMemberDeviceIdentity>[],
     required this.joinedAt,
   });
+
+  List<GroupMemberDeviceIdentity> get activeDevices =>
+      devices.where((device) => device.isActive).toList(growable: false);
+
+  GroupMemberDeviceIdentity? get legacyDeviceIdentity {
+    final publicKey = this.publicKey?.trim();
+    final mlKemKey = mlKemPublicKey?.trim();
+    if ((publicKey == null || publicKey.isEmpty) &&
+        (mlKemKey == null || mlKemKey.isEmpty)) {
+      return null;
+    }
+    return GroupMemberDeviceIdentity(
+      deviceId: peerId,
+      transportPeerId: peerId,
+      deviceSigningPublicKey: publicKey ?? '',
+      mlKemPublicKey: mlKemKey,
+      keyPackagePublicMaterial: mlKemKey,
+    );
+  }
+
+  List<GroupMemberDeviceIdentity> activeDevicesWithLegacyFallback() {
+    final active = activeDevices;
+    if (active.isNotEmpty) {
+      return active;
+    }
+    final legacy = legacyDeviceIdentity;
+    return legacy == null
+        ? const <GroupMemberDeviceIdentity>[]
+        : <GroupMemberDeviceIdentity>[legacy];
+  }
+
+  GroupMemberDeviceIdentity? findDeviceById(
+    String? deviceId, {
+    bool activeOnly = true,
+    bool allowLegacyFallback = false,
+  }) {
+    final normalized = deviceId?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    for (final device in devices) {
+      if (device.deviceId == normalized && (!activeOnly || device.isActive)) {
+        return device;
+      }
+    }
+    if (allowLegacyFallback) {
+      final legacy = legacyDeviceIdentity;
+      if (legacy != null && legacy.deviceId == normalized) {
+        return legacy;
+      }
+    }
+    return null;
+  }
+
+  GroupMemberDeviceIdentity? findDeviceByTransportPeerId(
+    String? transportPeerId, {
+    bool activeOnly = true,
+    bool allowLegacyFallback = false,
+  }) {
+    final normalized = transportPeerId?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    for (final device in devices) {
+      if (device.transportPeerId == normalized &&
+          (!activeOnly || device.isActive)) {
+        return device;
+      }
+    }
+    if (allowLegacyFallback) {
+      final legacy = legacyDeviceIdentity;
+      if (legacy != null && legacy.transportPeerId == normalized) {
+        return legacy;
+      }
+    }
+    return null;
+  }
+
+  GroupMemberDeviceIdentity? firstActiveDeviceForSigningKey(
+    String? signingPublicKey, {
+    bool allowLegacyFallback = false,
+  }) {
+    final normalized = signingPublicKey?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    for (final device in activeDevices) {
+      if (device.deviceSigningPublicKey == normalized) {
+        return device;
+      }
+    }
+    if (allowLegacyFallback) {
+      final legacy = legacyDeviceIdentity;
+      if (legacy?.deviceSigningPublicKey == normalized) {
+        return legacy;
+      }
+    }
+    return null;
+  }
 
   /// Creates a GroupMember from a database row map.
   factory GroupMember.fromMap(Map<String, dynamic> map) {
@@ -217,7 +493,35 @@ class GroupMember {
       ),
       publicKey: map['public_key'] as String?,
       mlKemPublicKey: map['ml_kem_public_key'] as String?,
+      devices: GroupMemberDeviceIdentity.listFromJsonString(
+        map['devices_json'] as String?,
+      ),
       joinedAt: DateTime.parse(map['joined_at'] as String),
+    );
+  }
+
+  factory GroupMember.fromConfigMap({
+    required String groupId,
+    required Map<String, dynamic> map,
+    GroupMember? existing,
+    DateTime? joinedAt,
+  }) {
+    final peerId = map['peerId'] as String? ?? existing?.peerId ?? '';
+    return GroupMember(
+      groupId: groupId,
+      peerId: peerId,
+      username: map['username'] as String? ?? existing?.username,
+      role: MemberRole.fromValue(map['role'] as String? ?? 'writer'),
+      permissions: map.containsKey('permissions')
+          ? GroupMemberPermissions.fromJson(map['permissions'])
+          : existing?.permissions ?? GroupMemberPermissions.empty,
+      publicKey: map['publicKey'] as String? ?? existing?.publicKey,
+      mlKemPublicKey:
+          map['mlKemPublicKey'] as String? ?? existing?.mlKemPublicKey,
+      devices: map.containsKey('devices')
+          ? GroupMemberDeviceIdentity.listFromJson(map['devices'])
+          : existing?.devices ?? const <GroupMemberDeviceIdentity>[],
+      joinedAt: existing?.joinedAt ?? joinedAt ?? DateTime.now().toUtc(),
     );
   }
 
@@ -231,8 +535,46 @@ class GroupMember {
       'permissions_json': permissions.toJsonString(),
       'public_key': publicKey,
       'ml_kem_public_key': mlKemPublicKey,
+      'devices_json': GroupMemberDeviceIdentity.listToJsonString(devices),
       'joined_at': joinedAt.toUtc().toIso8601String(),
     };
+  }
+
+  Map<String, dynamic> toConfigJson() {
+    return {
+      'peerId': peerId,
+      'username': username,
+      'role': role.toValue(),
+      if (permissions.hasOverrides) 'permissions': permissions.toJson(),
+      'publicKey': publicKey,
+      if (mlKemPublicKey != null) 'mlKemPublicKey': mlKemPublicKey,
+      if (devices.isNotEmpty)
+        'devices': devices.map((device) => device.toJson()).toList(),
+    };
+  }
+
+  GroupMember copyWith({
+    String? groupId,
+    String? peerId,
+    String? username,
+    MemberRole? role,
+    GroupMemberPermissions? permissions,
+    String? publicKey,
+    String? mlKemPublicKey,
+    List<GroupMemberDeviceIdentity>? devices,
+    DateTime? joinedAt,
+  }) {
+    return GroupMember(
+      groupId: groupId ?? this.groupId,
+      peerId: peerId ?? this.peerId,
+      username: username ?? this.username,
+      role: role ?? this.role,
+      permissions: permissions ?? this.permissions,
+      publicKey: publicKey ?? this.publicKey,
+      mlKemPublicKey: mlKemPublicKey ?? this.mlKemPublicKey,
+      devices: devices ?? this.devices,
+      joinedAt: joinedAt ?? this.joinedAt,
+    );
   }
 
   @override

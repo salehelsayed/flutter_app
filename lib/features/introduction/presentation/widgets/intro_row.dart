@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -37,15 +38,25 @@ class IntroRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final successColor = readableColors.isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF1DB954);
+    final onSuccessColor = readableColors.isLightSurface
+        ? Colors.white
+        : Colors.black;
     final introducerUsername = introduction.introducerUsername ?? 'someone';
-    const attributionStyle = TextStyle(fontSize: 12, color: Color(0x66FFFFFF));
+    final attributionStyle = TextStyle(
+      fontSize: 12,
+      color: readableColors.textMuted,
+    );
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0x14FFFFFF),
+        color: readableColors.surfaceSubtle,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0x1FFFFFFF)),
+        border: Border.all(color: readableColors.border),
       ),
       child: Row(
         children: [
@@ -61,17 +72,17 @@ class IntroRow extends StatelessWidget {
                 Text(
                   displayUsername,
                   textDirection: detectTextDirection(displayUsername),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xF2FFFFFF),
+                    color: readableColors.textPrimary,
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Row(
                   children: [
-                    const Text('Introduced by', style: attributionStyle),
+                    Text('Introduced by', style: attributionStyle),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
@@ -113,9 +124,9 @@ class IntroRow extends StatelessWidget {
               ],
             )
           else if (showActions && isOtherBlocked)
-            const Text(
+            Text(
               'Unavailable',
-              style: TextStyle(fontSize: 11, color: Color(0x66FFFFFF)),
+              style: TextStyle(fontSize: 11, color: readableColors.textMuted),
             )
           else if (introduction.status ==
               IntroductionOverallStatus.mutualAccepted)
@@ -133,15 +144,15 @@ class IntroRow extends StatelessWidget {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1DB954),
+                        color: successColor,
                         borderRadius: BorderRadius.circular(8),
                       ),
-                      child: const Text(
+                      child: Text(
                         'Message',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black,
+                          color: onSuccessColor,
                         ),
                       ),
                     ),
@@ -153,7 +164,7 @@ class IntroRow extends StatelessWidget {
               introduction.status == IntroductionOverallStatus.pending)
             Text(
               'Waiting for ${waitingForUsername ?? 'them'}',
-              style: const TextStyle(fontSize: 11, color: Color(0x66FFFFFF)),
+              style: TextStyle(fontSize: 11, color: readableColors.textMuted),
             )
           else
             _StatusLabel(status: introduction.status),
@@ -180,16 +191,24 @@ class _ActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final foregroundColor = readableColors.isLightSurface
+        ? Colors.white
+        : Colors.black;
+    final primaryColor = readableColors.isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF1DB954);
+
     final child = isProcessing && isPrimary
         ? Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
+              SizedBox(
                 width: 14,
                 height: 14,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Colors.white,
+                  color: foregroundColor,
                 ),
               ),
               const SizedBox(width: 8),
@@ -205,8 +224,8 @@ class _ActionButton extends StatelessWidget {
         style: FilledButton.styleFrom(
           minimumSize: const Size(0, 40),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          backgroundColor: const Color(0xFF1DB954),
-          foregroundColor: Colors.black,
+          backgroundColor: primaryColor,
+          foregroundColor: foregroundColor,
           textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
         ),
         child: child,
@@ -219,9 +238,11 @@ class _ActionButton extends StatelessWidget {
       style: OutlinedButton.styleFrom(
         minimumSize: const Size(0, 40),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        foregroundColor: const Color(0x99FFFFFF),
-        side: const BorderSide(color: Color(0x1FFFFFFF)),
-        backgroundColor: const Color(0x14FFFFFF),
+        foregroundColor: readableColors.textSecondary,
+        disabledForegroundColor: readableColors.disabledForeground,
+        side: BorderSide(color: readableColors.inputBorder),
+        backgroundColor: readableColors.surfaceRaised,
+        disabledBackgroundColor: readableColors.disabledSurface,
         textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
       ),
       child: child,
@@ -236,25 +257,29 @@ class _StatusLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final successColor = readableColors.isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF1DB954);
     final String label;
     final Color color;
 
     switch (status) {
       case IntroductionOverallStatus.mutualAccepted:
         label = 'Connected';
-        color = const Color(0xFF1DB954);
+        color = successColor;
       case IntroductionOverallStatus.passed:
         label = 'Passed';
-        color = const Color(0x66FFFFFF);
+        color = readableColors.textMuted;
       case IntroductionOverallStatus.expired:
         label = 'Expired';
-        color = const Color(0x66FFFFFF);
+        color = readableColors.textMuted;
       case IntroductionOverallStatus.pending:
         label = 'Pending';
-        color = const Color(0x99FFFFFF);
+        color = readableColors.textSecondary;
       case IntroductionOverallStatus.alreadyConnected:
         label = 'Already connected';
-        color = const Color(0xFF1DB954);
+        color = successColor;
     }
 
     return Container(

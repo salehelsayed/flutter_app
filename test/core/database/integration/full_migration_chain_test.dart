@@ -57,6 +57,12 @@ import 'package:flutter_app/core/database/migrations/057_group_member_permission
 import 'package:flutter_app/core/database/migrations/058_media_attachment_integrity_columns.dart';
 import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
 import 'package:flutter_app/core/database/migrations/060_group_event_log.dart';
+import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
+import 'package:flutter_app/core/database/migrations/063_group_pending_key_repairs.dart';
+import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
+import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
+import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -137,6 +143,13 @@ void main() {
     await runMediaAttachmentIntegrityColumnsMigration(db);
     await runMediaAttachmentEncryptionColumnsMigration(db);
     await runGroupEventLogMigration(db);
+    await runGroupMessageTransportPeerIdMigration(db);
+    await runGroupMemberDeviceIdentitiesMigration(db);
+    await runGroupPendingKeyRepairsMigration(db);
+    await runGroupWelcomeKeyPackageTombstonesMigration(db);
+    await runGroupHistoryGapRepairsMigration(db);
+    await runGroupSyncReceiptsMigration(db);
+    await runGroupSyncReceiptsMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -152,14 +165,21 @@ void main() {
     expect(groupCols53, contains('last_backlog_retained_at'));
     final groupMemberCols57 = await getColumnNames(db, 'group_members');
     expect(groupMemberCols57, contains('permissions_json'));
+    expect(groupMemberCols57, contains('devices_json'));
     expect(await getTableNames(db), contains('pending_group_invites'));
     expect(await getTableNames(db), contains('group_reaction_replay_outbox'));
     expect(await getTableNames(db), contains('group_invite_revocations'));
     expect(await getTableNames(db), contains('group_invite_consumptions'));
     expect(await getTableNames(db), contains('group_event_log'));
+    expect(await getTableNames(db), contains('group_pending_key_repairs'));
+    expect(await getTableNames(db), contains('group_history_gap_repairs'));
+    expect(await getTableNames(db), contains('group_inbox_cursors'));
+    expect(await getTableNames(db), contains('group_message_receipts'));
+    final groupMessageCols61 = await getColumnNames(db, 'group_messages');
+    expect(groupMessageCols61, contains('transport_peer_id'));
   }
 
-  Future<void> runUpgradePathFromV1(
+  Future<void> runUpgradePathFromV1ThroughV65(
     Database db, {
     required FakeSecureKeyStore keyStore,
   }) async {
@@ -208,6 +228,19 @@ void main() {
     await runMediaAttachmentIntegrityColumnsMigration(db);
     await runMediaAttachmentEncryptionColumnsMigration(db);
     await runGroupEventLogMigration(db);
+    await runGroupMessageTransportPeerIdMigration(db);
+    await runGroupMemberDeviceIdentitiesMigration(db);
+    await runGroupPendingKeyRepairsMigration(db);
+    await runGroupWelcomeKeyPackageTombstonesMigration(db);
+    await runGroupHistoryGapRepairsMigration(db);
+  }
+
+  Future<void> runUpgradePathFromV1(
+    Database db, {
+    required FakeSecureKeyStore keyStore,
+  }) async {
+    await runUpgradePathFromV1ThroughV65(db, keyStore: keyStore);
+    await runGroupSyncReceiptsMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -352,6 +385,9 @@ void main() {
           'pending_introduction_responses',
           'group_invite_revocations',
           'group_invite_consumptions',
+          'group_history_gap_repairs',
+          'group_inbox_cursors',
+          'group_message_receipts',
         ]),
       );
 
@@ -455,6 +491,7 @@ void main() {
           'text',
           'timestamp',
           'quoted_message_id',
+          'transport_peer_id',
         ]),
       );
     });
@@ -780,6 +817,49 @@ void main() {
     });
 
     test(
+      'PREREQ-GROUP-SYNC-RECEIPTS v65 to v66 upgrade creates sync tables and preserves group messages',
+      () async {
+        db = await databaseFactoryFfi.openDatabase(
+          inMemoryDatabasePath,
+          options: OpenDatabaseOptions(version: 1),
+        );
+
+        await runIdentityTableMigration(db);
+        final keyStore = FakeSecureKeyStore();
+        await runUpgradePathFromV1ThroughV65(db, keyStore: keyStore);
+        await db.insert('group_messages', {
+          'id': 'group-msg-before-066',
+          'group_id': 'group-1',
+          'sender_peer_id': 'peer-sender',
+          'sender_username': 'Sender',
+          'text': 'Stored before sync receipt migration',
+          'timestamp': '2026-05-01T12:00:00.000Z',
+          'key_generation': 1,
+          'status': 'delivered',
+          'is_incoming': 1,
+          'created_at': '2026-05-01T12:00:01.000Z',
+        });
+
+        await runGroupSyncReceiptsMigration(db);
+        await runGroupSyncReceiptsMigration(db);
+
+        final tables = await getTableNames(db);
+        expect(tables, contains('group_inbox_cursors'));
+        expect(tables, contains('group_message_receipts'));
+        final preserved = await db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: ['group-msg-before-066'],
+        );
+        expect(preserved, hasLength(1));
+        expect(
+          preserved.single['text'],
+          'Stored before sync receipt migration',
+        );
+      },
+    );
+
+    test(
       '1c. migrated schema persists newly arrived incoming messages',
       () async {
         db = await databaseFactoryFfi.openDatabase(
@@ -983,6 +1063,10 @@ void main() {
       await runIntroductionAlreadyConnectedMigration(db);
       await runGroupQuotedMessageIdMigration(db);
       await runGroupEventLogMigration(db);
+      await runGroupPendingKeyRepairsMigration(db);
+      await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      await runGroupHistoryGapRepairsMigration(db);
+      await runGroupSyncReceiptsMigration(db);
 
       // Seed data
       await db.insert('identity', {
@@ -1013,6 +1097,10 @@ void main() {
       await runGroupMessagesTablesMigration(db);
       await runGroupQuotedMessageIdMigration(db);
       await runGroupEventLogMigration(db);
+      await runGroupPendingKeyRepairsMigration(db);
+      await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      await runGroupHistoryGapRepairsMigration(db);
+      await runGroupSyncReceiptsMigration(db);
 
       // Re-run secrets migration (should be no-op)
       await migrateSecretsToSecureStorage(db: db, secureKeyStore: keyStore);

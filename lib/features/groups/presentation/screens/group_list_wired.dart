@@ -18,6 +18,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
@@ -240,9 +241,11 @@ class _GroupListWiredState extends State<GroupListWired>
     setState(() => _processingInviteIds.add(invite.groupId));
     try {
       final identity = await widget.identityRepo.loadIdentity();
+      final localTransportPeerId = widget.p2pService.currentState.peerId;
       final (result, group) = await acceptPendingGroupInvite(
         pendingInviteRepo: inviteListener.pendingInviteRepo,
         groupRepo: widget.groupRepo,
+        contactRepo: widget.contactRepo,
         msgRepo: widget.msgRepo,
         bridge: widget.bridge,
         groupId: invite.groupId,
@@ -253,6 +256,13 @@ class _GroupListWiredState extends State<GroupListWired>
         senderPublicKey: identity?.publicKey,
         senderPrivateKey: identity?.privateKey,
         senderUsername: identity?.username,
+        ownDeviceId: localTransportPeerId,
+        ownTransportPeerId: localTransportPeerId,
+        ownMlKemPublicKey: identity?.mlKemPublicKey,
+        ownKeyPackageId: defaultGroupWelcomeKeyPackageIdForDevice(
+          localTransportPeerId,
+        ),
+        ownKeyPackagePublicMaterial: identity?.mlKemPublicKey,
       );
       if (group != null) {
         _changedGroupIds.add(group.id);
@@ -277,6 +287,9 @@ class _GroupListWiredState extends State<GroupListWired>
           break;
         case AcceptPendingGroupInviteResult.alreadyUsed:
           _showSnackBar('Invite already used');
+          break;
+        case AcceptPendingGroupInviteResult.wrongIdentity:
+          _showSnackBar('Invite is for another identity');
           break;
         case AcceptPendingGroupInviteResult.repairPending:
           _showSnackBar('Invite needs fresh key material');

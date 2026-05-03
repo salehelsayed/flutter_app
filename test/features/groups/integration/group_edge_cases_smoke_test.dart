@@ -17,93 +17,97 @@ void main() {
     // ---------------------------------------------------------------
     // 1. Delivery failure — messages not delivered when network fails
     // ---------------------------------------------------------------
-    test('delivery failure — messages not delivered when network fails',
-        () async {
-      final admin = GroupTestUser.create(
-        peerId: 'peer-admin',
-        username: 'Admin',
-        network: network,
-      );
-      final bob = GroupTestUser.create(
-        peerId: 'peer-bob',
-        username: 'Bob',
-        network: network,
-      );
+    test(
+      'delivery failure — messages not delivered when network fails',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
 
-      final groupId = 'grp-delivery-fail';
-      await admin.createGroup(groupId: groupId, name: 'Fail Group');
-      await admin.addMember(groupId: groupId, invitee: bob);
+        final groupId = 'grp-delivery-fail';
+        await admin.createGroup(groupId: groupId, name: 'Fail Group');
+        await admin.addMember(groupId: groupId, invitee: bob);
 
-      admin.start();
-      bob.start();
+        admin.start();
+        bob.start();
 
-      // Enable delivery failure
-      network.deliveryFails = true;
-      await admin.sendGroupMessage(groupId: groupId, text: 'Lost message');
-      await pump();
+        // Enable delivery failure
+        network.deliveryFails = true;
+        await admin.sendGroupMessage(groupId: groupId, text: 'Lost message');
+        await pump();
 
-      // Admin saves outgoing locally
-      final adminMsgs = await admin.loadGroupMessages(groupId);
-      expect(adminMsgs.length, 1);
-      expect(adminMsgs.first.text, 'Lost message');
+        // Admin saves outgoing locally
+        final adminMsgs = await admin.loadGroupMessages(groupId);
+        expect(adminMsgs.length, 1);
+        expect(adminMsgs.first.text, 'Lost message');
 
-      // Bob receives nothing (delivery was dropped)
-      final bobMsgs = await bob.loadGroupMessages(groupId);
-      expect(bobMsgs.length, 0);
+        // Bob receives nothing (delivery was dropped)
+        final bobMsgs = await bob.loadGroupMessages(groupId);
+        expect(bobMsgs.length, 0);
 
-      // Recover the network
-      network.deliveryFails = false;
-      await admin.sendGroupMessage(groupId: groupId, text: 'Recovered');
-      await pump();
+        // Recover the network
+        network.deliveryFails = false;
+        await admin.sendGroupMessage(groupId: groupId, text: 'Recovered');
+        await pump();
 
-      // Bob now receives the recovered message
-      final bobMsgsAfter = await bob.loadGroupMessages(groupId);
-      expect(bobMsgsAfter.length, 1);
-      expect(bobMsgsAfter.first.text, 'Recovered');
+        // Bob now receives the recovered message
+        final bobMsgsAfter = await bob.loadGroupMessages(groupId);
+        expect(bobMsgsAfter.length, 1);
+        expect(bobMsgsAfter.first.text, 'Recovered');
 
-      admin.dispose();
-      bob.dispose();
-    });
+        admin.dispose();
+        bob.dispose();
+      },
+    );
 
     // ---------------------------------------------------------------
     // 2. Duplicate delivery — GroupMessageListener handles idempotently
     // ---------------------------------------------------------------
-    test('duplicate delivery — GroupMessageListener handles idempotently',
-        () async {
-      // Dedup is now implemented: handleIncomingGroupMessage checks for
-      // existing messages with the same (groupId, senderPeerId, text, timestamp)
-      // before saving, so duplicate deliveries are silently dropped.
-      final admin = GroupTestUser.create(
-        peerId: 'peer-admin',
-        username: 'Admin',
-        network: network,
-      );
-      final bob = GroupTestUser.create(
-        peerId: 'peer-bob',
-        username: 'Bob',
-        network: network,
-      );
+    test(
+      'duplicate delivery — GroupMessageListener handles idempotently',
+      () async {
+        // Dedup is now implemented: handleIncomingGroupMessage checks for
+        // existing messages with the same (groupId, senderPeerId, text, timestamp)
+        // before saving, so duplicate deliveries are silently dropped.
+        final admin = GroupTestUser.create(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          network: network,
+        );
 
-      final groupId = 'grp-duplicate';
-      await admin.createGroup(groupId: groupId, name: 'Dupe Group');
-      await admin.addMember(groupId: groupId, invitee: bob);
+        final groupId = 'grp-duplicate';
+        await admin.createGroup(groupId: groupId, name: 'Dupe Group');
+        await admin.addMember(groupId: groupId, invitee: bob);
 
-      admin.start();
-      bob.start();
+        admin.start();
+        bob.start();
 
-      // Enable duplicate delivery
-      network.duplicateOnDeliver = true;
-      await admin.sendGroupMessage(groupId: groupId, text: 'Duped');
-      await pump();
+        // Enable duplicate delivery
+        network.duplicateOnDeliver = true;
+        await admin.sendGroupMessage(groupId: groupId, text: 'Duped');
+        await pump();
 
-      // Bob should have only 1 message — the duplicate is deduplicated.
-      final bobMsgs = await bob.loadGroupMessages(groupId);
-      expect(bobMsgs.length, 1);
-      expect(bobMsgs[0].text, 'Duped');
+        // Bob should have only 1 message — the duplicate is deduplicated.
+        final bobMsgs = await bob.loadGroupMessages(groupId);
+        expect(bobMsgs.length, 1);
+        expect(bobMsgs[0].text, 'Duped');
 
-      admin.dispose();
-      bob.dispose();
-    });
+        admin.dispose();
+        bob.dispose();
+      },
+    );
 
     // ---------------------------------------------------------------
     // 3. Delivery delay — messages arrive after delay
@@ -173,20 +177,33 @@ void main() {
         u.start();
       }
 
+      for (var i = 1; i < users.length; i++) {
+        await users[0].broadcastMemberAdded(
+          groupId: groupId,
+          newMember: users[i],
+        );
+      }
+      await pump();
+      network.resetCounters();
+
       // Each user sends one message simultaneously (don't await between sends)
       final sends = <Future>[];
       for (var i = 0; i < users.length; i++) {
-        sends.add(users[i].sendGroupMessage(
-          groupId: groupId,
-          text: 'Hello from User$i',
-        ));
+        sends.add(
+          users[i].sendGroupMessage(
+            groupId: groupId,
+            text: 'Hello from User$i',
+          ),
+        );
       }
       await Future.wait(sends);
       await pump(const Duration(milliseconds: 100));
 
       // Each user should have 5 total messages: 1 outgoing + 4 incoming
       for (var i = 0; i < users.length; i++) {
-        final msgs = await users[i].loadGroupMessages(groupId);
+        final msgs = (await users[i].loadGroupMessages(
+          groupId,
+        )).where((message) => !message.id.startsWith('sys-')).toList();
         expect(
           msgs.length,
           5,
@@ -241,10 +258,7 @@ void main() {
       await bob.leaveGroup(groupId);
 
       // Admin sends a message after Bob left
-      await admin.sendGroupMessage(
-        groupId: groupId,
-        text: 'After Bob left',
-      );
+      await admin.sendGroupMessage(groupId: groupId, text: 'After Bob left');
       await pump();
 
       // Charlie sees the leave timeline plus the post-leave chat message.
@@ -305,8 +319,7 @@ void main() {
       // Bob should have exactly 20 incoming messages
       final bobCount = await bob.msgRepo.getMessageCount(groupId);
       final bobMsgs = await bob.loadGroupMessages(groupId);
-      expect(bobCount, 20,
-          reason: 'Bob msgRepo count should be 20');
+      expect(bobCount, 20, reason: 'Bob msgRepo count should be 20');
       expect(bobMsgs.length, 20);
       expect(bobMsgs.every((m) => m.isIncoming), isTrue);
 

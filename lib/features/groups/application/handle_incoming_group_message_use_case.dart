@@ -10,6 +10,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
@@ -30,6 +31,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   required String text,
   required String timestamp,
   String? selfPeerId,
+  String? transportPeerId,
+  String? senderDeviceId,
   String? messageId,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
@@ -46,6 +49,11 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   );
 
   final sanitizedText = sanitizeMessageText(text);
+  final normalizedTransportPeerId = transportPeerId?.trim();
+  final resolvedTransportPeerId =
+      normalizedTransportPeerId != null && normalizedTransportPeerId.isNotEmpty
+      ? normalizedTransportPeerId
+      : senderId;
   final mediaValidation = _validateIncomingMediaDescriptors(media);
   if (!mediaValidation.isValid) {
     emitFlowEvent(
@@ -67,8 +75,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   if (appendGroupEventLogEntry == null &&
       messageId != null &&
       messageId.isNotEmpty) {
-    final existsById = await msgRepo.existsByMessageId(messageId);
-    if (existsById) {
+    final existingById = await msgRepo.getMessage(messageId);
+    if (existingById != null && !_isRepairPlaceholder(existingById)) {
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         messageId: messageId,
@@ -125,18 +133,10 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     return null;
   }
 
-  // 2. Check sender is a member (optional: allow messages from non-members
-  //    in case member list is stale; log a warning)
+  // 2. Check sender is a member. A persisted pre-removal cutoff can still
+  // admit traffic sent before removal; otherwise unknown senders fail closed.
   final member = await groupRepo.getMember(groupId, senderId);
   if (member == null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_HANDLE_INCOMING_MSG_UNKNOWN_SENDER',
-      details: {
-        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-      },
-    );
-
     final removalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
       groupId,
       senderId,
@@ -154,8 +154,49 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       return null;
     }
 
-    // Still process the message — member list may be stale or the message
-    // crossed the accepted removal boundary before the persisted cutoff.
+    if (removalCutoff == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_UNKNOWN_SENDER_REJECTED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        },
+      );
+      return null;
+    }
+
+    if (resolvedTransportPeerId != senderId) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_TRANSPORT_SENDER_MISMATCH',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'transportPeerId': resolvedTransportPeerId.length > 8
+              ? resolvedTransportPeerId.substring(0, 8)
+              : resolvedTransportPeerId,
+        },
+      );
+      return null;
+    }
+  } else if (!_isSenderDeviceBound(
+    member: member,
+    senderDeviceId: senderDeviceId,
+    transportPeerId: resolvedTransportPeerId,
+  )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_HANDLE_INCOMING_MSG_UNBOUND_DEVICE_REJECTED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+        'transportPeerId': resolvedTransportPeerId.length > 8
+            ? resolvedTransportPeerId.substring(0, 8)
+            : resolvedTransportPeerId,
+      },
+    );
+    return null;
   }
   final sanitizedSenderUsername = sanitizeUsername(senderUsername).trim();
 
@@ -174,6 +215,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         'groupId': groupId,
         'senderId': senderId,
         'senderUsername': sanitizedSenderUsername,
+        'transportPeerId': resolvedTransportPeerId,
+        'senderDeviceId': senderDeviceId,
         'text': sanitizedText,
         'timestamp': normalizedTimestamp.toIso8601String(),
         'keyEpoch': keyEpoch,
@@ -184,8 +227,8 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   }
 
   if (messageId != null && messageId.isNotEmpty) {
-    final existsById = await msgRepo.existsByMessageId(messageId);
-    if (existsById) {
+    final existingById = await msgRepo.getMessage(messageId);
+    if (existingById != null && !_isRepairPlaceholder(existingById)) {
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         messageId: messageId,
@@ -210,15 +253,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       sanitizedSenderUsername.isNotEmpty &&
       member.username?.trim() != sanitizedSenderUsername) {
     await groupRepo.saveMember(
-      GroupMember(
-        groupId: member.groupId,
-        peerId: member.peerId,
-        username: sanitizedSenderUsername,
-        role: member.role,
-        publicKey: member.publicKey,
-        mlKemPublicKey: member.mlKemPublicKey,
-        joinedAt: member.joinedAt,
-      ),
+      member.copyWith(username: sanitizedSenderUsername),
     );
   }
 
@@ -253,6 +288,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     id: resolvedMessageId,
     groupId: groupId,
     senderPeerId: senderId,
+    transportPeerId: resolvedTransportPeerId,
     senderUsername: sanitizedSenderUsername,
     text: sanitizedText,
     timestamp: normalizedTimestamp,
@@ -284,6 +320,31 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   );
 
   return message;
+}
+
+bool _isRepairPlaceholder(GroupMessage message) {
+  return message.isIncoming &&
+      (message.status == groupPendingKeyRepairStatusPendingKey ||
+          message.status == groupPendingKeyRepairStatusUndecryptable);
+}
+
+bool _isSenderDeviceBound({
+  required GroupMember member,
+  required String? senderDeviceId,
+  required String transportPeerId,
+}) {
+  if (member.devices.isEmpty) {
+    return transportPeerId == member.peerId;
+  }
+  GroupMemberDeviceIdentity? device;
+  if (senderDeviceId?.trim().isNotEmpty == true) {
+    device = member.findDeviceById(senderDeviceId);
+  } else {
+    device = member.findDeviceByTransportPeerId(transportPeerId);
+  }
+  return device != null &&
+      device.isActive &&
+      device.transportPeerId == transportPeerId;
 }
 
 DateTime _normalizeIncomingMessageTimestamp({

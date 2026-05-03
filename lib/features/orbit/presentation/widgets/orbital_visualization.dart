@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'orbital_ring_painter.dart';
@@ -33,22 +34,24 @@ class OrbitalVisualization extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final innerBorderColor = readableColors.border.withValues(alpha: 0.20);
+    final outerBorderColor = readableColors.border.withValues(alpha: 0.14);
     final ring1Friends = friends.take(_ring1Count).toList();
-    final ring2Friends =
-        friends.skip(_ring1Count).take(_ring2Count).toList();
+    final ring2Friends = friends.skip(_ring1Count).take(_ring2Count).toList();
     final overflowCount = friends.length > 13 ? friends.length - 13 : 0;
 
     return Column(
       children: [
         // Section title
-        const Padding(
-          padding: EdgeInsets.only(bottom: 24),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 24),
           child: Text(
             'YOUR INNER CIRCLE',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: Color(0x66FFFFFF), // rgba(255,255,255,0.4)
+              color: readableColors.textMuted,
               letterSpacing: 1,
             ),
           ),
@@ -63,9 +66,7 @@ class OrbitalVisualization extends StatelessWidget {
             children: [
               // Dashed rings
               Positioned.fill(
-                child: CustomPaint(
-                  painter: OrbitalRingPainter(),
-                ),
+                child: CustomPaint(painter: OrbitalRingPainter()),
               ),
 
               // Center avatar
@@ -96,7 +97,7 @@ class OrbitalVisualization extends StatelessWidget {
                     size: 38,
                     globalIndex: i,
                     borderWidth: 1.5,
-                    borderColor: const Color(0x1FFFFFFF),
+                    borderColor: innerBorderColor,
                   ),
                 );
               }),
@@ -117,7 +118,7 @@ class OrbitalVisualization extends StatelessWidget {
                     size: 30,
                     globalIndex: _ring1Count + i,
                     borderWidth: 1,
-                    borderColor: const Color(0x14FFFFFF),
+                    borderColor: outerBorderColor,
                   ),
                 );
               }),
@@ -154,8 +155,7 @@ class OrbitalVisualization extends StatelessWidget {
   }) {
     if (count == 0) return Offset.zero;
     final offset = ringIndex * 15; // degrees stagger per ring
-    final angle =
-        (index * 360 / count + offset - 90) * (pi / 180);
+    final angle = (index * 360 / count + offset - 90) * (pi / 180);
     return Offset(cos(angle) * radius, sin(angle) * radius);
   }
 }

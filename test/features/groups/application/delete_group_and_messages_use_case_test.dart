@@ -85,6 +85,34 @@ void main() {
       expect(bridge.commandLog, contains('group:leave'));
     });
 
+    test('LP003 active delete dispatches one group leave', () async {
+      final now = DateTime.now().toUtc();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Active Group',
+          type: GroupType.chat,
+          topicName: '/mknoon/group/$groupId',
+          createdBy: 'creator-peer',
+          myRole: GroupRole.member,
+          createdAt: now,
+        ),
+      );
+
+      await deleteGroupAndMessages(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupMessageRepo: groupMessageRepo,
+        groupId: groupId,
+      );
+
+      expect(
+        bridge.commandLog.where((command) => command == 'group:leave'),
+        hasLength(1),
+      );
+      expect(await groupRepo.getGroup(groupId), isNull);
+    });
+
     test(
       'dissolved local cleanup deletes group state without publishing group leave',
       () async {
@@ -147,6 +175,63 @@ void main() {
         expect(await groupRepo.getMembers(groupId), isEmpty);
         expect(await groupRepo.getLatestKey(groupId), isNull);
         expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
+
+    test(
+      'LP003 dissolved local cleanup does not publish a second group leave',
+      () async {
+        final now = DateTime.now().toUtc();
+        bridge.commandLog.add(
+          'group:leave',
+        ); // Prior group_dissolved unsubscribe.
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Dissolved Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdBy: 'creator-peer',
+            myRole: GroupRole.member,
+            createdAt: now,
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'creator-peer',
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: 'creator-peer',
+            username: 'Creator',
+            role: MemberRole.admin,
+            joinedAt: now,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-1',
+            createdAt: now,
+          ),
+        );
+
+        await deleteGroupAndMessages(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupMessageRepo: groupMessageRepo,
+          groupId: groupId,
+          deleteLocallyIfDissolved: true,
+        );
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(await groupRepo.getGroup(groupId), isNull);
+        expect(await groupRepo.getMembers(groupId), isEmpty);
+        expect(await groupRepo.getLatestKey(groupId), isNull);
       },
     );
 

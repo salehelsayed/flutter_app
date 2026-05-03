@@ -1,12 +1,16 @@
 import 'dart:convert';
 
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
+import '../../../shared/fakes/in_memory_group_repository.dart';
 
 const _testGroupConfig = {
   'name': 'Book Club',
@@ -23,7 +27,7 @@ const _testGroupConfig = {
     {
       'peerId': '12D3KooWBob',
       'username': 'Bob',
-      'role': 'member',
+      'role': 'writer',
       'publicKey': 'bobPubKey64',
       'mlKemPublicKey': 'bobMlKem64',
     },
@@ -32,15 +36,149 @@ const _testGroupConfig = {
   'createdAt': '2026-03-02T00:00:00.000Z',
 };
 
+const _deviceBoundGroupConfig = {
+  'name': 'Book Club',
+  'groupType': 'chat',
+  'description': 'A group for book lovers',
+  'members': [
+    {
+      'peerId': '12D3KooWAlice',
+      'username': 'Alice',
+      'role': 'admin',
+      'publicKey': 'alicePubKey64',
+      'mlKemPublicKey': 'aliceMlKem64',
+      'devices': [
+        {
+          'deviceId': 'alice-device-1',
+          'transportPeerId': 'alice-device-1',
+          'deviceSigningPublicKey': 'alicePubKey64',
+          'mlKemPublicKey': 'aliceMlKem64',
+          'keyPackageId': 'alice-kp-1',
+          'status': 'active',
+        },
+      ],
+    },
+    {
+      'peerId': '12D3KooWBob',
+      'username': 'Bob',
+      'role': 'writer',
+      'publicKey': 'bobPubKey64',
+      'mlKemPublicKey': 'bobMlKem64',
+      'devices': [
+        {
+          'deviceId': 'bob-device-1',
+          'transportPeerId': 'bob-device-1',
+          'deviceSigningPublicKey': 'bobPubKey64',
+          'mlKemPublicKey': 'bobMlKem64',
+          'keyPackageId': 'bob-kp-1',
+          'keyPackagePublicMaterial': 'bob-kpm-1',
+          'status': 'active',
+        },
+      ],
+    },
+  ],
+  'createdBy': '12D3KooWAlice',
+  'createdAt': '2026-03-02T00:00:00.000Z',
+};
+
+const _parallelGroupConfig = {
+  'name': 'Book Club',
+  'groupType': 'chat',
+  'description': 'A group for book lovers',
+  'members': [
+    {
+      'peerId': '12D3KooWAlice',
+      'username': 'Alice',
+      'role': 'admin',
+      'publicKey': 'alicePubKey64',
+      'mlKemPublicKey': 'aliceMlKem64',
+    },
+    {
+      'peerId': '12D3KooWBob',
+      'username': 'Bob',
+      'role': 'writer',
+      'publicKey': 'bobPubKey64',
+      'mlKemPublicKey': 'bobMlKem64',
+    },
+    {
+      'peerId': '12D3KooWCharlie',
+      'username': 'Charlie',
+      'role': 'writer',
+      'publicKey': 'charliePubKey64',
+      'mlKemPublicKey': 'charlieMlKem64',
+    },
+    {
+      'peerId': '12D3KooWDave',
+      'username': 'Dave',
+      'role': 'writer',
+      'publicKey': 'davePubKey64',
+      'mlKemPublicKey': 'daveMlKem64',
+    },
+    {
+      'peerId': '12D3KooWEvil',
+      'username': 'Evil',
+      'role': 'writer',
+      'publicKey': 'evilPubKey64',
+      'mlKemPublicKey': 'badKey',
+    },
+  ],
+  'createdBy': '12D3KooWAlice',
+  'createdAt': '2026-03-02T00:00:00.000Z',
+};
+
+final _uuidV4Pattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+
+Future<InMemoryGroupRepository> _repoFromConfig(
+  Map<String, dynamic> groupConfig, {
+  String groupId = 'grp-abc123',
+  String groupKey = 'base64GroupKey==',
+  int keyEpoch = 1,
+}) async {
+  final repo = InMemoryGroupRepository();
+  final createdAt =
+      DateTime.tryParse(groupConfig['createdAt'] as String? ?? '')?.toUtc() ??
+      DateTime.utc(2026, 3, 2);
+  await repo.saveGroup(
+    GroupModel(
+      id: groupId,
+      name: groupConfig['name'] as String? ?? 'Book Club',
+      type: GroupType.fromValue(groupConfig['groupType'] as String? ?? 'chat'),
+      topicName: '/mknoon/group/$groupId',
+      description: groupConfig['description'] as String?,
+      createdAt: createdAt,
+      createdBy: groupConfig['createdBy'] as String? ?? '12D3KooWAlice',
+      myRole: GroupRole.admin,
+      lastMembershipEventAt: createdAt,
+      lastMetadataEventAt: createdAt,
+    ),
+  );
+  for (final member in groupConfig['members'] as List<dynamic>? ?? const []) {
+    await repo.saveMember(
+      GroupMember.fromConfigMap(
+        groupId: groupId,
+        map: Map<String, dynamic>.from(member as Map),
+        joinedAt: createdAt,
+      ),
+    );
+  }
+  await repo.saveKey(
+    GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: keyEpoch,
+      encryptedKey: groupKey,
+      createdAt: createdAt,
+    ),
+  );
+  return repo;
+}
+
 /// A [FakeP2PService] that delays each sendMessage by [delay].
 class _SlowFakeP2PService extends FakeP2PService {
   final Duration delay;
 
-  _SlowFakeP2PService({
-    required this.delay,
-    super.initialState,
-    super.sendMessageResult,
-  });
+  _SlowFakeP2PService({required this.delay, super.initialState});
 
   @override
   Future<bool> sendMessage(String peerId, String message) async {
@@ -116,9 +254,12 @@ void main() {
         final result = await sendGroupInvite(
           p2pService: p2pService,
           bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
           recipientPeerId: '12D3KooWBob',
           recipientMlKemPublicKey: 'bobMlKem64',
           senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
           senderUsername: 'Alice',
           groupId: 'grp-abc123',
           groupKey: 'base64GroupKey==',
@@ -145,6 +286,127 @@ void main() {
       },
     );
 
+    test(
+      'device-bound invite sends to the registered recipient device transport',
+      () async {
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(_deviceBoundGroupConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          recipientDeviceId: 'bob-device-1',
+          senderDeviceId: 'alice-device-1',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _deviceBoundGroupConfig,
+        );
+
+        expect(result, SendGroupInviteResult.success);
+        expect(p2pService.lastSendMessagePeerId, 'bob-device-1');
+
+        final envelope = GroupInvitePayload.parseEncryptedEnvelope(
+          p2pService.lastSendMessageContent!,
+        )!;
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final payload = GroupInvitePayload.fromInnerJson(
+          encrypted['ciphertext'] as String,
+        )!;
+        expect(payload.recipientPeerId, '12D3KooWBob');
+        expect(payload.recipientDeviceId, 'bob-device-1');
+        expect(payload.recipientTransportPeerId, 'bob-device-1');
+        expect(payload.recipientKeyPackageId, 'bob-kp-1');
+        expect(payload.welcomeKeyPackage, isNotNull);
+        expect(payload.welcomeKeyPackage!.packageId, 'bob-kp-1');
+        expect(
+          payload.invitePolicy.welcomeKeyPackageId,
+          payload.welcomeKeyPackage!.packageId,
+        );
+        expect(payload.senderDeviceId, 'alice-device-1');
+      },
+    );
+
+    test(
+      'EK011 rejects weak recipient key-package material before signing or encryption',
+      () async {
+        final weakPackageConfig = {
+          ..._deviceBoundGroupConfig,
+          'members': [
+            (_deviceBoundGroupConfig['members'] as List<dynamic>)[0],
+            {
+              ...((_deviceBoundGroupConfig['members'] as List<dynamic>)[1]
+                  as Map<String, dynamic>),
+              'devices': [
+                {
+                  ...((((_deviceBoundGroupConfig['members'] as List<dynamic>)[1]
+                              as Map<String, dynamic>)['devices']
+                          as List<dynamic>)[0]
+                      as Map<String, dynamic>),
+                  'keyPackagePublicMaterial': 'weak',
+                },
+              ],
+            },
+          ],
+        };
+
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(weakPackageConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          recipientDeviceId: 'bob-device-1',
+          senderDeviceId: 'alice-device-1',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: weakPackageConfig,
+        );
+
+        expect(result, SendGroupInviteResult.invalidPayload);
+        expect(bridge.commandLog, isNot(contains('payload.sign')));
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'device-bound invite rejects an unregistered requested recipient device before encryption',
+      () async {
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          recipientDeviceId: 'bob-device-2',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _deviceBoundGroupConfig,
+        );
+
+        expect(result, SendGroupInviteResult.invalidPayload);
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
     // --- Cycle 5.2 ---
     test(
       'returns encryptionRequired when recipientMlKemPublicKey is null',
@@ -152,9 +414,12 @@ void main() {
         final result = await sendGroupInvite(
           p2pService: p2pService,
           bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
           recipientPeerId: '12D3KooWBob',
           recipientMlKemPublicKey: null,
           senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
           senderUsername: 'Alice',
           groupId: 'grp-abc123',
           groupKey: 'base64GroupKey==',
@@ -174,9 +439,12 @@ void main() {
       final result = await sendGroupInvite(
         p2pService: stoppedP2P,
         bridge: bridge,
+        groupRepo: await _repoFromConfig(_testGroupConfig),
         recipientPeerId: '12D3KooWBob',
         recipientMlKemPublicKey: 'bobMlKem64',
         senderPeerId: '12D3KooWAlice',
+        senderPublicKey: 'alicePubKey64',
+        senderPrivateKey: 'alicePrivateKey64',
         senderUsername: 'Alice',
         groupId: 'grp-abc123',
         groupKey: 'base64GroupKey==',
@@ -195,9 +463,12 @@ void main() {
       final result = await sendGroupInvite(
         p2pService: p2pService,
         bridge: failBridge,
+        groupRepo: await _repoFromConfig(_testGroupConfig),
         recipientPeerId: '12D3KooWBob',
         recipientMlKemPublicKey: 'bobMlKem64',
         senderPeerId: '12D3KooWAlice',
+        senderPublicKey: 'alicePubKey64',
+        senderPrivateKey: 'alicePrivateKey64',
         senderUsername: 'Alice',
         groupId: 'grp-abc123',
         groupKey: 'base64GroupKey==',
@@ -218,9 +489,12 @@ void main() {
         final result = await sendGroupInvite(
           p2pService: p2pService,
           bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
           recipientPeerId: '12D3KooWBob',
           recipientMlKemPublicKey: 'bobMlKem64',
           senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
           senderUsername: 'Alice',
           groupId: 'grp-abc123',
           groupKey: 'base64GroupKey==',
@@ -240,9 +514,12 @@ void main() {
       final result = await sendGroupInvite(
         p2pService: p2pService,
         bridge: bridge,
+        groupRepo: await _repoFromConfig(_testGroupConfig),
         recipientPeerId: '12D3KooWBob',
         recipientMlKemPublicKey: 'bobMlKem64',
         senderPeerId: '12D3KooWAlice',
+        senderPublicKey: 'alicePubKey64',
+        senderPrivateKey: 'alicePrivateKey64',
         senderUsername: 'Alice',
         groupId: 'grp-abc123',
         groupKey: 'base64GroupKey==',
@@ -272,9 +549,12 @@ void main() {
         final result = await sendGroupInvite(
           p2pService: p2pService,
           bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
           recipientPeerId: '12D3KooWBob',
           recipientMlKemPublicKey: 'bobMlKem64',
           senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
           senderUsername: 'Alice',
           groupId: 'grp-abc123',
           groupKey: 'base64GroupKey==',
@@ -312,16 +592,6 @@ void main() {
     test(
       'keeps join material and policy details inside encrypted invite payload',
       () async {
-        final sensitiveConfig = <String, dynamic>{
-          ..._testGroupConfig,
-          'allowedDevices': ['receiver-phone-device'],
-          'invitePermissions': {
-            'assignedRole': 'writer',
-            'canInviteOthers': false,
-          },
-          'joinMaterialRef': {'kind': 'inlineGroupKey', 'keyEpoch': 1},
-        };
-
         for (final directSendSucceeds in [true, false]) {
           final scopedP2P = FakeP2PService(
             initialState: const NodeState(isStarted: true),
@@ -333,14 +603,17 @@ void main() {
           final result = await sendGroupInvite(
             p2pService: scopedP2P,
             bridge: bridge,
+            groupRepo: await _repoFromConfig(_testGroupConfig),
             recipientPeerId: '12D3KooWBob',
             recipientMlKemPublicKey: 'bobMlKem64',
             senderPeerId: '12D3KooWAlice',
+            senderPublicKey: 'alicePubKey64',
+            senderPrivateKey: 'alicePrivateKey64',
             senderUsername: 'Alice',
             groupId: 'grp-abc123',
             groupKey: 'base64GroupKey==',
             keyEpoch: 1,
-            groupConfig: sensitiveConfig,
+            groupConfig: _testGroupConfig,
           );
 
           expect(result, SendGroupInviteResult.success);
@@ -374,6 +647,7 @@ void main() {
           expect(cleartextPreview, isNot(contains('allowedDevices')));
           expect(cleartextPreview, isNot(contains('invitePermissions')));
           expect(cleartextPreview, isNot(contains('joinMaterialRef')));
+          expect(cleartextPreview, isNot(contains('invitePolicy')));
 
           final inner =
               jsonDecode(encrypted['ciphertext'] as String)
@@ -381,13 +655,19 @@ void main() {
           expect(inner['groupKey'], 'base64GroupKey==');
           expect(inner['keyEpoch'], 1);
           expect(inner['recipientPeerId'], '12D3KooWBob');
+          expect(inner['invitePolicy'], isA<Map<String, dynamic>>());
+
+          final policy = inner['invitePolicy'] as Map<String, dynamic>;
+          expect(policy['allowedDevices'], ['12D3KooWBob']);
+          expect(policy['invitePermissions']['assignedRole'], 'writer');
+          expect(policy['invitePermissions']['canInviteOthers'], isFalse);
+          expect(policy['joinMaterialRef']['kind'], 'inlineGroupKey');
+          expect(policy['joinMaterialRef']['keyEpoch'], 1);
 
           final config = inner['groupConfig'] as Map<String, dynamic>;
-          expect(config['allowedDevices'], ['receiver-phone-device']);
-          expect(config['invitePermissions']['assignedRole'], 'writer');
-          expect(config['invitePermissions']['canInviteOthers'], isFalse);
-          expect(config['joinMaterialRef']['kind'], 'inlineGroupKey');
-          expect(config['joinMaterialRef']['keyEpoch'], 1);
+          expect(config.containsKey('allowedDevices'), isFalse);
+          expect(config.containsKey('invitePermissions'), isFalse);
+          expect(config.containsKey('joinMaterialRef'), isFalse);
 
           final members = config['members'] as List<dynamic>;
           final alice = members.first as Map<String, dynamic>;
@@ -397,16 +677,279 @@ void main() {
         }
       },
     );
+
+    test(
+      'SP003 direct invite ids are unique UUID v4 values in both envelopes',
+      () async {
+        final inviteIds = <String>{};
+
+        for (var i = 0; i < 2; i++) {
+          final result = await sendGroupInvite(
+            p2pService: p2pService,
+            bridge: bridge,
+            groupRepo: await _repoFromConfig(_testGroupConfig),
+            recipientPeerId: '12D3KooWBob',
+            recipientMlKemPublicKey: 'bobMlKem64',
+            senderPeerId: '12D3KooWAlice',
+            senderPublicKey: 'alicePubKey64',
+            senderPrivateKey: 'alicePrivateKey64',
+            senderUsername: 'Alice',
+            groupId: 'grp-abc123',
+            groupKey: 'base64GroupKey==',
+            keyEpoch: 1,
+            groupConfig: _testGroupConfig,
+          );
+
+          expect(result, SendGroupInviteResult.success);
+          final envelope =
+              jsonDecode(p2pService.lastSendMessageContent!)
+                  as Map<String, dynamic>;
+          final inviteId = envelope['id'] as String;
+          expect(_uuidV4Pattern.hasMatch(inviteId), isTrue);
+          expect(inviteIds.add(inviteId), isTrue);
+
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          final inner =
+              jsonDecode(encrypted['ciphertext'] as String)
+                  as Map<String, dynamic>;
+          expect(inner['id'], inviteId);
+        }
+      },
+    );
+
+    test(
+      'IJ001 returns invalidPayload before encryption or delivery when policy derivation fails',
+      () async {
+        final invalidConfig = <String, dynamic>{
+          ..._testGroupConfig,
+          'members': [(_testGroupConfig['members'] as List<dynamic>).first],
+        };
+
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(invalidConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: invalidConfig,
+        );
+
+        expect(result, SendGroupInviteResult.invalidPayload);
+        expect(bridge.sendCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test('IJ005 direct invites default to single-use reuse policy', () async {
+      final result = await sendGroupInvite(
+        p2pService: p2pService,
+        bridge: bridge,
+        groupRepo: await _repoFromConfig(_testGroupConfig),
+        recipientPeerId: '12D3KooWBob',
+        recipientMlKemPublicKey: 'bobMlKem64',
+        senderPeerId: '12D3KooWAlice',
+        senderPublicKey: 'alicePubKey64',
+        senderPrivateKey: 'alicePrivateKey64',
+        senderUsername: 'Alice',
+        groupId: 'grp-abc123',
+        groupKey: 'base64GroupKey==',
+        keyEpoch: 1,
+        groupConfig: _testGroupConfig,
+      );
+
+      expect(result, SendGroupInviteResult.success);
+
+      final envelope =
+          jsonDecode(p2pService.lastSendMessageContent!)
+              as Map<String, dynamic>;
+      final cleartextEnvelope = Map<String, dynamic>.from(envelope)
+        ..remove('encrypted');
+      expect(cleartextEnvelope.toString(), isNot(contains('reusePolicy')));
+      final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+      final inner =
+          jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+      final policy = inner['invitePolicy'] as Map<String, dynamic>;
+      expect(policy['reusePolicy'], {'mode': 'singleUse'});
+    });
+
+    test('IJ005 direct invites can explicitly request multi-use', () async {
+      final result = await sendGroupInvite(
+        p2pService: p2pService,
+        bridge: bridge,
+        groupRepo: await _repoFromConfig(_testGroupConfig),
+        recipientPeerId: '12D3KooWBob',
+        recipientMlKemPublicKey: 'bobMlKem64',
+        senderPeerId: '12D3KooWAlice',
+        senderPublicKey: 'alicePubKey64',
+        senderPrivateKey: 'alicePrivateKey64',
+        senderUsername: 'Alice',
+        groupId: 'grp-abc123',
+        groupKey: 'base64GroupKey==',
+        keyEpoch: 1,
+        groupConfig: _testGroupConfig,
+        reusePolicy: GroupInviteReusePolicy.multiUse,
+      );
+
+      expect(result, SendGroupInviteResult.success);
+
+      final envelope =
+          jsonDecode(p2pService.lastSendMessageContent!)
+              as Map<String, dynamic>;
+      final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+      final inner =
+          jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
+      final payload = GroupInvitePayload.fromInnerJson(jsonEncode(inner));
+      expect(payload, isNotNull);
+      expect(
+        payload!.invitePolicy.reusePolicy,
+        GroupInviteReusePolicy.multiUse,
+      );
+    });
+
+    test(
+      'IJ002 signs canonical invite payload before encryption and delivery',
+      () async {
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'signed-invite-by-alice',
+        };
+
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
+
+        expect(result, SendGroupInviteResult.success);
+        expect(bridge.commandLog, contains('payload.sign'));
+        expect(
+          bridge.commandLog.indexOf('payload.sign'),
+          lessThan(bridge.commandLog.indexOf('message.encrypt')),
+        );
+
+        final signRequest = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .firstWhere((message) => message['cmd'] == 'payload.sign');
+        final signPayload = signRequest['payload'] as Map<String, dynamic>;
+        expect(signPayload['privateKey'], 'alicePrivateKey64');
+
+        final sentContent = p2pService.lastSendMessageContent!;
+        final envelope = jsonDecode(sentContent) as Map<String, dynamic>;
+        final cleartextEnvelope = Map<String, dynamic>.from(envelope)
+          ..remove('encrypted');
+        expect(
+          cleartextEnvelope.toString(),
+          isNot(contains('inviteSignature')),
+        );
+        expect(cleartextEnvelope.toString(), isNot(contains('signedPayload')));
+        expect(cleartextEnvelope.toString(), isNot(contains('signature')));
+
+        final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+        final inner =
+            jsonDecode(encrypted['ciphertext'] as String)
+                as Map<String, dynamic>;
+        final inviteSignature =
+            inner['inviteSignature'] as Map<String, dynamic>;
+        expect(inviteSignature['signatureAlgorithm'], 'ed25519');
+        expect(inviteSignature['signature'], 'signed-invite-by-alice');
+        expect(inviteSignature['signedPayload'], signPayload['data']);
+      },
+    );
+
+    test(
+      'PREREQ-INVITER-FRESHNESS refuses to sign invite from stale caller config after inviter removal or invite permission revocation',
+      () async {
+        final currentConfigWithoutAlice = {
+          ..._testGroupConfig,
+          'members': [(_testGroupConfig['members'] as List<dynamic>)[1]],
+        };
+        final groupRepo = await _repoFromConfig(currentConfigWithoutAlice);
+
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: groupRepo,
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
+
+        expect(result, SendGroupInviteResult.invalidPayload);
+        expect(bridge.commandLog, isNot(contains('payload.sign')));
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'IJ002 returns invalidPayload without encryption or delivery when invite signing fails',
+      () async {
+        bridge.responses['payload.sign'] = {
+          'ok': false,
+          'errorCode': 'SIGN_FAILED',
+        };
+
+        final result = await sendGroupInvite(
+          p2pService: p2pService,
+          bridge: bridge,
+          groupRepo: await _repoFromConfig(_testGroupConfig),
+          recipientPeerId: '12D3KooWBob',
+          recipientMlKemPublicKey: 'bobMlKem64',
+          senderPeerId: '12D3KooWAlice',
+          senderPublicKey: 'alicePubKey64',
+          senderPrivateKey: 'alicePrivateKey64',
+          senderUsername: 'Alice',
+          groupId: 'grp-abc123',
+          groupKey: 'base64GroupKey==',
+          keyEpoch: 1,
+          groupConfig: _testGroupConfig,
+        );
+
+        expect(result, SendGroupInviteResult.invalidPayload);
+        expect(bridge.commandLog, contains('payload.sign'));
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
   });
 
   group('sendGroupInvitesInParallel', () {
     const sharedArgs = (
       senderPeerId: '12D3KooWAlice',
+      senderPublicKey: 'alicePubKey64',
+      senderPrivateKey: 'alicePrivateKey64',
       senderUsername: 'Alice',
       groupId: 'grp-abc123',
       groupKey: 'base64GroupKey==',
       keyEpoch: 1,
-      groupConfig: _testGroupConfig,
+      groupConfig: _parallelGroupConfig,
     );
 
     test(
@@ -428,7 +971,10 @@ void main() {
         final result = await sendGroupInvitesInParallel(
           p2pService: p2pService,
           bridge: bridge,
+          groupRepo: await _repoFromConfig(sharedArgs.groupConfig),
           senderPeerId: sharedArgs.senderPeerId,
+          senderPublicKey: sharedArgs.senderPublicKey,
+          senderPrivateKey: sharedArgs.senderPrivateKey,
           senderUsername: sharedArgs.senderUsername,
           groupId: sharedArgs.groupId,
           groupKey: sharedArgs.groupKey,
@@ -471,7 +1017,10 @@ void main() {
       final result = await sendGroupInvitesInParallel(
         p2pService: slowP2P,
         bridge: bridge,
+        groupRepo: await _repoFromConfig(sharedArgs.groupConfig),
         senderPeerId: sharedArgs.senderPeerId,
+        senderPublicKey: sharedArgs.senderPublicKey,
+        senderPrivateKey: sharedArgs.senderPrivateKey,
         senderUsername: sharedArgs.senderUsername,
         groupId: sharedArgs.groupId,
         groupKey: sharedArgs.groupKey,
@@ -511,7 +1060,10 @@ void main() {
       final result = await sendGroupInvitesInParallel(
         p2pService: p2pService,
         bridge: bridge,
+        groupRepo: await _repoFromConfig(sharedArgs.groupConfig),
         senderPeerId: sharedArgs.senderPeerId,
+        senderPublicKey: sharedArgs.senderPublicKey,
+        senderPrivateKey: sharedArgs.senderPrivateKey,
         senderUsername: sharedArgs.senderUsername,
         groupId: sharedArgs.groupId,
         groupKey: sharedArgs.groupKey,
@@ -533,7 +1085,10 @@ void main() {
       final result = await sendGroupInvitesInParallel(
         p2pService: p2pService,
         bridge: bridge,
+        groupRepo: await _repoFromConfig(sharedArgs.groupConfig),
         senderPeerId: sharedArgs.senderPeerId,
+        senderPublicKey: sharedArgs.senderPublicKey,
+        senderPrivateKey: sharedArgs.senderPrivateKey,
         senderUsername: sharedArgs.senderUsername,
         groupId: sharedArgs.groupId,
         groupKey: sharedArgs.groupKey,
@@ -571,7 +1126,10 @@ void main() {
       final result = await sendGroupInvitesInParallel(
         p2pService: p2pService,
         bridge: throwBridge,
+        groupRepo: await _repoFromConfig(sharedArgs.groupConfig),
         senderPeerId: sharedArgs.senderPeerId,
+        senderPublicKey: sharedArgs.senderPublicKey,
+        senderPrivateKey: sharedArgs.senderPrivateKey,
         senderUsername: sharedArgs.senderUsername,
         groupId: sharedArgs.groupId,
         groupKey: sharedArgs.groupKey,

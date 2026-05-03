@@ -11,6 +11,8 @@ void main() {
 
   tearDown(() {
     flowEventLoggingEnabled = kDebugMode;
+    debugSetFlowEventSink(null);
+    debugPrint = debugPrintThrottled;
   });
 
   // ---------------------------------------------------------------------------
@@ -46,11 +48,7 @@ void main() {
         if (message != null) output.add(message);
       };
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'SHOULD_NOT_APPEAR',
-        details: {},
-      );
+      emitFlowEvent(layer: 'FL', event: 'SHOULD_NOT_APPEAR', details: {});
 
       debugPrint = debugPrintThrottled;
 
@@ -90,11 +88,7 @@ void main() {
         if (message != null) output.add(message);
       };
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'TS_TEST',
-        details: {},
-      );
+      emitFlowEvent(layer: 'FL', event: 'TS_TEST', details: {});
 
       debugPrint = debugPrintThrottled;
 
@@ -130,6 +124,45 @@ void main() {
       expect(details['count'], equals(42));
       expect(details['flag'], equals(true));
       expect(details['name'], equals('test'));
+    });
+
+    test('ER005 redacts secrets and multiaddrs before sink and logs', () {
+      flowEventLoggingEnabled = true;
+
+      final sinkEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(sinkEvents.add);
+      final output = <String>[];
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) output.add(message);
+      };
+
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ER005_SECRET_SURFACE',
+        details: {
+          'privateKeyHex': 'deadbeef-private-key',
+          'ciphertext': 'raw-ciphertext-blob',
+          'peerId': '12D3KooWLongSensitivePeerIdentifier',
+          'errorMessage':
+              'failed privateKey=deadbeef ciphertext=raw-ciphertext-blob '
+              '/ip4/10.0.0.1/tcp/4001/p2p/12D3KooWRelayPeer',
+          'nested': {'secretKey': 'mlkem-secret-key', 'nonce': 'nonce-secret'},
+        },
+      );
+
+      final sinkPayload = jsonEncode(sinkEvents.single);
+      final logPayload = output.single.substring('[FLOW] '.length);
+
+      for (final payload in [sinkPayload, logPayload]) {
+        expect(payload, isNot(contains('deadbeef-private-key')));
+        expect(payload, isNot(contains('raw-ciphertext-blob')));
+        expect(payload, isNot(contains('12D3KooWLongSensitivePeerIdentifier')));
+        expect(payload, isNot(contains('/ip4/10.0.0.1')));
+        expect(payload, isNot(contains('mlkem-secret-key')));
+        expect(payload, isNot(contains('nonce-secret')));
+        expect(payload, contains('[redacted]'));
+        expect(payload, contains('[redacted:multiaddr]'));
+      }
     });
   });
 

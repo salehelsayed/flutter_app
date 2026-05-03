@@ -3,8 +3,12 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
+import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
 
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -23,41 +27,87 @@ void main() {
     await runGroupMessagesTablesMigration(db);
     await runGroupQuotedMessageIdMigration(db);
     await runGroupMessageReliabilityColumnsMigration(db);
+    await runGroupMessageTransportPeerIdMigration(db);
+    await runGroupSyncReceiptsMigration(db);
 
-    repo = GroupMessageRepositoryImpl(
-      dbInsertGroupMessage: (row) => dbInsertGroupMessage(db, row),
-      dbLoadGroupMessagesPage: (groupId, {int limit = 50, int offset = 0}) =>
-          dbLoadGroupMessagesPage(db, groupId, limit: limit, offset: offset),
-      dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
-      dbLoadLatestGroupMessage: (groupId) =>
-          dbLoadLatestGroupMessage(db, groupId),
-      dbUpdateGroupMessageStatus: (id, status) =>
-          dbUpdateGroupMessageStatus(db, id, status),
-      dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
-      dbCountUnreadGroupMessages: (groupId) =>
-          dbCountUnreadGroupMessages(db, groupId),
-      dbCountTotalUnreadGroupMessages: () =>
-          dbCountTotalUnreadGroupMessages(db),
-      dbMarkGroupMessagesAsRead: (groupId) =>
-          dbMarkGroupMessagesAsRead(db, groupId),
-      dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(db, id),
-      dbExistsGroupMessageByContent: (groupId, senderPeerId, text, timestamp) =>
-          dbExistsGroupMessageByContent(
-            db,
-            groupId,
-            senderPeerId,
-            text,
-            timestamp,
-          ),
-      dbDeleteGroupMessagesForGroup: (groupId) =>
-          dbDeleteGroupMessagesForGroup(db, groupId),
-      dbLoadGroupThreadSummaries: (groupIds) =>
-          dbLoadGroupThreadSummaries(db, groupIds),
-      dbLoadFailedOutgoingGroupMessagesFn: () =>
-          dbLoadFailedOutgoingGroupMessages(db),
-      dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
-          dbTransitionGroupSendingToFailed(db, olderThan: olderThan),
-    );
+    GroupMessageRepositoryImpl buildRepo(
+      dynamic executor, {
+      bool enableTransactions = false,
+    }) {
+      return GroupMessageRepositoryImpl(
+        dbInsertGroupMessage: (row) => dbInsertGroupMessage(executor, row),
+        dbLoadGroupMessagesPage: (groupId, {int limit = 50, int offset = 0}) =>
+            dbLoadGroupMessagesPage(
+              executor,
+              groupId,
+              limit: limit,
+              offset: offset,
+            ),
+        dbLoadGroupMessage: (id) => dbLoadGroupMessage(executor, id),
+        dbLoadLatestGroupMessage: (groupId) =>
+            dbLoadLatestGroupMessage(executor, groupId),
+        dbUpdateGroupMessageStatus: (id, status) =>
+            dbUpdateGroupMessageStatus(executor, id, status),
+        dbCountGroupMessages: (groupId) =>
+            dbCountGroupMessages(executor, groupId),
+        dbCountUnreadGroupMessages: (groupId) =>
+            dbCountUnreadGroupMessages(executor, groupId),
+        dbCountTotalUnreadGroupMessages: () =>
+            dbCountTotalUnreadGroupMessages(executor),
+        dbMarkGroupMessagesAsRead: (groupId) =>
+            dbMarkGroupMessagesAsRead(executor, groupId),
+        dbDeleteGroupMessage: (id) => dbDeleteGroupMessage(executor, id),
+        dbExistsGroupMessageByContent:
+            (groupId, senderPeerId, text, timestamp) =>
+                dbExistsGroupMessageByContent(
+                  executor,
+                  groupId,
+                  senderPeerId,
+                  text,
+                  timestamp,
+                ),
+        dbDeleteGroupMessagesForGroup: (groupId) =>
+            dbDeleteGroupMessagesForGroup(executor, groupId),
+        dbLoadGroupThreadSummaries: (groupIds) =>
+            dbLoadGroupThreadSummaries(executor, groupIds),
+        dbLoadFailedOutgoingGroupMessagesFn: () =>
+            dbLoadFailedOutgoingGroupMessages(executor),
+        dbRecoverStuckSendingGroupMessagesFn: ({DateTime? olderThan}) =>
+            dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
+        dbLoadGroupInboxCursorFn: (groupId) async {
+          final row = await dbLoadGroupInboxCursor(executor, groupId);
+          return row?['cursor'] as String?;
+        },
+        dbLoadGroupMessageReceiptsFn:
+            (groupId, messageId, {String? receiptType}) =>
+                dbLoadGroupMessageReceipts(
+                  executor,
+                  groupId: groupId,
+                  messageId: messageId,
+                  receiptType: receiptType,
+                ),
+        dbRunGroupInboxPageTransactionFn: enableTransactions
+            ? ({
+                required groupId,
+                required nextCursor,
+                required apply,
+                required receipts,
+                required markReadMessageIds,
+              }) => dbApplyGroupInboxPageTransaction(
+                db,
+                groupId: groupId,
+                nextCursor: nextCursor,
+                receiptRows: () =>
+                    receipts.map((receipt) => receipt.toMap()).toList(),
+                markReadMessageIds: () => markReadMessageIds,
+                apply: (transactionExecutor) =>
+                    apply(buildRepo(transactionExecutor)),
+              )
+            : null,
+      );
+    }
+
+    repo = buildRepo(db, enableTransactions: true);
   });
 
   tearDown(() async {
@@ -70,6 +120,7 @@ void main() {
     String id = 'msg-001',
     String groupId = 'group-1',
     String senderPeerId = 'peer-sender',
+    String? transportPeerId,
     String? senderUsername = 'Alice',
     String text = 'Hello group',
     DateTime? timestamp,
@@ -84,6 +135,7 @@ void main() {
       id: id,
       groupId: groupId,
       senderPeerId: senderPeerId,
+      transportPeerId: transportPeerId,
       senderUsername: senderUsername,
       text: text,
       timestamp: timestamp ?? now,
@@ -98,7 +150,7 @@ void main() {
 
   group('saveMessage and getMessage', () {
     test('round-trip preserves all fields', () async {
-      final msg = makeMessage();
+      final msg = makeMessage(transportPeerId: 'peer-sender-device');
       await repo.saveMessage(msg);
 
       final result = await repo.getMessage('msg-001');
@@ -107,6 +159,7 @@ void main() {
       expect(result.groupId, 'group-1');
       expect(result.text, 'Hello group');
       expect(result.senderUsername, 'Alice');
+      expect(result.transportPeerId, 'peer-sender-device');
     });
 
     test('round-trip preserves quotedMessageId', () async {
@@ -224,6 +277,47 @@ void main() {
         'msg-c',
       ]);
     });
+
+    test(
+      'MS004 orders quoted parent before reply despite timestamp and id',
+      () async {
+        final parentTimestamp = DateTime.utc(2026, 1, 2, 12, 0, 1);
+        final replyTimestamp = DateTime.utc(2026, 1, 2, 12);
+        await repo.saveMessage(
+          makeMessage(
+            id: 'zz-ms004-parent',
+            text: 'Parent',
+            timestamp: parentTimestamp,
+            createdAt: parentTimestamp,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'aa-ms004-reply',
+            text: 'Reply',
+            timestamp: replyTimestamp,
+            quotedMessageId: 'zz-ms004-parent',
+            createdAt: replyTimestamp,
+          ),
+        );
+        await repo.saveMessage(
+          makeMessage(
+            id: 'mm-ms004-peer',
+            text: 'Concurrent peer',
+            timestamp: replyTimestamp,
+            createdAt: replyTimestamp,
+          ),
+        );
+
+        final page = await repo.getMessagesPage('group-1');
+        expect(page.map((message) => message.id).toList(), [
+          'mm-ms004-peer',
+          'zz-ms004-parent',
+          'aa-ms004-reply',
+        ]);
+        expect(page.last.quotedMessageId, 'zz-ms004-parent');
+      },
+    );
   });
 
   group('getLatestMessage', () {
@@ -381,6 +475,45 @@ void main() {
       final summary = await fakeRepo.getGroupThreadSummary('group-1');
       expect(summary.latestMessage!.id, 'msg-c');
       expect(summary.latestMessage!.quotedMessageId, 'msg-parent');
+    });
+
+    test('MS004 orders quoted parent before reply like the DB repo', () async {
+      final fakeRepo = InMemoryGroupMessageRepository();
+      final parentTimestamp = DateTime.utc(2026, 1, 2, 12, 0, 1);
+      final replyTimestamp = DateTime.utc(2026, 1, 2, 12);
+      await fakeRepo.saveMessage(
+        makeMessage(
+          id: 'zz-ms004-parent',
+          text: 'Parent',
+          timestamp: parentTimestamp,
+          createdAt: parentTimestamp,
+        ),
+      );
+      await fakeRepo.saveMessage(
+        makeMessage(
+          id: 'aa-ms004-reply',
+          text: 'Reply',
+          timestamp: replyTimestamp,
+          quotedMessageId: 'zz-ms004-parent',
+          createdAt: replyTimestamp,
+        ),
+      );
+      await fakeRepo.saveMessage(
+        makeMessage(
+          id: 'mm-ms004-peer',
+          text: 'Concurrent peer',
+          timestamp: replyTimestamp,
+          createdAt: replyTimestamp,
+        ),
+      );
+
+      final page = await fakeRepo.getMessagesPage('group-1');
+      expect(page.map((message) => message.id).toList(), [
+        'mm-ms004-peer',
+        'zz-ms004-parent',
+        'aa-ms004-reply',
+      ]);
+      expect(page.last.quotedMessageId, 'zz-ms004-parent');
     });
   });
 
@@ -644,6 +777,69 @@ void main() {
         now,
       );
       expect(result, isFalse);
+    });
+  });
+
+  group('PREREQ-GROUP-SYNC-RECEIPTS inbox transaction state', () {
+    test('loads durable cursor and receipts through repository', () async {
+      final receiptAt = DateTime.utc(2026, 5, 1, 12, 1);
+      await repo.runInboxPageTransaction(
+        groupId: 'group-1',
+        nextCursor: 'cursor-2',
+        receipts: [
+          GroupMessageReceipt(
+            groupId: 'group-1',
+            messageId: 'msg-001',
+            receiptType: groupMessageReceiptTypeDelivered,
+            memberPeerId: 'peer-local',
+            receiptAt: receiptAt,
+            createdAt: receiptAt,
+            updatedAt: receiptAt,
+          ),
+        ],
+        apply: (transactionRepo) async {
+          await transactionRepo.saveMessage(makeMessage(id: 'msg-001'));
+        },
+      );
+
+      expect(await repo.getInboxCursor('group-1'), 'cursor-2');
+      expect(
+        await repo.getReceiptsForMessage('group-1', 'msg-001'),
+        hasLength(1),
+      );
+    });
+
+    test('read receipt marks message read inside transaction', () async {
+      final receiptAt = DateTime.utc(2026, 5, 1, 12, 1);
+      await repo.runInboxPageTransaction(
+        groupId: 'group-1',
+        nextCursor: '',
+        receipts: [
+          GroupMessageReceipt(
+            groupId: 'group-1',
+            messageId: 'msg-001',
+            receiptType: groupMessageReceiptTypeRead,
+            memberPeerId: 'peer-local',
+            receiptAt: receiptAt,
+            createdAt: receiptAt,
+            updatedAt: receiptAt,
+          ),
+        ],
+        markReadMessageIds: const ['msg-001'],
+        apply: (transactionRepo) async {
+          await transactionRepo.saveMessage(makeMessage(id: 'msg-001'));
+        },
+      );
+
+      expect((await repo.getMessage('msg-001'))!.readAt, isNotNull);
+      expect(
+        await repo.getReceiptsForMessage(
+          'group-1',
+          'msg-001',
+          receiptType: groupMessageReceiptTypeRead,
+        ),
+        hasLength(1),
+      );
     });
   });
 }

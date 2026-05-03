@@ -132,6 +132,53 @@ void main() {
     expect(result!.text, 'Hello from sender!');
     expect(result.isIncoming, true);
     expect(result.senderPeerId, 'peer-sender');
+    expect(result.transportPeerId, 'peer-sender');
+  });
+
+  test(
+    'MS002 rejects transport peer mismatch before persistence or event log',
+    () async {
+      final eventLog = _FakeEventLog();
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'spoofed',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'ms002-spoof',
+        transportPeerId: 'peer-attacker',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('ms002-spoof'), isNull);
+      expect(eventLog.entries, isEmpty);
+    },
+  );
+
+  test('MS002 stores verified transport peer id on accepted message', () async {
+    final result = await handleIncomingGroupMessage(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      senderId: 'peer-sender',
+      senderUsername: 'Sender',
+      keyEpoch: 0,
+      text: 'bound sender',
+      timestamp: DateTime.now().toUtc().toIso8601String(),
+      messageId: 'ms002-bound',
+      transportPeerId: 'peer-sender',
+    );
+
+    expect(result, isNotNull);
+    expect(result!.transportPeerId, 'peer-sender');
+    final stored = await msgRepo.getMessage('ms002-bound');
+    expect(stored, isNotNull);
+    expect(stored!.senderPeerId, 'peer-sender');
+    expect(stored.transportPeerId, 'peer-sender');
   });
 
   test('records incoming message in tamper-evident event log', () async {
@@ -160,6 +207,7 @@ void main() {
     expect(payload['text'], 'Logged message');
     expect(payload['keyEpoch'], 3);
     expect(payload['quotedMessageId'], 'msg-parent-1');
+    expect(payload['transportPeerId'], 'peer-sender');
   });
 
   test(
@@ -342,23 +390,26 @@ void main() {
     expect(saved!.quotedMessageId, 'msg-parent-1');
   });
 
-  test('still processes messages from unknown members', () async {
-    // Message from non-member (stale member list)
-    final result = await handleIncomingGroupMessage(
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      groupId: 'group-1',
-      senderId: 'unknown-peer',
-      senderUsername: 'Unknown',
-      keyEpoch: 0,
-      text: 'Hello from unknown',
-      timestamp: DateTime.now().toUtc().toIso8601String(),
-    );
+  test(
+    'rejects messages from unknown members without storing a ghost row',
+    () async {
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'unknown-peer',
+        senderUsername: 'Unknown',
+        keyEpoch: 0,
+        text: 'Hello from unknown',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        messageId: 'msg-unknown-peer',
+      );
 
-    expect(result, isNotNull);
-    expect(result!.text, 'Hello from unknown');
-    expect(msgRepo.count, 1);
-  });
+      expect(result, isNull);
+      expect(msgRepo.count, 0);
+      expect(await msgRepo.getMessage('msg-unknown-peer'), isNull);
+    },
+  );
 
   test(
     'refreshes stored member username from later incoming group traffic',
@@ -451,7 +502,7 @@ void main() {
   );
 
   test(
-    'still processes unknown sender when persisted removal cutoff belongs to another peer',
+    'rejects unknown sender when persisted removal cutoff belongs to another peer',
     () async {
       await saveRemovalCutoff(
         removedPeerId: 'peer-other',
@@ -470,8 +521,8 @@ void main() {
         messageId: 'msg-new-sender',
       );
 
-      expect(result, isNotNull);
-      expect(result!.id, 'msg-new-sender');
+      expect(result, isNull);
+      expect(await msgRepo.getMessage('msg-new-sender'), isNull);
     },
   );
 
@@ -630,43 +681,46 @@ void main() {
     expect(msgRepo.count, 3); // all unique
   });
 
-  test('far future incoming timestamp is clamped to receive time', () async {
-    final beforeReceive = DateTime.now().toUtc();
-    final farFuture = beforeReceive.add(const Duration(days: 2));
+  test(
+    'MS003 far future incoming timestamp is clamped to receive time',
+    () async {
+      final beforeReceive = DateTime.now().toUtc();
+      final farFuture = beforeReceive.add(const Duration(days: 2));
 
-    final result = await handleIncomingGroupMessage(
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
-      groupId: 'group-1',
-      senderId: 'peer-sender',
-      senderUsername: 'Sender',
-      keyEpoch: 0,
-      text: 'Future-skewed message',
-      timestamp: farFuture.toIso8601String(),
-      messageId: 'msg-future-skew',
-    );
-    final afterReceive = DateTime.now().toUtc();
+      final result = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        senderUsername: 'Sender',
+        keyEpoch: 0,
+        text: 'Future-skewed message',
+        timestamp: farFuture.toIso8601String(),
+        messageId: 'msg-future-skew',
+      );
+      final afterReceive = DateTime.now().toUtc();
 
-    expect(result, isNotNull);
-    expect(result!.timestamp.isBefore(farFuture), isTrue);
-    expect(
-      result.timestamp.isAfter(
-        beforeReceive.subtract(const Duration(seconds: 1)),
-      ),
-      isTrue,
-    );
-    expect(
-      result.timestamp.isBefore(afterReceive.add(const Duration(seconds: 1))),
-      isTrue,
-    );
+      expect(result, isNotNull);
+      expect(result!.timestamp.isBefore(farFuture), isTrue);
+      expect(
+        result.timestamp.isAfter(
+          beforeReceive.subtract(const Duration(seconds: 1)),
+        ),
+        isTrue,
+      );
+      expect(
+        result.timestamp.isBefore(afterReceive.add(const Duration(seconds: 1))),
+        isTrue,
+      );
 
-    final saved = await msgRepo.getMessage('msg-future-skew');
-    expect(saved, isNotNull);
-    expect(saved!.timestamp, result.timestamp);
-  });
+      final saved = await msgRepo.getMessage('msg-future-skew');
+      expect(saved, isNotNull);
+      expect(saved!.timestamp, result.timestamp);
+    },
+  );
 
   test(
-    'past current and near future timestamps retain chronological order',
+    'MS003 past current and near future timestamps retain chronological order',
     () async {
       final base = DateTime.now().toUtc();
       final past = base.subtract(const Duration(minutes: 3));
@@ -1013,6 +1067,11 @@ void main() {
         const Duration(milliseconds: 1),
       );
 
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-removed',
+        removedAt: removedAt,
+      );
+
       final first = await handleIncomingGroupMessage(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -1025,11 +1084,6 @@ void main() {
         messageId: sharedMessageId,
       );
       expect(first, isNotNull);
-
-      await saveRemovalCutoff(
-        removedPeerId: 'peer-removed',
-        removedAt: removedAt,
-      );
 
       final replay = await handleIncomingGroupMessage(
         groupRepo: groupRepo,

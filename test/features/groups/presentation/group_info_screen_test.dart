@@ -5,6 +5,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -57,6 +58,7 @@ void main() {
     VoidCallback? onAddMember,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
+    GroupSecurityStatusViewState? securityStatus,
   }) {
     return MaterialApp(
       home: GroupInfoScreen(
@@ -76,6 +78,7 @@ void main() {
         onToggleAdminRole: onToggleAdminRole,
         onAddMember: onAddMember,
         backgroundPreference: backgroundPreference,
+        securityStatus: securityStatus,
       ),
     );
   }
@@ -137,6 +140,40 @@ void main() {
       find.byKey(const ValueKey('group-member-identity-warning-peer-admin')),
       findsNothing,
     );
+  });
+
+  testWidgets('shows security status for encryption, key change, and review', (
+    tester,
+  ) async {
+    const securityStatus = GroupSecurityStatusViewState(
+      hasCurrentKey: true,
+      keyEpoch: 2,
+      memberCount: 2,
+      verifiedMemberCount: 1,
+      identityWarningCount: 1,
+      unverifiedMemberCount: 0,
+    );
+
+    await tester.pumpWidget(
+      buildTestWidget(members: testMembers, securityStatus: securityStatus),
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('group-security-status-card')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(
+      find.byKey(const ValueKey('group-security-status-card')),
+      findsOneWidget,
+    );
+    expect(find.text('End-to-end encrypted'), findsOneWidget);
+    expect(find.text('Key change visible'), findsOneWidget);
+    expect(find.text('Group key changed to epoch 2'), findsNWidgets(2));
+    expect(find.text('1 of 2 members verified'), findsOneWidget);
+    expect(find.text('1 member needs verification review'), findsOneWidget);
+    expect(find.text('Verification warning'), findsOneWidget);
   });
 
   testWidgets('shows leave button', (tester) async {

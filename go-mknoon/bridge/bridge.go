@@ -1432,6 +1432,9 @@ func GroupCreate(paramsJSON string) (result string) {
 	if params.Name == "" || params.GroupType == "" || params.CreatorPeerId == "" || params.CreatorPublicKey == "" {
 		return errJSON("INVALID_INPUT", "missing name, groupType, creatorPeerId, or creatorPublicKey")
 	}
+	if !isSupportedBridgeGroupType(params.GroupType) {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("unsupported groupType: %s", params.GroupType))
+	}
 
 	// 1. Generate UUID for groupId.
 	groupId := uuid.New().String()
@@ -1485,6 +1488,15 @@ func GroupCreate(paramsJSON string) (result string) {
 		"keyEpoch":    1,
 		"groupConfig": configMap,
 	})
+}
+
+func isSupportedBridgeGroupType(groupType string) bool {
+	switch node.GroupType(groupType) {
+	case node.GroupTypeChat, node.GroupTypeAnnouncement, node.GroupTypeQA:
+		return true
+	default:
+		return false
+	}
 }
 
 // GroupJoinTopic joins an existing group topic.
@@ -1596,15 +1608,19 @@ func GroupPublish(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId          string                   `json:"groupId"`
-		Text             string                   `json:"text"`
-		SenderPeerId     string                   `json:"senderPeerId"`
-		SenderPublicKey  string                   `json:"senderPublicKey"`
-		SenderPrivateKey string                   `json:"senderPrivateKey"`
-		SenderUsername   string                   `json:"senderUsername"`
-		MessageId        string                   `json:"messageId,omitempty"`
-		QuotedMessageId  string                   `json:"quotedMessageId,omitempty"`
-		Media            []map[string]interface{} `json:"media,omitempty"`
+		GroupId               string                   `json:"groupId"`
+		Text                  string                   `json:"text"`
+		SenderPeerId          string                   `json:"senderPeerId"`
+		SenderPublicKey       string                   `json:"senderPublicKey"`
+		SenderPrivateKey      string                   `json:"senderPrivateKey"`
+		SenderUsername        string                   `json:"senderUsername"`
+		SenderDeviceId        string                   `json:"senderDeviceId,omitempty"`
+		SenderTransportPeerId string                   `json:"senderTransportPeerId,omitempty"`
+		SenderDevicePublicKey string                   `json:"senderDevicePublicKey,omitempty"`
+		SenderKeyPackageId    string                   `json:"senderKeyPackageId,omitempty"`
+		MessageId             string                   `json:"messageId,omitempty"`
+		QuotedMessageId       string                   `json:"quotedMessageId,omitempty"`
+		Media                 []map[string]interface{} `json:"media,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1619,6 +1635,21 @@ func GroupPublish(paramsJSON string) (result string) {
 	}
 
 	opts := buildGroupPublishOpts(params.Media, params.QuotedMessageId)
+	if opts == nil {
+		opts = make(map[string]interface{}, 4)
+	}
+	if params.SenderDeviceId != "" {
+		opts["senderDeviceId"] = params.SenderDeviceId
+	}
+	if params.SenderTransportPeerId != "" {
+		opts["senderTransportPeerId"] = params.SenderTransportPeerId
+	}
+	if params.SenderDevicePublicKey != "" {
+		opts["senderDevicePublicKey"] = params.SenderDevicePublicKey
+	}
+	if params.SenderKeyPackageId != "" {
+		opts["senderKeyPackageId"] = params.SenderKeyPackageId
+	}
 
 	msgId, topicPeers, err := n.PublishGroupMessage(
 		params.GroupId,
@@ -1676,11 +1707,15 @@ func GroupPublishReaction(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		GroupId          string `json:"groupId"`
-		SenderPeerId     string `json:"senderPeerId"`
-		SenderPublicKey  string `json:"senderPublicKey"`
-		SenderPrivateKey string `json:"senderPrivateKey"`
-		ReactionPayload  string `json:"reactionPayload"`
+		GroupId               string `json:"groupId"`
+		SenderPeerId          string `json:"senderPeerId"`
+		SenderPublicKey       string `json:"senderPublicKey"`
+		SenderPrivateKey      string `json:"senderPrivateKey"`
+		SenderDeviceId        string `json:"senderDeviceId,omitempty"`
+		SenderTransportPeerId string `json:"senderTransportPeerId,omitempty"`
+		SenderDevicePublicKey string `json:"senderDevicePublicKey,omitempty"`
+		SenderKeyPackageId    string `json:"senderKeyPackageId,omitempty"`
+		ReactionPayload       string `json:"reactionPayload"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1692,12 +1727,27 @@ func GroupPublishReaction(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing required fields")
 	}
 
+	opts := make(map[string]interface{}, 4)
+	if params.SenderDeviceId != "" {
+		opts["senderDeviceId"] = params.SenderDeviceId
+	}
+	if params.SenderTransportPeerId != "" {
+		opts["senderTransportPeerId"] = params.SenderTransportPeerId
+	}
+	if params.SenderDevicePublicKey != "" {
+		opts["senderDevicePublicKey"] = params.SenderDevicePublicKey
+	}
+	if params.SenderKeyPackageId != "" {
+		opts["senderKeyPackageId"] = params.SenderKeyPackageId
+	}
+
 	err := n.PublishGroupReaction(
 		params.GroupId,
 		params.SenderPrivateKey,
 		params.SenderPeerId,
 		params.SenderPublicKey,
 		params.ReactionPayload,
+		opts,
 	)
 	if err != nil {
 		return errJSON("GROUP_ERROR", err.Error())
@@ -1964,9 +2014,7 @@ func GroupDecryptMessage(paramsJSON string) (result string) {
 //	Input JSON: {
 //	  "groupId": "...",
 //	  "message": "...",
-//	  "recipientPeerIds": ["peer-2"],
-//	  "pushTitle": "...",
-//	  "pushBody": "..."
+//	  "recipientPeerIds": ["peer-2"]
 //	}
 //
 // Returns JSON: { "ok": true }
@@ -1989,8 +2037,6 @@ func GroupInboxStore(paramsJSON string) (result string) {
 		GroupId          string   `json:"groupId"`
 		Message          string   `json:"message"`
 		RecipientPeerIds []string `json:"recipientPeerIds"`
-		PushTitle        string   `json:"pushTitle"`
-		PushBody         string   `json:"pushBody"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -2004,8 +2050,8 @@ func GroupInboxStore(paramsJSON string) (result string) {
 		params.GroupId,
 		params.Message,
 		params.RecipientPeerIds,
-		params.PushTitle,
-		params.PushBody,
+		"",
+		"",
 	); err != nil {
 		return errJSON("GROUP_INBOX_ERROR", err.Error())
 	}
@@ -2097,7 +2143,7 @@ func GroupInboxRetrieveCursor(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing groupId")
 	}
 
-	msgs, nextCursor, err := n.GroupInboxRetrieveWithCursor(
+	page, err := n.GroupInboxRetrieveWithCursorResult(
 		params.GroupId,
 		params.Cursor,
 		params.Limit,
@@ -2106,8 +2152,8 @@ func GroupInboxRetrieveCursor(paramsJSON string) (result string) {
 		return errJSON("GROUP_INBOX_ERROR", err.Error())
 	}
 
-	msgList := make([]map[string]interface{}, len(msgs))
-	for i, m := range msgs {
+	msgList := make([]map[string]interface{}, len(page.Messages))
+	for i, m := range page.Messages {
 		msgList[i] = map[string]interface{}{
 			"from":      m.From,
 			"message":   m.Message,
@@ -2116,9 +2162,65 @@ func GroupInboxRetrieveCursor(paramsJSON string) (result string) {
 	}
 
 	return okJSON(map[string]interface{}{
-		"ok":       true,
-		"messages": msgList,
-		"cursor":   nextCursor,
+		"ok":          true,
+		"messages":    msgList,
+		"cursor":      page.NextCursor,
+		"historyGaps": page.HistoryGaps,
+	})
+}
+
+// GroupHistoryRepairRange requests encrypted replay envelopes for one
+// explicit history gap from one candidate source peer.
+// Input JSON: { "groupId": "...", "gapId": "...", "sourcePeerId": "...",
+// "missingAfterMessageId": "...", "missingBeforeMessageId": "...",
+// "expectedRangeHash": "...", "expectedHeadMessageId": "...", "limit": N }
+func GroupHistoryRepairRange(paramsJSON string) (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = errJSON("INTERNAL_ERROR", fmt.Sprintf("panic: %v", r))
+		}
+	}()
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+
+	if n == nil {
+		return errJSON("NOT_INITIALIZED", "call Initialize first")
+	}
+
+	var params node.GroupHistoryRepairRangeRequest
+	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
+		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
+	}
+
+	normalized, err := node.NormalizeGroupHistoryRepairRangeRequest(params)
+	if err != nil {
+		return errJSON("INVALID_INPUT", err.Error())
+	}
+
+	resp, err := n.GroupHistoryRepairRange(normalized)
+	if err != nil {
+		return errJSON("GROUP_HISTORY_REPAIR_ERROR", err.Error())
+	}
+
+	msgList := make([]map[string]interface{}, len(resp.Messages))
+	for i, m := range resp.Messages {
+		msgList[i] = map[string]interface{}{
+			"from":      m.From,
+			"message":   m.Message,
+			"timestamp": m.Timestamp,
+		}
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":            true,
+		"groupId":       resp.GroupId,
+		"gapId":         resp.GapId,
+		"sourcePeerId":  resp.SourcePeerId,
+		"rangeHash":     resp.RangeHash,
+		"headMessageId": resp.HeadMessageId,
+		"messages":      msgList,
 	})
 }
 

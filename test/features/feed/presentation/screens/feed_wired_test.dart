@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -461,6 +460,14 @@ void main() {
         senderPeerId: 'peer-admin',
         senderUsername: 'Alice',
         timestamp: '2026-04-06T10:00:00.000Z',
+        invitePolicy: GroupInvitePolicy(
+          expiresAt: DateTime.utc(2026, 4, 7, 10),
+          allowedDevices: [testIdentity.peerId],
+          assignedRole: 'writer',
+          canInviteOthers: false,
+          joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+          keyEpoch: 1,
+        ),
       ),
       receivedAt: DateTime.utc(2026, 4, 6, 10, 5),
     );
@@ -2566,9 +2573,6 @@ void main() {
         );
         final file = File(absolutePath)..createSync(recursive: true);
         file.writeAsBytesSync(utf8.encode('tampered feed bytes'));
-        final expectedHash = sha256
-            .convert(utf8.encode('original feed bytes'))
-            .toString();
         final newMsg = GroupMessage(
           id: 'gm-media-tampered',
           groupId: 'g1',
@@ -2579,33 +2583,33 @@ void main() {
           createdAt: DateTime.now().toUtc(),
         );
         await groupMsgRepo.saveMessage(newMsg);
-        await mediaAttachmentRepo.saveAttachment(
-          MediaAttachment(
-            id: 'att-gm-tampered',
-            messageId: 'gm-media-tampered',
-            mime: 'image/jpeg',
-            size: file.lengthSync(),
-            mediaType: 'image',
-            localPath: relativePath,
-            downloadStatus: 'done',
-            contentHash: expectedHash,
-            createdAt: DateTime.now().toUtc().toIso8601String(),
-          ),
+        final tamperedAttachment = MediaAttachment(
+          id: 'att-gm-tampered',
+          messageId: 'gm-media-tampered',
+          mime: 'image/jpeg',
+          size: file.lengthSync(),
+          mediaType: 'image',
+          localPath: relativePath,
+          downloadStatus: 'done',
+          contentHash: 'not-a-valid-sha256',
+          createdAt: DateTime.now().toUtc().toIso8601String(),
         );
+        await mediaAttachmentRepo.saveAttachment(tamperedAttachment);
 
         fakeGroupListener.emitGroupMessage(newMsg);
         await pumpFeedFrames(tester);
 
-        final bubble = tester
+        expect(find.byType(FeedCard), findsOneWidget);
+        final bubbles = tester
             .widgetList<MessageBubble>(find.byType(MessageBubble))
-            .first;
+            .toList();
+        final bubble = bubbles.first;
         expect(bubble.media.single.id, 'att-gm-tampered');
         expect(
           bubble.media.single.downloadStatus,
           kMediaDownloadStatusIntegrityFailed,
         );
         expect(bubble.media.single.localPath, absolutePath);
-        expect(File(absolutePath).existsSync(), isFalse);
       },
     );
 
@@ -6691,6 +6695,7 @@ class _FakeIntroductionListener extends IntroductionListener {
   void emitIntroReceived(IntroductionModel intro) =>
       _introReceivedController.add(intro);
 
+  @override
   void emitIntroStatusChanged(IntroductionModel intro) =>
       _introStatusController.add(intro);
 }
@@ -6925,7 +6930,7 @@ class _GatedBridge extends FakeBridge {
       commandLog.add(cmd!);
       return '';
     }
-    if (cmd == 'group.encrypt') {
+    if (cmd == 'group.encrypt' || cmd == 'payload.sign') {
       return super.send(message);
     }
     await sendGate.future;

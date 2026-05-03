@@ -15,6 +15,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../../core/bridge/fake_bridge.dart';
@@ -46,6 +47,43 @@ class _DownloadWritingBridge extends FakeBridge {
       return jsonEncode({'ok': true, 'id': payload['id'], 'size': 4});
     }
     return super.send(message);
+  }
+}
+
+class _ScopedMediaFileManager extends FakeMediaFileManager {
+  _ScopedMediaFileManager(String scope)
+    : _root = Directory(p.join(Directory.systemTemp.path, 'test_docs', scope));
+
+  final Directory _root;
+
+  @override
+  Future<String> localPathForAttachment({
+    required String contactPeerId,
+    required String blobId,
+    required String mime,
+  }) async {
+    final relativePath = relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: blobId,
+      mime: mime,
+    );
+    final absolutePath = p.join(_root.path, relativePath);
+    final file = File(absolutePath);
+    await file.parent.create(recursive: true);
+    return absolutePath;
+  }
+
+  @override
+  Future<String> resolveStoredPath(String storedPath) async {
+    if (storedPath.startsWith('pending_uploads/') ||
+        storedPath.startsWith('pending_uploads\\') ||
+        storedPath.startsWith('media/') ||
+        storedPath.startsWith('media\\') ||
+        storedPath.startsWith('post_media/') ||
+        storedPath.startsWith('post_media\\')) {
+      return p.join(_root.path, storedPath);
+    }
+    return storedPath;
   }
 }
 
@@ -128,6 +166,68 @@ void main() {
         createdAt: DateTime.utc(2026, 4, 29).add(Duration(minutes: epoch)),
       ),
     );
+  }
+
+  List<String> downloadBlobIds(GroupTestUser user) {
+    return user.bridge.sentMessages
+        .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+        .where((message) => message['cmd'] == 'media:download')
+        .map((message) {
+          final payload = message['payload'] as Map<String, dynamic>;
+          return payload['id'] as String;
+        })
+        .toList();
+  }
+
+  Future<MediaAttachment> expectDownloadedIncomingAttachment({
+    required GroupTestUser user,
+    required String groupId,
+    required String messageText,
+    required GroupMessage sentMessage,
+    required String senderPeerId,
+    required String senderUsername,
+    required int keyGeneration,
+    required MediaAttachment sent,
+  }) async {
+    final matches = (await user.loadGroupMessages(groupId))
+        .where((message) => message.isIncoming && message.text == messageText)
+        .toList();
+    expect(matches, hasLength(1), reason: '${user.username}: $messageText');
+
+    final received = matches.single;
+    expect(received.id, sentMessage.id, reason: user.username);
+    expect(received.senderPeerId, senderPeerId, reason: user.username);
+    expect(received.senderUsername, senderUsername, reason: user.username);
+    expect(received.keyGeneration, keyGeneration, reason: user.username);
+
+    final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
+      received.id,
+    );
+    expect(attachments, hasLength(1), reason: '${user.username}: $messageText');
+
+    final actual = attachments.single;
+    expect(actual.id, sent.id, reason: user.username);
+    expect(actual.mediaType, sent.mediaType, reason: user.username);
+    expect(actual.mime, sent.mime, reason: user.username);
+    expect(actual.width, sent.width, reason: user.username);
+    expect(actual.height, sent.height, reason: user.username);
+    expect(actual.durationMs, sent.durationMs, reason: user.username);
+    expect(actual.waveform, sent.waveform, reason: user.username);
+    expect(actual.contentHash, sent.contentHash, reason: user.username);
+    expect(
+      actual.encryptionKeyBase64,
+      sent.encryptionKeyBase64,
+      reason: user.username,
+    );
+    expect(actual.encryptionNonce, sent.encryptionNonce, reason: user.username);
+    expect(
+      actual.encryptionScheme,
+      sent.encryptionScheme,
+      reason: user.username,
+    );
+    expect(actual.downloadStatus, 'done', reason: user.username);
+    expect(actual.localPath, isNotNull, reason: user.username);
+    return actual;
   }
 
   Widget buildConversation({
@@ -233,11 +333,7 @@ void main() {
         );
         expect(voiceResult, group_send.SendGroupMessageResult.success);
 
-        await waitForDownloads(
-          user: bob,
-          groupId: groupId,
-          expectedCount: 3,
-        );
+        await waitForDownloads(user: bob, groupId: groupId, expectedCount: 3);
 
         final bobIncoming = (await bob.loadGroupMessages(
           groupId,
@@ -379,6 +475,295 @@ void main() {
     );
 
     test(
+      'multiple newly-added members independently download the same post-join image, video, and voice without pre-join history',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-multi-new-media-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-multi-new-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('bob-multi-new-media'),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-multi-new-media-peer',
+          username: 'Charlie',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('charlie-multi-new-media'),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-multi-new-member-media';
+        const epoch = 9;
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'Multi New Member Media',
+        );
+        await saveLatestKey(user: alice, groupId: groupId, epoch: epoch);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        final (preTextResult, preTextMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'pre-join text history',
+              messageId: 'msg-gmar003-pre-text',
+            );
+        expect(preTextResult, group_send.SendGroupMessageResult.successNoPeers);
+        expect(preTextMessage, isNotNull);
+
+        final preImage = attachment(
+          id: 'blob-gmar003-pre-image',
+          mime: 'image/jpeg',
+          size: 4,
+          width: 320,
+          height: 240,
+        );
+        final (preImageResult, preImageMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'pre-join image history',
+              messageId: 'msg-gmar003-pre-image',
+              mediaAttachments: [preImage],
+            );
+        expect(
+          preImageResult,
+          group_send.SendGroupMessageResult.successNoPeers,
+        );
+        expect(preImageMessage, isNotNull);
+
+        final preVideo = attachment(
+          id: 'blob-gmar003-pre-video',
+          mime: 'video/mp4',
+          size: 4,
+          width: 640,
+          height: 360,
+          durationMs: 7000,
+        );
+        final (preVideoResult, preVideoMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'pre-join video history',
+              messageId: 'msg-gmar003-pre-video',
+              mediaAttachments: [preVideo],
+            );
+        expect(
+          preVideoResult,
+          group_send.SendGroupMessageResult.successNoPeers,
+        );
+        expect(preVideoMessage, isNotNull);
+
+        final preVoice = attachment(
+          id: 'blob-gmar003-pre-voice',
+          mime: 'audio/mp4',
+          size: 4,
+          durationMs: 2100,
+          waveform: const <double>[0.3, 0.2, 0.5],
+        );
+        final (preVoiceResult, preVoiceMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'pre-join voice history',
+              messageId: 'msg-gmar003-pre-voice',
+              mediaAttachments: [preVoice],
+            );
+        expect(
+          preVoiceResult,
+          group_send.SendGroupMessageResult.successNoPeers,
+        );
+        expect(preVoiceMessage, isNotNull);
+        await pump();
+
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: epoch);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: epoch);
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        final postImage = attachment(
+          id: 'blob-gmar003-post-image',
+          mime: 'image/jpeg',
+          size: 4,
+          width: 800,
+          height: 600,
+        );
+        final (postImageResult, postImageMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'post-join image for all new members',
+              messageId: 'msg-gmar003-post-image',
+              mediaAttachments: [postImage],
+            );
+        expect(postImageResult, group_send.SendGroupMessageResult.success);
+        expect(postImageMessage, isNotNull);
+
+        final postVideo = attachment(
+          id: 'blob-gmar003-post-video',
+          mime: 'video/mp4',
+          size: 4,
+          width: 1920,
+          height: 1080,
+          durationMs: 18_000,
+        );
+        final (postVideoResult, postVideoMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'post-join video for all new members',
+              messageId: 'msg-gmar003-post-video',
+              mediaAttachments: [postVideo],
+            );
+        expect(postVideoResult, group_send.SendGroupMessageResult.success);
+        expect(postVideoMessage, isNotNull);
+
+        final postVoice = attachment(
+          id: 'blob-gmar003-post-voice',
+          mime: 'audio/mp4',
+          size: 4,
+          durationMs: 4200,
+          waveform: const <double>[0.2, 0.5, 0.3, 0.6],
+        );
+        final (postVoiceResult, postVoiceMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'post-join voice for all new members',
+              messageId: 'msg-gmar003-post-voice',
+              mediaAttachments: [postVoice],
+            );
+        expect(postVoiceResult, group_send.SendGroupMessageResult.success);
+        expect(postVoiceMessage, isNotNull);
+
+        for (final recipient in [bob, charlie]) {
+          await waitForDownloads(
+            user: recipient,
+            groupId: groupId,
+            expectedCount: 3,
+          );
+
+          final messages = await recipient.loadGroupMessages(groupId);
+          final messageTexts = messages.map((message) => message.text).toList();
+          final messageIds = messages.map((message) => message.id).toSet();
+          expect(
+            messageTexts,
+            containsAll([
+              'post-join image for all new members',
+              'post-join video for all new members',
+              'post-join voice for all new members',
+            ]),
+            reason: recipient.username,
+          );
+          for (final preJoinText in [
+            'pre-join text history',
+            'pre-join image history',
+            'pre-join video history',
+            'pre-join voice history',
+          ]) {
+            expect(
+              messageTexts,
+              isNot(contains(preJoinText)),
+              reason: recipient.username,
+            );
+          }
+          for (final preJoinMessage in [
+            preTextMessage,
+            preImageMessage,
+            preVideoMessage,
+            preVoiceMessage,
+          ]) {
+            expect(
+              messageIds,
+              isNot(contains(preJoinMessage!.id)),
+              reason: recipient.username,
+            );
+          }
+
+          for (final preJoinMessage in [
+            preTextMessage,
+            preImageMessage,
+            preVideoMessage,
+            preVoiceMessage,
+          ]) {
+            expect(
+              await recipient.mediaAttachmentRepo.getAttachmentsForMessage(
+                preJoinMessage!.id,
+              ),
+              isEmpty,
+              reason: recipient.username,
+            );
+          }
+
+          await expectDownloadedIncomingAttachment(
+            user: recipient,
+            groupId: groupId,
+            messageText: 'post-join image for all new members',
+            sentMessage: postImageMessage!,
+            senderPeerId: alice.peerId,
+            senderUsername: alice.username,
+            keyGeneration: epoch,
+            sent: postImage,
+          );
+          await expectDownloadedIncomingAttachment(
+            user: recipient,
+            groupId: groupId,
+            messageText: 'post-join video for all new members',
+            sentMessage: postVideoMessage!,
+            senderPeerId: alice.peerId,
+            senderUsername: alice.username,
+            keyGeneration: epoch,
+            sent: postVideo,
+          );
+          await expectDownloadedIncomingAttachment(
+            user: recipient,
+            groupId: groupId,
+            messageText: 'post-join voice for all new members',
+            sentMessage: postVoiceMessage!,
+            senderPeerId: alice.peerId,
+            senderUsername: alice.username,
+            keyGeneration: epoch,
+            sent: postVoice,
+          );
+
+          expect(
+            await recipient.mediaAttachmentRepo.getPendingDownloads(),
+            isEmpty,
+          );
+          expect(
+            recipient.bridge.commandLog.where((cmd) => cmd == 'media:download'),
+            hasLength(3),
+            reason: recipient.username,
+          );
+          expect(
+            downloadBlobIds(recipient),
+            unorderedEquals([postImage.id, postVideo.id, postVoice.id]),
+            reason: recipient.username,
+          );
+
+          final latestKey = await recipient.groupRepo.getLatestKey(groupId);
+          expect(latestKey, isNotNull, reason: recipient.username);
+          expect(latestKey!.keyGeneration, epoch, reason: recipient.username);
+
+          final members = await recipient.groupRepo.getMembers(groupId);
+          expect(
+            members.map((member) => member.peerId).toSet(),
+            {alice.peerId, bob.peerId, charlie.peerId},
+            reason: recipient.username,
+          );
+        }
+      },
+    );
+
+    test(
       'new member receives current metadata and roles without pre-join history',
       () async {
         final alice = GroupTestUser.create(
@@ -441,6 +826,27 @@ void main() {
           role: MemberRole.reader,
           changedAt: DateTime.utc(2026, 4, 29, 9, 3),
         );
+        final updatedCharlie = await alice.groupRepo.getMember(
+          groupId,
+          charlie.peerId,
+        );
+        expect(updatedCharlie, isNotNull);
+        await alice.groupRepo.saveMember(
+          GroupMember(
+            groupId: updatedCharlie!.groupId,
+            peerId: updatedCharlie.peerId,
+            username: updatedCharlie.username,
+            role: updatedCharlie.role,
+            permissions: const GroupMemberPermissions(
+              inviteMembers: false,
+              editMetadata: false,
+              pinMessages: true,
+            ),
+            publicKey: updatedCharlie.publicKey,
+            mlKemPublicKey: updatedCharlie.mlKemPublicKey,
+            joinedAt: updatedCharlie.joinedAt,
+          ),
+        );
 
         await alice.addMember(
           groupId: groupId,
@@ -469,9 +875,33 @@ void main() {
         });
         expect(bobMembersByPeerId[alice.peerId]!.role, MemberRole.admin);
         expect(bobMembersByPeerId[charlie.peerId]!.role, MemberRole.reader);
+        expect(bobMembersByPeerId[charlie.peerId]!.permissions.toJson(), {
+          'inviteMembers': false,
+          'editMetadata': false,
+          'pinMessages': true,
+        });
+        expect(
+          bobMembersByPeerId[charlie.peerId]!.permissions.allows(
+            GroupMemberPermission.inviteMembers,
+            MemberRole.reader,
+          ),
+          isFalse,
+        );
+        expect(
+          bobMembersByPeerId[charlie.peerId]!.permissions.allows(
+            GroupMemberPermission.pinMessages,
+            MemberRole.reader,
+          ),
+          isTrue,
+        );
         expect(bobMembersByPeerId[bob.peerId]!.role, MemberRole.writer);
+        expect(
+          bobMembersByPeerId[bob.peerId]!.permissions.hasOverrides,
+          isFalse,
+        );
 
         final bobMessagesBeforePostJoin = await bob.loadGroupMessages(groupId);
+        expect(bobMessagesBeforePostJoin, isEmpty);
         expect(
           bobMessagesBeforePostJoin.map((message) => message.text),
           isNot(contains('pre-join state history')),

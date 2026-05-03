@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
@@ -79,6 +81,8 @@ final memberBob = GroupMember(
   peerId: 'peer-bob',
   username: 'Bob',
   role: MemberRole.writer,
+  publicKey: 'pk-bob',
+  mlKemPublicKey: 'mlkem-pk-bob',
   joinedAt: DateTime.now().toUtc(),
 );
 
@@ -87,6 +91,8 @@ final memberAdmin = GroupMember(
   peerId: 'peer-admin',
   username: 'Admin',
   role: MemberRole.admin,
+  publicKey: 'pk-admin',
+  mlKemPublicKey: 'mlkem-pk-admin',
   joinedAt: DateTime.now().toUtc(),
 );
 
@@ -550,66 +556,93 @@ void main() {
       },
     );
 
-    testWidgets('batch invite broadcasts one members_added system message', (
-      tester,
-    ) async {
-      final contactRepo = InMemoryContactRepository();
-      contactRepo.addTestContact(contactAlice);
-      contactRepo.addTestContact(contactCharlie);
+    testWidgets(
+      'PREREQ-SIGNED-COMMIT-AUDIT batch invite broadcasts one signed members_added system message',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        contactRepo.addTestContact(contactCharlie);
 
-      final groupRepo = InMemoryGroupRepository();
-      await groupRepo.saveGroup(testGroup);
-      await groupRepo.saveMember(memberAdmin);
-      await groupRepo.saveKey(
-        GroupKeyInfo(
-          groupId: 'group-1',
-          keyGeneration: 1,
-          encryptedKey: 'test-group-key-base64',
-          createdAt: DateTime.now().toUtc(),
-        ),
-      );
-
-      final bridge = PassthroughCryptoBridge();
-
-      await tester.pumpWidget(
-        buildDirectWiredTestWidget(
-          groupRepo: groupRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
-          p2pService: FakeP2PService(
-            initialState: const NodeState(isStarted: true),
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
           ),
-        ),
-      );
-      await pumpFrames(tester);
+        );
 
-      // Select Alice + Charlie, tap Send Invites
-      await tester.tap(find.text('Alice'));
-      await tester.pump();
-      await tester.tap(find.text('Charlie'));
-      await tester.pump();
-      await tester.tap(find.text('Send Invites'));
-      await pumpFrames(tester, count: 20);
+        final bridge = PassthroughCryptoBridge();
 
-      // Exactly 1 group:publish call
-      final publishCalls = bridge.commandLog
-          .where((c) => c == 'group:publish')
-          .length;
-      expect(publishCalls, equals(1));
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            p2pService: FakeP2PService(
+              initialState: const NodeState(isStarted: true),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
 
-      // Published text has __sys: 'members_added' with 2 members
-      final publishMsg = bridge.sentMessages.firstWhere((msg) {
-        final parsed = jsonDecode(msg) as Map<String, dynamic>;
-        return parsed['cmd'] == 'group:publish';
-      });
-      final parsed = jsonDecode(publishMsg) as Map<String, dynamic>;
-      final payload = parsed['payload'] as Map<String, dynamic>;
-      final sysText =
-          jsonDecode(payload['text'] as String) as Map<String, dynamic>;
-      expect(sysText['__sys'], equals('members_added'));
-      final sysMembers = sysText['members'] as List<dynamic>;
-      expect(sysMembers.length, equals(2));
-    });
+        // Select Alice + Charlie, tap Send Invites
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Charlie'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 20);
+
+        // Exactly 1 group:publish call
+        final publishCalls = bridge.commandLog
+            .where((c) => c == 'group:publish')
+            .length;
+        expect(publishCalls, equals(1));
+
+        // Published text has __sys: 'members_added' with 2 members
+        final publishMsg = bridge.sentMessages.firstWhere((msg) {
+          final parsed = jsonDecode(msg) as Map<String, dynamic>;
+          return parsed['cmd'] == 'group:publish';
+        });
+        final parsed = jsonDecode(publishMsg) as Map<String, dynamic>;
+        final payload = parsed['payload'] as Map<String, dynamic>;
+        final sysText =
+            jsonDecode(payload['text'] as String) as Map<String, dynamic>;
+        expect(sysText['__sys'], equals('members_added'));
+        final sysMembers = sysText['members'] as List<dynamic>;
+        expect(sysMembers.length, equals(2));
+        expect(sysText[signedGroupTransitionAuditField], isA<Map>());
+        final audit = (sysText[signedGroupTransitionAuditField] as Map)
+            .cast<String, dynamic>();
+        expect(audit['transitionType'], 'members_added');
+        expect(audit['groupId'], 'group-1');
+        expect(audit['sourceEventId'], payload['messageId']);
+        expect(audit['signatureAlgorithm'], 'ed25519');
+        expect(audit['signedPayload'], isA<String>());
+        expect(audit['signature'], isA<String>());
+
+        final auditPayload =
+            jsonDecode(audit['signedPayload'] as String)
+                as Map<String, dynamic>;
+        expect(auditPayload['sourceEventId'], payload['messageId']);
+        expect(auditPayload['transitionType'], 'members_added');
+        expect(auditPayload['transitionOutputHash'], isA<String>());
+        expect(auditPayload['preTransitionStateHash'], isA<String>());
+        expect(
+          (auditPayload['actor'] as Map)['signingPublicKey'],
+          contactSelf.publicKey,
+        );
+
+        final signIndex = bridge.commandLog.indexOf('payload.sign');
+        final publishIndex = bridge.commandLog.indexOf('group:publish');
+        expect(signIndex, isNonNegative);
+        expect(signIndex, lessThan(publishIndex));
+      },
+    );
 
     testWidgets('batch invite sends individual P2P invites to each contact', (
       tester,
@@ -668,6 +701,68 @@ void main() {
         expect(envelope['encrypted'], isNotNull);
       }
     });
+
+    testWidgets(
+      'PREREQ-INVITER-FRESHNESS batch invite sends proof-bound invite payloads',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactAlice);
+        contactRepo.addTestContact(contactCharlie);
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        final bridge = PassthroughCryptoBridge();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+          ),
+        );
+        await pumpFrames(tester);
+
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Charlie'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 20);
+
+        expect(p2pService.sentMessageLog.length, equals(2));
+        for (final entry in p2pService.sentMessageLog) {
+          final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+          final encrypted = envelope['encrypted'] as Map<String, dynamic>;
+          final payload = GroupInvitePayload.fromInnerJson(
+            encrypted['ciphertext'] as String,
+          );
+          expect(payload, isNotNull);
+          expect(payload!.membershipFreshnessProof, isNotNull);
+          expect(
+            payload.inviteSignature!.signedPayload,
+            contains(groupInviteMembershipFreshnessProofField),
+          );
+          expect(
+            payload.membershipFreshnessProof!.groupConfigStateHash,
+            payload.groupConfig['stateHash'],
+          );
+        }
+      },
+    );
 
     testWidgets('batch invite saves a durable members-added timeline locally', (
       tester,

@@ -20,12 +20,14 @@ import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -41,6 +43,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbit_close_butt
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -109,6 +112,7 @@ void main() {
     publicKey: 'test-public-key',
     privateKey: 'test-private-key',
     mnemonic12: 'w1 w2 w3 w4 w5 w6 w7 w8 w9 w10 w11 w12',
+    mlKemPublicKey: 'mlkem-test-peer-id-12345',
     username: 'Alice',
     createdAt: DateTime.now().toUtc().toIso8601String(),
     updatedAt: DateTime.now().toUtc().toIso8601String(),
@@ -342,40 +346,166 @@ void main() {
   }
 
   group('OrbitWired', () {
+    GroupInviteMembershipFreshnessProof makeInviteFreshnessProof({
+      required String inviteId,
+      required String groupId,
+      required String? recipientPeerId,
+      required Map<String, dynamic> groupConfig,
+      required DateTime issuedAt,
+      String? recipientDeviceId,
+      String? recipientTransportPeerId,
+      String? recipientMlKemPublicKey,
+      String? recipientKeyPackageId,
+      String? recipientKeyPackagePublicMaterial,
+    }) {
+      final stateHash = buildGroupConfigStateHash(
+        groupId: groupId,
+        groupConfig: groupConfig,
+      );
+      return GroupInviteMembershipFreshnessProof(
+        inviteId: inviteId,
+        groupId: groupId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDeviceId,
+        recipientTransportPeerId: recipientTransportPeerId,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        recipientKeyPackageId: recipientKeyPackageId,
+        recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
+        inviterPeerId: '12D3KooWAlice',
+        inviterPublicKey: 'alicePubKey64',
+        keyEpoch: 1,
+        groupConfigStateHash: stateHash,
+        membershipWatermark: stateHash,
+        issuedAt: issuedAt.toUtc(),
+        expiresAt: issuedAt.toUtc().add(groupInviteMembershipFreshnessTtl),
+        inviterMemberSnapshot: const {
+          'peerId': '12D3KooWAlice',
+          'username': 'Alice',
+          'role': 'admin',
+          'publicKey': 'alicePubKey64',
+          'mlKemPublicKey': 'aliceMlKem64',
+        },
+      );
+    }
+
     PendingGroupInvite makePendingInvite({
       String groupId = 'grp-abc123',
       String groupName = 'Book Club',
       DateTime? receivedAt,
+      String? recipientDeviceId,
     }) {
+      final effectiveReceivedAt = (receivedAt ?? DateTime.now().toUtc())
+          .toUtc();
+      final createdAt = effectiveReceivedAt.subtract(const Duration(hours: 6));
+      final inviteTimestamp = createdAt.add(const Duration(minutes: 5));
+      final packageId = recipientDeviceId == null
+          ? null
+          : defaultGroupWelcomeKeyPackageIdForDevice(recipientDeviceId);
+      final packageMaterial = recipientDeviceId == null
+          ? null
+          : testIdentity.mlKemPublicKey;
+      final welcomeKeyPackage =
+          recipientDeviceId != null &&
+              packageId != null &&
+              packageMaterial != null
+          ? GroupWelcomeKeyPackage.create(
+              packageId: packageId,
+              publicMaterial: packageMaterial,
+              recipientPeerId: testIdentity.peerId,
+              recipientDeviceId: recipientDeviceId,
+              recipientTransportPeerId: recipientDeviceId,
+              recipientMlKemPublicKey: testIdentity.mlKemPublicKey!,
+              inviteId: 'invite-$groupId',
+              groupId: groupId,
+              keyEpoch: 1,
+              issuedAt: inviteTimestamp,
+              expiresAt: effectiveReceivedAt.add(pendingGroupInviteTtl),
+            )
+          : null;
+      final Map<String, dynamic> groupConfig = {
+        'name': groupName,
+        'groupType': 'chat',
+        'description': 'Invite description',
+        'members': [
+          {
+            'peerId': '12D3KooWAlice',
+            'username': 'Alice',
+            'role': 'admin',
+            'publicKey': 'alicePubKey64',
+            'mlKemPublicKey': 'aliceMlKem64',
+          },
+          {
+            'peerId': testIdentity.peerId,
+            'username': testIdentity.username,
+            'role': 'writer',
+            'publicKey': testIdentity.publicKey,
+            'mlKemPublicKey': testIdentity.mlKemPublicKey,
+            if (recipientDeviceId != null)
+              'devices': [
+                {
+                  'deviceId': recipientDeviceId,
+                  'transportPeerId': recipientDeviceId,
+                  'deviceSigningPublicKey': testIdentity.publicKey,
+                  'mlKemPublicKey': testIdentity.mlKemPublicKey,
+                  'keyPackageId': packageId,
+                  'keyPackagePublicMaterial': packageMaterial,
+                  'status': 'active',
+                },
+              ],
+          },
+        ],
+        'createdBy': '12D3KooWAlice',
+        'createdAt': createdAt.toIso8601String(),
+      };
       final payload = GroupInvitePayload(
         id: 'invite-$groupId',
         groupId: groupId,
         groupKey: 'base64-key',
         keyEpoch: 1,
-        groupConfig: {
-          'name': groupName,
-          'groupType': 'chat',
-          'description': 'Invite description',
-          'members': [
-            {
-              'peerId': '12D3KooWAlice',
-              'username': 'Alice',
-              'role': 'admin',
-              'publicKey': 'alicePubKey64',
-              'mlKemPublicKey': 'aliceMlKem64',
-            },
-          ],
-          'createdBy': '12D3KooWAlice',
-          'createdAt': '2026-03-02T00:00:00.000Z',
-        },
+        groupConfig: groupConfig,
         senderPeerId: '12D3KooWAlice',
         senderUsername: 'Alice',
-        timestamp: '2026-03-02T12:00:00.000Z',
-      );
+        timestamp: inviteTimestamp.toIso8601String(),
+        recipientPeerId: testIdentity.peerId,
+        recipientDeviceId: recipientDeviceId,
+        recipientTransportPeerId: recipientDeviceId,
+        recipientMlKemPublicKey: recipientDeviceId == null
+            ? null
+            : testIdentity.mlKemPublicKey,
+        recipientKeyPackageId: packageId,
+        recipientKeyPackagePublicMaterial: packageMaterial,
+        welcomeKeyPackage: welcomeKeyPackage,
+        invitePolicy: GroupInvitePolicy(
+          expiresAt: effectiveReceivedAt.add(pendingGroupInviteTtl),
+          allowedDevices: [recipientDeviceId ?? testIdentity.peerId],
+          assignedRole: 'writer',
+          canInviteOthers: false,
+          joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
+          keyEpoch: 1,
+          welcomeKeyPackageId: welcomeKeyPackage?.packageId,
+          welcomeKeyPackagePublicMaterialHash:
+              welcomeKeyPackage?.publicMaterialHash,
+          welcomeKeyPackageExpiresAt: welcomeKeyPackage?.expiresAt,
+        ),
+        membershipFreshnessProof: makeInviteFreshnessProof(
+          inviteId: 'invite-$groupId',
+          groupId: groupId,
+          recipientPeerId: testIdentity.peerId,
+          recipientDeviceId: recipientDeviceId,
+          recipientTransportPeerId: recipientDeviceId,
+          recipientMlKemPublicKey: recipientDeviceId == null
+              ? null
+              : testIdentity.mlKemPublicKey,
+          recipientKeyPackageId: packageId,
+          recipientKeyPackagePublicMaterial: packageMaterial,
+          groupConfig: groupConfig,
+          issuedAt: inviteTimestamp,
+        ),
+      ).withInviteSignature(signature: 'signed-invite-by-alice');
 
       return PendingGroupInvite.fromPayload(
         payload,
-        receivedAt: receivedAt ?? DateTime.now().toUtc(),
+        receivedAt: effectiveReceivedAt,
       );
     }
 
@@ -1881,66 +2011,152 @@ void main() {
       },
     );
 
-    testWidgets('accepting a pending group invite from Intros joins the group', (
-      tester,
-    ) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      identityRepo.seed(testIdentity);
+    testWidgets(
+      'accepting a pending group invite from Intros joins the group',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
 
-      final invite = makePendingInvite(
-        groupId: 'grp-accept',
-        groupName: 'Writers Room',
-      );
-      await pendingInviteRepo.savePendingInvite(invite);
-      bridge.responses['group:inboxRetrieveCursor'] = {
-        'ok': true,
-        'messages': [
-          {
-            'from': '12D3KooWAlice',
-            'message':
-                '{"groupId":"grp-accept","messageId":"offline-msg-1","senderId":"12D3KooWAlice","senderUsername":"Alice","keyEpoch":1,"text":"Welcome back","timestamp":"2026-03-02T13:00:00.000Z"}',
-          },
-        ],
-        'cursor': '',
-      };
+        final invite = makePendingInvite(
+          groupId: 'grp-accept',
+          groupName: 'Writers Room',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': <Map<String, dynamic>>[],
+          'cursor': '',
+        };
 
-      final groupInviteListener = _FakeGroupInviteListener(
-        joinedStream: joinedGroupInviteController.stream,
-        pendingStream: pendingInviteController.stream,
-        pendingInviteRepo: pendingInviteRepo,
-      );
-      final feedUnreadCountListenable = ValueNotifier<int>(0);
-      addTearDown(feedUnreadCountListenable.dispose);
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
 
-      await tester.pumpWidget(
-        buildOrbitWired(
-          groupInviteListener: groupInviteListener,
-          initialFilterTab: 'intros',
-          appShellController: AppShellController(initialTab: AppShellTab.orbit),
-          feedUnreadCountListenable: feedUnreadCountListenable,
-        ),
-      );
-      await pumpOrbitFrames(tester, count: 6);
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
 
-      await tester.tap(
-        find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
-      );
-      await pumpOrbitFrames(tester, count: 30);
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpOrbitFrames(tester, count: 30);
 
-      expect(await pendingInviteRepo.getPendingInvite(invite.groupId), isNull);
-      expect(await groupRepo.getGroup(invite.groupId), isNotNull);
-      expect(
-        find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
-        findsNothing,
-      );
-      expect(find.text('Joined Writers Room'), findsOneWidget);
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(find.text('Joined Writers Room'), findsOneWidget);
 
-      await tester.tap(find.text('All'));
-      await pumpOrbitFrames(tester, count: 4);
+        await tester.tap(find.text('All'));
+        await pumpOrbitFrames(tester, count: 4);
 
-      expect(find.text('Writers Room'), findsOneWidget);
-    });
+        expect(find.text('Writers Room'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'EK011 accepts a key-package-bound pending group invite from Intros',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+        const localDeviceId = 'orbit-local-device-1';
+        p2pService.emitState(
+          const NodeState(peerId: localDeviceId, isStarted: true),
+        );
+
+        final invite = makePendingInvite(
+          groupId: 'grp-package-orbit',
+          groupName: 'Package Writers',
+          recipientDeviceId: localDeviceId,
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(find.text('Joined Package Writers'), findsOneWidget);
+
+        final tombstone = await pendingInviteRepo.getWelcomeKeyPackageTombstone(
+          packageId: defaultGroupWelcomeKeyPackageIdForDevice(localDeviceId)!,
+          recipientDeviceId: localDeviceId,
+          groupId: invite.groupId,
+        );
+        expect(tombstone, isNotNull);
+        expect(tombstone!.inviteId, invite.inviteId);
+      },
+    );
 
     testWidgets(
       'pushed conversation route shows loading shell before delayed initial page resolves',
@@ -2611,6 +2827,7 @@ class _FakeIntroductionListener extends IntroductionListener {
   Stream<IntroductionModel> get introStatusChangedStream =>
       _introStatusController.stream;
 
+  @override
   void emitIntroStatusChanged(IntroductionModel intro) =>
       _introStatusController.add(intro);
 }

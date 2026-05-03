@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -26,6 +27,9 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
   required String actorUsername,
   required String actorPublicKey,
   required String actorPrivateKey,
+  String? actorDeviceId,
+  String? actorTransportPeerId,
+  String? actorKeyPackageId,
   DateTime? dissolvedAt,
 }) async {
   emitFlowEvent(
@@ -72,16 +76,39 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
   }
 
   final eventAt = (dissolvedAt ?? DateTime.now()).toUtc();
+  final preTransitionStateHash = await buildGroupTransitionStateHash(
+    groupRepo,
+    groupId,
+  );
   final members = await groupRepo.getMembers(groupId);
   final recipientPeerIds = members
       .map((member) => member.peerId)
       .where((peerId) => peerId.isNotEmpty && peerId != actorPeerId)
       .toList(growable: false);
-  final sysText = jsonEncode({
-    '__sys': 'group_dissolved',
-    'dissolvedAt': eventAt.toIso8601String(),
-    'dissolvedBy': actorPeerId,
-  });
+  final sourceEventId =
+      'group_dissolved:$groupId:$actorPeerId:${eventAt.microsecondsSinceEpoch}';
+  final sysPayload = await signGroupSystemTransitionPayload(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    groupId: groupId,
+    transitionType: 'group_dissolved',
+    sourceEventId: sourceEventId,
+    eventAt: eventAt,
+    actorPeerId: actorPeerId,
+    actorUsername: actorUsername,
+    actorSigningPublicKey: actorPublicKey,
+    actorPrivateKey: actorPrivateKey,
+    actorDeviceId: actorDeviceId,
+    actorTransportPeerId: actorTransportPeerId,
+    actorKeyPackageId: actorKeyPackageId,
+    preTransitionStateHash: preTransitionStateHash,
+    systemPayload: {
+      '__sys': 'group_dissolved',
+      'dissolvedAt': eventAt.toIso8601String(),
+      'dissolvedBy': actorPeerId,
+    },
+  );
+  final sysText = jsonEncode(sysPayload);
   final timelineMessage = buildGroupDissolvedTimelineMessage(
     groupId: groupId,
     senderId: actorPeerId,
@@ -98,6 +125,10 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
       senderPublicKey: actorPublicKey,
       senderPrivateKey: actorPrivateKey,
       senderUsername: actorUsername,
+      senderDeviceId: actorDeviceId,
+      senderTransportPeerId: actorTransportPeerId,
+      senderKeyPackageId: actorKeyPackageId,
+      messageId: sourceEventId,
     );
   } catch (e) {
     emitFlowEvent(
@@ -117,8 +148,13 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
       'groupId': groupId,
       'senderId': actorPeerId,
       'senderUsername': actorUsername,
+      if (actorDeviceId != null && actorDeviceId.isNotEmpty)
+        'senderDeviceId': actorDeviceId,
+      if (actorTransportPeerId != null && actorTransportPeerId.isNotEmpty)
+        'transportPeerId': actorTransportPeerId,
       'text': sysText,
       'timestamp': eventAt.toIso8601String(),
+      'messageId': sourceEventId,
     });
 
     try {
@@ -128,7 +164,13 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
         groupId: groupId,
         payloadType: groupOfflineReplayPayloadTypeMessage,
         plaintext: inboxPayload,
+        senderPeerId: actorPeerId,
+        senderPublicKey: actorPublicKey,
+        senderPrivateKey: actorPrivateKey,
         messageId: timelineMessage.id,
+        senderDeviceId: actorDeviceId,
+        senderTransportPeerId: actorTransportPeerId,
+        senderKeyPackageId: actorKeyPackageId,
         recipientPeerIds: recipientPeerIds,
       );
     } catch (e) {

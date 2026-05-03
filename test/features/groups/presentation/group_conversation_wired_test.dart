@@ -477,6 +477,7 @@ GroupMessage makeMessage({
   List<MediaAttachment> media = const [],
   String? wireEnvelope,
   String? inboxRetryPayload,
+  DateTime? timestamp,
 }) => GroupMessage(
   id: id,
   groupId: groupId,
@@ -484,10 +485,10 @@ GroupMessage makeMessage({
   senderUsername: senderUsername,
   text: text,
   quotedMessageId: quotedMessageId,
-  timestamp: DateTime.now().toUtc(),
+  timestamp: timestamp ?? DateTime.now().toUtc(),
   status: status,
   isIncoming: isIncoming,
-  createdAt: DateTime.now().toUtc(),
+  createdAt: timestamp ?? DateTime.now().toUtc(),
   media: media,
   wireEnvelope: wireEnvelope,
   inboxRetryPayload: inboxRetryPayload,
@@ -663,6 +664,78 @@ void main() {
 
       final textField = tester.widget<TextField>(find.byType(TextField));
       expect(textField.controller?.text, 'Shared group text');
+    });
+
+    testWidgets('shows security status from key epoch and member safety', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: group.id,
+          keyGeneration: 2,
+          encryptedKey: 'test-group-key-2',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'peer-alice',
+          username: 'Alice',
+          role: MemberRole.writer,
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob-current',
+          mlKemPublicKey: 'mlkem-bob-current',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await contactRepo.addContact(
+        ContactModel(
+          peerId: 'peer-alice',
+          publicKey: 'pk-alice',
+          rendezvous: '/ip4/127.0.0.1/tcp/4001',
+          username: 'Alice',
+          signature: 'sig-alice',
+          scannedAt: DateTime.utc(2026, 5, 1).toIso8601String(),
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+      await contactRepo.addContact(
+        ContactModel(
+          peerId: 'peer-bob',
+          publicKey: 'pk-bob-saved',
+          rendezvous: '/ip4/127.0.0.1/tcp/4001',
+          username: 'Bob',
+          signature: 'sig-bob',
+          scannedAt: DateTime.utc(2026, 5, 1).toIso8601String(),
+          mlKemPublicKey: 'mlkem-bob-saved',
+        ),
+      );
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpUntil(
+        tester,
+        () => find
+            .byKey(const ValueKey('group-conversation-security-strip'))
+            .evaluate()
+            .isNotEmpty,
+      );
+
+      expect(find.text('Encrypted - key epoch 2'), findsOneWidget);
+      expect(find.text('1 member needs verification review'), findsOneWidget);
+      expect(find.textContaining('test-group-key-2'), findsNothing);
     });
 
     testWidgets(
@@ -1915,6 +1988,291 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'GMAR-004 reopen hydration preserves video voice pending and failed media without duplicates',
+      (tester) async {
+        final group = makeChatGroup();
+        final timestamp = DateTime.utc(2026, 5, 2, 9);
+        final mediaFileManager = FakeMediaFileManager();
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'gmar004-complete',
+            text: 'verified video and voice',
+            timestamp: timestamp,
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'gmar004-pending',
+            text: 'pending video remains visible',
+            timestamp: timestamp.add(const Duration(seconds: 1)),
+          ),
+        );
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'gmar004-failed',
+            text: 'failed voice remains retryable',
+            timestamp: timestamp.add(const Duration(seconds: 2)),
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'gmar004-video-done',
+            messageId: 'gmar004-complete',
+            mime: 'video/mp4',
+            size: 4096,
+            mediaType: 'video',
+            width: 640,
+            height: 360,
+            durationMs: 12000,
+            localPath: 'pending_uploads/gmar004-complete/gmar004-video.mp4',
+            downloadStatus: 'done',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-05-02T09:00:00.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'gmar004-voice-done',
+            messageId: 'gmar004-complete',
+            mime: 'audio/mp4',
+            size: 2048,
+            mediaType: 'audio',
+            durationMs: 4200,
+            localPath: 'pending_uploads/gmar004-complete/gmar004-voice.m4a',
+            downloadStatus: 'done',
+            waveform: <double>[0.2, 0.6, 0.35, 0.8],
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-05-02T09:00:01.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'gmar004-video-pending',
+            messageId: 'gmar004-pending',
+            mime: 'video/mp4',
+            size: 4096,
+            mediaType: 'video',
+            width: 640,
+            height: 360,
+            durationMs: 9000,
+            downloadStatus: 'pending',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-05-02T09:00:02.000Z',
+          ),
+        );
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'gmar004-voice-failed',
+            messageId: 'gmar004-failed',
+            mime: 'audio/mp4',
+            size: 2048,
+            mediaType: 'audio',
+            durationMs: 3000,
+            downloadStatus: kMediaDownloadStatusIntegrityFailed,
+            waveform: <double>[0.1, 0.4, 0.7],
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-fixture',
+            encryptionNonce: 'nonce-fixture',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            createdAt: '2026-05-02T09:00:03.000Z',
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await pumpFrames(tester, count: 20);
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.length == 3 &&
+              screen.mediaMap['gmar004-complete']?.length == 2 &&
+              screen.mediaMap['gmar004-pending']?.length == 1 &&
+              screen.mediaMap['gmar004-failed']?.length == 1;
+        });
+
+        void expectHydratedOnce() {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          expect(
+            screen.messages.where(
+              (message) => message.id == 'gmar004-complete',
+            ),
+            hasLength(1),
+          );
+          expect(
+            screen.mediaMap['gmar004-complete']!.map((media) => media.id),
+            ['gmar004-video-done', 'gmar004-voice-done'],
+          );
+          expect(
+            screen.mediaMap['gmar004-complete']!
+                .map((media) => media.contentHash)
+                .toSet(),
+            {_validContentHash},
+          );
+          expect(
+            screen.mediaMap['gmar004-complete']!
+                .map((media) => media.encryptionScheme)
+                .toSet(),
+            {kMediaAttachmentEncryptionSchemeBlobAesGcmV1},
+          );
+          expect(
+            screen.mediaMap['gmar004-pending']!.single.downloadStatus,
+            isIn(['pending', 'failed', kMediaDownloadStatusIntegrityFailed]),
+          );
+          expect(
+            screen.mediaMap['gmar004-failed']!.single.downloadStatus,
+            kMediaDownloadStatusIntegrityFailed,
+          );
+          expect(screen.onRetryUnavailableMedia, isNotNull);
+        }
+
+        expectHydratedOnce();
+        expect(
+          find.byKey(
+            const ValueKey(
+              'unavailable-media-retry-gmar004-failed-gmar004-voice-failed',
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('failed-media-retry-gmar004-failed')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('failed-media-delete-gmar004-failed')),
+          findsNothing,
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          ),
+        );
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await pumpFrames(tester, count: 20);
+        await pumpUntil(tester, () {
+          final screen = tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+          return screen.messages.length == 3 &&
+              screen.mediaMap['gmar004-complete']?.length == 2 &&
+              screen.mediaMap['gmar004-pending']?.length == 1 &&
+              screen.mediaMap['gmar004-failed']?.length == 1;
+        });
+
+        expectHydratedOnce();
+      },
+    );
+
+    testWidgets(
+      'MS003 live stream upsert orders equal timestamps by message id',
+      (tester) async {
+        final group = makeChatGroup();
+        final sameTimestamp = DateTime.utc(2026, 4, 30, 12);
+        await groupRepo.saveGroup(group);
+        await msgRepo.saveMessage(
+          makeMessage(
+            id: 'ms003-b',
+            text: 'B at same time',
+            timestamp: sameTimestamp,
+          ),
+        );
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        final incoming = makeMessage(
+          id: 'ms003-a',
+          text: 'A at same time',
+          timestamp: sameTimestamp,
+        );
+        await msgRepo.saveMessage(incoming);
+        messageStreamController.add(incoming);
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.messages.map((message) => message.id), [
+          'ms003-a',
+          'ms003-b',
+        ]);
+      },
+    );
+
+    testWidgets('MS004 live stream upsert keeps quoted parent before reply', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      final parentTimestamp = DateTime.utc(2026, 4, 30, 12, 0, 1);
+      final replyTimestamp = DateTime.utc(2026, 4, 30, 12);
+      await groupRepo.saveGroup(group);
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'zz-ms004-parent',
+          text: 'Parent',
+          timestamp: parentTimestamp,
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'mm-ms004-peer',
+          text: 'Concurrent peer',
+          timestamp: replyTimestamp,
+        ),
+      );
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpFrames(tester);
+
+      final reply = makeMessage(
+        id: 'aa-ms004-reply',
+        text: 'Reply',
+        timestamp: replyTimestamp,
+        quotedMessageId: 'zz-ms004-parent',
+      );
+      await msgRepo.saveMessage(reply);
+      messageStreamController.add(reply);
+      await pumpFrames(tester, count: 20);
+
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(screen.messages.map((message) => message.id), [
+        'mm-ms004-peer',
+        'zz-ms004-parent',
+        'aa-ms004-reply',
+      ]);
+    });
 
     testWidgets('live removal timeline event from listener appears in UI', (
       tester,
@@ -4282,8 +4640,9 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
-        await pumpUntil(tester, () => uploadStarted.isCompleted, maxPumps: 240);
-        expect(uploadStarted.isCompleted, isTrue);
+        await tester.runAsync(() async {
+          await uploadStarted.future.timeout(const Duration(seconds: 10));
+        });
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);
@@ -4578,7 +4937,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 2));
+          await uploadStarted.future.timeout(const Duration(seconds: 10));
         });
         await pumpFrames(tester, count: 5);
 

@@ -154,11 +154,53 @@ That is the correct level of honesty for a publish + inbox-backed, receipt-less 
   is the Flutter `messageId`/content dedupe contract, not nonce-cache
   rejection, and Go group-topic validation rejects forged signed
   `members_added` envelopes before decoded membership events reach Flutter.
-- `test/features/groups/integration/group_media_fanout_test.dart` now proves
-  existing discussion members receive image, video, and voice messages through
-  the bridge-backed group send path with descriptors intact. This is
-  fake-network/app-layer media evidence; live GossipSub/simulator media
-  delivery remains owned by later Report 85 sessions.
+- GMAR-002 tightened `test/features/groups/integration/group_media_fanout_test.dart`
+  on `2026-05-02`: existing Bob and Charlie now each independently complete
+  Alice's image, video, and voice downloads with matching incoming message ids,
+  attachment metadata, `done` status, local paths, and exact per-recipient
+  download calls. The suite also proves one recipient's forced download failure
+  remains visible as failed/non-done while the other recipient succeeds.
+- GMAR-002 also tightened the lower relay/blob proof in
+  `go-mknoon/integration/media_test.go`: two authorized non-sender members now
+  independently download the same group blob byte-for-byte while an outsider is
+  rejected. This is existing-member app-layer/blob authorization evidence;
+  GMAR-003 and GMAR-004 carry the later membership-boundary app-layer parity and
+  configured visible/recovery proof.
+- GMAR-003 tightened the host/app-layer membership-boundary media proofs on
+  `2026-05-02`: `group_new_member_onboarding_test.dart` now proves newly-added
+  Bob and Charlie independently download Alice's same post-join image, video,
+  and voice while pre-join text/media remains excluded. `group_media_fanout_test.dart`
+  now proves newly-added Bob's media reaches Alice and Charlie, and existing
+  non-creator Charlie's media reaches Alice and Bob, with completed downloads,
+  sender identity, sender message ids, key epoch, attachment metadata, and exact
+  per-recipient download calls. The full media fan-out suite stayed green, so
+  MD-011 removed-member future-media exclusion remains protected.
+- GMAR-004 accepted the remaining Report 90 configured visible-media/recovery
+  layer on `2026-05-02`: the simulator proof on
+  `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` now passes after fixture metadata was
+  made truthful under group media integrity policy, host screen/wired tests prove
+  video/voice/failed media rows, reopen hydration, retry visibility, and no
+  duplicate rows/attachments, and the full drain offline inbox suite passes after
+  legacy fake replay fixtures were signed at the test fake bridge boundary. No
+  GMAR-004 production group media or replay logic change was required.
+- GMAR-005 closed the final Report 90 gate-confidence layer on `2026-05-03`:
+  after fix-authorized recovery for failing media-message journey metadata,
+  stable-ID/all-gate, broad host-suite, and two-simulator smoke orchestration
+  evidence, the final rerun passed every required direct GMAR suite, configured
+  simulator media proof, two-simulator routing/group and foreground group push
+  smoke command with relay addresses, device-pinned `run_test_gates.sh all`,
+  `completeness-check`, broad `flutter test`, `cd go-mknoon && go test ./...`,
+  and `git diff --check`.
+- GMAR-001 tightened the text-only fan-out proof on `2026-05-02`:
+  `group_messaging_smoke_test.dart` now proves Admin, Bob, Charlie, and Diana
+  each receive the other three active members' text messages exactly once with
+  matching sender peer IDs and usernames. The focused four-user text proof and
+  the `groups` gate both passed.
+- That GMAR-001 evidence alone closes only the text complaint shape where a member
+  sees creator-authored text but misses other active members' text. It does
+  **not** close Report 90 all-recipient media parity by itself: that media proof
+  is now carried by GMAR-002, GMAR-003, and GMAR-004, with final gate/full-suite
+  reconciliation closed by GMAR-005.
 - Report 89 extends that same suite to the newly-added sender path: after
   bootstrap and latest-key persistence, Bob sends image, video, and voice, his
   outgoing rows retain the attachments, and Alice/Charlie each receive exactly
@@ -247,11 +289,17 @@ Future work may strengthen those areas, but they are not required to keep the cu
 
 ## Current Residual Caveat
 
-There is still one narrow residual worth remembering:
+There are still narrow residuals worth remembering:
 
 - voice publish-failure retry is weaker than ordinary-media retry because the producer-side completed-attachment seam is still narrower in the current tree
+- Report 90 all-recipient media parity is now closed by GMAR-001 through
+  GMAR-005. The accepted evidence includes existing-member app-layer
+  image/video/voice download parity, two-authorized-non-sender blob
+  authorization proof, newly-added/non-creator host app-layer media parity,
+  configured visible render/playback/reopen/retry/offline/duplicate proof, and
+  the GMAR-005 final gate/full-suite reconciliation.
 
-This is **not** a reason to reopen the whole group reliability program. It is the one specific residual to reopen only if it becomes a real escaped bug or clearly justified trust gap.
+These are **not** reasons to reopen the whole group reliability program. Reopen only if they become real escaped bugs or clearly justified trust gaps.
 
 ---
 

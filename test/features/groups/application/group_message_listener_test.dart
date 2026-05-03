@@ -15,10 +15,14 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
@@ -73,6 +77,84 @@ class GateableMediaAttachmentRepository
       }
     }
     await super.updateDownloadStatus(id, downloadStatus);
+  }
+}
+
+class _InMemoryGroupPendingKeyRepairRepository
+    implements GroupPendingKeyRepairRepository {
+  final Map<String, GroupPendingKeyRepair> repairs = {};
+
+  @override
+  Future<GroupPendingKeyRepairUpsertResult> upsertPendingRepair(
+    GroupPendingKeyRepair repair,
+  ) async {
+    final existing = repairs[repair.id];
+    if (existing == null) {
+      repairs[repair.id] = repair;
+      return GroupPendingKeyRepairUpsertResult(repair: repair, created: true);
+    }
+    final merged = existing.copyWith(updatedAt: repair.updatedAt);
+    repairs[repair.id] = merged;
+    return GroupPendingKeyRepairUpsertResult(repair: merged, created: false);
+  }
+
+  @override
+  Future<GroupPendingKeyRepair?> getRepair(String id) async => repairs[id];
+
+  @override
+  Future<List<GroupPendingKeyRepair>> getPendingRepairsForGroupEpoch({
+    required String groupId,
+    required int keyEpoch,
+    int limit = 50,
+  }) async {
+    return repairs.values
+        .where(
+          (repair) =>
+              repair.groupId == groupId &&
+              repair.keyEpoch == keyEpoch &&
+              repair.status == groupPendingKeyRepairStatusPendingKey,
+        )
+        .take(limit)
+        .toList();
+  }
+
+  @override
+  Future<void> recordAttempt(String id, {required String? lastError}) async {
+    final existing = repairs[id];
+    if (existing == null) return;
+    repairs[id] = existing.copyWith(
+      attempts: existing.attempts + 1,
+      lastError: lastError,
+      updatedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  @override
+  Future<void> finalizeRepaired(String id) async {
+    final existing = repairs[id];
+    if (existing == null || existing.finalizedAt != null) return;
+    final now = DateTime.now().toUtc();
+    repairs[id] = existing.copyWith(
+      status: groupPendingKeyRepairStatusRepaired,
+      updatedAt: now,
+      finalizedAt: now,
+    );
+  }
+
+  @override
+  Future<void> finalizeUndecryptable(
+    String id, {
+    required String lastError,
+  }) async {
+    final existing = repairs[id];
+    if (existing == null || existing.finalizedAt != null) return;
+    final now = DateTime.now().toUtc();
+    repairs[id] = existing.copyWith(
+      status: groupPendingKeyRepairStatusUndecryptable,
+      lastError: lastError,
+      updatedAt: now,
+      finalizedAt: now,
+    );
   }
 }
 
@@ -254,6 +336,41 @@ void main() {
     };
   }
 
+  Future<Map<String, dynamic>> signedAuditSystemPayload({
+    required String transitionType,
+    required String sourceEventId,
+    required DateTime eventAt,
+    required Map<String, dynamic> systemPayload,
+    String actorPeerId = 'peer-admin',
+    String actorUsername = 'Admin',
+    String actorPublicKey = 'pk-admin',
+  }) {
+    return signGroupSystemTransitionPayload(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      transitionType: transitionType,
+      sourceEventId: sourceEventId,
+      eventAt: eventAt,
+      actorPeerId: actorPeerId,
+      actorUsername: actorUsername,
+      actorSigningPublicKey: actorPublicKey,
+      actorPrivateKey: 'sk-$actorPeerId',
+      systemPayload: systemPayload,
+    );
+  }
+
+  Future<void> expectNotificationCount(
+    FakeNotificationService service,
+    int count,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (service.shown.length < count && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(service.shown, hasLength(count));
+  }
+
   setUp(() async {
     groupRepo = InMemoryGroupRepository();
     msgRepo = InMemoryGroupMessageRepository();
@@ -268,6 +385,7 @@ void main() {
     };
 
     await groupRepo.saveGroup(testGroup);
+    await saveTrustedAdminMember();
     await groupRepo.saveMember(
       GroupMember(
         groupId: 'group-1',
@@ -291,6 +409,553 @@ void main() {
     sourceController.close();
   });
 
+  test(
+    'PREREQ-FUTURE-EPOCH-KEY-REPAIR live decryption failure creates repair placeholder and trigger without normal delivery',
+    () async {
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final repairRequests = <GroupKeyRepairRequest>[];
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: (request) {
+          repairRequests.add(request);
+        },
+      );
+      listener.start(sourceController.stream);
+      addTearDown(diagnostics.close);
+
+      final emittedMessage = listener.groupMessageStream.first.timeout(
+        const Duration(seconds: 1),
+      );
+      diagnostics.add({
+        'event': 'group:decryption_failed',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'keyEpoch': 3,
+        'localKeyEpoch': 2,
+        'error': 'cipher: message authentication failed',
+      });
+
+      final placeholder = await emittedMessage;
+      expect(placeholder.groupId, 'group-1');
+      expect(placeholder.senderPeerId, 'peer-sender');
+      expect(placeholder.text, groupPendingKeyRepairPlaceholderText);
+      expect(placeholder.status, groupPendingKeyRepairStatusPendingKey);
+      expect(placeholder.keyGeneration, 3);
+      expect(await msgRepo.getMessage(placeholder.id), isNotNull);
+      expect(msgRepo.count, 1);
+      expect(pendingRepo.repairs.values, hasLength(1));
+      expect(pendingRepo.repairs.values.single.replayEnvelopeJson, isNull);
+      expect(repairRequests, hasLength(1));
+      expect(repairRequests.single.groupId, 'group-1');
+      expect(repairRequests.single.keyEpoch, 3);
+      expect(repairRequests.single.reason, groupKeyRepairReasonLiveDiagnostic);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 3,
+        'messageId': 'normal-live-after-diagnostic',
+        'text': 'Normal live delivery is separate',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      });
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        await msgRepo.getMessage('normal-live-after-diagnostic'),
+        isNotNull,
+      );
+      expect(msgRepo.count, 2);
+    },
+  );
+
+  group('PREREQ-SIGNED-COMMIT-AUDIT', () {
+    test(
+      'missing audit for shipped transition families is rejected before side effects',
+      () async {
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'unsigned-member-added-1',
+          'text': jsonEncode({
+            '__sys': 'member_added',
+            'member': {
+              'peerId': 'peer-new',
+              'username': 'New',
+              'role': 'writer',
+              'publicKey': 'pk-new',
+            },
+            'groupConfig': buildGroupConfigPayload(testGroup, [
+              GroupMember(
+                groupId: 'group-1',
+                peerId: 'peer-admin',
+                username: 'Admin',
+                role: MemberRole.admin,
+                publicKey: 'pk-admin',
+                joinedAt: initialMemberJoinedAt,
+              ),
+              GroupMember(
+                groupId: 'group-1',
+                peerId: 'peer-new',
+                username: 'New',
+                role: MemberRole.writer,
+                publicKey: 'pk-new',
+                joinedAt: initialMemberJoinedAt,
+              ),
+            ]),
+          }),
+          'timestamp': '2026-05-01T12:00:00.000Z',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-new'), isNull);
+        expect(msgRepo.count, 0);
+        expect(eventLog.entries, isEmpty);
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      },
+    );
+
+    test(
+      'valid signed transition applies live and duplicate replay is idempotent while tampered replay is blocked',
+      () async {
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final eventAt = DateTime.utc(2026, 5, 1, 12, 1);
+        final member = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-audit-new',
+          username: 'Audited',
+          role: MemberRole.writer,
+          publicKey: 'pk-audit-new',
+          joinedAt: eventAt,
+        );
+        final signedPayload = await signGroupSystemTransitionPayload(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          transitionType: 'member_added',
+          sourceEventId: 'signed-member-added-1',
+          eventAt: eventAt,
+          actorPeerId: 'peer-admin',
+          actorUsername: 'Admin',
+          actorSigningPublicKey: 'pk-admin',
+          actorPrivateKey: 'sk-admin',
+          systemPayload: {
+            '__sys': 'member_added',
+            'member': member.toConfigJson(),
+            'groupConfig': buildGroupConfigPayload(testGroup, [
+              GroupMember(
+                groupId: 'group-1',
+                peerId: 'peer-admin',
+                username: 'Admin',
+                role: MemberRole.admin,
+                publicKey: 'pk-admin',
+                joinedAt: initialMemberJoinedAt,
+              ),
+              member,
+            ]),
+          },
+        );
+        final liveEnvelope = {
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'signed-member-added-1',
+          'text': jsonEncode(signedPayload),
+          'timestamp': eventAt.toIso8601String(),
+        };
+
+        sourceController.add(liveEnvelope);
+        await Future.delayed(const Duration(milliseconds: 50));
+        sourceController.add(liveEnvelope);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          await groupRepo.getMember('group-1', 'peer-audit-new'),
+          isNotNull,
+        );
+        expect(eventLog.entries, hasLength(1));
+        expect(msgRepo.count, 1);
+
+        final tampered = Map<String, dynamic>.from(signedPayload)
+          ..['member'] = {...member.toConfigJson(), 'username': 'Tampered'};
+        sourceController.add({
+          ...liveEnvelope,
+          'messageId': 'signed-member-added-2',
+          'text': jsonEncode(tampered),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final stored = await groupRepo.getMember('group-1', 'peer-audit-new');
+        expect(stored!.username, 'Audited');
+        expect(eventLog.entries, hasLength(1));
+        expect(msgRepo.count, 1);
+      },
+    );
+  });
+
+  group('PREREQ-REMOTE-EVENT-FAMILIES', () {
+    test(
+      'duplicate group_message_deleted removes one exact target and keeps one tombstone',
+      () async {
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final messageAt = DateTime.utc(2026, 5, 1, 12);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'delete-target-1',
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            senderUsername: 'Sender',
+            text: 'Remove this',
+            timestamp: messageAt,
+            createdAt: messageAt,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'delete-keep-1',
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            senderUsername: 'Sender',
+            text: 'Keep this',
+            timestamp: messageAt,
+            createdAt: messageAt,
+          ),
+        );
+
+        final deletedAt = messageAt.add(const Duration(minutes: 1));
+        final signedPayload = await signedAuditSystemPayload(
+          transitionType: 'group_message_deleted',
+          sourceEventId: 'remote-delete-event-1',
+          eventAt: deletedAt,
+          systemPayload: {
+            '__sys': 'group_message_deleted',
+            'targetMessageId': 'delete-target-1',
+            'deletedAt': deletedAt.toIso8601String(),
+          },
+        );
+        final envelope = {
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'remote-delete-event-1',
+          'text': jsonEncode(signedPayload),
+          'timestamp': deletedAt.toIso8601String(),
+        };
+
+        sourceController.add(envelope);
+        sourceController.add(envelope);
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await msgRepo.getMessage('delete-target-1'), isNull);
+        expect(await msgRepo.getMessage('delete-keep-1'), isNotNull);
+        final messages = await msgRepo.getMessagesPage('group-1', limit: 20);
+        final tombstones = messages
+            .where(
+              (message) =>
+                  message.id.startsWith(
+                    'sys-group_message_deleted:group-1:delete-target-1:',
+                  ) &&
+                  message.text == 'Admin deleted a message',
+            )
+            .toList();
+        expect(tombstones, hasLength(1));
+        expect(eventLog.entries, hasLength(1));
+        expect(eventLog.entries.single['eventType'], 'group_message_deleted');
+      },
+    );
+
+    test(
+      'stale wrong-group and unauthorized group_message_deleted events do not corrupt messages',
+      () async {
+        listener.start(sourceController.stream);
+        final messageAt = DateTime.utc(2026, 5, 1, 12);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'group-2',
+            name: 'Other Group',
+            type: GroupType.chat,
+            topicName: 'group-topic-2',
+            createdAt: initialGroupCreatedAt,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.admin,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'newer-target',
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            text: 'Newer than delete',
+            timestamp: messageAt.add(const Duration(minutes: 5)),
+            createdAt: messageAt,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'foreign-target',
+            groupId: 'group-2',
+            senderPeerId: 'peer-sender',
+            text: 'Wrong group',
+            timestamp: messageAt,
+            createdAt: messageAt,
+          ),
+        );
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'admin-owned-target',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            text: 'Admin message',
+            timestamp: messageAt,
+            createdAt: messageAt,
+          ),
+        );
+
+        void addDeleteEvent({
+          required String senderId,
+          required String senderUsername,
+          required String messageId,
+          required String targetMessageId,
+          required DateTime deletedAt,
+        }) {
+          sourceController.add({
+            'groupId': 'group-1',
+            'senderId': senderId,
+            'senderUsername': senderUsername,
+            'keyEpoch': 0,
+            'messageId': messageId,
+            'text': jsonEncode({
+              '__sys': 'group_message_deleted',
+              'targetMessageId': targetMessageId,
+              'deletedAt': deletedAt.toIso8601String(),
+            }),
+            'timestamp': deletedAt.toIso8601String(),
+          });
+        }
+
+        addDeleteEvent(
+          senderId: 'peer-admin',
+          senderUsername: 'Admin',
+          messageId: 'stale-delete-event',
+          targetMessageId: 'newer-target',
+          deletedAt: messageAt,
+        );
+        addDeleteEvent(
+          senderId: 'peer-admin',
+          senderUsername: 'Admin',
+          messageId: 'wrong-group-delete-event',
+          targetMessageId: 'foreign-target',
+          deletedAt: messageAt.add(const Duration(minutes: 10)),
+        );
+        addDeleteEvent(
+          senderId: 'peer-sender',
+          senderUsername: 'Sender',
+          messageId: 'unauthorized-delete-event',
+          targetMessageId: 'admin-owned-target',
+          deletedAt: messageAt.add(const Duration(minutes: 10)),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await msgRepo.getMessage('newer-target'), isNotNull);
+        expect(await msgRepo.getMessage('foreign-target'), isNotNull);
+        expect(await msgRepo.getMessage('admin-owned-target'), isNotNull);
+        final messages = await msgRepo.getMessagesPage('group-1', limit: 20);
+        expect(
+          messages.where(
+            (message) => message.id.startsWith('sys-group_message_deleted:'),
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'member_banned and member_unbanned are idempotent and stale ban replay is ignored',
+      () async {
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        final joinedAt = DateTime.utc(2026, 5, 1, 11, 59);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-target',
+            username: 'Target',
+            role: MemberRole.writer,
+            publicKey: 'pk-target',
+            joinedAt: joinedAt,
+          ),
+        );
+
+        Future<void> sendSignedEvent({
+          required String transitionType,
+          required String sourceEventId,
+          required DateTime eventAt,
+          required Map<String, dynamic> systemPayload,
+        }) async {
+          final signedPayload = await signedAuditSystemPayload(
+            transitionType: transitionType,
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+            systemPayload: systemPayload,
+          );
+          final envelope = {
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'messageId': sourceEventId,
+            'text': jsonEncode(signedPayload),
+            'timestamp': eventAt.toIso8601String(),
+          };
+          sourceController.add(envelope);
+          sourceController.add(envelope);
+          await Future.delayed(const Duration(milliseconds: 50));
+        }
+
+        final bannedAt = DateTime.utc(2026, 5, 1, 12);
+        await sendSignedEvent(
+          transitionType: 'member_banned',
+          sourceEventId: 'member-banned-event-1',
+          eventAt: bannedAt,
+          systemPayload: {
+            '__sys': 'member_banned',
+            'targetPeerId': 'peer-target',
+            'targetUsername': 'Target',
+            'bannedAt': bannedAt.toIso8601String(),
+          },
+        );
+
+        expect(await groupRepo.getMember('group-1', 'peer-target'), isNull);
+        var messages = await msgRepo.getMessagesPage('group-1', limit: 20);
+        expect(
+          messages.where(
+            (message) =>
+                message.id.startsWith(
+                  'sys-member_banned:group-1:peer-target:',
+                ) &&
+                message.text == 'Admin banned Target',
+          ),
+          hasLength(1),
+        );
+        expect(eventLog.entries, hasLength(1));
+
+        final unbannedAt = DateTime.utc(2026, 5, 1, 12, 5);
+        await sendSignedEvent(
+          transitionType: 'member_unbanned',
+          sourceEventId: 'member-unbanned-event-1',
+          eventAt: unbannedAt,
+          systemPayload: {
+            '__sys': 'member_unbanned',
+            'targetPeerId': 'peer-target',
+            'targetUsername': 'Target',
+            'unbannedAt': unbannedAt.toIso8601String(),
+          },
+        );
+
+        expect(await groupRepo.getMember('group-1', 'peer-target'), isNull);
+        messages = await msgRepo.getMessagesPage('group-1', limit: 20);
+        expect(
+          messages.where(
+            (message) =>
+                message.id.startsWith(
+                  'sys-member_unbanned:group-1:peer-target:',
+                ) &&
+                message.text == 'Admin unbanned Target',
+          ),
+          hasLength(1),
+        );
+        expect(eventLog.entries, hasLength(2));
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-target',
+            username: 'Target',
+            role: MemberRole.writer,
+            publicKey: 'pk-target',
+            joinedAt: unbannedAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        final staleBanAt = DateTime.utc(2026, 5, 1, 12, 1);
+        await sendSignedEvent(
+          transitionType: 'member_banned',
+          sourceEventId: 'member-banned-stale-after-unban',
+          eventAt: staleBanAt,
+          systemPayload: {
+            '__sys': 'member_banned',
+            'targetPeerId': 'peer-target',
+            'targetUsername': 'Target',
+            'bannedAt': staleBanAt.toIso8601String(),
+          },
+        );
+
+        final targetAfterStaleBan = await groupRepo.getMember(
+          'group-1',
+          'peer-target',
+        );
+        expect(targetAfterStaleBan, isNotNull);
+        expect(targetAfterStaleBan!.joinedAt.isAfter(staleBanAt), isTrue);
+        messages = await msgRepo.getMessagesPage('group-1', limit: 20);
+        expect(
+          messages.where(
+            (message) =>
+                message.id.startsWith('sys-member_banned:group-1:peer-target:'),
+          ),
+          hasLength(1),
+        );
+        expect(eventLog.entries, hasLength(2));
+      },
+    );
+  });
+
   test('processes valid message', () async {
     listener.start(sourceController.stream);
 
@@ -310,6 +975,45 @@ void main() {
     final latest = await msgRepo.getLatestMessage('group-1');
     expect(latest!.text, 'Hello group!');
   });
+
+  test(
+    'ER002 rejects unknown sender message before stream, storage, or notification',
+    () async {
+      final notifService = FakeNotificationService();
+      final tracker = ActiveConversationTracker();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        notificationService: notifService,
+        groupConversationTracker: tracker,
+        getAppLifecycleState: () => AppLifecycleState.paused,
+      );
+      final emitted = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(emitted.add);
+      addTearDown(subscription.cancel);
+
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-unknown',
+        'senderUsername': 'Unknown',
+        'keyEpoch': 0,
+        'text': 'Ghost message',
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-er002-unknown',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(await msgRepo.getMessage('msg-er002-unknown'), isNull);
+      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+      expect(emitted, isEmpty);
+      expect(notifService.shown, isEmpty);
+    },
+  );
 
   test('forwards quotedMessageId from event into persisted message', () async {
     listener.start(sourceController.stream);
@@ -622,9 +1326,15 @@ void main() {
           avatarBlobId: 'blob-1',
           avatarMime: 'image/jpeg',
         );
-        final sysPayload = signedMetadataSystemPayload(
+        final metadataPayload = signedMetadataSystemPayload(
           updatedAt: updatedAt,
           groupConfig: groupConfig,
+        );
+        final sysPayload = await signedAuditSystemPayload(
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'metadata-valid-1',
+          eventAt: updatedAt,
+          systemPayload: metadataPayload,
         );
         final sysText = jsonEncode(sysPayload);
 
@@ -660,18 +1370,167 @@ void main() {
         expect(updateConfigIndex, isNonNegative);
         expect(verifyIndex, lessThan(updateConfigIndex));
 
+        final actorEvent = sysPayload['actorEvent'] as Map<String, dynamic>;
         final verifyMsg = bridge.sentMessages.firstWhere((message) {
           final parsed = jsonDecode(message) as Map<String, dynamic>;
-          return parsed['cmd'] == 'payload.verify';
+          final payload = parsed['payload'] as Map<String, dynamic>?;
+          return parsed['cmd'] == 'payload.verify' &&
+              payload?['data'] == actorEvent['signedPayload'];
         });
         final verifyPayload =
             (jsonDecode(verifyMsg) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
-        final actorEvent = sysPayload['actorEvent'] as Map<String, dynamic>;
         expect(verifyPayload['publicKey'], 'pk-admin');
         expect(verifyPayload['data'], actorEvent['signedPayload']);
         expect(verifyPayload['signature'], actorEvent['signature']);
         expect(eventLog.entries, hasLength(1));
+      },
+    );
+
+    test(
+      'DB002 logs membership and metadata events and blocks changed replay before mutation',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        final eventLog = _FakeEventLog();
+        listener.dispose();
+        listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          appendGroupEventLogEntry: eventLog.append,
+        );
+        listener.start(sourceController.stream);
+
+        const memberEventAt = '2026-04-05T12:24:00.000Z';
+        Map<String, dynamic> memberAddedPayload(String peerId) => {
+          '__sys': 'member_added',
+          'member': {
+            'peerId': peerId,
+            'username': peerId == 'peer-charlie' ? 'Charlie' : 'Eve',
+            'role': 'writer',
+            'publicKey': 'pk-$peerId',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {'peerId': peerId, 'role': 'writer', 'publicKey': 'pk-$peerId'},
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+          },
+        };
+
+        final signedMemberPayload = await signedAuditSystemPayload(
+          transitionType: 'member_added',
+          sourceEventId: 'db002-member-added-1',
+          eventAt: DateTime.parse(memberEventAt),
+          systemPayload: memberAddedPayload('peer-charlie'),
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'db002-member-added-1',
+          'text': jsonEncode(signedMemberPayload),
+          'timestamp': memberEventAt,
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNotNull);
+        expect(eventLog.entries, hasLength(1));
+        expect(eventLog.entries.single['eventType'], 'member_added');
+
+        final tamperedMemberPayload = {
+          ...memberAddedPayload('peer-eve'),
+          signedGroupTransitionAuditField:
+              signedMemberPayload[signedGroupTransitionAuditField],
+        };
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'db002-member-added-1',
+          'text': jsonEncode(tamperedMemberPayload),
+          'timestamp': memberEventAt,
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(eventLog.entries, hasLength(1));
+        expect(await groupRepo.getMember('group-1', 'peer-eve'), isNull);
+        expect(msgRepo.count, 1);
+
+        final metadataAt = DateTime.parse('2026-04-05T12:25:00.000Z');
+        Map<String, dynamic> metadataPayload(String name) {
+          final groupConfig = buildMetadataConfig(
+            updatedAt: metadataAt,
+            name: name,
+          );
+          return signedMetadataSystemPayload(
+            updatedAt: metadataAt,
+            groupConfig: groupConfig,
+          );
+        }
+
+        final signedMetadataPayload = await signedAuditSystemPayload(
+          transitionType: 'group_metadata_updated',
+          sourceEventId: 'db002-metadata-1',
+          eventAt: metadataAt,
+          systemPayload: metadataPayload('DB002 Verified Name'),
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'db002-metadata-1',
+          'text': jsonEncode(signedMetadataPayload),
+          'timestamp': metadataAt.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updatedGroup = await groupRepo.getGroup('group-1');
+        expect(updatedGroup, isNotNull);
+        expect(updatedGroup!.name, 'DB002 Verified Name');
+        expect(eventLog.entries, hasLength(2));
+        expect(eventLog.entries.last['eventType'], 'group_metadata_updated');
+
+        final tamperedMetadataPayload = {
+          ...metadataPayload('DB002 Tampered Name'),
+          signedGroupTransitionAuditField:
+              signedMetadataPayload[signedGroupTransitionAuditField],
+        };
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'messageId': 'db002-metadata-1',
+          'text': jsonEncode(tamperedMetadataPayload),
+          'timestamp': metadataAt.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(eventLog.entries, hasLength(2));
+        expect(
+          (await groupRepo.getGroup('group-1'))!.name,
+          'DB002 Verified Name',
+        );
+        expect(msgRepo.count, 2);
       },
     );
 
@@ -742,12 +1601,16 @@ void main() {
       listener.start(sourceController.stream);
 
       final updatedAt = DateTime.parse('2026-04-05T12:23:00.000Z');
-      final sysText = jsonEncode(
-        signedMetadataSystemPayload(
+      final sysPayload = await signedAuditSystemPayload(
+        transitionType: 'group_metadata_updated',
+        sourceEventId: 'metadata-invalid-signature-1',
+        eventAt: updatedAt,
+        systemPayload: signedMetadataSystemPayload(
           updatedAt: updatedAt,
           groupConfig: buildMetadataConfig(updatedAt: updatedAt),
         ),
       );
+      final sysText = jsonEncode(sysPayload);
 
       sourceController.add({
         'groupId': 'group-1',
@@ -2066,6 +2929,8 @@ void main() {
     test(
       'self-removal calls leaveGroup and emits on groupRemovedStream',
       () async {
+        final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
+        final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
         // Create a listener that knows its own peerId
         final selfListener = GroupMessageListener(
           groupRepo: groupRepo,
@@ -2081,8 +2946,11 @@ void main() {
             peerId: 'peer-self',
             username: 'Me',
             role: MemberRole.writer,
-            joinedAt: DateTime.now().toUtc(),
+            joinedAt: selfJoinedAt,
           ),
+        );
+        await groupRepo.updateGroup(
+          testGroup.copyWith(myRole: GroupRole.member),
         );
 
         selfListener.start(sourceController.stream);
@@ -2093,6 +2961,7 @@ void main() {
         final sysText = jsonEncode({
           '__sys': 'member_removed',
           'member': {'peerId': 'peer-self', 'username': 'Me'},
+          'removedAt': removedAt.toIso8601String(),
           'groupConfig': {
             'name': 'Test Group',
             'groupType': 'chat',
@@ -2110,7 +2979,7 @@ void main() {
           'senderUsername': 'Admin',
           'keyEpoch': 0,
           'text': sysText,
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'timestamp': removedAt.toIso8601String(),
         });
 
         await Future.delayed(const Duration(milliseconds: 50));
@@ -2136,6 +3005,8 @@ void main() {
     test(
       'duplicate self-removal emits one removal signal and leaves once',
       () async {
+        final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
+        final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
         final selfListener = GroupMessageListener(
           groupRepo: groupRepo,
           msgRepo: msgRepo,
@@ -2149,8 +3020,11 @@ void main() {
             peerId: 'peer-self',
             username: 'Me',
             role: MemberRole.writer,
-            joinedAt: DateTime.now().toUtc(),
+            joinedAt: selfJoinedAt,
           ),
+        );
+        await groupRepo.updateGroup(
+          testGroup.copyWith(myRole: GroupRole.member),
         );
 
         selfListener.start(sourceController.stream);
@@ -2161,6 +3035,7 @@ void main() {
         final sysText = jsonEncode({
           '__sys': 'member_removed',
           'member': {'peerId': 'peer-self', 'username': 'Me'},
+          'removedAt': removedAt.toIso8601String(),
           'groupConfig': {
             'name': 'Test Group',
             'groupType': 'chat',
@@ -2178,7 +3053,7 @@ void main() {
           'senderUsername': 'Admin',
           'keyEpoch': 0,
           'text': sysText,
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'timestamp': removedAt.toIso8601String(),
         };
 
         sourceController.add(duplicateEvent);
@@ -2193,6 +3068,68 @@ void main() {
         expect(removedGroups, ['group-1']);
         expect(await groupRepo.getGroup('group-1'), isNull);
         expect(msgRepo.count, 0);
+
+        await sub.cancel();
+        selfListener.dispose();
+      },
+    );
+
+    test(
+      'LP003 member_removed self-removal is the ban-equivalent leave path',
+      () async {
+        final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
+        final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
+        final selfListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-self',
+            username: 'Me',
+            role: MemberRole.writer,
+            joinedAt: selfJoinedAt,
+          ),
+        );
+        await groupRepo.updateGroup(
+          testGroup.copyWith(myRole: GroupRole.member),
+        );
+
+        final removedGroups = <String>[];
+        final sub = selfListener.groupRemovedStream.listen(removedGroups.add);
+
+        await selfListener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': 'peer-self', 'username': 'Me'},
+            'removedAt': removedAt.toIso8601String(),
+            'groupConfig': {
+              'name': 'Test Group',
+              'groupType': 'chat',
+              'members': [
+                {'peerId': 'peer-admin', 'role': 'admin'},
+              ],
+              'createdBy': 'peer-admin',
+              'createdAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          }),
+          'timestamp': removedAt.toIso8601String(),
+        });
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(await groupRepo.getGroup('group-1'), isNull);
+        expect(removedGroups, ['group-1']);
 
         await sub.cancel();
         selfListener.dispose();
@@ -2468,14 +3405,22 @@ void main() {
           },
         };
 
+        final roleEventAt = DateTime.utc(2026, 4, 30, 12);
+        final signedRolePayload = await signedAuditSystemPayload(
+          transitionType: 'member_role_updated',
+          sourceEventId: 'role-event-1',
+          eventAt: roleEventAt,
+          systemPayload: rolePayload('admin'),
+        );
+
         sourceController.add({
           'groupId': 'group-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
           'keyEpoch': 0,
           'messageId': 'role-event-1',
-          'text': jsonEncode(rolePayload('admin')),
-          'timestamp': DateTime.utc(2026, 4, 30, 12).toIso8601String(),
+          'text': jsonEncode(signedRolePayload),
+          'timestamp': roleEventAt.toIso8601String(),
         });
 
         await Future.delayed(const Duration(milliseconds: 50));
@@ -2488,14 +3433,19 @@ void main() {
           MemberRole.admin,
         );
 
+        final tamperedRolePayload = {
+          ...rolePayload('member'),
+          signedGroupTransitionAuditField:
+              signedRolePayload[signedGroupTransitionAuditField],
+        };
         sourceController.add({
           'groupId': 'group-1',
           'senderId': 'peer-admin',
           'senderUsername': 'Admin',
           'keyEpoch': 0,
           'messageId': 'role-event-1',
-          'text': jsonEncode(rolePayload('member')),
-          'timestamp': DateTime.utc(2026, 4, 30, 12).toIso8601String(),
+          'text': jsonEncode(tamperedRolePayload),
+          'timestamp': roleEventAt.toIso8601String(),
         });
 
         await Future.delayed(const Duration(milliseconds: 50));
@@ -2622,6 +3572,71 @@ void main() {
         final target = await groupRepo.getMember('group-1', 'peer-target');
         expect(target, isNotNull);
         expect(target!.role, MemberRole.reader);
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(msgRepo.count, 0);
+      },
+    );
+
+    test(
+      'limited manager member_role_updated cannot demote an admin',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-manager',
+            username: 'Manager',
+            role: MemberRole.writer,
+            permissions: const GroupMemberPermissions(manageRoles: true),
+            publicKey: 'pk-manager',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_role_updated',
+          'member': {
+            'peerId': 'peer-admin',
+            'username': 'Admin',
+            'role': 'writer',
+            'publicKey': 'pk-admin',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-manager',
+                'role': 'writer',
+                'permissions': {'manageRoles': true},
+                'publicKey': 'pk-manager',
+              },
+              {
+                'peerId': 'peer-admin',
+                'role': 'writer',
+                'publicKey': 'pk-admin',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-manager',
+          'senderUsername': 'Manager',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final admin = await groupRepo.getMember('group-1', 'peer-admin');
+        expect(admin, isNotNull);
+        expect(admin!.role, MemberRole.admin);
         expect(bridge.commandLog, isNot(contains('group:updateConfig')));
         expect(msgRepo.count, 0);
       },
@@ -2990,6 +4005,182 @@ void main() {
         restartedListener.dispose();
       },
     );
+
+    test(
+      'RP018 stale removal beats role replay and later role cannot resurrect',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        listener.start(sourceController.stream);
+
+        const staleRoleAt = '2026-04-05T12:00:02.000Z';
+        final staleRoleUpdate = jsonEncode({
+          '__sys': 'member_role_updated',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'admin',
+            'publicKey': 'pk-charlie',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'role': 'admin',
+                'publicKey': 'pk-charlie',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': staleRoleUpdate,
+          'timestamp': staleRoleAt,
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final promoted = await groupRepo.getMember('group-1', 'peer-charlie');
+        expect(promoted, isNotNull);
+        expect(promoted!.role, MemberRole.admin);
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          DateTime.parse(staleRoleAt).toUtc(),
+        );
+
+        const removalAt = '2026-04-05T12:00:01.000Z';
+        final delayedRemoval = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+          'removedAt': removalAt,
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': delayedRemoval,
+          'timestamp': removalAt,
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+        expect(
+          debugLogs.any(
+            (line) => line.contains(
+              'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_CONFLICT_APPLIED',
+            ),
+          ),
+          isTrue,
+        );
+
+        const laterRoleAt = '2026-04-05T12:00:03.000Z';
+        final laterRoleUpdate = jsonEncode({
+          '__sys': 'member_role_updated',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'writer',
+            'publicKey': 'pk-charlie',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': laterRoleUpdate,
+          'timestamp': laterRoleAt,
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(2),
+        );
+        expect(
+          debugLogs.any(
+            (line) => line.contains(
+              'GROUP_MESSAGE_LISTENER_MEMBER_ROLE_UPDATE_MISSING_TARGET_IGNORED',
+            ),
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -3240,19 +4431,20 @@ void main() {
       () async {
         final mediaRepo = GateableMediaAttachmentRepository();
         final delayedBridge = _DelayedMediaDownloadBridge();
+        final mediaFileManager = FakeMediaFileManager();
         final mediaListener = GroupMessageListener(
           groupRepo: groupRepo,
           msgRepo: msgRepo,
           bridge: delayedBridge,
           mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: FakeMediaFileManager(),
+          mediaFileManager: mediaFileManager,
         );
         final mediaSource = StreamController<Map<String, dynamic>>.broadcast();
 
         final firstDownloadFuture = downloadMedia(
           bridge: delayedBridge,
           mediaAttachmentRepo: mediaRepo,
-          mediaFileManager: FakeMediaFileManager(),
+          mediaFileManager: mediaFileManager,
           attachment: const MediaAttachment(
             id: 'blob-event-1',
             messageId: 'msg-group-1',
@@ -3362,7 +4554,7 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(notifService.shown, hasLength(1));
+      await expectNotificationCount(notifService, 1);
       expect(notifService.shown.first.contactPeerId, 'group:group-1');
       expect(notifService.shown.first.senderUsername, 'Test Group');
       expect(notifService.shown.first.messageText, 'Sender: Hello group!');
@@ -3401,7 +4593,7 @@ void main() {
 
         await Future.delayed(const Duration(milliseconds: 50));
 
-        expect(notifService.shown, hasLength(1));
+        await expectNotificationCount(notifService, 1);
         expect(msgRepo.count, 1);
 
         await notifListener.handleReplayEnvelope(message);
@@ -3418,6 +4610,118 @@ void main() {
           reason: 'Replay must not persist a second message row',
         );
 
+        notifListener.dispose();
+      },
+    );
+
+    test(
+      'LP013 duplicate PubSub delivery preserves first row and notification state',
+      () async {
+        final notifService = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final mediaRepo = InMemoryMediaAttachmentRepository();
+        const messageId = 'lp013-live-duplicate-message';
+        final firstTimestamp = DateTime.utc(2026, 4, 30, 22, 50);
+        final conflictingTimestamp = firstTimestamp.add(
+          const Duration(minutes: 1),
+        );
+
+        final notifListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: notifService,
+          groupConversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          mediaAttachmentRepo: mediaRepo,
+        );
+        notifListener.start(sourceController.stream);
+
+        final emitted = <GroupMessage>[];
+        final sub = notifListener.groupMessageStream.listen(emitted.add);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 7,
+          'messageId': messageId,
+          'text': 'Trusted first content',
+          'timestamp': firstTimestamp.toIso8601String(),
+          'quotedMessageId': 'lp013-parent-first',
+          'media': [
+            {
+              'id': 'lp013-media-1',
+              'mime': 'image/png',
+              'size': 2048,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash': _validContentHash,
+              'encryptionKeyBase64': 'key-fixture',
+              'encryptionNonce': 'nonce-fixture',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'createdAt': firstTimestamp.toIso8601String(),
+            },
+          ],
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 9,
+          'messageId': messageId,
+          'text': 'Conflicting duplicate content',
+          'timestamp': conflictingTimestamp.toIso8601String(),
+          'quotedMessageId': 'lp013-parent-conflicting',
+          'media': [
+            {
+              'id': 'lp013-media-1',
+              'mime': 'image/jpeg',
+              'size': 4096,
+              'mediaType': 'image',
+              'downloadStatus': 'pending',
+              'contentHash':
+                  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              'encryptionKeyBase64': 'other-key-fixture',
+              'encryptionNonce': 'other-nonce-fixture',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'createdAt': conflictingTimestamp.toIso8601String(),
+            },
+          ],
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(msgRepo.count, 1);
+        expect(emitted, hasLength(1));
+        await expectNotificationCount(notifService, 1);
+        expect(await msgRepo.getUnreadCount('group-1'), 1);
+
+        final saved = await msgRepo.getMessage(messageId);
+        expect(saved, isNotNull);
+        expect(saved!.text, 'Trusted first content');
+        expect(saved.timestamp, firstTimestamp);
+        expect(saved.quotedMessageId, 'lp013-parent-first');
+        expect(saved.keyGeneration, 7);
+        expect(saved.status, 'delivered');
+
+        final attachments = await mediaRepo.getAttachmentsForMessage(messageId);
+        expect(attachments, hasLength(1));
+        expect(attachments.single.id, 'lp013-media-1');
+        expect(attachments.single.mime, 'image/png');
+        expect(attachments.single.size, 2048);
+        expect(attachments.single.contentHash, _validContentHash);
+
+        expect(emitted.single.id, messageId);
+        expect(emitted.single.text, 'Trusted first content');
+        expect(notifService.shown.single.contactPeerId, 'group:group-1');
+        expect(notifService.shown.single.messageText, contains('Trusted'));
+
+        await sub.cancel();
         notifListener.dispose();
       },
     );
@@ -3574,6 +4878,8 @@ void main() {
     test('does not notify after self-removal deletes the group', () async {
       final notifService = FakeNotificationService();
       final tracker = ActiveConversationTracker();
+      final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
+      final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
 
       await groupRepo.saveMember(
         GroupMember(
@@ -3581,9 +4887,10 @@ void main() {
           peerId: 'peer-self',
           username: 'Me',
           role: MemberRole.writer,
-          joinedAt: DateTime.now().toUtc(),
+          joinedAt: selfJoinedAt,
         ),
       );
+      await groupRepo.updateGroup(testGroup.copyWith(myRole: GroupRole.member));
 
       final notifListener = GroupMessageListener(
         groupRepo: groupRepo,
@@ -3602,6 +4909,7 @@ void main() {
       final sysText = jsonEncode({
         '__sys': 'member_removed',
         'member': {'peerId': 'peer-self', 'username': 'Me'},
+        'removedAt': removedAt.toIso8601String(),
         'groupConfig': {
           'name': 'Test Group',
           'groupType': 'chat',
@@ -3619,7 +4927,7 @@ void main() {
         'senderUsername': 'Admin',
         'keyEpoch': 0,
         'text': sysText,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'timestamp': removedAt.toIso8601String(),
       });
 
       await Future.delayed(const Duration(milliseconds: 50));
@@ -3696,7 +5004,7 @@ void main() {
 
       await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(notifService.shown, hasLength(1));
+      await expectNotificationCount(notifService, 1);
 
       notifListener.dispose();
     });
@@ -3921,6 +5229,42 @@ void main() {
         expect(bridge.commandLog, contains('group:leave'));
       },
     );
+
+    test('LP003 replayed group_dissolved dispatches one group leave', () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          joinedAt: initialMemberJoinedAt,
+        ),
+      );
+
+      await listener.handleReplayEnvelope({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 0,
+        'text': jsonEncode({
+          '__sys': 'group_dissolved',
+          'dissolvedAt': '2026-04-05T12:00:00.000Z',
+          'dissolvedBy': 'peer-admin',
+        }),
+        'timestamp': '2026-04-05T12:00:00.000Z',
+      });
+
+      final updated = await groupRepo.getGroup('group-1');
+      expect(updated, isNotNull);
+      expect(updated!.isDissolved, isTrue);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:leave'),
+        hasLength(1),
+      );
+      final saved = await msgRepo.getLatestMessage('group-1');
+      expect(saved, isNotNull);
+      expect(saved!.id.startsWith('sys-group_dissolved:group-1:'), isTrue);
+    });
 
     test('replayed group_dissolved is idempotent', () async {
       await groupRepo.saveMember(
@@ -4298,6 +5642,171 @@ void main() {
         expect(bridge.commandLog, isNot(contains('group:leave')));
       },
     );
+
+    test(
+      'RP005 demoted creator receive-side mutations are rejected before side effects',
+      () async {
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.writer,
+            publicKey: 'pk-admin',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-target',
+            username: 'Target',
+            role: MemberRole.writer,
+            publicKey: 'pk-target',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        listener.start(sourceController.stream);
+
+        final metadataUpdatedAt = DateTime.utc(2026, 4, 5, 12, 0, 3);
+        final staleMutationEvents = <Map<String, dynamic>>[
+          {
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_added',
+              'member': {
+                'peerId': 'peer-late',
+                'username': 'Late',
+                'role': 'writer',
+                'publicKey': 'pk-late',
+              },
+              'groupConfig': {
+                'name': 'Stale Add',
+                'groupType': 'chat',
+                'members': [
+                  {
+                    'peerId': 'peer-admin',
+                    'role': 'writer',
+                    'publicKey': 'pk-admin',
+                  },
+                  {
+                    'peerId': 'peer-late',
+                    'role': 'writer',
+                    'publicKey': 'pk-late',
+                  },
+                ],
+                'createdBy': 'peer-admin',
+                'createdAt': initialGroupCreatedAt.toIso8601String(),
+              },
+            }),
+            'timestamp': '2026-04-05T12:00:00.000Z',
+          },
+          {
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_removed',
+              'member': {'peerId': 'peer-target', 'username': 'Target'},
+              'removedAt': '2026-04-05T12:00:01.000Z',
+              'groupConfig': {
+                'name': 'Stale Remove',
+                'groupType': 'chat',
+                'members': [
+                  {
+                    'peerId': 'peer-admin',
+                    'role': 'writer',
+                    'publicKey': 'pk-admin',
+                  },
+                ],
+                'createdBy': 'peer-admin',
+                'createdAt': initialGroupCreatedAt.toIso8601String(),
+              },
+            }),
+            'timestamp': '2026-04-05T12:00:01.000Z',
+          },
+          {
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_role_updated',
+              'member': {
+                'peerId': 'peer-target',
+                'username': 'Target',
+                'role': 'admin',
+                'publicKey': 'pk-target',
+              },
+              'groupConfig': {
+                'name': 'Stale Role',
+                'groupType': 'chat',
+                'members': [
+                  {
+                    'peerId': 'peer-admin',
+                    'role': 'writer',
+                    'publicKey': 'pk-admin',
+                  },
+                  {
+                    'peerId': 'peer-target',
+                    'role': 'admin',
+                    'publicKey': 'pk-target',
+                  },
+                ],
+                'createdBy': 'peer-admin',
+                'createdAt': initialGroupCreatedAt.toIso8601String(),
+              },
+            }),
+            'timestamp': '2026-04-05T12:00:02.000Z',
+          },
+          {
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 0,
+            'text': jsonEncode(
+              signedMetadataSystemPayload(
+                updatedAt: metadataUpdatedAt,
+                groupConfig: buildMetadataConfig(
+                  updatedAt: metadataUpdatedAt,
+                  name: 'Stale Metadata',
+                  description: 'Should not apply',
+                ),
+              ),
+            ),
+            'timestamp': metadataUpdatedAt.toIso8601String(),
+          },
+        ];
+
+        for (final event in staleMutationEvents) {
+          sourceController.add(event);
+        }
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        final group = await groupRepo.getGroup('group-1');
+        expect(group, isNotNull);
+        expect(group!.name, 'Test Group');
+        expect(group.description, isNull);
+        expect(group.lastMembershipEventAt, isNull);
+        expect(group.lastMetadataEventAt, isNull);
+        expect(await groupRepo.getMember('group-1', 'peer-late'), isNull);
+        final admin = await groupRepo.getMember('group-1', 'peer-admin');
+        expect(admin, isNotNull);
+        expect(admin!.role, MemberRole.writer);
+        final target = await groupRepo.getMember('group-1', 'peer-target');
+        expect(target, isNotNull);
+        expect(target!.role, MemberRole.writer);
+        expect(msgRepo.count, 0);
+        expect(bridge.commandLog, isNot(contains('payload.verify')));
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      },
+    );
   });
 
   group('duplicate shipped system event replay', () {
@@ -4527,13 +6036,19 @@ void main() {
       listener.start(sourceController.stream);
 
       const eventAt = '2026-04-05T12:14:00.000Z';
+      final signedKeyRotatedPayload = await signedAuditSystemPayload(
+        transitionType: 'key_rotated',
+        sourceEventId: 'key-rotated-replay-1',
+        eventAt: DateTime.parse(eventAt),
+        systemPayload: {'__sys': 'key_rotated', 'newKeyEpoch': 2},
+      );
       final duplicateEvent = {
         'groupId': 'group-1',
         'senderId': 'peer-admin',
         'senderUsername': 'Admin',
         'keyEpoch': 0,
         'messageId': 'key-rotated-replay-1',
-        'text': jsonEncode({'__sys': 'key_rotated', 'newKeyEpoch': 2}),
+        'text': jsonEncode(signedKeyRotatedPayload),
         'timestamp': eventAt,
       };
 

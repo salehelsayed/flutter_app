@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -37,6 +38,13 @@ class FriendPickerScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final accentColor = readableColors.isLightSurface
+        ? const Color(0xFF157A39)
+        : const Color(0xFF1DB954);
+    final onAccentColor = readableColors.isLightSurface
+        ? Colors.white
+        : Colors.black;
     final localizations = AppLocalizations.of(context)!;
     final filtered = availableFriends
         .where(
@@ -51,9 +59,9 @@ class FriendPickerScreen extends StatelessWidget {
         : 0.0;
 
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xFF0B0D11),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      decoration: BoxDecoration(
+        color: readableColors.surfaceBase,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -65,7 +73,7 @@ class FriendPickerScreen extends StatelessWidget {
               width: 36,
               height: 4,
               decoration: BoxDecoration(
-                color: const Color(0x33FFFFFF),
+                color: readableColors.divider,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -79,19 +87,21 @@ class FriendPickerScreen extends StatelessWidget {
                 Expanded(
                   child: Text(
                     localizations.picker_introduce_to(recipientUsername),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xF2FFFFFF),
+                      color: readableColors.textPrimary,
                     ),
                   ),
                 ),
                 IconButton(
                   onPressed: isSending ? null : onClose,
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.close,
                     size: 20,
-                    color: Color(0x66FFFFFF),
+                    color: isSending
+                        ? readableColors.disabledForeground
+                        : readableColors.iconMuted,
                   ),
                 ),
               ],
@@ -103,24 +113,27 @@ class FriendPickerScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Container(
               decoration: BoxDecoration(
-                color: const Color(0x14FFFFFF),
+                color: readableColors.inputFill,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0x1FFFFFFF)),
+                border: Border.all(color: readableColors.inputBorder),
               ),
               child: TextField(
                 enabled: !isSending,
                 onChanged: isSending ? null : onSearchChanged,
-                style: const TextStyle(fontSize: 14, color: Color(0xF2FFFFFF)),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: readableColors.textPrimary,
+                ),
                 decoration: InputDecoration(
                   hintText: localizations.picker_search,
                   hintStyle: TextStyle(
                     fontSize: 14,
-                    color: Colors.white.withValues(alpha: 0.3),
+                    color: readableColors.placeholderText,
                   ),
                   prefixIcon: Icon(
                     Icons.search,
                     size: 18,
-                    color: Colors.white.withValues(alpha: 0.3),
+                    color: readableColors.iconMuted,
                   ),
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(
@@ -143,7 +156,7 @@ class FriendPickerScreen extends StatelessWidget {
                           : localizations.picker_no_results(searchQuery),
                       style: TextStyle(
                         fontSize: 14,
-                        color: Colors.white.withValues(alpha: 0.4),
+                        color: readableColors.textMuted,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -162,6 +175,9 @@ class FriendPickerScreen extends StatelessWidget {
                         isSelected: isSelected,
                         isDisabled: isSending,
                         onTap: () => onToggleFriend(friend.peerId),
+                        readableColors: readableColors,
+                        accentColor: accentColor,
+                        onAccentColor: onAccentColor,
                       );
                     },
                   ),
@@ -175,8 +191,8 @@ class FriendPickerScreen extends StatelessWidget {
               16,
               12 + MediaQuery.of(context).padding.bottom,
             ),
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(color: Color(0x14FFFFFF))),
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: readableColors.divider)),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -190,10 +206,10 @@ class FriendPickerScreen extends StatelessWidget {
                             sendCompletedCount,
                             sendTotalCount,
                           ),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
-                            color: Color(0xF2FFFFFF),
+                            color: readableColors.textSecondary,
                           ),
                         ),
                       ),
@@ -205,10 +221,8 @@ class FriendPickerScreen extends StatelessWidget {
                     child: LinearProgressIndicator(
                       value: progressValue,
                       minHeight: 6,
-                      backgroundColor: const Color(0x1FFFFFFF),
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                        Color(0xFF1DB954),
-                      ),
+                      backgroundColor: readableColors.disabledSurface,
+                      valueColor: AlwaysStoppedAnimation<Color>(accentColor),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -219,12 +233,11 @@ class FriendPickerScreen extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: !isSending && selectionCount > 0 ? onSend : null,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1DB954),
-                      foregroundColor: Colors.black,
-                      disabledBackgroundColor: const Color(0x331DB954),
-                      disabledForegroundColor: Colors.black.withValues(
-                        alpha: 0.4,
-                      ),
+                      backgroundColor: accentColor,
+                      foregroundColor: onAccentColor,
+                      disabledBackgroundColor: readableColors.disabledSurface,
+                      disabledForegroundColor:
+                          readableColors.disabledForeground,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -256,12 +269,18 @@ class _FriendPickerRow extends StatelessWidget {
   final bool isSelected;
   final bool isDisabled;
   final VoidCallback onTap;
+  final BackgroundReadableColors readableColors;
+  final Color accentColor;
+  final Color onAccentColor;
 
   const _FriendPickerRow({
     required this.friend,
     required this.isSelected,
     required this.isDisabled,
     required this.onTap,
+    required this.readableColors,
+    required this.accentColor,
+    required this.onAccentColor,
   });
 
   @override
@@ -278,11 +297,15 @@ class _FriendPickerRow extends StatelessWidget {
             Expanded(
               child: Text(
                 friend.username,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xF2FFFFFF),
-                ),
+                style:
+                    const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ).copyWith(
+                      color: isDisabled
+                          ? readableColors.disabledForeground
+                          : readableColors.textPrimary,
+                    ),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -294,18 +317,14 @@ class _FriendPickerRow extends StatelessWidget {
               height: 24,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: isSelected
-                    ? const Color(0xFF1DB954)
-                    : Colors.transparent,
+                color: isSelected ? accentColor : Colors.transparent,
                 border: Border.all(
-                  color: isSelected
-                      ? const Color(0xFF1DB954)
-                      : const Color(0x66FFFFFF),
+                  color: isSelected ? accentColor : readableColors.inputBorder,
                   width: 2,
                 ),
               ),
               child: isSelected
-                  ? const Icon(Icons.check, size: 14, color: Colors.black)
+                  ? Icon(Icons.check, size: 14, color: onAccentColor)
                   : null,
             ),
           ],
