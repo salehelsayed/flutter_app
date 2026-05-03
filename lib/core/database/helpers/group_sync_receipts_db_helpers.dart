@@ -2,6 +2,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../../features/groups/domain/models/group_message_receipt.dart';
 import '../../utils/flow_event_emitter.dart';
+import '../db_write_transaction.dart';
 
 typedef GroupInboxTransactionApply =
     Future<void> Function(DatabaseExecutor executor);
@@ -115,7 +116,7 @@ Future<void> dbApplyGroupInboxPageTransaction(
     details: {'groupId': _safeId(groupId)},
   );
 
-  return db.transaction((txn) async {
+  return dbWriteTransaction(db, (txn) async {
     await apply(txn);
 
     final now = DateTime.now().toUtc();

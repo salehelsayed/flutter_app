@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import '../db_write_transaction.dart';
 
 typedef AppendGroupEventLogEntry =
     Future<Map<String, Object?>> Function({
@@ -57,7 +58,7 @@ Future<Map<String, Object?>> dbAppendGroupEventLogEntry(
   required Map<String, Object?> payload,
   DateTime? createdAt,
 }) {
-  return db.transaction((txn) {
+  return dbWriteTransaction(db, (txn) {
     return _appendGroupEventLogEntry(
       txn,
       groupId: groupId,

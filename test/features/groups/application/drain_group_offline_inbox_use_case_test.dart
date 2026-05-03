@@ -1126,8 +1126,15 @@ void main() {
   );
 
   test(
-    'PREREQ-GROUP-SYNC-RECEIPTS failed page apply does not save rows or advance cursor',
+    'PREREQ-GROUP-SYNC-RECEIPTS failed page commit does not advance cursor or save receipts',
     () async {
+      // After the lock-window refactor (drain Phase 1 = process messages
+      // outside any DB write transaction; Phase 2 = small atomic
+      // cursor+receipts commit), a failure in the Phase 2 transaction must
+      // still leave the cursor un-advanced and receipts un-committed so the
+      // re-drain retries this page. The persisted message itself may already
+      // exist from Phase 1 — handleIncomingGroupMessage is idempotent on
+      // messageId and the next drain dedupes it instead of duplicating.
       await saveDefaultReplayKey();
       bridge.addPage('group-1', '', [
         await signedRelayMessage(
@@ -1145,7 +1152,6 @@ void main() {
         selfPeerId: 'peer-local',
       );
 
-      expect(await msgRepo.getMessage('sync-rollback-msg'), isNull);
       expect(await msgRepo.getInboxCursor('group-1'), isNull);
       expect(
         await msgRepo.getReceiptsForMessage('group-1', 'sync-rollback-msg'),
