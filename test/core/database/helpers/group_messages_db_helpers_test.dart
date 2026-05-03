@@ -410,4 +410,28 @@ void main() {
       expect(await dbLoadGroupMessage(db, 'msg-2'), isNotNull);
     });
   });
+
+  group('dbDeleteGroupMessagesForGroup', () {
+    test('deletes only messages for the requested group', () async {
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'msg-target-1', groupId: 'group-1'),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'msg-target-2', groupId: 'group-1'),
+      );
+      await dbInsertGroupMessage(
+        db,
+        makeMessageRow(id: 'msg-other', groupId: 'group-2'),
+      );
+
+      final count = await dbDeleteGroupMessagesForGroup(db, 'group-1');
+
+      expect(count, 2);
+      expect(await dbLoadAllGroupMessages(db, 'group-1'), isEmpty);
+      final remaining = await dbLoadAllGroupMessages(db, 'group-2');
+      expect(remaining.map((row) => row['id']), ['msg-other']);
+    });
+  });
 }

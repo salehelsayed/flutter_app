@@ -348,6 +348,72 @@ void main() {
     });
 
     test(
+      'accept completes after first inbox page when relay reports more backlog',
+      () async {
+        await pendingInviteRepo.savePendingInvite(makeInvite());
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': const [],
+          'cursor': 'stale-or-more-backlog',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(
+          await msgRepo.getInboxCursor('grp-abc123'),
+          'stale-or-more-backlog',
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'accepted group survives inbox catch-up failure and returns recovery warning',
+      () async {
+        await pendingInviteRepo.savePendingInvite(makeInvite());
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': false,
+          'errorCode': 'RELAY_UNAVAILABLE',
+          'errorMessage': 'relay unavailable',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.bridgeError);
+        expect(group, isNotNull);
+        expect(group!.id, 'grp-abc123');
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await pendingInviteRepo.getConsumedInvite('invite-1'),
+          isNotNull,
+        );
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+      },
+    );
+
+    test(
       'accept replays backlog reactions when reactionRepo is provided',
       () async {
         final backlogTimestamp = DateTime.now()

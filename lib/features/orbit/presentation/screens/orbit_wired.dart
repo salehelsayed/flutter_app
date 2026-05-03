@@ -1699,12 +1699,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final groupRepository = widget.groupRepository;
     final groupMessageRepository = widget.groupMessageRepository;
     if (groupRepository == null || groupMessageRepository == null) return;
+    final isDissolved = group.group.isDissolved;
 
     final confirmed = await showConfirmationDialog(
       context: context,
-      title: AppLocalizations.of(context)!.orbit_leave_group,
-      description:
-          'This will permanently leave the group and delete all messages. This cannot be undone.',
+      title: isDissolved
+          ? 'Delete dissolved group?'
+          : AppLocalizations.of(context)!.orbit_leave_group,
+      description: isDissolved
+          ? 'This will remove the dissolved group and its local history from this device. This cannot be undone.'
+          : 'This will permanently leave the group and delete all messages. This cannot be undone.',
       confirmLabel: 'Delete',
     );
     if (!confirmed || !mounted) return;
@@ -1715,6 +1719,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         groupRepo: groupRepository,
         groupMessageRepo: groupMessageRepository,
         groupId: group.group.id,
+        deleteLocallyIfDissolved: true,
       );
       _openRowNotifier.value = null;
       _markGroupChanged(group.group.id);

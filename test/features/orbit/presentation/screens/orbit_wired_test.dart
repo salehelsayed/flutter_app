@@ -1561,6 +1561,372 @@ void main() {
       expect(find.text('Bob'), findsWidgets);
     });
 
+    testWidgets('deleting one Orbit group preserves friends and other groups', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([
+        testContact,
+        testContact.copyWith(
+          peerId: 'contact-peer-id-2',
+          publicKey: 'contact-pk-2',
+          username: 'Cara',
+          mlKemPublicKey: 'mlkem-contact-peer-id-2',
+        ),
+      ]);
+
+      final now = DateTime.utc(2026, 3, 1, 12);
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-delete-one',
+          name: 'Delete One Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-delete-one',
+          createdAt: now,
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'g-keep-one',
+          name: 'Keep One Group',
+          type: GroupType.chat,
+          topicName: 'topic-g-keep-one',
+          createdAt: now.subtract(const Duration(minutes: 1)),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-delete-one',
+          groupId: 'g-delete-one',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Target group message',
+          timestamp: now,
+          isIncoming: true,
+          createdAt: now,
+        ),
+      );
+      await groupMsgRepo.saveMessage(
+        GroupMessage(
+          id: 'gm-keep-one',
+          groupId: 'g-keep-one',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Kept group message',
+          timestamp: now.subtract(const Duration(minutes: 1)),
+          isIncoming: true,
+          createdAt: now.subtract(const Duration(minutes: 1)),
+        ),
+      );
+
+      await tester.pumpWidget(buildOrbitWired());
+      await pumpOrbitFrames(tester, count: 6);
+
+      expect(find.text('Delete One Group'), findsOneWidget);
+      expect(find.text('Keep One Group'), findsOneWidget);
+      expect(find.text('Bob'), findsWidgets);
+      expect(find.text('Cara'), findsWidgets);
+
+      final center = tester.getCenter(find.text('Delete One Group'));
+      await tester.flingFrom(center, const Offset(-350, 0), 1000);
+      await pumpOrbitFrames(tester, count: 6);
+
+      await tester.tap(find.text('Delete').first);
+      await tester.pump();
+      await tester.tap(find.text('Delete').last);
+      await pumpOrbitFrames(tester, count: 8);
+
+      expect(find.text('Delete One Group'), findsNothing);
+      expect(find.text('Keep One Group'), findsOneWidget);
+      expect(find.text('Bob'), findsWidgets);
+      expect(find.text('Cara'), findsWidgets);
+      expect(await contactRepo.getActiveContacts(), hasLength(2));
+      expect(await groupRepo.getGroup('g-delete-one'), isNull);
+      expect(await groupRepo.getGroup('g-keep-one'), isNotNull);
+      expect(await groupMsgRepo.getMessage('gm-delete-one'), isNull);
+      expect(await groupMsgRepo.getMessage('gm-keep-one'), isNotNull);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:leave'),
+        hasLength(1),
+      );
+    });
+
+    testWidgets(
+      'user-B scenario: deleting one Orbit group keeps both 1:1 chat threads with friends intact',
+      (tester) async {
+        // Mirrors the user-reported scenario: B is mutual friends with A and C,
+        // accepted A's group invite, exchanged group messages, then swipes
+        // delete on the group from Orbit. After delete, B must still have both
+        // 1:1 chat threads (with A and C) including every prior DM row.
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+
+        final friendA = testContact.copyWith(
+          peerId: 'friend-a-peer',
+          publicKey: 'friend-a-pk',
+          username: 'Alice',
+          mlKemPublicKey: 'mlkem-friend-a',
+        );
+        final friendC = testContact.copyWith(
+          peerId: 'friend-c-peer',
+          publicKey: 'friend-c-pk',
+          username: 'Charlie',
+          mlKemPublicKey: 'mlkem-friend-c',
+        );
+        contactRepo.seed([friendA, friendC]);
+
+        // Seed 1:1 chat history with both friends. These rows are the
+        // invariant we are guarding: group delete must not touch them.
+        const aliceDmIds = ['dm-a-1', 'dm-a-2', 'dm-a-3'];
+        const charlieDmIds = ['dm-c-1', 'dm-c-2'];
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'dm-a-1',
+            contactPeerId: friendA.peerId,
+            senderPeerId: testIdentity.peerId,
+            text: 'hey alice',
+            timestamp: '2026-04-10T09:00:00.000Z',
+            status: 'sent',
+            isIncoming: false,
+            createdAt: '2026-04-10T09:00:00.000Z',
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'dm-a-2',
+            contactPeerId: friendA.peerId,
+            senderPeerId: friendA.peerId,
+            text: 'hi B',
+            timestamp: '2026-04-10T09:01:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-04-10T09:01:00.000Z',
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'dm-a-3',
+            contactPeerId: friendA.peerId,
+            senderPeerId: testIdentity.peerId,
+            text: 'see you tonight',
+            timestamp: '2026-04-10T09:02:00.000Z',
+            status: 'sent',
+            isIncoming: false,
+            createdAt: '2026-04-10T09:02:00.000Z',
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'dm-c-1',
+            contactPeerId: friendC.peerId,
+            senderPeerId: testIdentity.peerId,
+            text: 'yo charlie',
+            timestamp: '2026-04-10T10:00:00.000Z',
+            status: 'sent',
+            isIncoming: false,
+            createdAt: '2026-04-10T10:00:00.000Z',
+          ),
+        );
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'dm-c-2',
+            contactPeerId: friendC.peerId,
+            senderPeerId: friendC.peerId,
+            text: 'sup',
+            timestamp: '2026-04-10T10:01:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-04-10T10:01:00.000Z',
+          ),
+        );
+
+        // Group setup: A is admin, B is the test user (member), C is also a
+        // member. Some group messages have already been exchanged.
+        final now = DateTime.utc(2026, 4, 11, 9);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'game-night',
+            name: 'Game Night',
+            type: GroupType.chat,
+            topicName: 'topic-game-night',
+            createdAt: now,
+            createdBy: friendA.peerId,
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-1',
+            groupId: 'game-night',
+            senderPeerId: friendA.peerId,
+            senderUsername: friendA.username,
+            text: 'who is in?',
+            timestamp: now,
+            isIncoming: true,
+            createdAt: now,
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-2',
+            groupId: 'game-night',
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username!,
+            text: 'me',
+            timestamp: now.add(const Duration(seconds: 30)),
+            isIncoming: false,
+            createdAt: now.add(const Duration(seconds: 30)),
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-3',
+            groupId: 'game-night',
+            senderPeerId: friendC.peerId,
+            senderUsername: friendC.username,
+            text: 'bring snacks',
+            timestamp: now.add(const Duration(minutes: 1)),
+            isIncoming: true,
+            createdAt: now.add(const Duration(minutes: 1)),
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+
+        // Sanity: Orbit shows the friends and the group before delete.
+        expect(find.text('Alice'), findsWidgets);
+        expect(find.text('Charlie'), findsWidgets);
+        expect(find.text('Game Night'), findsOneWidget);
+
+        // Snapshot Bob's 1:1 chat counts BEFORE deletion.
+        final aliceMessagesBefore =
+            await messageRepo.getMessagesForContact(friendA.peerId);
+        final charlieMessagesBefore =
+            await messageRepo.getMessagesForContact(friendC.peerId);
+        expect(aliceMessagesBefore.map((m) => m.id).toList(), aliceDmIds);
+        expect(charlieMessagesBefore.map((m) => m.id).toList(), charlieDmIds);
+
+        // -- act: swipe-left on the group row, tap Delete, confirm dialog.
+        final groupCenter = tester.getCenter(find.text('Game Night'));
+        await tester.flingFrom(groupCenter, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(find.text('Delete').first);
+        await tester.pump();
+        // Confirmation dialog appears; tap its Delete action.
+        await tester.tap(find.text('Delete').last);
+        await pumpOrbitFrames(tester, count: 8);
+
+        // -- assert UI: group is gone, friends still visible.
+        expect(find.text('Game Night'), findsNothing);
+        expect(find.text('Alice'), findsWidgets);
+        expect(find.text('Charlie'), findsWidgets);
+
+        // -- assert state: contacts table is intact.
+        final contactsAfter = await contactRepo.getActiveContacts();
+        expect(contactsAfter.map((c) => c.peerId).toSet(),
+            {friendA.peerId, friendC.peerId});
+
+        // -- assert state: 1:1 chat threads with each friend are intact —
+        //    every original message row is still present in order.
+        final aliceMessagesAfter =
+            await messageRepo.getMessagesForContact(friendA.peerId);
+        expect(
+          aliceMessagesAfter.map((m) => m.id).toList(),
+          aliceDmIds,
+          reason: 'group delete must not touch 1:1 messages with Alice',
+        );
+        final charlieMessagesAfter =
+            await messageRepo.getMessagesForContact(friendC.peerId);
+        expect(
+          charlieMessagesAfter.map((m) => m.id).toList(),
+          charlieDmIds,
+          reason: 'group delete must not touch 1:1 messages with Charlie',
+        );
+
+        // -- assert state: group + group messages are purged from local repos.
+        expect(await groupRepo.getGroup('game-night'), isNull);
+        expect(await groupMsgRepo.getMessage('gm-1'), isNull);
+        expect(await groupMsgRepo.getMessage('gm-2'), isNull);
+        expect(await groupMsgRepo.getMessage('gm-3'), isNull);
+
+        // -- assert wire: a single leave broadcast was issued.
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+      },
+    );
+
+    testWidgets(
+      'deleting a dissolved Orbit group is local-only and preserves friends',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+
+        final now = DateTime.utc(2026, 4, 5, 12);
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'g-dissolved-one',
+            name: 'Dissolved One Group',
+            type: GroupType.chat,
+            topicName: 'topic-g-dissolved-one',
+            createdAt: now,
+            createdBy: 'peer-admin',
+            myRole: GroupRole.member,
+            isDissolved: true,
+            dissolvedAt: now,
+            dissolvedBy: 'peer-admin',
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm-dissolved-one',
+            groupId: 'g-dissolved-one',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Dissolved group history',
+            timestamp: now,
+            isIncoming: true,
+            createdAt: now,
+          ),
+        );
+
+        await tester.pumpWidget(buildOrbitWired());
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Dissolved One Group'), findsOneWidget);
+        expect(find.text('Bob'), findsWidgets);
+
+        final center = tester.getCenter(find.text('Dissolved One Group'));
+        await tester.flingFrom(center, const Offset(-350, 0), 1000);
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(find.text('Delete').first);
+        await tester.pump();
+        expect(find.text('Delete dissolved group?'), findsOneWidget);
+        await tester.tap(find.text('Delete').last);
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(find.text('Dissolved One Group'), findsNothing);
+        expect(find.text('Bob'), findsWidgets);
+        expect(await contactRepo.getActiveContacts(), hasLength(1));
+        expect(await groupRepo.getGroup('g-dissolved-one'), isNull);
+        expect(await groupMsgRepo.getMessage('gm-dissolved-one'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:leave')));
+      },
+    );
+
     testWidgets(
       'friend tap pushes conversation route before read marking completes',
       (tester) async {
@@ -2155,6 +2521,77 @@ void main() {
         );
         expect(tombstone, isNotNull);
         expect(tombstone!.inviteId, invite.inviteId);
+      },
+    );
+
+    testWidgets(
+      'accepting a pending group invite from Intros clears spinner on cursor backlog',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          const ContactModel(
+            peerId: '12D3KooWAlice',
+            publicKey: 'alicePubKey64',
+            rendezvous: '/ip4/0.0.0.0',
+            username: 'Alice',
+            signature: 'sig',
+            scannedAt: '2026-01-01T00:00:00Z',
+            mlKemPublicKey: 'aliceMlKem64',
+          ),
+        ]);
+
+        final invite = makePendingInvite(
+          groupId: 'grp-cursor-orbit',
+          groupName: 'Cursor Writers',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': <Map<String, dynamic>>[],
+          'cursor': 'repeat-cursor',
+        };
+
+        final groupInviteListener = _FakeGroupInviteListener(
+          joinedStream: joinedGroupInviteController.stream,
+          pendingStream: pendingInviteController.stream,
+          pendingInviteRepo: pendingInviteRepo,
+        );
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            groupInviteListener: groupInviteListener,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(find.text('Joined Cursor Writers'), findsOneWidget);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
       },
     );
 

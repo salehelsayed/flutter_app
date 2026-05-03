@@ -815,6 +815,46 @@ void main() {
     );
 
     testWidgets(
+      'accept clears spinner when inbox catch-up reports more cursor pages',
+      (tester) async {
+        final invite = makePendingInvite(
+          groupId: 'grp-cursor-pending',
+          groupName: 'Cursor Room',
+        );
+        await pendingInviteRepo.savePendingInvite(invite);
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': const [],
+          'cursor': 'repeat-cursor',
+        };
+
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+
+        await tester.tap(
+          find.byKey(ValueKey('pending-group-invite-accept-${invite.groupId}')),
+        );
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          await pendingInviteRepo.getPendingInvite(invite.groupId),
+          isNull,
+        );
+        expect(await groupRepo.getGroup(invite.groupId), isNotNull);
+        expect(
+          find.byKey(ValueKey('pending-group-invite-${invite.groupId}')),
+          findsNothing,
+        );
+        expect(find.text('Cursor Room'), findsOneWidget);
+        expect(find.text('Joined Cursor Room'), findsOneWidget);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxRetrieveCursor'),
+          hasLength(1),
+        );
+      },
+    );
+
+    testWidgets(
       'repair-pending accept keeps the invite row and shows key-material warning',
       (tester) async {
         final invite = makePendingInvite(overrideGroupKey: '');

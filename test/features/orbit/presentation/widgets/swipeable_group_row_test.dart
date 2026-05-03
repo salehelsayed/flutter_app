@@ -100,6 +100,59 @@ void main() {
       expect(deleteCalled, isTrue);
     });
 
+    testWidgets('group delete does not fire a neighboring friend delete', (
+      tester,
+    ) async {
+      bool friendDeleteCalled = false;
+      bool groupDeleteCalled = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                SwipeableFriendRow(
+                  key: const ValueKey('friend-row'),
+                  isArchived: false,
+                  openRowNotifier: openRowNotifier,
+                  onDelete: () => friendDeleteCalled = true,
+                  child: Container(
+                    width: double.infinity,
+                    height: 72,
+                    color: Colors.blue,
+                    child: const Text('Friend Content'),
+                  ),
+                ),
+                SwipeableFriendRow(
+                  key: const ValueKey('group-row'),
+                  isArchived: false,
+                  openRowNotifier: openRowNotifier,
+                  onArchive: () {},
+                  onDelete: () => groupDeleteCalled = true,
+                  child: Container(
+                    width: double.infinity,
+                    height: 72,
+                    color: Colors.green,
+                    child: const Text('Group Content'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      final center = tester.getCenter(find.text('Group Content'));
+      await tester.dragFrom(center, const Offset(-250, 0));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(groupDeleteCalled, isTrue);
+      expect(friendDeleteCalled, isFalse);
+    });
+
     testWidgets('archived group shows Unarchive on swipe', (tester) async {
       bool unarchiveCalled = false;
 

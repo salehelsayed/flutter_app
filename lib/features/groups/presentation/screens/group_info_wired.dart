@@ -106,19 +106,34 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   Future<void> _loadGroupInfo() async {
     try {
+      final identity = _ownPeerId == null
+          ? await widget.identityRepo.loadIdentity()
+          : null;
+      final ownPeerId = _ownPeerId ?? identity?.peerId;
       final group = await widget.groupRepo.getGroup(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
-      final memberSafetyByPeerId = await _loadMemberSafety(members);
+      final memberSafetyByPeerId = await _loadMemberSafety(
+        members,
+        ownPeerId: ownPeerId,
+      );
       final latestKey = await widget.groupRepo.getLatestKey(widget.group.id);
       final securityStatus = GroupSecurityStatusViewState.fromSnapshot(
         latestKey: latestKey,
         memberCount: members.length,
         memberSafety: memberSafetyByPeerId.values,
+        locallyVerifiedMemberCount:
+            ownPeerId != null &&
+                members.any((member) => member.peerId == ownPeerId)
+            ? 1
+            : 0,
       );
       if (!mounted) return;
       setState(() {
         if (group != null) {
           _group = group;
+        }
+        if (_ownPeerId == null && ownPeerId != null) {
+          _ownPeerId = ownPeerId;
         }
         _members = members;
         _memberSafetyByPeerId = memberSafetyByPeerId;
@@ -134,10 +149,14 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   }
 
   Future<Map<String, GroupMemberIdentitySafety>> _loadMemberSafety(
-    List<GroupMember> members,
-  ) async {
+    List<GroupMember> members, {
+    String? ownPeerId,
+  }) async {
     final memberSafetyByPeerId = <String, GroupMemberIdentitySafety>{};
     for (final member in members) {
+      if (member.peerId == ownPeerId) {
+        continue;
+      }
       try {
         final contact = await widget.contactRepo.getContact(member.peerId);
         final safety = GroupMemberIdentitySafety.compare(

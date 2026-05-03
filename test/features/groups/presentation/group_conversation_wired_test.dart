@@ -738,6 +738,85 @@ void main() {
       expect(find.textContaining('test-group-key-2'), findsNothing);
     });
 
+    testWidgets('counts own member as verified without saved contact', (
+      tester,
+    ) async {
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+          publicKey: testIdentity.publicKey,
+          mlKemPublicKey: testIdentity.mlKemPublicKey,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'peer-alice',
+          username: 'Alice',
+          role: MemberRole.writer,
+          publicKey: 'pk-alice',
+          mlKemPublicKey: 'mlkem-alice',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          mlKemPublicKey: 'mlkem-bob',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await contactRepo.addContact(
+        ContactModel(
+          peerId: 'peer-alice',
+          publicKey: 'pk-alice',
+          rendezvous: '/ip4/127.0.0.1/tcp/4001',
+          username: 'Alice',
+          signature: 'sig-alice',
+          scannedAt: DateTime.utc(2026, 5, 1).toIso8601String(),
+          mlKemPublicKey: 'mlkem-alice',
+        ),
+      );
+      await contactRepo.addContact(
+        ContactModel(
+          peerId: 'peer-bob',
+          publicKey: 'pk-bob',
+          rendezvous: '/ip4/127.0.0.1/tcp/4002',
+          username: 'Bob',
+          signature: 'sig-bob',
+          scannedAt: DateTime.utc(2026, 5, 1).toIso8601String(),
+          mlKemPublicKey: 'mlkem-bob',
+        ),
+      );
+
+      await tester.pumpWidget(buildWidget(group: group));
+      await pumpUntil(
+        tester,
+        () => find
+            .byKey(const ValueKey('group-conversation-security-strip'))
+            .evaluate()
+            .isNotEmpty,
+      );
+
+      expect(find.text('Encrypted - key epoch 1'), findsOneWidget);
+      expect(find.text('All 3 members verified'), findsOneWidget);
+      expect(find.text('2 of 3 members verified'), findsNothing);
+      expect(
+        find.textContaining('not verified from saved contacts'),
+        findsNothing,
+      );
+    });
+
     testWidgets(
       'hydrated group initialPendingMedia uses budget bytes instead of file size',
       (tester) async {

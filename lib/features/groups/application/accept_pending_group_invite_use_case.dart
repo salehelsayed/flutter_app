@@ -56,6 +56,8 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
   String? ownKeyPackagePublicMaterial,
   DateTime? now,
   DownloadGroupAvatarFn? downloadGroupAvatarFn,
+  bool drainAcceptedInboxAllPages = false,
+  int acceptedInboxPageSize = 50,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -269,18 +271,20 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         consumedAt: effectiveNow,
       );
       await pendingInviteRepo.deletePendingInvite(groupId);
-      await drainGroupOfflineInboxForGroup(
+      final acceptedId = acceptedGroupId ?? groupId;
+      final inboxDrained = await _drainAcceptedGroupInboxBestEffort(
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
-        groupId: acceptedGroupId ?? groupId,
+        groupId: acceptedId,
         mediaAttachmentRepo: mediaAttachmentRepo,
         reactionRepo: reactionRepo,
         groupMessageListener: groupMessageListener,
+        drainAllPages: drainAcceptedInboxAllPages,
+        pageSize: acceptedInboxPageSize,
       );
-      final acceptedId = acceptedGroupId ?? groupId;
       final group = await groupRepo.getGroup(acceptedId);
-      await _publishAcceptedJoinTimelineIfPossible(
+      await _publishAcceptedJoinTimelineBestEffort(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         bridge: bridge,
@@ -293,7 +297,12 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
         senderTransportPeerId: ownTransportPeerId,
         senderKeyPackageId: ownKeyPackageId,
       );
-      return (AcceptPendingGroupInviteResult.success, group);
+      return (
+        inboxDrained
+            ? AcceptPendingGroupInviteResult.success
+            : AcceptPendingGroupInviteResult.bridgeError,
+        group,
+      );
     case HandleGroupInviteResult.bridgeError:
       if (isSingleUse) {
         await _recordConsumedInvite(
@@ -310,7 +319,7 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
       await pendingInviteRepo.deletePendingInvite(groupId);
       final acceptedId = acceptedGroupId ?? groupId;
       final group = await groupRepo.getGroup(acceptedId);
-      await _publishAcceptedJoinTimelineIfPossible(
+      await _publishAcceptedJoinTimelineBestEffort(
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         bridge: bridge,
@@ -404,6 +413,83 @@ Future<void> _recordConsumedInvite({
           : retentionExpiry,
     ),
   );
+}
+
+Future<bool> _drainAcceptedGroupInboxBestEffort({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  ReactionRepository? reactionRepo,
+  GroupMessageListener? groupMessageListener,
+  required bool drainAllPages,
+  required int pageSize,
+}) async {
+  try {
+    await drainGroupOfflineInboxForGroup(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: groupId,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      reactionRepo: reactionRepo,
+      groupMessageListener: groupMessageListener,
+      drainAllPages: drainAllPages,
+      pageSize: pageSize,
+    );
+    return true;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_INBOX_DRAIN_WARNING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'error': e.toString(),
+      },
+    );
+    return false;
+  }
+}
+
+Future<void> _publishAcceptedJoinTimelineBestEffort({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required Bridge bridge,
+  required String groupId,
+  String? senderPeerId,
+  String? senderPublicKey,
+  String? senderPrivateKey,
+  String? senderUsername,
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  String? senderKeyPackageId,
+}) async {
+  try {
+    await _publishAcceptedJoinTimelineIfPossible(
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      bridge: bridge,
+      groupId: groupId,
+      senderPeerId: senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      senderUsername: senderUsername,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+      senderKeyPackageId: senderKeyPackageId,
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PENDING_GROUP_INVITE_ACCEPT_JOIN_EVENT_WARNING',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'stage': 'timeline',
+        'error': e.toString(),
+      },
+    );
+  }
 }
 
 Future<void> _publishAcceptedJoinTimelineIfPossible({
