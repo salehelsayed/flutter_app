@@ -247,6 +247,13 @@ class PassthroughCryptoBridge extends FakeBridge {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
     final cmd = parsed['cmd'] as String?;
 
+    // Mirror the parent guard so the message.encrypt and message.decrypt
+    // shortcut branches below cannot be invoked from inside a
+    // dbWriteTransaction body. Without this, the parent's guard at the top
+    // of FakeBridge.send is bypassed for those two commands because the
+    // override returns before delegating to super.send.
+    assertNotInsideDbWriteTransaction(commandPreview: cmd ?? '');
+
     if (cmd == 'message.encrypt') {
       // Track (same bookkeeping as FakeBridge.send)
       sendCallCount++;
@@ -286,6 +293,11 @@ class ZeroPeerPublishBridge extends FakeBridge {
   Future<String> send(String message) async {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
     final cmd = parsed['cmd'] as String?;
+
+    // Same dbWriteTransaction guard as the parent + the sibling subclass:
+    // group:publish is also intercepted with an early return that would
+    // otherwise bypass FakeBridge.send's guard.
+    assertNotInsideDbWriteTransaction(commandPreview: cmd ?? '');
 
     if (cmd == 'group:publish') {
       sendCallCount++;
