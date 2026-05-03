@@ -145,8 +145,8 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_ke
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
-import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
@@ -1603,6 +1603,10 @@ void main() async {
   );
 
   // Create group invite listener
+  final groupIdentityCallbacks = buildGroupIdentityCallbacks(
+    identityRepo: repository,
+    p2pService: p2pService,
+  );
   final groupInviteListener = GroupInviteListener(
     groupInviteStream: messageRouter.groupInviteStream,
     groupRepo: groupRepository,
@@ -1611,27 +1615,14 @@ void main() async {
     bridge: bridge,
     msgRepo: groupMessageRepository,
     mediaAttachmentRepo: mediaAttachmentRepository,
-    getOwnMlKemSecretKey: () async {
-      final identity = await repository.loadIdentity();
-      return identity?.mlKemSecretKey;
-    },
-    getOwnPeerId: () async {
-      final identity = await repository.loadIdentity();
-      return identity?.peerId;
-    },
-    getOwnDeviceId: () async => p2pService.currentState.peerId,
-    getOwnTransportPeerId: () async => p2pService.currentState.peerId,
-    getOwnMlKemPublicKey: () async {
-      final identity = await repository.loadIdentity();
-      return identity?.mlKemPublicKey;
-    },
-    getOwnKeyPackageId: () async => defaultGroupWelcomeKeyPackageIdForDevice(
-      p2pService.currentState.peerId,
-    ),
-    getOwnKeyPackagePublicMaterial: () async {
-      final identity = await repository.loadIdentity();
-      return identity?.mlKemPublicKey;
-    },
+    getOwnMlKemSecretKey: groupIdentityCallbacks.getOwnMlKemSecretKey,
+    getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
+    getOwnDeviceId: groupIdentityCallbacks.getOwnDeviceId,
+    getOwnTransportPeerId: groupIdentityCallbacks.getOwnTransportPeerId,
+    getOwnMlKemPublicKey: groupIdentityCallbacks.getOwnMlKemPublicKey,
+    getOwnKeyPackageId: groupIdentityCallbacks.getOwnKeyPackageId,
+    getOwnKeyPackagePublicMaterial:
+        groupIdentityCallbacks.getOwnKeyPackagePublicMaterial,
     appendGroupEventLogEntry:
         ({
           required groupId,
@@ -1658,17 +1649,9 @@ void main() async {
     groupKeyUpdateStream: messageRouter.groupKeyUpdateStream,
     groupRepo: groupRepository,
     bridge: bridge,
-    getOwnMlKemSecretKey: () async {
-      final identity = await repository.loadIdentity();
-      return identity?.mlKemSecretKey;
-    },
-    getOwnPeerId: () async {
-      final identity = await repository.loadIdentity();
-      return identity?.peerId;
-    },
-    getOwnDeviceId: () async {
-      return p2pService.currentState.peerId;
-    },
+    getOwnMlKemSecretKey: groupIdentityCallbacks.getOwnMlKemSecretKey,
+    getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
+    getOwnDeviceId: groupIdentityCallbacks.getOwnDeviceId,
     retryPendingGroupKeyRepairs:
         groupPendingKeyRepairRunner.retryPendingRepairsForRequest,
     appendGroupEventLogEntry:
