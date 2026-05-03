@@ -50,5 +50,75 @@ void main() {
       });
       expect(isInsideDbWriteTransaction(), isFalse);
     });
+
+    test(
+      'PassthroughCryptoBridge respects the guard for its intercepted commands',
+      () async {
+        // The PassthroughCryptoBridge subclass intercepts message.encrypt
+        // and message.decrypt with early returns before delegating to
+        // super.send. Without the override-level guard, those two commands
+        // would bypass the parent FakeBridge.send guard. Test pins the
+        // patch from /ultrareview run 1 bug_010.
+        final bridge = PassthroughCryptoBridge();
+        await bridge.initialize();
+
+        for (final cmd in const ['message.encrypt', 'message.decrypt']) {
+          Object? thrown;
+          try {
+            await runInDbWriteTransactionZoneForTest(() async {
+              await bridge.send(
+                jsonEncode({
+                  'cmd': cmd,
+                  'payload': {
+                    'plaintext': 'p',
+                    'ciphertext': 'c',
+                    'recipientPublicKey': 'k',
+                    'kem': 'k',
+                    'nonce': 'n',
+                    'secretKey': 's',
+                  },
+                }),
+              );
+            });
+          } catch (e) {
+            thrown = e;
+          }
+          expect(
+            thrown,
+            isA<BridgeCallInsideDbTransactionError>(),
+            reason: 'PassthroughCryptoBridge.$cmd must trip the guard',
+          );
+        }
+      },
+    );
+
+    test(
+      'ZeroPeerPublishBridge respects the guard for group:publish',
+      () async {
+        final bridge = ZeroPeerPublishBridge();
+        await bridge.initialize();
+
+        Object? thrown;
+        try {
+          await runInDbWriteTransactionZoneForTest(() async {
+            await bridge.send(
+              jsonEncode({
+                'cmd': 'group:publish',
+                'payload': {'messageId': 'm-1'},
+              }),
+            );
+          });
+        } catch (e) {
+          thrown = e;
+        }
+        expect(
+          thrown,
+          isA<BridgeCallInsideDbTransactionError>(),
+          reason:
+              'ZeroPeerPublishBridge.group:publish must trip the guard '
+              '(/ultrareview run 1 bug_010)',
+        );
+      },
+    );
   });
 }
