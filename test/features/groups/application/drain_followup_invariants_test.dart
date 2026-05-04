@@ -12,6 +12,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -457,6 +458,103 @@ void main() {
               'shape rolled them back via the SQLCipher txn, but the new '
               'three-phase shape has no implicit rollback for outer-repo '
               'writes — fix must call deleteMessagesForGroup before exit.',
+        );
+      },
+    );
+
+    test(
+      'drain → listener: malformed envelope decoding to text-less, '
+      'media-less payload does NOT persist an empty row',
+      () async {
+        // Cross-system regression for the user-reported "test delete shows
+        // empty bubbles" symptom. The listener-side empty-drop guard is
+        // pinned by GroupMessageListener tests in
+        // test/features/groups/application/group_message_listener_test.dart
+        // (see "drops events with neither text nor media — empty bubble
+        // after cold restart regression"). What was missing: a test that
+        // confirms the SAME guard fires when the malformed event arrives
+        // through the offline-drain path, not via the live GossipSub
+        // stream. Production hardware soak hit this case (the Go side
+        // sometimes emits skeleton replay envelopes with no `text` after
+        // partial decrypt) and our well-formed-input drain test could
+        // never reach it.
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+        addTearDown(listener.dispose);
+
+        // Build a perfectly-signed envelope whose decrypted plaintext has
+        // an empty text field and no media. decodeInboxMessage will
+        // accept it (signature verifies, ciphertext decrypts to the
+        // plaintext we provided) and the drain will dispatch it through
+        // the listener, where the empty-drop guard must fire.
+        final emptyEnvelope = await buildGroupOfflineReplayEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: jsonEncode({
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'keyEpoch': 1,
+            'text': '', // <-- empty after decrypt
+            'timestamp': DateTime.utc(2026, 5, 2, 12).toIso8601String(),
+            'messageId': 'msg-empty-from-drain',
+            // no 'media' key — text-less + media-less is the regression
+          }),
+          messageId: 'msg-empty-from-drain',
+          senderPeerId: 'peer-admin',
+          senderPublicKey: 'pk-admin',
+          senderPrivateKey: 'sk-peer-admin',
+        );
+
+        bridge.addPage('group-1', '', [
+          {
+            'from': 'peer-admin',
+            'message': emptyEnvelope,
+            'timestamp':
+                DateTime.utc(2026, 5, 2, 12).millisecondsSinceEpoch,
+          },
+        ], '');
+
+        await drainGroupOfflineInbox(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupMessageListener: listener,
+        );
+
+        expect(
+          msgRepo.count,
+          0,
+          reason:
+              'Drain must NOT persist an envelope whose decoded payload '
+              'has no text and no media — that produces an empty bubble '
+              'on the conversation screen that survives cold restart.',
+        );
+        expect(
+          await msgRepo.getMessage('msg-empty-from-drain'),
+          isNull,
+          reason: 'no row should exist for the empty envelope',
+        );
+        expect(
+          flowEvents
+              .where(
+                (e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP',
+              )
+              .toList(),
+          hasLength(1),
+          reason:
+              'GROUP_MESSAGE_LISTENER_EMPTY_DROP must fire so production '
+              'logs can identify which upstream events are malformed.',
         );
       },
     );
