@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -975,6 +976,154 @@ void main() {
     final latest = await msgRepo.getLatestMessage('group-1');
     expect(latest!.text, 'Hello group!');
   });
+
+  test(
+    'drops events with neither text nor media — empty bubble after cold '
+    'restart regression',
+    () async {
+      // Regression for the user-reported bug: after the app was killed
+      // and reopened, opening an old group thread showed empty bubbles.
+      // Root cause walked in this branch: group_message_listener._handleMessage
+      // used `data['text'] as String? ?? ''` and saved the row even when
+      // `text` was missing/null with no media. After a cold restart the
+      // empty-text row was reloaded and rendered as a blank bubble.
+      // The fix bails early on text-less + media-less events; this test
+      // is the regression guard.
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final emitted = <GroupMessage>[];
+      final subscription = listener.groupMessageStream.listen(emitted.add);
+      addTearDown(subscription.cancel);
+
+      listener.start(sourceController.stream);
+
+      // Event from upstream that mimics a malformed/partial-decrypt payload:
+      // valid groupId + senderId, but no `text` field at all and no media.
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-empty-drop-1',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      // No row persisted — this is the load-bearing assertion. Without
+      // the fix the row would be saved with text='' and survive cold
+      // restarts as an empty bubble.
+      expect(
+        msgRepo.count,
+        0,
+        reason:
+            'event with neither text nor media must not be persisted '
+            '(would render as empty bubble after cold restart)',
+      );
+      expect(await msgRepo.getMessage('msg-empty-drop-1'), isNull);
+      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+
+      // No live UI emission either — the conversation screen would
+      // otherwise upsert an empty-text bubble in memory until restart.
+      expect(emitted, isEmpty);
+
+      // Diagnostic event must fire so the failure is visible in FLOW
+      // logs from real devices.
+      final dropEvents = flowEvents
+          .where((e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP')
+          .toList();
+      expect(
+        dropEvents,
+        hasLength(1),
+        reason:
+            'GROUP_MESSAGE_LISTENER_EMPTY_DROP must be emitted once so '
+            'production logs reveal which upstream events are malformed',
+      );
+      final details = dropEvents.single['details'] as Map<String, dynamic>;
+      expect(details['hasTextField'], false);
+    },
+  );
+
+  test(
+    'drops events where text is present but null, with no media',
+    () async {
+      // Sister case: Go bridge sends `text: null` instead of omitting
+      // the key. The String? coercion at the listener entry treats null
+      // and missing identically; the guard must catch both.
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': null,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-empty-drop-null',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(msgRepo.count, 0);
+      expect(
+        flowEvents
+            .where((e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'allows media-only messages with empty text — legitimate sender shape',
+    () async {
+      // The send-side use case (send_group_message_use_case.dart:483)
+      // permits messages with empty text as long as media is present.
+      // The empty-drop guard must NOT regress that path: we only care
+      // here that the drop event is NOT emitted, which is the precise
+      // contract this guard owes. Whether the row ultimately persists
+      // depends on the rest of the pipeline (sender membership, dedupe,
+      // media validation) — that is covered by other tests in this file.
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      listener.start(sourceController.stream);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'text': '',
+        'media': [
+          {
+            'url': 'mknoon://blob/abc',
+            'kind': 'image',
+            'contentHash': _validContentHash,
+            'mimeType': 'image/jpeg',
+            'size': 123,
+          },
+        ],
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'messageId': 'msg-media-only-1',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      expect(
+        flowEvents.where(
+          (e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP',
+        ),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'ER002 rejects unknown sender message before stream, storage, or notification',
