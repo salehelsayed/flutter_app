@@ -63,3 +63,53 @@ f82f778e  Stop tracking local Codex sandbox artifacts and fix orchestrator agent
 7dc6376f  Untrack remaining sandbox / build caches missed by f82f778e
 <this>    Patch FakeBridge subclass guard bypass (/ultrareview run 1 bug_010)
 ```
+
+---
+
+## Post-closure follow-up — malformed-envelope coverage gap (filed 2026-05-04 after Pixel +88 hardware soak)
+
+### What slipped through
+
+After Gate 3 closed and we shipped the +87 build, the Pixel hardware re-test surfaced a *separate* bug we conflated mid-debug with a residual lock-window:
+
+- **Symptom**: opening an existing group on the Pixel showed three blank/grey bubbles in the conversation screen instead of the messages whose previews were visible from the Orbit list.
+- **First diagnosis (wrong)**: I read the `database has been locked for 0:00:10` warnings in logcat and assumed the conversation screen's `getMessagesPage()` was queued behind a busy lock — i.e. another instance of the same lock-window class as the original Orbit-skeleton stall.
+- **Actual root cause**: `GroupMessageListener._handleMessage` was persisting events with `text=""` and no media. Those rows came back from the DB and the conversation screen rendered them as empty bubbles. The lock warnings I saw were *unrelated* concurrent activity that happened to coincide. This was visible in `git diff` as uncommitted WIP modifications to `lib/features/groups/application/group_message_listener.dart` — I had treated those modifications as "user state, don't audit" rather than reviewing the diff.
+- **Fix**: the listener empty-message drop guard the user had already drafted (uncommitted) — early-return inside `_handleMessage` if `text.isEmpty && media.isEmpty`, plus a `GROUP_MESSAGE_LISTENER_EMPTY_DROP` flow event. Landed in commit `dfb96e32` together with the simulator tests and other in-flight WIP.
+
+### Why the original test plan missed it
+
+The five reasons, each independently sufficient, that none of our +87-era tests caught this:
+
+1. **Scope of TDD was set by the symptom we'd already named.** Tests optimized for proving the lock-window contract held. None exercised "what happens when upstream emits a malformed event."
+2. **No fuzz / malformed-input coverage on the listener.** Existing listener tests validated well-formed envelopes (signed, decrypted, with text). No test for "what if `text` is empty after decode."
+3. **Bug was in pre-existing WIP code I never reviewed.** `_handleMessage` had been on the branch as uncommitted-modified the entire time. I treated it as user state and didn't audit it.
+4. **Hardware validation used clean inputs.** The 25-message reproduction had iOS sim "a" sending well-formed signed envelopes through `buildGroupOfflineReplayEnvelope` — exactly the path that *cannot* produce empty-text events. So the hardware test was incapable of exposing this bug.
+5. **Release builds suppress `[FLOW]` events.** When I read the +86 logcat I saw `[BRIDGE-EVENT]` entries but no FL/UC/DB granular events, so I had to guess from indirect signals (the lock warning timing) instead of reading the actual symptom.
+
+### What we added in response
+
+- **Listener-side regression tests** (already in `dfb96e32` alongside the guard): three tests in `test/features/groups/application/group_message_listener_test.dart` covering `text` missing, `text == null`, and the legitimate "empty text + media" pass-through path.
+- **Cross-system regression test** (added in *this* commit): `test/features/groups/application/drain_followup_invariants_test.dart` — "drain → listener: malformed envelope decoding to text-less, media-less payload does NOT persist an empty row." Pins the contract that the listener guard fires when a malformed envelope arrives via the offline-drain path, not just the live GossipSub stream.
+
+### Outstanding follow-ups (do these before the next release with significant group-messaging changes)
+
+1. **Hardware soak must include a malformed-envelope injection point.** The next time we hardware-validate group-messaging work, the test plan needs at least one upstream event that decodes to text-less / media-less. The simplest way: extend `_PageBridge` (or a sibling fake at the Go-bridge layer) to occasionally return a skeleton envelope, and run a soak where the conversation screen is opened repeatedly during ingest. If that soak takes >15 min on hardware, run it on simulator-only via `reset_simulators.sh`.
+2. **Audit `handleIncomingGroupMessage` for parallel weakness.** The use case has many `return null;` branches (lines 69, 96, 108, 133, 154, 166, 181, 199, 248, 277). At least one of these may also persist empty rows in some path. A focused read with the same lens as the listener fix is worth ~30 min before this code area changes again.
+3. **Extend the drain test scaffolding to inject malformed envelopes.** `_PageBridge` and the helpers in `drain_followup_invariants_test.dart` are now the canonical scaffolding for drain-side regression coverage. Adding a `addMalformedPage(...)` helper would make future malformed-envelope tests trivial to write.
+4. **Mid-debug rule for next time:** if a UI symptom looks like "skeleton placeholder stuck", VERIFY whether the rows are real-but-empty before assuming it's a loader. Open a debug build (FLOW events visible) and check what `getMessagesPage` actually returns. The 10s lock warning is *not* a reliable indicator that the load itself is blocked — there are many paths that produce that warning concurrently with unrelated UI states.
+5. **Consider stricter `dbWriteTransaction` guard** that also fails if the body awaits any method on a `Database`/`DatabaseExecutor` other than the supplied `txn`. The current guard catches bridge calls (which is the high-impact case) but not parent-DB awaits. A `Zone`-based proxy that intercepts non-`txn` calls inside the body would close that hole, at the cost of slightly heavier dev-build overhead.
+
+### PR head at this update
+
+```
+dfb96e32  Land in-flight WIP: empty-msg listener guard, simulator tests, relay binary
+a600a5cf  Bump 1.0.0+88: live-message symptom fix verified on hardware
+e8066621  Bump 1.0.0+87: lock-window fix + dbWriteTransaction guard
+f412df19  Patch FakeBridge subclass guard bypass + Gate 3 closure note
+7dc6376f  Untrack remaining sandbox / build caches missed by f82f778e
+f82f778e  Stop tracking local Codex sandbox artifacts and fix orchestrator agent definition
+67442851  Fix drain Phase 2/3 atomicity gaps surfaced by /ultrareview
+4730f6d9  Fix offline-inbox drain holding SQLCipher write lock across bridge calls
+<this>    Add drain → listener empty-envelope cross-system test + post-closure follow-up note
+```
