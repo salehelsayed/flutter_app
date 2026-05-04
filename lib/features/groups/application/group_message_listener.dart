@@ -274,6 +274,29 @@ class GroupMessageListener {
         return;
       }
 
+      // Drop events that have neither text nor media. These are not valid
+      // user messages — most likely a malformed envelope from upstream
+      // (e.g. a partial-decrypt failure on the Go side that emits a
+      // skeleton event without `text`). Persisting them produces empty
+      // bubbles that survive cold-restart. The offline-drain undecryptable
+      // path persists its own user-readable placeholder elsewhere; this
+      // listener should never silently persist a row with no body.
+      final mediaListForEmptyCheck = (data['media'] as List?) ?? const [];
+      if (text.isEmpty && mediaListForEmptyCheck.isEmpty) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_MESSAGE_LISTENER_EMPTY_DROP',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'senderId': senderId.length > 8
+                ? senderId.substring(0, 8)
+                : senderId,
+            'hasTextField': data.containsKey('text'),
+          },
+        );
+        return;
+      }
+
       final wireMessageId = data['messageId'] as String?;
 
       // Check for system message (config updates from admin)
