@@ -359,3 +359,178 @@ After all three sessions:
 - `test/features/groups/application/drain_followup_invariants_test.dart` — Sessions A and B target test file. Already has `_PageBridge` scaffolding and the cross-system empty-envelope test from `82df2a00`.
 - `test/core/database/db_write_transaction_guard_test.dart` — Session C target test file. Already has 5 tests pinning the bridge-side guard.
 - `test/features/groups/application/group_message_listener_test.dart:980` — listener-side empty-drop tests already in place; useful reference shape for Session B's new use-case-side tests.
+
+---
+
+## 2026-05-05 hardware-soak finding — Android notification-tap callback never fires
+
+A live two-device repro (Pixel 6 / Android 16 / API 36 as receiver, iOS sim as
+sender, prod debug build of `1.0.0+88` from branch `new-background`) was run
+end-to-end with `adb logcat --pid=<app>` capture. The bug surfaced exactly as
+the user-reported "tap notification → wrong chat opens" symptom: Alice opened
+user-C's chat, backgrounded the app, sender Bob sent a 1:1 message, the OS
+notification appeared on the Pixel, Alice tapped it, the app foregrounded but
+landed on user-C's chat instead of routing to Bob.
+
+### What the Pixel logs show
+
+```
+11:53:11.113  P2P_SERVICE_MESSAGE_RECEIVED   from=12D3KooWJp (Bob), incoming=true
+11:53:11.114  MESSAGE_ROUTER_ROUTING          type=chat_message
+11:53:11.521  INBOX_STAGING_REPO_STAGE_ENTRY  entryId=direct:5
+11:53:13.343  NOTIFICATION_SHOWN              contactPeerId=12D3KooWJp, sender=Bob,
+                                              payload=12D3KooWJpvAhFF34wMbGKnomtV843shnN7PBxJFRT4AfovxR14t
+11:53:27.479  [RESUME] Step 5: refreshSilentlyOnResume() done   ← app foregrounded by the tap
+11:53:27.481  [LIFECYCLE] _onResumed() finished
+11:55:11.049  peer:disconnected → 12D3KooWJpv...
+```
+
+Absent across the full 6909-line capture:
+
+- `NOTIFICATION_TAPPED` (emitted from `_onNotificationResponse` in
+  `lib/core/notifications/flutter_notification_service.dart:64`, the very first
+  emit after the plugin callback fires)
+- `NOTIFICATIONS_CLEARED` (emitted from `clearDeliveredNotifications`, called
+  by `routeAppRootLocalNotificationTap` *before* any route resolution)
+- `NOTIFICATION_OPEN_PREPARATION_ERROR` / `NOTIFICATION_TAP_NAV_ERROR`
+  (would have fired if tap routing reached Dart and then errored)
+- Any navigation event, route-target resolution, or
+  `_handleNotificationRouteTarget` activity
+
+### Conclusion
+
+The Flutter `_onNotificationTap` callback in `lib/main.dart:2367` was **never
+invoked** when the OS-level notification was tapped on Android. The app's
+`_onResumed` lifecycle hook fired (because tapping a notification still brings
+the existing process forward), but the tap *payload* was never delivered to
+the Dart side. With no payload, no routing decision runs, so the app simply
+resumes to whichever screen was last visible — user-C's chat — which is
+exactly the symptom the user has been reporting. The bug is at the
+Android-↔-Flutter `flutter_local_notifications` PendingIntent boundary, **not**
+in `prepareNotificationOpen` / `_handleNotificationRouteTarget` / the route
+switch (which the Alice harness in `integration_test/notification_open_during_other_chat_alice_harness.dart`
+exercises directly via `onNotificationTap` and which therefore can never
+catch this regression).
+
+`adb shell dumpsys activity activities` corroborates this: while the app is in
+the foreground after the tap, the MainActivity's current Intent is
+
+```
+act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10200000
+```
+
+i.e., a plain launcher intent — no notification extras, no `payload=` data.
+A correctly delivered `flutter_local_notifications` tap PendingIntent would
+have carried extras consumed by the plugin's `onDidReceiveNotificationResponse`
+dispatcher.
+
+### Suspect surface
+
+`MainActivity.kt` is currently bare:
+
+```kotlin
+class MainActivity : FlutterActivity() {
+    private var goBridge: GoBridge? = null
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        goBridge = GoBridge(flutterEngine)
+    }
+}
+```
+
+with `android:launchMode="singleTask"` in `AndroidManifest.xml:20`. With
+`singleTask`, a tap on the notification PendingIntent fires `onNewIntent`
+on the existing MainActivity instance — but the default
+`FlutterActivity.onNewIntent` does **not** propagate to the
+`flutter_local_notifications` plugin's response handler in plugin v18.0.1.
+Plugin docs and known issues (e.g.
+`flutter_local_notifications` GitHub #2023, #2287) call out exactly this
+mismatch on Android 12+ with `singleTask` / `singleTop`.
+
+### Standing rule
+
+**Rule 2.1 — Test surface for OS notification tap delivery**
+
+Every notification-related fix must include at minimum one **end-to-end**
+hardware-or-emulator test where the *real* OS taps a *real* posted
+notification and the Dart side observes `NOTIFICATION_TAPPED` (and downstream
+route events). A harness that synthesizes the tap by directly invoking
+`onNotificationTap` is necessary but not sufficient — it cannot catch
+PendingIntent / launchMode regressions like this one.
+
+**Why:** the existing `notification_open_during_other_chat_alice_harness.dart`
+calls `onNotificationTap` from Dart, so it green-lights even when the
+PendingIntent never reaches Flutter. Today's hardware soak is the first time
+this gap surfaced.
+
+**How to apply:** new sessions touching anything in
+`lib/core/notifications/`, `MainActivity.kt`, or the AndroidManifest
+notification-related fields must add or update an `adb logcat`-asserting
+hardware step in the soak plan that greps for `NOTIFICATION_TAPPED`.
+
+### Session N — Wire MainActivity → flutter_local_notifications onNewIntent
+
+Goal: deliver the notification PendingIntent payload from the OS to the Dart
+`_onNotificationTap` handler when the existing app process is brought to the
+foreground via notification tap (the Pixel-soak scenario above).
+
+**RED:** new instrumentation test (or unit test of MainActivity's
+`onNewIntent` hook via Robolectric/Espresso, depending on what the project
+already supports) that asserts: given a notification PendingIntent with
+`payload="12D3KooWJpv..."` extra, after MainActivity is brought forward,
+the FlutterPluginBinding receives a notification-response intent and the
+Dart `MethodChannel('dexterous.com/flutter/local_notifications')` receives a
+`didReceiveNotificationResponse` invocation with that payload. Mark the
+test as currently failing on the existing bare MainActivity.
+
+**GREEN:** override `onNewIntent` in
+`android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt` to forward
+notification-launch intents to the `flutter_local_notifications`
+NotificationDetailsActivity hook (or, equivalently, follow the plugin's
+documented `onNewIntent` contract for `singleTask` apps). At a minimum:
+
+1. Override `onNewIntent(intent: Intent)` to call
+   `super.onNewIntent(intent)` and then `setIntent(intent)`.
+2. Verify (in a separate diagnostic step) that the plugin's intent
+   action / extras survive the singleTask resume.
+
+If `setIntent(intent)` alone is insufficient, fall back to the explicit plugin
+hook — call into the plugin's instance via the FlutterEngine plugin registry
+and forward the intent (the plugin exposes a public method for this in
+recent versions).
+
+**REFACTOR:** add a logging-only step in `onNewIntent` (gated behind
+`BuildConfig.DEBUG`) that dumps `intent.extras?.keySet()` to logcat so
+future hardware soaks can see at a glance whether the payload arrived.
+Wire the same `emitFlowEvent('NOTIFICATION_NEW_INTENT_RECEIVED', ...)` on
+the Dart side in `_onResumed` to record whether a notification-driven resume
+was observed without a follow-up `NOTIFICATION_TAPPED`.
+
+**Verification:**
+- `flutter test` GREEN.
+- Hardware re-run of the same Pixel soak above (Alice on Pixel, Bob on iOS
+  sim, real notification tap). Pixel logcat must show:
+  - `NOTIFICATION_TAPPED` within ~1s of the tap.
+  - Either `_handleNotificationRouteTarget` for the Bob conversation, or a
+    silent return because `onBeforeRouteTarget` resolved a non-conversation
+    kind.
+- `dumpsys activity activities` after the tap must show MainActivity's Intent
+  with the notification extras (action ≠ MAIN/LAUNCHER) **or** show
+  MAIN/LAUNCHER but with `_onNotificationTap` having already fired (the
+  plugin re-uses `setIntent` patterns).
+
+### Critical files / scripts (added)
+
+- `lib/core/notifications/flutter_notification_service.dart:55-73` —
+  `_onNotificationResponse`; the FLOW emit at line 64 is the canary that this
+  session must make fire.
+- `lib/main.dart:2307` — `widget.notificationService.onNotificationTap = _onNotificationTap;`
+  registration site.
+- `lib/main.dart:2367` — `_onNotificationTap` body.
+- `android/app/src/main/kotlin/com/mknoon/app/MainActivity.kt` — the
+  override target.
+- `android/app/src/main/AndroidManifest.xml:20` — `launchMode="singleTask"`,
+  the constraint that makes plain `setIntent`-style fixes necessary.
+- `integration_test/notification_open_during_other_chat_alice_harness.dart` —
+  existing harness that **cannot** catch this regression by design (synthesizes
+  the tap in Dart). Standing rule 2.1 applies.
