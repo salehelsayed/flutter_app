@@ -4750,7 +4750,9 @@ void main() {
             isFalse,
           );
 
-          final sentAt = DateTime.utc(2026, 4, 29, 12);
+          final sentAt = DateTime.now().toUtc().subtract(
+            const Duration(days: 1),
+          );
           final (parentResult, parent) = await admin.sendGroupMessageViaBridge(
             groupId: groupId,
             text: 'Partition parent',

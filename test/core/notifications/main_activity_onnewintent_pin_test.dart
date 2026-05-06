@@ -4,13 +4,15 @@
 // PendingIntent and the Dart _onNotificationTap callback never fires (Pixel
 // hardware soak 2026-05-05).
 //
-// This is a text-level pin, not a runtime test — the project does not have
-// Android JVM / Robolectric / instrumentation test infrastructure today, and
-// the bug surface (singleTask + Activity intent flow) cannot be reproduced
-// off-device. Standing Rule 2.1 in
+// This is a text-level pin and a belt-and-braces companion to the
+// behaviour-level Robolectric test at
+// android/app/src/test/kotlin/com/mknoon/app/MainActivityOnNewIntentTest.kt
+// (added in Session N+1, 2026-05-05). Either test catching a regression is
+// sufficient; both passing is the green-bar guarantee. Standing Rule 2.1 in
 // `Test-Flight-Improv/Group-Chat-Feature/lock-window-fix-followups-tdd-plan-2026-05-04.md`
 // requires a real-OS-tap hardware soak as the runtime regression catcher;
-// this test is the cheap static catcher that goes alongside.
+// this pin plus the Robolectric regression are cheap PR-time catchers that go
+// alongside it.
 
 import 'dart:io';
 

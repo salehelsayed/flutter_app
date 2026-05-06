@@ -3907,6 +3907,9 @@ void main() {
   test(
     'drains mixed epoch encrypted replay out of order without rewriting epochs',
     () async {
+      final retainedBaseTimestamp = DateTime.now().toUtc().subtract(
+        const Duration(days: 1),
+      );
       final epoch1Key = GroupKeyInfo(
         groupId: 'group-1',
         keyGeneration: 1,
@@ -3931,7 +3934,7 @@ void main() {
           'senderUsername': 'Sender',
           'keyEpoch': 1,
           'text': 'Older epoch replay',
-          'timestamp': '2026-04-29T10:00:00.000Z',
+          'timestamp': retainedBaseTimestamp.toIso8601String(),
           'messageId': 'msg-ms018-epoch-1',
         }),
         messageId: 'msg-ms018-epoch-1',
@@ -3945,7 +3948,9 @@ void main() {
           'senderUsername': 'Sender',
           'keyEpoch': 2,
           'text': 'Newer epoch replay delivered first',
-          'timestamp': '2026-04-29T10:01:00.000Z',
+          'timestamp': retainedBaseTimestamp
+              .add(const Duration(minutes: 1))
+              .toIso8601String(),
           'messageId': 'msg-ms018-epoch-2',
         }),
         messageId: 'msg-ms018-epoch-2',

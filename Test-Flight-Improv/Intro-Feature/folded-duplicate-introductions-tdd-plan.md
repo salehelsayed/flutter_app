@@ -40,6 +40,11 @@ introduced the same person.
 - `Test-Flight-Improv/Intro-Feature/test-inventory.md` confirms broad existing
   intro coverage. This plan must add focused regressions rather than replacing
   the existing intro suite.
+- Existing three-simulator intro E2E coverage lives in `smoke_test_friends.sh`,
+  including `INTRO_E2E_SCENARIO=happy ./smoke_test_friends.sh` and
+  `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh`. This rollout must add a
+  folded-duplicate simulator scenario instead of treating the current scenarios
+  as proof of the new four-identity duplicate-introducer behavior.
 
 ## Product Contract
 
@@ -107,6 +112,37 @@ The fold crosses introducers. It does not merge unrelated counterparties.
 - Existing single-intro count behavior must remain unchanged for non-duplicate
   data.
 
+### Upgrade Contract
+
+- Existing persisted raw `IntroductionModel` rows from the current shipped build
+  remain valid input for the folded projection.
+- After app update and first launch, users with already-persisted pending intros
+  must see those intros in the folded review design without losing intro ids,
+  statuses, introducer attribution, or pending decisions.
+- No migration may delete, merge, or rewrite raw introduction rows just to create
+  the folded design; folding is a read/projection behavior over the existing
+  rows unless a later explicit migration plan proves otherwise.
+
+### Simulator E2E Contract
+
+- Add a dedicated folded duplicate E2E scenario:
+  `INTRO_E2E_SCENARIO=folded-duplicate ./smoke_test_friends.sh`.
+- The scenario requires four distinct identities: introducer A, current viewer
+  B, introduced target C, and second introducer D. D may come from a fourth
+  simulator or an attached physical device.
+- The scenario must create two active intros for the same current viewer and
+  target through different introducers, then prove the current viewer sees one
+  folded row with both introducer attributions and one Accept/Pass decision.
+- The same scenario must prove the folded action applies to both underlying
+  intro ids and all involved identities converge without losing intro state.
+- `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh` must include the new
+  `folded-duplicate` scenario once it lands. Keep
+  `INTRO_E2E_SCENARIO=happy ./smoke_test_friends.sh` green as the baseline
+  simulator intro journey after the harness changes.
+- If the fourth identity/device is unavailable during execution, record an
+  exact simulator/device fixture blocker and keep the simulator row blocked
+  rather than closing it.
+
 ## TDD Source Matrix
 
 Status vocabulary:
@@ -117,12 +153,13 @@ Status vocabulary:
 
 | Row ID | Status | Priority | Scenario | Required first failing tests | Closure evidence |
 | --- | --- | --- | --- | --- | --- |
-| `DIF-001` | `Open` | `P0` | Application projection folds active duplicate intros by target peer across multiple introducers while preserving all underlying intro ids and introducer names. | Add focused tests in `test/features/introduction/application/load_introductions_test.dart` or a new folded projection suite. Cases: two introducers same target fold to one item; different targets remain separate; current user as recipient and introduced both resolve correctly; newest row only affects display fallback, not membership. | Projection tests green; no raw-list tests regressed. |
+| `DIF-001` | `Open` | `P0` | Application projection folds active duplicate intros by target peer across multiple introducers while preserving all underlying intro ids and introducer names, including rows already persisted by the current shipped build before update. | Add focused tests in `test/features/introduction/application/load_introductions_test.dart` or a new folded projection suite. Cases: two introducers same target fold to one item; different targets remain separate; current user as recipient and introduced both resolve correctly; newest row only affects display fallback, not membership; an upgrade-style fixture built from existing raw persisted `IntroductionModel` rows folds without mutating rows or losing ids, statuses, attribution, or pending decisions. | Projection tests green; no raw-list tests regressed; upgrade-style persisted-row fixture proves folded display compatibility with existing data. |
 | `DIF-002` | `Open` | `P0` | User-facing pending count counts one folded target, not duplicate raw rows, and preserves already-connected/non-pending badge rules. | Add repository/helper or application count tests for duplicate raw rows with the same counterparty from two introducers. Include recipient-side and introduced-side cases. | Direct count tests green; `countPendingIntroductions` or its replacement returns folded count where user-facing badges need it. |
 | `DIF-003` | `Open` | `P0` | One Accept/Pass action applies to every underlying active pending intro in the folded group. | Add tests for folded accept and folded pass over two pending intro ids. Assert both party statuses update, outbound response calls are made through existing single-intro paths, duplicate taps do not double-apply, and non-party/key-mismatch failures do not get hidden. | Folded accept/pass tests green; existing `accept_introduction_test.dart` and `pass_introduction_test.dart` still pass. |
 | `DIF-004` | `Open` | `P0` | Orbit/Intros UI renders one row for duplicate target intros and shows multi-introducer attribution. | Add widget tests for `IntrosTab` and active `OrbitScreen` intro sliver: duplicate `aboza` rows collapse to one row, exactly one Accept and one Pass are visible, attribution names both introducers, and long/blank names use existing fallback/truncation behavior. | Widget tests green; existing intro row, intro tab, and Orbit screen tests still pass. |
 | `DIF-005` | `Open` | `P0` | Wired Orbit flow processes a folded Accept/Pass once, disables the whole folded row while processing, reloads to the folded state, and updates the Orbit badge/review count by folded target count. | Add `OrbitWired` tests with two introductions for the same `otherPeerId`. Assert one visible row, one processing state, both underlying rows receive the action, duplicate taps do not create extra updates, and the badge count is one. Add a `FeedWired` badge test if the badge still reads the repository count directly. | `OrbitWired`/Feed badge tests green; direct companion Orbit intro wiring tests green. |
-| `DIF-006` | `Open` | `P1` | Full regression and documentation closure prove the folded behavior without weakening existing intro journeys. | No product-code test first. This is closure: run the intro gate and direct companion suites, then update this matrix row statuses and `test-inventory.md` with concrete evidence. | `./scripts/run_test_gates.sh intro` green, direct Orbit/Feed companion tests green, docs updated with exact files and commands. |
+| `DIF-006` | `Open` | `P0` | Four-identity simulator proof covers two introducers creating duplicate intros for the same current viewer and target, then verifies one folded row and one folded Accept/Pass decision over both underlying intro ids. | Add `INTRO_E2E_SCENARIO=folded-duplicate` to `smoke_test_friends.sh` and the supporting debug runner/config if needed. Require four identities/devices: introducer A, current viewer B, target C, and second introducer D from a fourth simulator or attached physical device. Include the new scenario in `INTRO_E2E_SCENARIO=all`. | `INTRO_E2E_SCENARIO=folded-duplicate ./smoke_test_friends.sh` green with four identities; `INTRO_E2E_SCENARIO=happy ./smoke_test_friends.sh` remains green; `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh` includes the new scenario and is green, or the row stays blocked with an exact fourth-device fixture blocker. |
+| `DIF-007` | `Open` | `P1` | Full regression and documentation closure prove the folded behavior without weakening existing intro journeys. | No product-code test first. This is closure: run the intro gate, direct companion suites, and folded duplicate simulator proof, then update this matrix row statuses and `test-inventory.md` with concrete evidence. | `./scripts/run_test_gates.sh intro` green, direct Orbit/Feed companion tests green, folded duplicate simulator proof green, docs updated with exact files and commands. If the fourth-device fixture is unavailable, this row records the blocker and the rollout remains `Blocked`/not closed. |
 
 ## Step-by-Step Implementation Plan
 
@@ -227,6 +264,18 @@ flutter test --no-pub \
 ./scripts/run_test_gates.sh intro
 ```
 
+```sh
+INTRO_E2E_SCENARIO=happy ./smoke_test_friends.sh
+INTRO_E2E_SCENARIO=folded-duplicate ./smoke_test_friends.sh
+INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh
+```
+
+The folded duplicate simulator scenario requires four distinct identities:
+introducer A, current viewer B, introduced target C, and second introducer D.
+The fourth identity may run on an additional simulator or an attached physical
+device. Do not mark `DIF-006` `Closed` without green four-identity proof; if
+the fixture is unavailable, record the exact blocker and leave the row blocked.
+
 Run `flutter test --no-pub test/features/feed/presentation/screens/feed_wired_test.dart`
 if the Feed badge code changes.
 
@@ -251,7 +300,9 @@ if the Feed badge code changes.
 
 This plan does not:
 
-- add a DB migration or change the persisted introduction row schema
+- add a DB migration or change the persisted introduction row schema; the folded
+  projection must read existing raw intro rows directly so upgrade users keep
+  their current intros
 - change introduction payload protocol fields
 - change friend-picker resend eligibility
 - permanently block future introductions after a Pass
@@ -268,7 +319,11 @@ The feature is done only when:
 - Accept and Pass each appear only once for the folded row
 - Accept/Pass applies to all current underlying pending intro records in the
   fold
+- users upgrading from the current shipped build with already-persisted pending
+  intro rows see those intros in the folded review design without data loss
 - Orbit and Feed user-facing badge/review counts count folded targets
+- the four-identity folded duplicate simulator scenario is green, and the
+  scenario is included in `INTRO_E2E_SCENARIO=all`
 - all existing intro tests still pass
 - the intro gate passes
 - this source matrix and the intro test inventory are updated with exact test
