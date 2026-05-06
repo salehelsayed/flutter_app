@@ -185,6 +185,8 @@ import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
+import 'package:flutter_app/core/notifications/notification_open_dedupe_gate.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
@@ -2145,6 +2147,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final PostNotificationOpenCoordinator _postNotificationOpenCoordinator;
   late final ContactRequestNotificationMaterializer
   _contactRequestNotificationMaterializer;
+  late final IosApnsNotificationOpenBridge _iosApnsNotificationOpenBridge;
+  final NotificationOpenDedupeGate _remoteNotificationOpenDedupeGate =
+      NotificationOpenDedupeGate();
   late final Future<void> _initialShareIntentCapture;
   Future<void>? _runtimeServicesReady;
 
@@ -2203,6 +2208,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
     _setupPushListeners();
     _setupNotificationTapHandler();
+    _setupIosApnsNotificationOpenBridge();
     _setupShareIntentHandling();
     _initialShareIntentCapture = _captureInitialShareIntent();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2307,7 +2313,58 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.notificationService.onNotificationTap = _onNotificationTap;
   }
 
+  void _setupIosApnsNotificationOpenBridge() {
+    _iosApnsNotificationOpenBridge = IosApnsNotificationOpenBridge();
+    _iosApnsNotificationOpenBridge.register(_routeRemoteNotificationOpen);
+    unawaited(_prepareIosApnsNotificationOpenBridgeWhenReady());
+  }
+
+  Future<void> _prepareIosApnsNotificationOpenBridgeWhenReady({
+    bool allowRetry = true,
+  }) async {
+    await _ensureRuntimeServicesReady();
+    if (!mounted) {
+      return;
+    }
+    final isReady = await _iosApnsNotificationOpenBridge
+        .markNotificationOpenBridgeReady();
+    if (!mounted) {
+      return;
+    }
+    if (!isReady) {
+      if (allowRetry) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          Future<void>.delayed(const Duration(milliseconds: 500), () {
+            if (mounted) {
+              unawaited(
+                _prepareIosApnsNotificationOpenBridgeWhenReady(
+                  allowRetry: false,
+                ),
+              );
+            }
+          });
+        });
+      }
+      return;
+    }
+    await _iosApnsNotificationOpenBridge.consumeInitialNotificationOpen(
+      _routeRemoteNotificationOpen,
+    );
+  }
+
   Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {
+    if (!_remoteNotificationOpenDedupeGate.shouldRoute(data)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'REMOTE_NOTIFICATION_OPEN_DEDUPED',
+        details: {
+          'dataKeys': data.keys.toList(growable: false),
+          'dedupeKey': NotificationOpenDedupeGate.dedupeKeyFor(data) ?? '',
+        },
+      );
+      return;
+    }
+
     _notificationTappedAt = DateTime.now();
     final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
     await _withContactRequestPresentationSuppressed(
@@ -2639,6 +2696,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.p2pService.dispose();
     widget.bridge.dispose();
     widget.audioRecorderService.dispose();
+    _iosApnsNotificationOpenBridge.dispose();
     widget.notificationService.dispose();
 
     super.dispose();

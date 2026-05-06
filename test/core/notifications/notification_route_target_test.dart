@@ -91,6 +91,78 @@ void main() {
       },
     );
 
+    test('fromRemoteMessageData maps APNs-direct one-to-one payloads', () {
+      final data = <String, dynamic>{
+        'aps': {
+          'alert': {'title': 'Alice', 'body': 'Hello'},
+        },
+        'type': 'new_message',
+        'sender_id': 'peer-apns-123',
+        'message_id': 'msg-apns-123',
+      };
+
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+
+      expect(data.containsKey('gcm.message_id'), isFalse);
+      expect(data.containsKey('payload'), isFalse);
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.conversation);
+      expect(routeTarget.peerId, 'peer-apns-123');
+    });
+
+    test('fromRemoteMessageData maps APNs-direct group payloads', () {
+      final data = <String, dynamic>{
+        'aps': {
+          'alert': {'title': 'Team', 'body': 'Alice: Hello'},
+        },
+        'type': 'group_message',
+        'groupId': 'group-apns-123',
+        'message_id': 'msg-group-apns-123',
+      };
+
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
+
+      expect(data.containsKey('gcm.message_id'), isFalse);
+      expect(data.containsKey('payload'), isFalse);
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+      expect(routeTarget.groupId, 'group-apns-123');
+      expect(routeTarget.messageId, 'msg-group-apns-123');
+    });
+
+    test('fromRemoteMessageData maps FCM-shaped one-to-one route payloads', () {
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+        'aps': {
+          'alert': {'title': 'Alice', 'body': 'Hello'},
+        },
+        'gcm.message_id': 'fcm-msg-123',
+        'type': 'new_message',
+        'sender_id': 'peer-fcm-123',
+        'message_id': 'msg-fcm-123',
+      });
+
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.conversation);
+      expect(routeTarget.peerId, 'peer-fcm-123');
+    });
+
+    test('fromRemoteMessageData maps FCM-shaped group route payloads', () {
+      final routeTarget = NotificationRouteTarget.fromRemoteMessageData({
+        'aps': {
+          'alert': {'title': 'Team', 'body': 'Alice: Hello'},
+        },
+        'gcm.message_id': 'fcm-group-123',
+        'type': 'group_message',
+        'groupId': 'group-fcm-123',
+        'message_id': 'msg-group-fcm-123',
+      });
+
+      expect(routeTarget, isNotNull);
+      expect(routeTarget!.kind, NotificationRouteTargetKind.group);
+      expect(routeTarget.groupId, 'group-fcm-123');
+      expect(routeTarget.messageId, 'msg-group-fcm-123');
+    });
+
     test(
       'fromRemoteMessageData maps contact_request to contact-request route',
       () {
