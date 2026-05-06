@@ -534,3 +534,167 @@ was observed without a follow-up `NOTIFICATION_TAPPED`.
 - `integration_test/notification_open_during_other_chat_alice_harness.dart` —
   existing harness that **cannot** catch this regression by design (synthesizes
   the tap in Dart). Standing rule 2.1 applies.
+
+---
+
+## Rollout — Session N controller ledger (added 2026-05-05)
+
+### Run Mode Snapshot
+
+- **Active mode:** implementation-committed gap-closure.
+- **Degraded local continuation allowed:** no.
+- **Source proposal / closure path:** this same document, Session N section
+  (lines 471–520) is the row-of-record.
+- **Source row status vocabulary:** `Open` / `In progress` / `Code-landed` /
+  `Hardware-pending` / `Closed`.
+- **Overall closure bar:** Kotlin `onNewIntent` fix landed in
+  `MainActivity.kt`; an automated test (or honestly recorded hardware-only
+  scope) pinning the fix exists; Dart-side `NOTIFICATION_NEW_INTENT_RECEIVED`
+  flow event added so future hardware soaks can grep for it; the bug remains
+  reproducible only on a real Android device, so end-to-end verification is
+  necessarily a hardware-soak follow-up the human owns (Standing Rule 2.1).
+- **Final verdict policy:** `accepted_with_explicit_follow_up` is the
+  expected verdict (code-side closes; hardware re-run = explicit
+  external-fixture follow-up the human runs). Use `closed` only if the
+  human comes back and reports the hardware soak passed in this same
+  artifact.
+
+### Ledger
+
+| Session | Status | Plan path | Result | Notes |
+|---|---|---|---|---|
+| N — Wire `MainActivity` → `flutter_local_notifications` `onNewIntent` | closed | [`session-N-android-notification-tap-onnewintent-plan-2026-05-05.md`](./session-N-android-notification-tap-onnewintent-plan-2026-05-05.md) | Code-landed + hardware-soak-verified | GREEN. `MainActivity.kt` now overrides `onNewIntent` with `super.onNewIntent(intent); setIntent(intent)` and a KDoc block linking back to this artifact. Static pin test at `test/core/notifications/main_activity_onnewintent_pin_test.dart` is GREEN (and was confirmed RED before the Kotlin edit). `flutter test` overall: 6395 passed. `flutter analyze`: 1717 issues — same count both with and without the diff, i.e., zero new warnings introduced (artifact's "1691 baseline" line above is itself stale; it predates pre-existing churn unrelated to this session). **Hardware soak verified 2026-05-05** on Pixel 6 (Android 16, API 36) ↔ 2 iOS-sim friends, fresh-install debug build with the new override. Two consecutive notification-tap reps both produced `NOTIFICATION_TAPPED` Dart flow events on the Pixel within milliseconds of the tap (10:58:49.841 and 11:00:03.727 UTC), each followed by `NOTIFICATION_TAP_TO_MESSAGE_TIMING` `routeKind=conversation` with `elapsedMs=573` and `elapsedMs=442` respectively. No `NOTIFICATION_TAP_NAV_ERROR`, no `INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR`, no FATAL / `E/flutter`. User-reported "tap notification → wrong chat opens" symptom no longer reproduces. Standing Rule 2.1 satisfied. |
+
+### Follow-ups (explicit, not blocking final verdict)
+
+1. **Hardware soak (external-fixture; human-owned).** ✅ **Hardware-soak-verified 2026-05-05.**
+   Per Standing Rule 2.1 in this same artifact (lines 450–469), the Pixel ↔
+   iOS-sim soak from the 2026-05-05 finding was re-run on a fresh-install
+   debug build of branch `new-background` carrying the `MainActivity.onNewIntent`
+   override. Pixel 6 (Android 16, API 36) was the receiver; two iOS sims
+   (`347FB118…` iPhone Air + `5BA69F1C…` iPhone 17) were the senders.
+   Two consecutive notification-tap reps both produced:
+   - `NOTIFICATION_TAPPED` Dart flow event on the Pixel within milliseconds
+     of the tap (10:58:49.841 UTC and 11:00:03.727 UTC).
+   - `NOTIFICATION_TAP_TO_MESSAGE_TIMING` `routeKind=conversation` immediately
+     after, with `elapsedMs=573` (rep 1) and `elapsedMs=442` (rep 2) — both
+     well under the ~1s target.
+   - No `NOTIFICATION_TAP_NAV_ERROR`, no `INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR`,
+     no `FATAL EXCEPTION`, no `E/flutter` in either `flutter run` stdout or
+     `adb logcat --pid=<app>`.
+   - The user-reported "tap notification → wrong chat opens" symptom no
+     longer reproduces.
+   Logs captured: `/tmp/run-pixel.log`, `/tmp/pixel-logcat.log`. This is
+   the runtime regression catcher; the static pin test only locks the
+   contract.
+2. **Diagnostic flow event `NOTIFICATION_NEW_INTENT_RECEIVED`
+   (deferred REFACTOR sub-row).** The original Session N spec asked for a
+   Dart-side `emitFlowEvent('NOTIFICATION_NEW_INTENT_RECEIVED', ...)` in
+   `_onResumed` to record whether a notification-driven resume was observed
+   without a follow-up `NOTIFICATION_TAPPED`. Doing this honestly requires
+   a new MethodChannel from MainActivity → Dart so the Dart side actually
+   knows whether the most recent `onNewIntent` carried notification extras.
+   That is a non-trivial bridge surface for diagnostic-only value;
+   intentionally deferred to keep this session minimal-touch. File as a
+   small standalone follow-up if/when the next hardware soak still feels
+   noisy. Same scope: a debug-build-only `Log.d` in `onNewIntent` dumping
+   `intent.extras?.keySet()` for `adb logcat` visibility.
+3. **Robolectric / instrumentation test infrastructure (spawned as
+   Session N+1 on 2026-05-05).** The project has no `androidTest/`
+   directory and no Robolectric setup. Adding either was disproportionate
+   for the single-line override that landed in Session N. After the
+   2026-05-05 hardware soak passed, the user asked specifically for a
+   regression catcher beyond the existing text-level static pin test;
+   the request was scoped into its own session plan at
+   [`session-N+1-android-onnewintent-regression-test-plan-2026-05-05.md`](./session-N+1-android-onnewintent-regression-test-plan-2026-05-05.md).
+   That session's pre-flight chooses between Robolectric (default, JVM
+   unit test) and `androidTest/` (escalation if Robolectric infra cost
+   exceeds ~1 hour). It is bounded — one test, one file, one regression
+   scope — and explicitly does **not** replace Standing Rule 2.1.
+   Status: Open / not yet implemented. Track it in the session plan,
+   not here.
+
+### Final program verdict
+
+**`closed`** — promoted 2026-05-05 after hardware-soak verification.
+(Originally recorded `accepted_with_explicit_follow_up` 2026-05-05 when
+the code landed; promoted later the same day after the soak passed.)
+
+The implementation-side closure bar for Session N is fully met (override
+landed, static pin GREEN, full suite GREEN, no new analyzer warnings, KDoc
+block links back to this artifact for future readers). The remaining
+piece — real-OS-tap hardware soak per Standing Rule 2.1 — was run on
+2026-05-05 (Pixel 6 + 2 iOS sims, fresh installs, debug build of
+`new-background`); see follow-up #1 above for the captured evidence.
+Two consecutive tap reps both observed `NOTIFICATION_TAPPED` on the Pixel
+within milliseconds, both routed to `routeKind=conversation` in <600 ms,
+no errors in any of the 3 device logs. The original "tap notification
+→ wrong chat opens" symptom no longer reproduces.
+
+Sim-side noises observed during the soak that are **unrelated to the
+notification-tap fix** were carved out into a separate follow-up artifact
+([`session-N-followups-sim-side-noises-2026-05-05.md`](./session-N-followups-sim-side-noises-2026-05-05.md))
+so this row's `closed` status is not muddied by them. They are: iOS-sim
+push-token registration error (only reproduces on simulator; needs real
+iPhone re-check) and sim-B GossipSub-relay `NO_RESERVATION (204)` dial
+flakiness against all 5 relay candidates.
+
+Follow-up #2 (`NOTIFICATION_NEW_INTENT_RECEIVED` diagnostic flow event)
+and #3 (Robolectric / `androidTest/` infrastructure) above remain
+deferred and are non-blocking for this verdict.
+
+### Controller Progress
+
+- 2026-05-05: rollout entered. Read artifact, confirmed Sessions A/B/C
+  above are out of scope per user direction (separate rollout).
+  Confirmed no prior controller ledger existed for Session N — this is
+  first pass. WIP commit `5fec83b3` only added the diagnostic + plan
+  prose; no code or test changes for Session N have been applied yet.
+  `MainActivity.kt` is still bare (verified).
+- 2026-05-05: spawn-children path unavailable in this environment — no
+  Task tool, downstream `$implementation-plan-orchestrator` /
+  `$implementation-execution-qa-orchestrator` /
+  `$implementation-closure-audit-orchestrator` skills not present. Per
+  orchestrator contract, falling back to bounded artifact-only local
+  Plan / Execution / Closure / Final-Acceptance for the single Session N.
+  Single session, narrow scope (one Kotlin file + one Dart flow event +
+  one new test), so the bounded fallback is appropriate. Hardware re-run
+  remains the user's responsibility per Standing Rule 2.1 — that piece
+  will be recorded as `external-fixture` follow-up regardless.
+- 2026-05-05: plan written
+  ([`session-N-android-notification-tap-onnewintent-plan-2026-05-05.md`](./session-N-android-notification-tap-onnewintent-plan-2026-05-05.md)).
+  RED test landed and confirmed failing on bare `MainActivity.kt`. Edited
+  `MainActivity.kt` with `onNewIntent` override; pin test flipped GREEN.
+  `flutter test` 6395 passed. `flutter analyze` 1717 issues, identical
+  with and without the diff (zero new warnings). Diff is exactly:
+  `MainActivity.kt`,
+  `test/core/notifications/main_activity_onnewintent_pin_test.dart`, this
+  artifact, and the new plan file — fully within scope. Closure recorded;
+  final verdict `accepted_with_explicit_follow_up`. Rollout complete
+  modulo the human-owned hardware soak (follow-up #1).
+- 2026-05-05 (later): hardware soak run by the human on Pixel 6 + 2 iOS
+  sims, fresh installs, debug build of `new-background`. Two consecutive
+  notification-tap reps both produced `NOTIFICATION_TAPPED` Dart flow
+  events on the Pixel (`elapsedMs=573` and `elapsedMs=442` to message
+  display, both `routeKind=conversation`). No tap-route errors / FATAL /
+  `E/flutter` in any of the 3 device logs. Standing Rule 2.1 satisfied.
+  Verdict promoted from `accepted_with_explicit_follow_up` → `closed`;
+  ledger row + Final-program-verdict section + follow-up #1 updated to
+  reflect the soak evidence. Three sim-side log noises that surfaced
+  during the soak (iOS-sim push-token registration error; sim-B relay
+  `NO_RESERVATION` dial flakiness; cosmetic empty `messageId` in
+  `NOTIFICATION_TAP_TO_MESSAGE_TIMING`) are unrelated to this fix and
+  carved out into
+  [`session-N-followups-sim-side-noises-2026-05-05.md`](./session-N-followups-sim-side-noises-2026-05-05.md)
+  for a future session.
+- 2026-05-05 (post-closure, on user request): regression-coverage gap
+  raised — the static pin test is shape-only, the existing Dart harness
+  cannot exercise the OS PendingIntent → MainActivity → plugin → Dart
+  path (and is precisely the reason the original bug went unnoticed).
+  Spawned Session N+1 plan at
+  [`session-N+1-android-onnewintent-regression-test-plan-2026-05-05.md`](./session-N+1-android-onnewintent-regression-test-plan-2026-05-05.md)
+  to add a behaviour-level Android-side test (Robolectric default;
+  `androidTest/` escalation path if infra cost exceeds ~1 hour). That
+  session is intentionally separate so this `closed` verdict does not
+  re-open. Updated follow-up #3 above to link to it; this artifact's
+  rollout is otherwise complete.
