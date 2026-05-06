@@ -1,355 +1,620 @@
-# Session N (iOS) — Wire AppDelegate → flutter_local_notifications didReceive
+# Session N (iOS) - Evidence-gated notification tap routing plan
 
-iOS sibling of
-[`session-N-android-notification-tap-onnewintent-plan-2026-05-05.md`](./session-N-android-notification-tap-onnewintent-plan-2026-05-05.md).
-The Android plan was filed against
-[`lock-window-fix-followups-tdd-plan-2026-05-04.md`](./lock-window-fix-followups-tdd-plan-2026-05-04.md)
-under "Session N — Wire MainActivity → flutter_local_notifications onNewIntent"
-and explicitly asserted the iOS path was "working per the artifact; do not
-touch". That assumption is now **incorrect**: a 2026-05-06 follow-up trace of
-the production-flow-integrity-auditor's
-[`notification-tap-to-route`](../Production-Flow-Audits/findings/notification-tap-to-route-2026-05-05.md)
-flow, plus the user's manual hardware confirmation, established that the iOS
-side has the same class of break, at the symmetric boundary
-(`UNUserNotificationCenter` → AppDelegate → `flutter_local_notifications` →
-Dart `_onNotificationTap`). This document is the iOS-side fix plan.
+Status: execution-ready for simulator-first evidence-gated work.
 
-Created 2026-05-06.
+Created 2026-05-06. Rewritten 2026-05-06 after repo evidence showed the
+original AppDelegate-only fix plan was not sufficient.
 
-## Scope
+This is the iOS sibling of
+[`session-N-android-notification-tap-onnewintent-plan-2026-05-05.md`](./session-N-android-notification-tap-onnewintent-plan-2026-05-05.md),
+but it is not the same class of fix. Android had a concrete missing handoff:
+`singleTask` notification intents reached `MainActivity.onNewIntent`, but the
+activity did not call `setIntent(intent)`, so `flutter_local_notifications`
+could not read the tap extras. The proposed iOS equivalent
+("add an AppDelegate override that only calls super") is not proven, because
+`AppDelegate` already subclasses `FlutterAppDelegate`, and FlutterAppDelegate
+already implements `userNotificationCenter(_:didReceive:withCompletionHandler:)`
+and forwards to registered plugins.
 
-Make the OS-level iOS notification tap deliver its `UNNotificationResponse`
-payload to the Dart `_onNotificationTap` callback when the existing app
-process is brought forward (warm-resume) or relaunched from suspended
-(cold-resume via tap) on iOS 16+.
+The iOS work must therefore start by proving the real failing boundary on
+hardware before accepting any code change as the fix.
 
-Strictly out of scope:
-- Hardware re-run on a physical iPhone. Standing Rule 2.1 in the parent
-  artifact mandates one, but the human owns it. Recorded as explicit
-  follow-up after this session lands.
-- Android path. Already addressed by `session-N-android-...-2026-05-05.md`.
-- Foreground notification presentation
-  (`userNotificationCenter:willPresent:withCompletionHandler:`). The
-  symmetric AppDelegate-clobbers-plugin-delegate problem may also affect
-  foreground presentation, but the user-reported symptom and audit finding
-  are about the tap path. A separate session can audit `willPresent` if a
-  finding is filed; do **not** expand this session to cover it.
-- Refactoring `AppDelegate.swift`'s FCM/APNs registration or implicit-engine
-  wiring. Those are co-located but unrelated.
-- Removing `AppDelegate.swift:21` (`UNUserNotificationCenter.current().delegate
-  = self`). That line may be needed by the FCM/APNs path elsewhere in the
-  app (Firebase Messaging is wired in line 2 / 43); leaving it in place and
-  adding a forwarding override is the safer minimal-touch fix.
+## Planning Progress
 
-## Likely code-entry files
+- 2026-05-06 - Simulator fallback update completed. Files inspected since
+  last update: `scripts/push_fixture_to_simulator.sh`, push fixtures under
+  `test/features/push/fixtures/`, and `xcrun simctl push` help. Decision:
+  when no physical iPhone is available, run a simulator-first APNs-style tap
+  proof with `simctl push` and classify results as `simulator-verified,
+  hardware-pending`, not final hardware closure. Next action: execute
+  diagnostics on a booted simulator.
+- 2026-05-06 - Arbiter completed. Files inspected since last update:
+  `AppDelegate.swift`, Flutter engine iOS `FlutterAppDelegate.mm`,
+  `FlutterPluginAppLifeCycleDelegate.mm`, `flutter_local_notifications`
+  iOS plugin source, `firebase_messaging` iOS plugin source, `main.dart`,
+  `flutter_notification_service.dart`, and the Android Session N plan.
+  Decision/blocker: the old plan's structural assumption is stale; an
+  explicit Swift super-only override is not a sufficient iOS fix. Next action:
+  execute evidence-gated diagnostics and branch only on observed hardware
+  logs.
+- 2026-05-06 - Reviewer completed. Files inspected since last update:
+  current iOS plan, notification audit finding, `Info.plist`, and current
+  Dart routing tests. Decision/blocker: the plan must distinguish local
+  `flutter_local_notifications` taps from FCM/APNs remote notification opens.
+  Next action: require native + Dart trace evidence in the closure bar.
+- 2026-05-06 - Planner completed. Files inspected since last update:
+  `StartupRouter`, `background_message_handler`, `background_push_notification_fallback`,
+  and local/remote routing dispatch code. Decision/blocker: classify as
+  `evidence-gated`, not direct implementation-ready. Next action: write
+  branch-by-evidence implementation steps.
+- 2026-05-06 - Evidence Collector completed. Files inspected since last
+  update: native iOS AppDelegate, Android MainActivity, Flutter engine,
+  FlutterFire Messaging, flutter_local_notifications, and app-root routing.
+  Decision/blocker: current AppDelegate already inherits the native forwarding
+  method from FlutterAppDelegate. Next action: build a plan that proves the
+  runtime boundary first.
 
-- `ios/Runner/AppDelegate.swift` — the override target. Currently sets the
-  AppDelegate as `UNUserNotificationCenter.current().delegate` (line 21) but
-  does not implement the tap-response method, so taps that land in the
-  AppDelegate's UN-delegate slot are silently dropped before they can reach
-  the `flutter_local_notifications` plugin.
-- `ios/Runner/Info.plist` — no edits expected; UNUserNotificationCenter
-  delegation is purely runtime.
-- `lib/core/notifications/flutter_notification_service.dart:55` — already
-  wired (`_onNotificationResponse` is the FLOW canary that must start
-  firing).
-- `lib/main.dart:2367` — `_onNotificationTap` body (already in place).
+## Real Scope
 
-## Likely test surface
+Make iOS notification taps route to the tapped conversation, group, intro,
+contact request, or post target when the app is resumed or launched by the
+tap.
 
-- New: `test/core/notifications/app_delegate_user_notification_center_pin_test.dart`
-  — a text-level regression pin, symmetric to
-  `main_activity_onnewintent_pin_test.dart`. Reads `AppDelegate.swift`,
-  asserts the file contains:
-  - an `override func userNotificationCenter(...didReceive...withCompletionHandler:)`
-    declaration, with parameter spelling tolerant of `UNNotificationResponse`
-    on either Swift API form (Swift 5+ stable),
-  - a `super.userNotificationCenter(center, didReceive: response,
-    withCompletionHandler: completionHandler)` call inside that override
-    (this is what causes `FlutterAppDelegate`'s plugin-pipeline forwarding
-    to run, which is the actual fix), and
-  - that the override is inside the `AppDelegate` class.
-  This is the project-appropriate substitute for XCUITest / XCTest / Quick.
-  It cannot prove the OS actually invokes the override on real-device tap —
-  that is what the iPhone hardware soak (Standing Rule 2.1) is for. But it
-  pins the *contract* the fix relies on, which is the regression class that
-  just bit us symmetrically on Android.
-- Existing: `test/core/notifications/flutter_notification_service_test.dart`
-  remains valid; not modified by this session.
-- Existing: `test/core/notifications/main_activity_onnewintent_pin_test.dart`
-  remains valid; not modified.
-- Existing: `flutter analyze` clean (no new warnings beyond the established
-  baseline).
+In scope:
 
-## Device / Relay Proof Profile
+- Prove which iOS tap path is actually failing, starting with simulator proof
+  when physical hardware is unavailable:
+  local `flutter_local_notifications` fallback notification,
+  FCM/APNs remote notification open, cold-start initial notification,
+  warm-resume notification tap, or Dart route materialization after a valid
+  tap callback.
+- Use `scripts/push_fixture_to_simulator.sh` and `xcrun simctl push` to
+  exercise simulator remote APNs-style notification taps before hardware.
+- Add the smallest diagnostic hooks needed to classify the boundary.
+- Apply only the fix indicated by the trace.
+- Keep all final routing centralized through existing app-root paths:
+  `MyApp._onNotificationTap(...)`, `_routeRemoteNotificationOpen(...)`, or
+  `StartupRouter._handleInitialPushOpen(...)`.
 
-`external-fixture-blocked` for the end-to-end OS-tap proof.
+Out of scope:
 
-- Profile: `os-notification-device-lab`. Single physical iPhone (the wireless
-  device `00008030-001A6D2801BB802E` iOS 26.3.1 listed in
-  `flutter devices` is suitable) as receiver, Pixel 6 sender (already paired
-  via the 2026-05-05 hardware-soak DI), prod debug build of branch
-  `new-background`. iOS Simulator is **not** acceptable for the verification
-  — sim notification UX (no real lock screen, no real banner-tap) does not
-  reliably exercise the `userNotificationCenter:didReceive:` path.
-- Live device availability: NOT checked by this session — orchestrator was
-  explicitly told not to flash a device. This session writes the code +
-  static-pin test only. The hardware run is a follow-up the human owns.
-- Closure evidence accepted from this session: code change present + static
-  pin test green + `flutter test` overall green + `flutter analyze` no new
-  warnings. Final hardware soak grep for `NOTIFICATION_TAPPED` (in `flutter
-  run`'s stdout, since iOS does not have logcat) is recorded as explicit
-  follow-up, not a controller blocker.
+- Treating a super-only AppDelegate override as the final fix without hardware
+  proof.
+- Rewriting notification payload formats unless the trace proves payload shape
+  is the broken boundary.
+- Refactoring Firebase/APNs registration, push-token registration, startup,
+  listener, or route architecture broadly.
+- Android changes.
+- Foreground presentation behavior unless the hardware trace proves the tap
+  notification was never displayed because foreground presentation was broken.
 
-## Plan
+## Closure Bar
 
-### RED
+This session is closed only when the physical iPhone tap proof shows the same
+user-visible result Android now has:
 
-Write `test/core/notifications/app_delegate_user_notification_center_pin_test.dart`:
+- Receiver starts in a non-target chat or non-target surface.
+- Sender triggers a routable notification.
+- Receiver taps the OS notification.
+- App opens the tapped target, not the previous route.
+- Logs show the expected path for the actual notification type:
+  - Local FLN fallback path:
+    `ios_native_un_didReceive` or equivalent native tap log ->
+    `NOTIFICATION_TAPPED` -> route target handling ->
+    `NOTIFICATION_TAP_TO_MESSAGE_TIMING` or equivalent target-route proof.
+  - Remote FCM/APNs path:
+    native `UNUserNotificationCenter didReceive` and/or
+    `PUSH_MESSAGE_OPENED_APP` / `PUSH_INITIAL_MESSAGE_OPENED` ->
+    route target handling -> target screen visible.
+- No `NOTIFICATION_TAP_NAV_ERROR`, no `INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR`,
+  no duplicate route push, and no app crash.
+- Static/unit tests added in this session pass.
+- `flutter analyze` introduces no new warnings beyond the existing baseline.
 
-```dart
-// Pin: AppDelegate.swift must override
-// userNotificationCenter(_:didReceive:withCompletionHandler:) and call
-// super.userNotificationCenter(...), otherwise on iOS the tap-response is
-// intercepted at the AppDelegate (which sets itself as the UN delegate at
-// AppDelegate.swift:21) and never reaches the flutter_local_notifications
-// plugin's didReceiveNotificationResponse dispatcher. Without that
-// dispatcher, the Dart _onNotificationTap callback never fires and the
-// app resumes to whichever screen was last visible (mirror of the
-// Android Pixel hardware-soak symptom 2026-05-05).
-//
-// This is a text-level pin, not a runtime test — the project does not
-// have XCUITest / XCTest / Quick infrastructure today, and the bug
-// surface (UN delegate ownership across AppDelegate / plugin / FCM)
-// cannot be reproduced off-device. Standing Rule 2.1 in
-// Test-Flight-Improv/Group-Chat-Feature/lock-window-fix-followups-tdd-plan-2026-05-04.md
-// requires a real-OS-tap hardware soak as the runtime regression catcher;
-// this test is the cheap static catcher that goes alongside.
+Static text pins are supporting evidence only. They do not replace the
+physical iPhone tap proof.
 
-import 'dart:io';
-import 'package:flutter_test/flutter_test.dart';
+If a physical iPhone is not available, this session may advance only to
+`simulator-verified, hardware-pending`. That interim state is useful enough to
+validate remote APNs-style tap routing and choose the next code branch, but it
+does not prove real APNs/FCM delivery, push-token registration, lock-screen
+behavior, or data-only background push -> local notification fallback behavior
+on hardware.
 
-void main() {
-  test(
-      'AppDelegate.swift overrides userNotificationCenter didReceive and '
-      'forwards to super', () {
-    final file = File('ios/Runner/AppDelegate.swift');
-    expect(file.existsSync(), isTrue,
-        reason: 'AppDelegate.swift is the override target named by Session N (iOS).');
+## Source Of Truth
 
-    final source = file.readAsStringSync();
+Current code beats stale prose.
 
-    // Must override userNotificationCenter(_:didReceive:withCompletionHandler:).
-    // Tolerate optional whitespace and the `_` external parameter label that
-    // is canonical on the UNUserNotificationCenterDelegate protocol.
-    final overrideRegex = RegExp(
-      r'override\s+func\s+userNotificationCenter\s*\(\s*'
-      r'_\s+center\s*:\s*UNUserNotificationCenter\s*,\s*'
-      r'didReceive\s+response\s*:\s*UNNotificationResponse\s*,\s*'
-      r'withCompletionHandler\s+completionHandler\s*:\s*'
-      r'@escaping\s*\(\s*\)\s*->\s*Void\s*\)',
-    );
-    expect(
-      overrideRegex.hasMatch(source),
-      isTrue,
-      reason: 'AppDelegate must override '
-          'userNotificationCenter(_:didReceive:withCompletionHandler:) — '
-          'without this, the flutter_local_notifications plugin never '
-          'observes the notification tap response on iOS, because '
-          'AppDelegate.swift:21 sets the AppDelegate as the UN delegate.',
-    );
+Authoritative files and behavior sources:
 
-    // Must forward to super so FlutterAppDelegate's plugin-pipeline
-    // forwarding fires. This is the actual fix: super forwards the call to
-    // every registered plugin, including flutter_local_notifications, which
-    // then invokes didReceiveNotificationResponse on its Dart channel.
-    final superForwardRegex = RegExp(
-      r'super\.userNotificationCenter\s*\(\s*'
-      r'center\s*,\s*'
-      r'didReceive\s*:\s*response\s*,\s*'
-      r'withCompletionHandler\s*:\s*completionHandler\s*\)',
-    );
-    expect(
-      superForwardRegex.hasMatch(source),
-      isTrue,
-      reason: 'The override must call '
-          'super.userNotificationCenter(center, didReceive: response, '
-          'withCompletionHandler: completionHandler) — without the super '
-          'call, FlutterAppDelegate cannot dispatch to the plugin pipeline '
-          'and the tap is silently dropped.',
-    );
-  });
-}
+- `ios/Runner/AppDelegate.swift`
+- `ios/Runner/Info.plist`
+- `ios/Runner/GeneratedPluginRegistrant.m`
+- Flutter engine iOS `FlutterAppDelegate.mm` and
+  `FlutterPluginAppLifeCycleDelegate.mm`
+- `flutter_local_notifications` 18.0.1 iOS plugin source
+- `firebase_messaging` 15.2.10 iOS plugin source
+- `lib/core/notifications/flutter_notification_service.dart`
+- `lib/core/notifications/app_root_notification_open.dart`
+- `lib/core/notifications/notification_route_dispatch.dart`
+- `lib/core/notifications/notification_route_target.dart`
+- `lib/features/identity/presentation/startup_router.dart`
+- `lib/features/push/application/background_message_handler.dart`
+- `lib/main.dart`
+- Android Session N hardware-verified plan for parity expectations, not for
+  iOS implementation mechanics.
+
+If these disagree:
+
+- Hardware trace of the actual iPhone tap wins over any static assumption.
+- Flutter engine/plugin source wins over local comments about how delegation
+  works.
+- Existing centralized Dart route functions win over feature-specific
+  navigation ideas.
+
+## Session Classification
+
+`evidence-gated`.
+
+The user-visible gap is real enough to investigate, but the old proposed fix
+does not identify a proven missing iOS handoff. Execution must first add or
+collect trace evidence, then branch to the smallest confirmed fix.
+
+## Exact Problem Statement
+
+The reported iOS symptom is: tapping a chat notification on iPhone can bring
+the app back to the previously visible screen instead of opening the tapped
+conversation or group, mirroring the Android user-visible failure.
+
+What is not yet proven:
+
+- Whether the tapped iOS notification is a local notification created by
+  `flutter_local_notifications` from a data-only push fallback.
+- Whether the tapped notification is a visible FCM/APNs remote notification
+  handled by `FirebaseMessaging.onMessageOpenedApp` or
+  `FirebaseMessaging.getInitialMessage`.
+- Whether iOS native `UNUserNotificationCenterDelegate.didReceive` fires at
+  all.
+- Whether the native callback fires but the Flutter plugin callback does not.
+- Whether Dart receives the callback but route target preparation or navigation
+  fails.
+
+The implementation must improve only the proven broken boundary while keeping
+local and remote notification routing behavior aligned with Android's final
+contract.
+
+## Files And Repos To Inspect Next
+
+Production/native:
+
+- `ios/Runner/AppDelegate.swift`
+- `ios/Runner/Info.plist`
+- `ios/Runner/GeneratedPluginRegistrant.m`
+
+Production/Dart:
+
+- `lib/core/notifications/flutter_notification_service.dart`
+- `lib/core/notifications/notification_route_target.dart`
+- `lib/core/notifications/notification_route_dispatch.dart`
+- `lib/core/notifications/app_root_notification_open.dart`
+- `lib/features/push/application/background_message_handler.dart`
+- `lib/features/push/application/background_push_notification_fallback.dart`
+- `lib/features/identity/presentation/startup_router.dart`
+- `lib/main.dart`
+
+Reference/plugin source:
+
+- `.pub-cache/hosted/pub.dev/flutter_local_notifications-18.0.1/ios/Classes/FlutterLocalNotificationsPlugin.m`
+- `.pub-cache/hosted/pub.dev/firebase_messaging-15.2.10/ios/firebase_messaging/Sources/firebase_messaging/FLTFirebaseMessagingPlugin.m`
+- Flutter engine `FlutterAppDelegate.mm`
+- Flutter engine `FlutterPluginAppLifeCycleDelegate.mm`
+
+Tests:
+
+- `test/core/notifications/flutter_notification_service_test.dart`
+- `test/core/notifications/main_activity_onnewintent_pin_test.dart`
+- `test/core/notifications/app_root_notification_open_test.dart`
+- `test/core/notifications/notification_route_target_test.dart`
+- `test/core/notifications/notification_route_contract_matrix_test.dart`
+- `test/features/identity/presentation/screens/startup_router_notification_open_test.dart`
+- `test/integration/notification_tap_smoke_test.dart`
+- `integration_test/notification_open_ui_smoke_test.dart`
+
+## Existing Tests Covering This Area
+
+Already covered:
+
+- Local notification response callback forwards non-empty payloads through
+  `FlutterNotificationService.onNotificationTap`.
+- Local notification tap payloads route through `routeAppRootLocalNotificationTap`.
+- Initial local notification launch can consume the stored payload.
+- Remote message data maps to `NotificationRouteTarget`.
+- Startup initial remote messages route after P2P startup and inbox drain.
+- Android `MainActivity.onNewIntent` static pin covers the Android-only
+  `singleTask` handoff.
+- Integration smoke tests cover app-root notification open flows in harnessed
+  environments.
+
+Missing:
+
+- A physical iPhone proof that the OS tap reaches the expected native and Dart
+  callback.
+- A simulator `simctl push` proof that a remote APNs-style notification tap
+  reaches the expected native and Dart callback before hardware is available.
+- A diagnostic pin that classifies local FLN fallback notification taps versus
+  FCM/APNs remote notification opens.
+- A regression test that prevents future iOS work from relying on a no-op
+  AppDelegate override as complete proof.
+
+## Regression/Tests To Add First
+
+Add diagnostics before claiming a fix.
+
+1. Add a native iOS tap diagnostic in `AppDelegate.swift`.
+   - Acceptable form: explicit
+     `userNotificationCenter(_:didReceive:withCompletionHandler:)` override
+     that logs action identifier, delegate class, and sanitized userInfo keys,
+     then calls `super.userNotificationCenter(...)`.
+   - Important: this is diagnostic/defensive forwarding, not accepted as the
+     final fix by itself.
+   - The log must identify whether the tapped notification has FLN keys such
+     as `NotificationId` / `payload`, FCM keys such as `gcm.message_id`, or
+     neither.
+
+2. Add a static pin test for the diagnostic contract.
+   - Suggested path:
+     `test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`.
+   - It should assert:
+     - `AppDelegate` subclasses `FlutterAppDelegate`.
+     - AppDelegate sets `UNUserNotificationCenter.current().delegate = self`.
+     - The diagnostic `didReceive` override calls
+       `super.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)`.
+     - The test reason must say this is a hardware-trace aid, not proof of
+       routing.
+
+3. Add or extend a focused Dart test only if the evidence points to Dart.
+   - If local payload parsing is wrong, extend
+     `notification_route_target_test.dart`.
+   - If remote initial-open handling is wrong, extend
+     `startup_router_notification_open_test.dart`.
+   - If app-root local tap routing is wrong, extend
+     `app_root_notification_open_test.dart` or `notification_tap_smoke_test.dart`.
+
+Do not add XCUITest, XCTest, Quick, or new iOS native test infrastructure for
+this session. Hardware proof is the runtime test surface.
+
+## Step-by-step Implementation Plan
+
+### Step 1 - Instrument without deciding the fix
+
+- Add the AppDelegate diagnostic/defensive forwarding override described
+  above.
+- Keep the body limited to sanitized `NSLog` plus `super.userNotificationCenter(...)`.
+- Do not call `completionHandler()` directly.
+- Do not remove or move `UNUserNotificationCenter.current().delegate = self`.
+- Add the static diagnostic pin test.
+- Run the direct static pin test.
+
+Stop here if the Swift code does not compile or if the method signature does
+not match Swift's `UNUserNotificationCenterDelegate` shape.
+
+### Step 2 - Run local gates before hardware
+
+- Run the focused notification tests listed below.
+- Run `flutter analyze` and compare against the established baseline.
+- Record whether the only code change so far is diagnostic/defensive
+  forwarding plus tests.
+
+### Step 3 - Simulator-first APNs tap proof
+
+Use this step when no physical iPhone is connected. It is a required
+pre-hardware evidence lane for this session, not final closure.
+
+Prerequisites:
+
+- At least one booted iOS simulator.
+- App installed/running on that simulator with bundle id `com.mknoon.app`
+  unless overridden by `IOS_BUNDLE_ID`.
+- Native diagnostic logging from Step 1 is present.
+
+Commands:
+
+```sh
+xcrun simctl list devices booted
+flutter run -d <SIM_UDID>
+scripts/push_fixture_to_simulator.sh --dry-run one_to_one_text
+scripts/push_fixture_to_simulator.sh --device <SIM_UDID> --bundle-id com.mknoon.app one_to_one_text
 ```
 
-This test fails on the current `new-background` HEAD because
-`AppDelegate.swift` does not contain any
-`userNotificationCenter(_:didReceive:withCompletionHandler:)` override.
+Also run a group fixture if group taps are in the reproduced symptom:
 
-### GREEN
-
-Edit `ios/Runner/AppDelegate.swift` to add the override. The minimal,
-non-clobbering change is to insert a single method on the `AppDelegate`
-class. Place it after the existing
-`didFailToRegisterForRemoteNotificationsWithError` method (line 59) and
-before the `didInitializeImplicitFlutterEngine` callback (line 61) so the
-notification-related delegate methods stay grouped together.
-
-```swift
-/// Required for flutter_local_notifications on iOS.
-///
-/// `AppDelegate` sets itself as the `UNUserNotificationCenter` delegate at
-/// `application(_:didFinishLaunchingWithOptions:)` (see line ~21) so that
-/// FCM-related foreground/will-present customizations have a place to live.
-/// That assignment, however, prevents the `flutter_local_notifications`
-/// plugin from cleanly owning the delegate slot itself: even when the
-/// plugin tries to re-claim ownership during plugin registration (which is
-/// further deferred in this app by `FlutterImplicitEngineDelegate` /
-/// `didInitializeImplicitFlutterEngine`), Firebase Messaging may re-claim
-/// the slot back, and any tap that lands in the AppDelegate slot without an
-/// explicit forwarding override is silently dropped.
-///
-/// Forwarding to `super` here triggers `FlutterAppDelegate`'s
-/// plugin-pipeline dispatch, which calls
-/// `userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:`
-/// on every registered plugin — including `flutter_local_notifications`,
-/// which then invokes `didReceiveNotificationResponse` on its Dart channel.
-/// That is what causes `_onNotificationResponse` (and therefore
-/// `_onNotificationTap`, and therefore `_handleNotificationRouteTarget`) to
-/// fire, finally routing the user to the correct conversation.
-///
-/// Diagnosed in the Pixel ↔ iPhone hardware soak follow-up on 2026-05-06;
-/// see Test-Flight-Improv/Production-Flow-Audits/findings/notification-tap-to-route-2026-05-05.md
-/// (re-audit note added 2026-05-06) and
-/// Test-Flight-Improv/Group-Chat-Feature/lock-window-fix-followups-tdd-plan-2026-05-04.md
-/// (Standing Rule 2.1 — real-device hardware soak required for verification).
-/// The matching Dart pin test
-/// (test/core/notifications/app_delegate_user_notification_center_pin_test.dart)
-/// is the static catcher.
-override func userNotificationCenter(
-  _ center: UNUserNotificationCenter,
-  didReceive response: UNNotificationResponse,
-  withCompletionHandler completionHandler: @escaping () -> Void
-) {
-  super.userNotificationCenter(
-    center,
-    didReceive: response,
-    withCompletionHandler: completionHandler
-  )
-}
+```sh
+scripts/push_fixture_to_simulator.sh --device <SIM_UDID> --bundle-id com.mknoon.app group_text
 ```
 
-Notes:
-- The signature **must** match the `UNUserNotificationCenterDelegate`
-  protocol exactly. The `_` external parameter label on `center` is
-  required — Swift's protocol shape uses the underscore there. The pin
-  regex in the RED test enforces this spelling.
-- `super.userNotificationCenter(...)` is the entire body. Do not call
-  `completionHandler()` directly — `super` is responsible for either
-  invoking `completionHandler` itself (after plugins finish) or forwarding
-  the responsibility to the plugin pipeline. Calling it twice is a
-  documented crash on Apple's `os_log`.
-- Do **not** remove `AppDelegate.swift:21`
-  (`UNUserNotificationCenter.current().delegate = self`). That assignment
-  is load-bearing for FCM/APNs registration paths elsewhere in the
-  AppDelegate. The override is what makes coexistence with the plugin
-  work; removing the delegate line is a wider scope change with FCM
-  implications.
-- `FlutterAppDelegate` (the parent class) implements
-  `UNUserNotificationCenterDelegate` and forwards to plugins via its
-  internal plugin registry; this is the contract this fix relies on. If
-  the Flutter version ever stops doing this forwarding, the Dart pin
-  test still passes (since the override is present) but the runtime
-  behavior would regress — Standing Rule 2.1's hardware soak is the
-  catcher for that class of upstream regression.
+Manual action:
 
-### REFACTOR
+- Background the app or leave it warm.
+- Send the simulated push.
+- Tap the simulator notification.
+- Capture `flutter run` stdout and simulator/device logs.
 
-Two REFACTOR items in scope; mirroring the Android session's split.
+Expected classification for this simulator lane:
 
-**In scope, landed in this session:**
-- The Swift override carries a substantial doc comment (above) that names
-  the bug, the soak date, the AppDelegate-clobbers-delegate root cause,
-  and the link back to this artifact. Future readers don't need to
-  re-derive the reason. Mirror of the KDoc block on Android.
+- `xcrun simctl push` creates a remote APNs-style notification. It should
+  exercise the native `UNUserNotificationCenter didReceive` path and then the
+  Firebase remote-open path: `PUSH_MESSAGE_OPENED_APP` for warm opens or
+  `PUSH_INITIAL_MESSAGE_OPENED` for cold/suspended launches.
+- It is not expected to prove a data-only background push that wakes the
+  background isolate and creates a local FLN fallback notification.
+- If simulator tap routing works, record `simulator-verified,
+  hardware-pending` and keep the physical iPhone proof as the final closure
+  gate.
+- If simulator tap routing fails, branch on the observed evidence in Step 5
+  before waiting for hardware.
 
-**Deferred, recorded as explicit follow-up sub-row in the parent ledger:**
-- `emitFlowEvent('NOTIFICATION_DID_RECEIVE_RESPONSE', ...)` on the Dart
-  side in `_onResumed`. To do this honestly, AppDelegate would need to
-  surface a signal ("the tap response just landed at the AppDelegate
-  level") to Dart over a MethodChannel — a non-trivial new bridge
-  surface. Out of scope for this minimal-touch session. The Swift-side
-  `NSLog` that the plan also mentions (a debug-build-only
-  `response.notification.request.content.userInfo` dump) is also
-  deferred — it is diagnostic-only and not load-bearing for the fix.
-  Both are recorded as follow-ups in the parent ledger so they aren't
-  forgotten.
-- `userNotificationCenter:willPresent:withCompletionHandler:` audit. The
-  same AppDelegate-clobbers-delegate dynamic could be silently dropping
-  *foreground* notification presentations as well. Filing as a separate
-  finding under `notification-tap-to-route`'s flow file (or a new flow if
-  the auditor prefers) so a future session triages.
+### Step 4 - Physical iPhone tap proof
 
-### Verification (per spec, scoped to what runs without hardware)
+Use the physical iPhone as receiver and Pixel 6 or another working peer as
+sender.
 
-- `flutter test test/core/notifications/app_delegate_user_notification_center_pin_test.dart`
-  GREEN.
-- `flutter test` overall GREEN (no regression in the broader suite).
-- `flutter analyze` no new warnings beyond the established baseline.
-- `git diff` shows exactly the two files changed:
-  - `ios/Runner/AppDelegate.swift`
-  - `test/core/notifications/app_delegate_user_notification_center_pin_test.dart`
-- Hardware soak (per Standing Rule 2.1): NOT run by this session. Recorded
-  as explicit external-fixture follow-up in the parent ledger; the human
-  performs it manually on the wireless iPhone + Pixel 6 sender pair.
+Required reps:
 
-## Done criteria
+- Warm-resume from a different chat/surface into a 1:1 notification target.
+- Warm-resume into a group notification target if group notifications are in
+  scope for the reproduced symptom.
+- Cold-start or suspended launch by tapping the notification.
 
-1. `AppDelegate.swift` contains the
-   `userNotificationCenter(_:didReceive:withCompletionHandler:)` override
-   calling
-   `super.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)`.
-2. Static pin test exists at
-   `test/core/notifications/app_delegate_user_notification_center_pin_test.dart`
-   and passes.
-3. `flutter test` overall passes (or the only failures are pre-existing
-   and documented in CLAUDE.md / project memory; e.g., the four
-   `onAddressesUpdated` Bridge interface failures recorded under
-   `## Image Processing (UI-12)`).
-4. `flutter analyze` no new warnings.
-5. The parent ledger row for Session N (iOS) is opened (or appended to
-   the existing Android Session N row) with status `Code-landed,
-   hardware-pending`, concrete file + test references, and the explicit
-   hardware follow-up recorded.
-6. Production-Flow-Audits side: append to
-   `Test-Flight-Improv/Production-Flow-Audits/findings/notification-tap-to-route-2026-05-05.md`
-   a `notif-tap-2026-05-06-002` block (or move to a new dated file
-   `notification-tap-to-route-2026-05-06.md` if the auditor's schema
-   prefers) describing the iOS variant of the same break + this session's
-   fix path. Update the ledger row's findings-file pointer accordingly.
+Capture `flutter run` stdout / iOS device logs and classify each tap:
 
-## Scope guard
+- Local FLN fallback:
+  userInfo contains FLN `payload`; expect `NOTIFICATION_TAPPED`.
+- Remote FCM/APNs:
+  userInfo contains `gcm.message_id`; expect `PUSH_MESSAGE_OPENED_APP` or
+  `PUSH_INITIAL_MESSAGE_OPENED`.
+- Unknown:
+  userInfo has neither expected key family; inspect payload origin before
+  coding.
 
-If during execution any of these surface, STOP and reclassify rather than
-expand scope:
-- Existing `flutter test` failures unrelated to notifications. Do not fix
-  them; mark them out of scope.
-- Need to add XCUITest / XCTest / Quick / iOS native test infrastructure.
-  Do not add. The static pin test is the project-appropriate substitute
-  and is symmetric to the Android Session N approach.
-- Adding the MethodChannel for `NOTIFICATION_DID_RECEIVE_RESPONSE`. Defer.
-  Not a blocker; recorded as follow-up.
-- Auditing or fixing `userNotificationCenter:willPresent:withCompletionHandler:`
-  — file as a separate finding for a future session, do not bundle with
-  this fix.
-- Removing or moving `AppDelegate.swift:21`
-  (`UNUserNotificationCenter.current().delegate = self`). Out of scope —
-  the FCM path may depend on it, and the override is the targeted minimal
-  fix.
-- Touching FCM / APNs registration code in `AppDelegate.swift`. Out of
-  scope.
-- Switching from `FlutterImplicitEngineDelegate` to standard
-  `FlutterAppDelegate` plugin registration. Architectural change; out of
-  scope.
-- Android notification path. Working per the matching Android Session N;
-  do not touch.
+### Step 5 - Branch only on evidence
+
+Branch A: native AppDelegate diagnostic does not log on tap.
+
+- The OS tap is not reaching the expected delegate object.
+- Inspect who owns `UNUserNotificationCenter.current().delegate` after plugin
+  registration and before backgrounding.
+- Candidate fix may be resetting the delegate after implicit engine plugin
+  registration, but only if logs prove another object has replaced it.
+- Do not change Firebase/APNs token registration unless delegate ownership
+  evidence requires it.
+
+Branch B: native diagnostic logs, but neither `NOTIFICATION_TAPPED` nor
+`PUSH_MESSAGE_OPENED_APP` / `PUSH_INITIAL_MESSAGE_OPENED` fires.
+
+- If userInfo is FLN-shaped, inspect `flutter_local_notifications` registration
+  and initialization timing.
+- If userInfo is FCM-shaped, inspect `firebase_messaging` open handling and
+  whether the message is classified as initial notification versus warm open.
+- Fix the plugin handoff or initialization timing indicated by the trace.
+
+Branch C: Dart open/tap event fires, but route target is null or wrong.
+
+- Fix `NotificationRouteTarget.fromPayload(...)` or
+  `NotificationRouteTarget.fromRemoteMessageData(...)`.
+- Add a unit test for the exact payload/data shape seen in the hardware log.
+
+Branch D: route target resolves, but UI remains on the previous screen.
+
+- Fix app-root navigation or preparation in `main.dart`,
+  `StartupRouter`, or the route target materializer.
+- Add a widget/integration test for the exact route kind.
+
+Branch E: diagnostics plus existing code already route correctly on hardware.
+
+- Do not invent a further code fix.
+- Keep or remove the diagnostic override based on reviewer judgment:
+  - keep if it is wanted as a defensive forwarding/documented trace point;
+  - remove if the team wants zero native churn after proof.
+- Close as evidence-verified with no product-code fix beyond optional
+  diagnostics.
+
+Branch F: simulator remote APNs-style taps work, but hardware is unavailable.
+
+- Do not invent a production fix from absence of hardware.
+- Record `simulator-verified, hardware-pending`.
+- Keep the native diagnostic available for the later iPhone run unless the
+  reviewer explicitly chooses to remove it.
+- Do not claim data-only background push or local FLN fallback behavior is
+  proven by `simctl push`.
+
+### Step 6 - Final verification
+
+- Re-run focused tests and `flutter analyze`.
+- Re-run the simulator tap proof after the targeted fix.
+- Re-run the physical iPhone tap proof after the targeted fix when hardware is
+  available.
+- Update the parent ledger and production-flow audit finding with the actual
+  proven boundary and fix, not the stale AppDelegate-clobbers-plugin claim.
+
+## Risks And Edge Cases
+
+- Local fallback notifications and remote APNs notifications have different
+  callback surfaces. Treating them as one path can hide the real break.
+- Simulator `simctl push` supports remote APNs-style notifications only; it
+  does not prove real APNs/FCM delivery or data-only background wake -> local
+  notification fallback.
+- `FlutterAppDelegate` already forwards `didReceive`; a super-only override can
+  create false confidence.
+- Calling `completionHandler()` directly in AppDelegate can double-complete if
+  `super` or a plugin also calls it.
+- If Firebase Messaging owns the tap path, `NOTIFICATION_TAPPED` may never be
+  the correct canary; the correct canary is `PUSH_MESSAGE_OPENED_APP` or
+  `PUSH_INITIAL_MESSAGE_OPENED`.
+- Cold-start routing waits for startup/P2P readiness; warm routing does not
+  have the same timing.
+- Group route materialization may require inbox drain or pending invite
+  resolution before navigation.
+- Duplicate notifications can make the tapped payload look stale unless the
+  hardware run records notification id, payload prefix, and message id.
+
+## Exact Tests And Gates To Run
+
+Direct tests after adding diagnostics:
+
+```sh
+flutter test test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart
+flutter test test/core/notifications/flutter_notification_service_test.dart
+flutter test test/core/notifications/app_root_notification_open_test.dart
+flutter test test/core/notifications/notification_route_target_test.dart
+flutter test test/core/notifications/notification_route_contract_matrix_test.dart
+flutter test test/features/identity/presentation/screens/startup_router_notification_open_test.dart
+flutter test test/integration/notification_tap_smoke_test.dart
+```
+
+Broader gate:
+
+```sh
+flutter analyze
+```
+
+Run broader `flutter test` only if the code change moves beyond native logging
+and focused notification routing tests, or if the session controller requires
+the same closure level as Android Session N.
+
+Hardware proof:
+
+- Physical iPhone receiver.
+- Pixel 6 or known-good peer sender.
+- Capture `flutter run` stdout and native iOS logs.
+- Grep for native diagnostic, `NOTIFICATION_TAPPED`,
+  `PUSH_MESSAGE_OPENED_APP`, `PUSH_INITIAL_MESSAGE_OPENED`,
+  `NOTIFICATION_TAP_NAV_ERROR`, and final route timing/target logs.
+
+Simulator proof when physical iPhone is unavailable:
+
+```sh
+xcrun simctl list devices booted
+flutter run -d <SIM_UDID>
+scripts/push_fixture_to_simulator.sh --dry-run one_to_one_text
+scripts/push_fixture_to_simulator.sh --device <SIM_UDID> --bundle-id com.mknoon.app one_to_one_text
+scripts/push_fixture_to_simulator.sh --device <SIM_UDID> --bundle-id com.mknoon.app group_text
+```
+
+Simulator logs must be checked for native diagnostic output,
+`PUSH_MESSAGE_OPENED_APP`, `PUSH_INITIAL_MESSAGE_OPENED`,
+`NOTIFICATION_TAP_NAV_ERROR`, and final route timing/target logs.
+
+## Known-failure Interpretation
+
+- Existing `flutter analyze` warning debt is not this session's failure if the
+  count and diagnostics are unchanged by the diff.
+- Existing unrelated `flutter test` failures must be recorded as pre-existing
+  and not fixed here.
+- Hardware proof blocked by device availability is an external-fixture blocker,
+  not a code pass.
+- Simulator proof can classify and de-risk the remote APNs-style tap path, but
+  it cannot close the hardware-only parts of the contract.
+- A static pin passing is not enough to declare the iOS notification tap fixed.
+
+## Done Criteria
+
+All must be true:
+
+1. The plan's stale root-cause claim is not used in final closure notes.
+2. Diagnostic/static regression coverage exists if native code was touched.
+3. The actual tap type is classified from hardware evidence as local FLN,
+   remote FCM/APNs, or another explicit path.
+4. The targeted fix, if needed, matches the classified boundary.
+5. Focused notification tests pass.
+6. `flutter analyze` introduces no new warnings.
+7. Physical iPhone tap proof shows the app opens the tapped target from
+   warm-resume and cold/suspended launch.
+8. Parent ledger and production-flow audit docs record the proven boundary,
+   concrete files changed, tests run, and hardware evidence.
+
+Interim done criteria when no physical iPhone is connected:
+
+1. Simulator `simctl push` proof runs for at least `one_to_one_text`.
+2. `group_text` simulator proof runs if the reproduced symptom includes group
+   notification taps.
+3. Logs classify the simulator tap as remote APNs-style and show either
+   successful routing or a concrete failing boundary.
+4. The session status is recorded as `simulator-verified, hardware-pending` or
+   `simulator-failed, fix-needed`; it is not recorded as fully closed.
+
+## Scope Guard
+
+Stop and re-plan instead of expanding scope if:
+
+- The hardware trace shows no iOS notification is actually delivered.
+- The simulator trace fails because the app is not installed, the simulator is
+  not booted, or `simctl push` rejects the payload; fix the fixture/environment
+  before changing app code.
+- The issue is push-token registration, APNs entitlement, or backend FCM
+  payload generation rather than app-side tap routing.
+- The fix would require changing the relay push contract.
+- The fix would require new iOS native test infrastructure.
+- The only evidence is "a super-only override was added and the static test
+  passed."
+- The proposed fix bypasses centralized app-root routing.
+- The proposed fix routes directly from a background handler.
+
+## Accepted Differences / Intentionally Out Of Scope
+
+- Android's fix is a `MainActivity.onNewIntent`/`setIntent` handoff. iOS does
+  not have a proven equivalent yet.
+- iOS remote notifications may route through Firebase Messaging events instead
+  of `flutter_local_notifications`; that is acceptable if the final route
+  contract is identical.
+- Simulator `simctl push` is accepted as pre-hardware evidence for remote
+  APNs-style tap routing, but it is intentionally not accepted as proof of
+  physical-device delivery or local FLN fallback behavior.
+- Foreground presentation is intentionally separate unless it blocks the
+  reproduction.
+- A native diagnostic override may remain as defensive documentation if the
+  reviewer accepts it, but it is not the proof of correctness.
+
+## Dependency Impact
+
+- If this closes with a local FLN fix, future notification work should use
+  `NOTIFICATION_TAPPED` as the local-tap canary on iOS and Android.
+- If this closes with a Firebase remote-open fix, future docs must stop
+  requiring `NOTIFICATION_TAPPED` for remote APNs taps and instead require
+  `PUSH_MESSAGE_OPENED_APP` / `PUSH_INITIAL_MESSAGE_OPENED`.
+- If hardware evidence shows the app already routes correctly, the production
+  audit should be corrected and no follow-up implementation session should be
+  opened.
+- If simulator evidence shows remote APNs-style taps already route correctly
+  while no physical iPhone is available, the next dependency is a hardware-only
+  follow-up rather than more app-side implementation.
+- If the issue is APNs/backend delivery, route implementation sessions should
+  be skipped until push delivery is proven.
+
+## Reviewer Pass
+
+Finding 1: The old plan's claim that AppDelegate does not implement
+`didReceive` is structurally wrong because AppDelegate inherits
+FlutterAppDelegate, which implements and forwards that method.
+
+Resolution: Fixed. The rewritten plan treats AppDelegate override as
+diagnostic/defensive only and requires hardware evidence.
+
+Finding 2: The old plan assumes `flutter_local_notifications` is the only tap
+path.
+
+Resolution: Fixed. The rewritten plan branches local FLN fallback versus
+remote FCM/APNs open paths.
+
+Finding 3: The old closure bar accepted static pins plus later hardware.
+
+Resolution: Fixed. Physical iPhone tap proof is required for closure.
+
+Finding 4: The plan could still drift into broad Firebase/APNs refactors.
+
+Resolution: Fixed with scope guard and branch-by-evidence steps.
+
+## Arbiter Decision
+
+No structural blockers remain in this rewritten plan. It is safe to execute as
+an evidence-gated session because it does not assume the fix, it preserves
+centralized routing, and it requires hardware proof before closure.
