@@ -54,6 +54,135 @@ hardware before accepting any code change as the fix.
   method from FlutterAppDelegate. Next action: build a plan that proves the
   runtime boundary first.
 
+## Execution Progress
+
+- 2026-05-06 11:46:33 CEST - Contract extracted. Files inspected:
+  `Test-Flight-Improv/Group-Chat-Feature/session-N-ios-notification-tap-userNotificationCenter-plan-2026-05-06.md`
+  and `mobile-notification-routing-and-deep-linking/references/repo-notification-map.md`.
+  Decision/blocker: execute evidence-gated Step 1 first; required direct tests
+  and `flutter analyze` are explicit, while hardware proof may remain
+  hardware-pending if no iPhone is available. Next action: spawn isolated
+  Executor for diagnostic/native pin implementation and required gates.
+- 2026-05-06 11:48:36 CEST - Executor local pass started. Files inspected:
+  `ios/Runner/AppDelegate.swift`,
+  `test/core/notifications/main_activity_onnewintent_pin_test.dart`, and
+  current notification tests. Decision/blocker: no Dart routing evidence yet;
+  patch Step 1 only. Next action: add native diagnostic forwarding override
+  and static pin test.
+- 2026-05-06 11:48:36 CEST - Executor patch applied. Files touched:
+  `ios/Runner/AppDelegate.swift`,
+  `test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`,
+  and this plan. Decision/blocker: Swift diagnostic logs sanitized tap key
+  shape and forwards to `FlutterAppDelegate`; static pin added. Next action:
+  run fastest structural validation.
+- 2026-05-06 11:50:22 CEST - Fast structural validation finished. Command:
+  `flutter test test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`.
+  Result: passed. Next action: run remaining focused notification gates.
+- 2026-05-06 11:54:23 CEST - Focused notification tests finished.
+  Commands: `flutter test test/core/notifications/flutter_notification_service_test.dart`,
+  `flutter test test/core/notifications/app_root_notification_open_test.dart`,
+  `flutter test test/core/notifications/notification_route_target_test.dart`,
+  `flutter test test/core/notifications/notification_route_contract_matrix_test.dart`,
+  `flutter test test/features/identity/presentation/screens/startup_router_notification_open_test.dart`,
+  and `flutter test test/integration/notification_tap_smoke_test.dart`.
+  Result: all passed. `flutter analyze` completed with exit 1 on existing
+  analyzer debt, reporting 1717 issues across unrelated files; targeted
+  `flutter analyze test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`
+  passed with no issues. Next action: capture simulator/hardware availability
+  evidence.
+- 2026-05-06 11:55:27 CEST - Executor child closed after bounded waits.
+  Files inspected/touched from landed evidence:
+  `ios/Runner/AppDelegate.swift`,
+  `test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`,
+  and this plan. Decision/blocker: child made scoped code/test/progress
+  evidence but did not return a final handoff; continue with fresh QA review
+  using repo files as source of truth. Next action: spawn QA Reviewer.
+- 2026-05-06 11:58:39 CEST - QA Reviewer completed. Files reviewed:
+  `ios/Runner/AppDelegate.swift`,
+  `test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`,
+  and this plan. Decision/blocker: code/test portion is acceptable, but
+  required simulator or hardware tap proof is missing. Next action: spawn the
+  single allowed Executor fix pass, scoped only to simulator/hardware evidence
+  collection or exact environment blocker recording.
+- 2026-05-06 12:04:55 CEST - Executor fix pass availability evidence
+  collected. Commands: `xcrun simctl list devices booted`, `flutter devices`,
+  and `xcrun xctrace list devices`. Result: booted simulators available:
+  `iPhone 17 Pro (38FECA55-03C1-4907-BD9D-8E64BF8E3469)` and
+  `iPhone 17 (5BA69F1C-B112-47BE-B1FF-8C1003728C8F)`. `flutter devices`
+  found Pixel 6 plus those simulators and listed `Saleh's iPhone` wirelessly,
+  but reported code `-27` requiring unlock/cable/same LAN/Developer Mode;
+  `xcrun xctrace list devices` listed iPhones under `Devices Offline`.
+  Decision/blocker: no usable physical iPhone proof in this automated pass;
+  proceed on simulator lane.
+- 2026-05-06 12:04:55 CEST - Simulator fixture and app evidence collected.
+  Commands: `scripts/push_fixture_to_simulator.sh --dry-run one_to_one_text`,
+  `scripts/push_fixture_to_simulator.sh --dry-run group_text`,
+  `xcrun simctl get_app_container <SIM_UDID> com.mknoon.app app`, and
+  `xcrun simctl launch 38FECA55-03C1-4907-BD9D-8E64BF8E3469 com.mknoon.app`.
+  Result: both APNs fixtures resolved; both booted simulators have
+  `com.mknoon.app` installed; launch returned `com.mknoon.app: 24211`.
+  Decision/blocker: simulator app install/run prerequisite satisfied.
+- 2026-05-06 12:04:55 CEST - Simulator push/tap evidence attempted. Commands:
+  `scripts/push_fixture_to_simulator.sh --device 38FECA55-03C1-4907-BD9D-8E64BF8E3469 --bundle-id com.mknoon.app one_to_one_text`,
+  `scripts/push_fixture_to_simulator.sh --device 38FECA55-03C1-4907-BD9D-8E64BF8E3469 --bundle-id com.mknoon.app group_text`,
+  `xcrun simctl terminate 38FECA55-03C1-4907-BD9D-8E64BF8E3469 com.mknoon.app`,
+  bounded `xcrun simctl spawn ... log stream`, and canary `log show`
+  queries for `ios_native_un_didReceive`, `PUSH_MESSAGE_OPENED_APP`,
+  `PUSH_INITIAL_MESSAGE_OPENED`, `NOTIFICATION_TAP_NAV_ERROR`,
+  `NOTIFICATION_TAPPED`, `NOTIFICATION_TAP_TO_MESSAGE_TIMING`, and
+  `INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR`. Result: sequential 1:1 and group
+  pushes returned `Notification sent to 'com.mknoon.app'`; parallel fixture
+  attempts hit `mktemp: mkstemp failed ... File exists` and were rerun
+  sequentially. Screenshot `/tmp/mknoon-ios-push-terminated.png` showed the
+  delivered iOS banner (`New Message` / `You have a new message`). Runner
+  canary log queries returned only headers/no matching Runner tap/open logs.
+  `osascript` UI automation to send Simulator keystrokes failed with
+  `osascript is not allowed to send keystrokes. (1002)`, and `simctl` exposes
+  no notification tap/keypress subcommand. Decision/blocker: simulator remote
+  push delivery is proven, but simulator notification tap activation was not
+  performed; classify as `environment_blocker` / `tap-not-proven`, not
+  `simulator-failed, fix-needed`. No app-side boundary failure was traced and
+  no production code change is justified in this fix pass. Next action: final
+  QA should keep the tap proof blocker open until a manual simulator tap or
+  usable physical iPhone run captures the required native/Dart route logs.
+- 2026-05-06 12:09:09 CEST - Final QA completed and verdict written. Files
+  reviewed: `ios/Runner/AppDelegate.swift`,
+  `test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`,
+  and this plan. Decision/blocker: final QA accepted the scoped diagnostic
+  code/test delta but confirmed `tap-not-proven` remains blocking because no
+  simulator notification activation or physical iPhone tap produced native/Dart
+  route logs. Final verdict: `blocked`, blocker class
+  `environment_blocker`. Recommended next retry focus: perform a manual
+  simulator notification tap or use a connected/unlocked physical iPhone, then
+  capture `ios_native_un_didReceive`, `PUSH_MESSAGE_OPENED_APP`,
+  `PUSH_INITIAL_MESSAGE_OPENED`, navigation error canaries, and final
+  target-route proof.
+- 2026-05-06 12:47:09 CEST - Follow-up iOS-only fix applied after user
+  reported the bug persists and clarified Android is working. Files touched:
+  `ios/Runner/AppDelegate.swift` and
+  `test/core/notifications/app_delegate_notification_tap_diagnostic_pin_test.dart`.
+  Decision/blocker: harden the iOS native boundary by re-seating
+  `UNUserNotificationCenter.current().delegate = self` before
+  `super.application(...)`, after `super.application(...)`, after implicit
+  engine plugin registration, and on `didBecomeActive`, while still forwarding
+  taps to `FlutterAppDelegate`. Direct notification tests passed and
+  `flutter build ios --simulator --debug` passed. Next action: retest on iOS
+  hardware/simulator tap and inspect the new `notification_center_delegate_installed`
+  and `ios_native_un_didReceive` logs if routing still fails.
+- 2026-05-06 16:14:01 CEST - Real simulator notification tap proof collected
+  through the new UI smoke. Command:
+  `scripts/run_ios_notification_tap_ui_smoke.sh --skip-build --devices 38FECA55-03C1-4907-BD9D-8E64BF8E3469,5BA69F1C-B112-47BE-B1FF-8C1003728C8F`.
+  Result: passed all five scenarios: iPhone 17 Pro warm 1:1, iPhone 17 Pro
+  warm group, iPhone 17 warm 1:1, iPhone 17 warm group, and iPhone 17 Pro
+  cold 1:1. The cold-start log included `MKNOON_APNS_TAP_READY mode=cold`,
+  `ios_native_un_didReceive`, `ios_notification_open_stored_pending`,
+  `ios_notification_open_initial_consumed`, and
+  `IOS_APNS_INITIAL_NOTIFICATION_OPENED`; warm scenarios included
+  `ios_notification_open_forwarded_warm` and `IOS_APNS_NOTIFICATION_OPENED`.
+  Forbidden route/open error markers were absent. Decision/blocker: simulator
+  tap proof is now closed for the APNs-direct native-to-Dart route path;
+  physical iPhone proof remains optional/manual release evidence.
+
 ## Real Scope
 
 Make iOS notification taps route to the tapped conversation, group, intro,

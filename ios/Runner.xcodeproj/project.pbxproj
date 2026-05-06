@@ -17,6 +17,7 @@
 		6F73B00173A0000000000001 /* NotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6F73B00273A0000000000001 /* NotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6F73C00173A0000000000001 /* NotificationPreviewResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F73C00173A0000000000002 /* NotificationPreviewResolverTests.swift */; };
 		6F73C00273A0000000000001 /* NotificationPreviewResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */; };
+		6F74D00173A1000000000001 /* NotificationTapUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F74D00273A1000000000001 /* NotificationTapUITests.swift */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		8947AEE5CF6A83D4C8860F66 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 790BEFCD1A48E573CB47B8A8 /* Pods_Runner.framework */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
@@ -48,6 +49,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 6F73B00873A0000000000001;
 			remoteInfo = NotificationService;
+		};
+		6F74D00473A1000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 97C146E61CF9000F007C117D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 97C146ED1CF9000F007C117D;
+			remoteInfo = Runner;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -95,6 +103,8 @@
 		6F73B00273A0000000000001 /* NotificationService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		6F73C00173A0000000000002 /* NotificationPreviewResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPreviewResolverTests.swift; sourceTree = "<group>"; };
 		6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NotificationPreviewResolver.swift; path = ../NotificationService/NotificationPreviewResolver.swift; sourceTree = "<group>"; };
+		6F74D00273A1000000000001 /* NotificationTapUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationTapUITests.swift; sourceTree = "<group>"; };
+		6F74D00373A1000000000001 /* RunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		790BEFCD1A48E573CB47B8A8 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -191,6 +201,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6F74D00873A1000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -222,6 +239,14 @@
 			path = Pods;
 			sourceTree = "<group>";
 		};
+		6F74D00973A1000000000001 /* RunnerUITests */ = {
+			isa = PBXGroup;
+			children = (
+				6F74D00273A1000000000001 /* NotificationTapUITests.swift */,
+			);
+			path = RunnerUITests;
+			sourceTree = "<group>";
+		};
 		9740EEB11CF90186004384FC /* Flutter */ = {
 			isa = PBXGroup;
 			children = (
@@ -242,6 +267,7 @@
 				6F73B00673A0000000000001 /* NotificationService */,
 				97C146EF1CF9000F007C117D /* Products */,
 				331C8082294A63A400263BE5 /* RunnerTests */,
+				6F74D00973A1000000000001 /* RunnerUITests */,
 				80E3124777F57A9D4776EB67 /* Pods */,
 				E8E7A2CCC05850244F8A8F11 /* Frameworks */,
 			);
@@ -252,6 +278,7 @@
 			children = (
 				97C146EE1CF9000F007C117D /* Runner.app */,
 				331C8081294A63A400263BE5 /* RunnerTests.xctest */,
+				6F74D00373A1000000000001 /* RunnerUITests.xctest */,
 				698216C92F5E3A0A00B87A6B /* Share Extension.appex */,
 				6F73B00273A0000000000001 /* NotificationService.appex */,
 			);
@@ -307,6 +334,24 @@
 			productName = RunnerTests;
 			productReference = 331C8081294A63A400263BE5 /* RunnerTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		6F74D00A73A1000000000001 /* RunnerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6F74D00E73A1000000000001 /* Build configuration list for PBXNativeTarget "RunnerUITests" */;
+			buildPhases = (
+				6F74D00673A1000000000001 /* Sources */,
+				6F74D00873A1000000000001 /* Frameworks */,
+				6F74D00773A1000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6F74D00573A1000000000001 /* PBXTargetDependency */,
+			);
+			name = RunnerUITests;
+			productName = RunnerUITests;
+			productReference = 6F74D00373A1000000000001 /* RunnerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 		698216C82F5E3A0A00B87A6B /* Share Extension */ = {
 			isa = PBXNativeTarget;
@@ -397,6 +442,10 @@
 					6F73B00873A0000000000001 = {
 						CreatedOnToolsVersion = 26.3;
 					};
+					6F74D00A73A1000000000001 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = 97C146ED1CF9000F007C117D;
+					};
 					97C146ED1CF9000F007C117D = {
 						CreatedOnToolsVersion = 7.3.1;
 						LastSwiftMigration = 1100;
@@ -420,6 +469,7 @@
 			targets = (
 				97C146ED1CF9000F007C117D /* Runner */,
 				331C8080294A63A400263BE5 /* RunnerTests */,
+				6F74D00A73A1000000000001 /* RunnerUITests */,
 				698216C82F5E3A0A00B87A6B /* Share Extension */,
 				6F73B00873A0000000000001 /* NotificationService */,
 			);
@@ -428,6 +478,13 @@
 
 /* Begin PBXResourcesBuildPhase section */
 		331C807F294A63A400263BE5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6F74D00773A1000000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -619,6 +676,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6F74D00673A1000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6F74D00173A1000000000001 /* NotificationTapUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		698216C52F5E3A0A00B87A6B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -650,6 +715,11 @@
 			isa = PBXTargetDependency;
 			target = 97C146ED1CF9000F007C117D /* Runner */;
 			targetProxy = 331C8085294A63A400263BE5 /* PBXContainerItemProxy */;
+		};
+		6F74D00573A1000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 97C146ED1CF9000F007C117D /* Runner */;
+			targetProxy = 6F74D00473A1000000000001 /* PBXContainerItemProxy */;
 		};
 		698216D22F5E3A0A00B87A6B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -806,6 +876,71 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
+			};
+			name = Profile;
+		};
+		6F74D00B73A1000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Runner;
+			};
+			name = Debug;
+		};
+		6F74D00C73A1000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Runner;
+			};
+			name = Release;
+		};
+		6F74D00D73A1000000000001 /* Profile */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mknoon.app.RunnerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Runner;
 			};
 			name = Profile;
 		};
@@ -1242,6 +1377,16 @@
 				331C8088294A63A400263BE5 /* Debug */,
 				331C8089294A63A400263BE5 /* Release */,
 				331C808A294A63A400263BE5 /* Profile */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6F74D00E73A1000000000001 /* Build configuration list for PBXNativeTarget "RunnerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6F74D00B73A1000000000001 /* Debug */,
+				6F74D00C73A1000000000001 /* Release */,
+				6F74D00D73A1000000000001 /* Profile */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

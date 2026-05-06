@@ -382,15 +382,19 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `test/integration/relay_down_degradation_integration_test.dart` | Optional / manual direct suite | 1:1 degradation edge-case coverage, including failed-send during transport loss -> foreground online-transition retry healing the same row exactly once |
 | `test/integration/routing_smoke_group_criteria_test.dart` | Optional / manual direct suite | Report 85 host-side guard that the two-simulator group smoke G2/G4/G5/G7/G8 rows cannot pass with pending or sender-only receiver evidence |
 | `integration_test/cold_start_sendable_no_user_action_test.dart` | Optional / manual direct suite | Cold-start sendability check without widening the startup or transport gates |
+| `integration_test/cold_start_message_render_simulator_test.dart` | Optional / manual direct suite | Simulator-bound Orbit render smoke for previously received 1:1 and group message bodies after a cold restart |
 | `integration_test/conversation_wired_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation screen wiring |
 | `integration_test/conversation_wired_subscription_performance_test.dart` | Optional / manual direct suite | Performance-only validation for conversation subscription churn |
 | `integration_test/feed_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/foreground_group_push_drain_test.dart` | Optional / manual direct suite | Foreground group push targeted drain, no-duplicate, and Report 85 representative media descriptor/download regression without widening the frozen named gates. Companion simulator approximation: `dart run integration_test/scripts/run_foreground_group_push_simulator_smoke.dart -d <alice>,<bob>` for real-stack two-simulator gap + replay coverage. |
+| `integration_test/group_delete_preserves_friends_simulator_test.dart` | Optional / manual direct suite | Simulator-bound Orbit delete regression proving deleting one group does not remove friends or 1:1 threads |
+| `integration_test/group_invite_accept_spinner_simulator_test.dart` | Optional / manual direct suite | Simulator-bound pending group invite accept regression proving the spinner clears and the group joins |
 | `integration_test/feed_wired_init_performance_test.dart` | Optional / manual direct suite | Performance-only validation for feed initialization |
 | `integration_test/group_new_member_media_simulator_proof_test.dart` | Optional / manual direct suite | Report 89 simulator-backed new discussion member video and voice render/play/reopen proof; Report 90 GMAR-005 configured-simulator proof without widening frozen named gates |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |
 | `integration_test/media_message_journey_e2e_test.dart` | Optional / manual direct suite | End-to-end media delivery journey coverage that stays outside the frozen named gates; Report 90 GMAR-005 runs it directly as final media-journey evidence |
 | `integration_test/notification_open_ui_smoke_test.dart` | Optional / manual direct suite | Notification-open UI routing smoke without widening the frozen named gates |
+| `scripts/run_ios_notification_tap_ui_smoke.sh` | Optional / manual direct suite | iOS simulator-bound APNs notification tap smoke using `simctl push` plus a real Springboard notification tap; release/nightly confidence only, not a PR gate |
 | `integration_test/orbit_performance_test.dart` | Optional / manual direct suite | Performance-only validation for Orbit surface behavior |
 | `integration_test/settings_background_choice_smoke_test.dart` | Optional / manual direct suite | Device-backed Settings background-choice smoke from the background/theme rollout archive; classified here to keep the test inventory complete without widening named gates |
 

@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 
@@ -116,6 +117,43 @@ void main() {
 
       expect(notificationService.shown, isEmpty);
     });
+
+    test(
+      'resume-only recovery suppression does not synthesize a tap route',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        var routeCalls = 0;
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        notificationService.onNotificationTap = (_) {
+          routeCalls += 1;
+        };
+
+        await maybeShowNotification(
+          notificationService: notificationService,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          contactPeerId: 'peer-123',
+          senderUsername: 'Alice',
+          messageText: 'Recovered from inbox',
+          suppressNotification: true,
+        );
+
+        expect(notificationService.shown, isEmpty);
+        expect(routeCalls, 0);
+        expect(
+          events,
+          contains(
+            predicate<Map<String, dynamic>>((event) {
+              final details = event['details'];
+              return event['event'] == 'NOTIFICATION_SUPPRESSED' &&
+                  details is Map &&
+                  details['reason'] == 'recovery_replay';
+            }),
+          ),
+        );
+      },
+    );
 
     test(
       'prefers exact message-id suppression over route-wide suppression when available',
