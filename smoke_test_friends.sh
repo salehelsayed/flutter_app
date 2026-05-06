@@ -10,8 +10,32 @@ CONFIG_FILE="intro_e2e_config.json"
 RESULT_FILE="intro_e2e_result.json"
 INTRO_E2E_SCENARIO="${INTRO_E2E_SCENARIO:-all}"
 ARTIFACT_ROOT="build/intro_e2e"
+DOCS_A=""
+DOCS_B=""
+DOCS_C=""
 
 get_docs_dir() {
+  case "$1" in
+    "$DEVICE_A")
+      if [ -n "$DOCS_A" ] && [ -d "$DOCS_A" ]; then
+        echo "$DOCS_A"
+        return
+      fi
+      ;;
+    "$DEVICE_B")
+      if [ -n "$DOCS_B" ] && [ -d "$DOCS_B" ]; then
+        echo "$DOCS_B"
+        return
+      fi
+      ;;
+    "$DEVICE_C")
+      if [ -n "$DOCS_C" ] && [ -d "$DOCS_C" ]; then
+        echo "$DOCS_C"
+        return
+      fi
+      ;;
+  esac
+
   local container
   container=$(xcrun simctl get_app_container "$1" "$BUNDLE_ID" data 2>/dev/null)
   if [ -z "$container" ]; then
@@ -19,6 +43,12 @@ get_docs_dir() {
     return
   fi
   echo "$container/Documents"
+}
+
+cache_docs_dirs() {
+  DOCS_A=$(get_docs_dir "$DEVICE_A")
+  DOCS_B=$(get_docs_dir "$DEVICE_B")
+  DOCS_C=$(get_docs_dir "$DEVICE_C")
 }
 
 contact_entry_json() {
@@ -74,6 +104,9 @@ write_config() {
   local device="$1"
   local json="$2"
   local docs
+  # Config files are polled by the running debug app. Stop the target app before
+  # staging a new phase config so the previous phase cannot consume it early.
+  xcrun simctl terminate "$device" "$BUNDLE_ID" 2>/dev/null || true
   docs=$(get_docs_dir "$device")
   if [ -z "$docs" ]; then
     echo "ERROR: Could not resolve Documents directory for $device" >&2
@@ -572,7 +605,11 @@ assert_offline_first_chat_messages() {
 prepare_devices() {
   echo ""
   echo "=== Preparing three intro E2E simulators ==="
+  DOCS_A=""
+  DOCS_B=""
+  DOCS_C=""
   ./reset_simulators.sh
+  cache_docs_dirs
 
   EXPORT_A=$(read_export "$DEVICE_A")
   EXPORT_B=$(read_export "$DEVICE_B")
@@ -664,6 +701,7 @@ run_intro_phase() {
     }
   ],
   "contact_request_action": "none",
+  "contact_settle_delay_ms": 10000,
   "introduction_action": "none",
   "introduction_settle_delay_ms": 3000
 }
@@ -675,7 +713,7 @@ EOF
   "stepId": "$step_id",
   "contact_request_action": "$b_contact_action",
   "introduction_action": "$b_intro_action",
-  "poll_cycles": 35,
+  "poll_cycles": 70,
   "poll_interval_ms": 500
 }
 EOF
@@ -686,7 +724,7 @@ EOF
   "stepId": "$step_id",
   "contact_request_action": "$c_contact_action",
   "introduction_action": "$c_intro_action",
-  "poll_cycles": 35,
+  "poll_cycles": 70,
   "poll_interval_ms": 500
 }
 EOF
@@ -814,7 +852,7 @@ run_partial_fanout_send_phase() {
   ],
   "contact_request_action": "none",
   "introduction_action": "none",
-  "contact_settle_delay_ms": 5000,
+  "contact_settle_delay_ms": 10000,
   "introduction_settle_delay_ms": 2500,
   "poll_cycles": 25,
   "poll_interval_ms": 500
@@ -978,12 +1016,14 @@ EOF
 }
 
 run_pass_fallback_phase() {
-  local step_id="pass-fallback-disconnected"
+  local stop_step_id="pass-fallback-stop-targets"
+  local pass_step_id="pass-fallback-disconnected"
+  xcrun simctl terminate "$DEVICE_B" "$BUNDLE_ID" 2>/dev/null || true
   clear_results
 
   write_config "$DEVICE_A" "$(cat <<EOF
 {
-  "stepId": "$step_id",
+  "stepId": "$stop_step_id",
   "contact_request_action": "none",
   "node_action_before_intro_phase": "stop_node",
   "introduction_action": "none",
@@ -993,9 +1033,27 @@ run_pass_fallback_phase() {
 EOF
 )"
 
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$stop_step_id",
+  "contact_request_action": "none",
+  "node_action_before_intro_phase": "stop_node",
+  "introduction_action": "none",
+  "poll_cycles": 0,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_devices "$DEVICE_A" "$DEVICE_C"
+  wait_for_results_for_devices "$stop_step_id" "$DEVICE_A" "$DEVICE_C"
+  xcrun simctl terminate "$DEVICE_A" "$BUNDLE_ID" 2>/dev/null || true
+  xcrun simctl terminate "$DEVICE_C" "$BUNDLE_ID" 2>/dev/null || true
+
+  clear_results_for_devices "$DEVICE_B"
   write_config "$DEVICE_B" "$(cat <<EOF
 {
-  "stepId": "$step_id",
+  "stepId": "$pass_step_id",
   "contact_request_action": "none",
   "contact_settle_delay_ms": 3000,
   "introduction_action": "pass_all",
@@ -1005,20 +1063,8 @@ EOF
 EOF
 )"
 
-  write_config "$DEVICE_C" "$(cat <<EOF
-{
-  "stepId": "$step_id",
-  "contact_request_action": "none",
-  "node_action_before_intro_phase": "stop_node",
-  "introduction_action": "none",
-  "poll_cycles": 0,
-  "poll_interval_ms": 500
-}
-EOF
-)"
-
-  relaunch_all
-  wait_for_all_results "$step_id"
+  relaunch_devices "$DEVICE_B"
+  wait_for_results_for_devices "$pass_step_id" "$DEVICE_B"
 }
 
 run_pass_fallback_recovery_phase() {
@@ -1154,6 +1200,7 @@ EOF
 {
   "stepId": "$step_id",
   "contact_request_action": "none",
+  "contact_settle_delay_ms": 10000,
   "introduction_action": "none",
   "send_chat_messages": [
     {
