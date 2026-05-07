@@ -17,8 +17,10 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/folded_introduction_response_use_case.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
+import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -534,6 +536,22 @@ Future<Map<String, dynamic>> _runIntroductionAction({
     throw StateError('Identity missing for intro E2E action');
   }
 
+  if (action == 'accept_folded_all' || action == 'pass_folded_all') {
+    return _runFoldedIntroductionAction(
+      action: action,
+      introRepo: introRepo,
+      contactRepo: contactRepo,
+      p2pService: p2pService,
+      bridge: bridge,
+      identityPeerId: identity.peerId,
+      identityUsername: identity.username,
+      messageRepo: messageRepo,
+      pollCycles: pollCycles,
+      pollIntervalMs: pollIntervalMs,
+      idleCyclesAfterSeen: idleCyclesAfterSeen,
+    );
+  }
+
   final actedOn = <String>[];
   var dropped = 0;
   var sawAny = false;
@@ -596,6 +614,97 @@ Future<Map<String, dynamic>> _runIntroductionAction({
   }
 
   return {'action': action, 'actedOn': actedOn, 'dropped': dropped};
+}
+
+Future<Map<String, dynamic>> _runFoldedIntroductionAction({
+  required String action,
+  required IntroductionRepository introRepo,
+  required ContactRepository contactRepo,
+  required P2PService p2pService,
+  required Bridge bridge,
+  required String identityPeerId,
+  required String identityUsername,
+  required MessageRepository messageRepo,
+  required int pollCycles,
+  required int pollIntervalMs,
+  required int idleCyclesAfterSeen,
+}) async {
+  final actedOn = <String>[];
+  final foldedTargets = <Map<String, dynamic>>[];
+  final processedTargetPeerIds = <String>{};
+  var sawAny = false;
+  var idleAfterSeen = 0;
+
+  for (var tick = 0; tick < pollCycles; tick++) {
+    await p2pService.drainOfflineInbox();
+    final pending = await introRepo.getPendingIntroductionsForUser(
+      identityPeerId,
+    );
+    final foldedItems =
+        foldIntroductionsForReview(
+              introductions: pending,
+              ownPeerId: identityPeerId,
+            )
+            .where((item) {
+              return item.pendingCurrentViewerDecisionIntroIds.isNotEmpty &&
+                  !processedTargetPeerIds.contains(item.targetPeerId);
+            })
+            .toList(growable: false);
+
+    if (foldedItems.isNotEmpty) {
+      sawAny = true;
+      idleAfterSeen = 0;
+    } else if (sawAny) {
+      idleAfterSeen++;
+      if (idleAfterSeen >= idleCyclesAfterSeen) {
+        break;
+      }
+    }
+
+    for (final foldedItem in foldedItems) {
+      final FoldedIntroductionActionBatchResult result;
+      switch (action) {
+        case 'accept_folded_all':
+          result = await acceptFoldedIntroduction(
+            introRepo: introRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            foldedIntroduction: foldedItem,
+            ownPeerId: identityPeerId,
+            ownUsername: identityUsername,
+            messageRepo: messageRepo,
+          );
+          break;
+        case 'pass_folded_all':
+          result = await passFoldedIntroduction(
+            introRepo: introRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            foldedIntroduction: foldedItem,
+            ownPeerId: identityPeerId,
+            ownUsername: identityUsername,
+          );
+          break;
+        default:
+          throw StateError('Unknown folded intro E2E action: $action');
+      }
+
+      actedOn.addAll(result.appliedResults.map((item) => item.introductionId));
+      processedTargetPeerIds.add(foldedItem.targetPeerId);
+      foldedTargets.add(_foldedActionResultToJson(foldedItem, result));
+    }
+
+    await Future<void>.delayed(Duration(milliseconds: pollIntervalMs));
+  }
+
+  return {
+    'action': action,
+    'actedOn': actedOn,
+    'dropped': 0,
+    'foldedTargets': foldedTargets,
+  };
 }
 
 Future<Map<String, dynamic>?> _runChatMessageSends({
@@ -757,6 +866,13 @@ Future<Map<String, dynamic>> _collectSnapshot({
     introMap[intro.id] = intro;
   }
 
+  final foldedReviewItems = identity == null
+      ? const <FoldedIntroductionReviewItem>[]
+      : foldIntroductionsForReview(
+          introductions: introMap.values.toList(growable: false),
+          ownPeerId: identity.peerId,
+        );
+
   final retryableOutbox = await introRepo.loadRetryableOutboxDeliveries(
     olderThan: Duration.zero,
     limit: 100,
@@ -862,6 +978,9 @@ Future<Map<String, dynamic>> _collectSnapshot({
           },
         )
         .toList(growable: false),
+    'foldedReviewItems': foldedReviewItems
+        .map(_foldedReviewItemToJson)
+        .toList(growable: false),
     'introOutboxDeliveries': retryableOutbox
         .map(
           (delivery) => {
@@ -876,5 +995,67 @@ Future<Map<String, dynamic>> _collectSnapshot({
         .toList(growable: false),
     'systemMessages': systemMessages,
     'chatMessages': chatMessages,
+  };
+}
+
+Map<String, dynamic> _foldedReviewItemToJson(
+  FoldedIntroductionReviewItem item,
+) {
+  return {
+    'targetPeerId': item.targetPeerId,
+    'targetDisplayName': item.targetDisplayName,
+    'displaySourceIntroductionId': item.displaySourceIntroductionId,
+    'introductionIds': item.introductionIds,
+    'introducerAttributions': item.introducerAttributions
+        .map(
+          (attribution) => {
+            'introducerId': attribution.introducerId,
+            'displayName': attribution.displayName,
+          },
+        )
+        .toList(growable: false),
+    'pendingCurrentViewerDecisionIntroIds':
+        item.pendingCurrentViewerDecisionIntroIds,
+    'acceptedCurrentViewerDecisionIntroIds':
+        item.acceptedCurrentViewerDecisionIntroIds,
+    'passedCurrentViewerDecisionIntroIds':
+        item.passedCurrentViewerDecisionIntroIds,
+  };
+}
+
+Map<String, dynamic> _foldedActionResultToJson(
+  FoldedIntroductionReviewItem item,
+  FoldedIntroductionActionBatchResult result,
+) {
+  return {
+    'targetPeerId': item.targetPeerId,
+    'targetDisplayName': item.targetDisplayName,
+    'displaySourceIntroductionId': item.displaySourceIntroductionId,
+    'introductionIds': item.introductionIds,
+    'results': result.results
+        .map(_foldedSingleActionResultToJson)
+        .toList(growable: false),
+    'appliedIntroIds': result.appliedResults
+        .map((item) => item.introductionId)
+        .toList(growable: false),
+    'skippedNotPendingIntroIds': result.skippedNotPendingResults
+        .map((item) => item.introductionId)
+        .toList(growable: false),
+    'failedIntroIds': result.failedResults
+        .map((item) => item.introductionId)
+        .toList(growable: false),
+  };
+}
+
+Map<String, dynamic> _foldedSingleActionResultToJson(
+  FoldedIntroductionActionResult result,
+) {
+  final intro = result.introduction;
+  return {
+    'introductionId': result.introductionId,
+    'outcome': result.outcome.name,
+    'recipientStatus': intro?.recipientStatus.toDbString(),
+    'introducedStatus': intro?.introducedStatus.toDbString(),
+    'overallStatus': intro?.status.toDbString(),
   };
 }

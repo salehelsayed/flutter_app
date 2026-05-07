@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
@@ -14,7 +15,9 @@ void main() {
     String recipientId = 'peer-B',
     String introducedId = 'peer-C',
     String? introducerUsername = 'Alice',
+    String? recipientUsername,
     String? introducedUsername = 'Charlie',
+    String? createdAt,
     IntroductionOverallStatus status = IntroductionOverallStatus.pending,
   }) {
     return IntroductionModel(
@@ -23,8 +26,9 @@ void main() {
       recipientId: recipientId,
       introducedId: introducedId,
       introducerUsername: introducerUsername,
+      recipientUsername: recipientUsername,
       introducedUsername: introducedUsername,
-      createdAt: now,
+      createdAt: createdAt ?? now,
       status: status,
     );
   }
@@ -35,6 +39,7 @@ void main() {
     void Function(String)? onAccept,
     void Function(String)? onPass,
     String ownPeerId = 'peer-B',
+    List<FoldedIntroductionReviewItem>? foldedReviewItems,
   }) {
     return MaterialApp(
       home: Scaffold(
@@ -46,6 +51,7 @@ void main() {
             onAccept: onAccept ?? (_) {},
             onPass: onPass ?? (_) {},
             ownPeerId: ownPeerId,
+            foldedReviewItems: foldedReviewItems,
           ),
         ),
       ),
@@ -250,5 +256,68 @@ void main() {
       expect(find.text('Accept'), findsNothing);
       expect(find.text('Pass'), findsNothing);
     });
+
+    testWidgets(
+      'renders duplicate aboza introductions as one folded review row',
+      (tester) async {
+        final older = DateTime.parse(
+          now,
+        ).subtract(const Duration(minutes: 1)).toUtc().toIso8601String();
+        final intro1 = makeIntro(
+          id: 'intro-noor',
+          introducerId: 'peer-noor',
+          recipientId: 'peer-me',
+          introducedId: 'peer-aboza',
+          introducerUsername: 'Noor',
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: older,
+        );
+        final intro2 = makeIntro(
+          id: 'intro-layla',
+          introducerId: 'peer-layla',
+          recipientId: 'peer-me',
+          introducedId: 'peer-aboza',
+          introducerUsername: 'Layla',
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: now,
+        );
+        final folded = foldIntroductionsForReview(
+          introductions: [intro1, intro2],
+          ownPeerId: 'peer-me',
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            groupedIntros: {
+              'peer-noor': [intro1],
+              'peer-layla': [intro2],
+            },
+            introducerUsernames: const {
+              'peer-noor': 'Noor',
+              'peer-layla': 'Layla',
+            },
+            ownPeerId: 'peer-me',
+            foldedReviewItems: folded,
+          ),
+        );
+
+        final row = find.byType(IntroRow);
+        expect(row, findsOneWidget);
+        expect(find.text('aboza'), findsOneWidget);
+        expect(find.text('Accept'), findsOneWidget);
+        expect(find.text('Pass'), findsOneWidget);
+        expect(
+          find.descendant(of: row, matching: find.textContaining('Noor')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: row, matching: find.textContaining('Layla')),
+          findsOneWidget,
+        );
+        expect(find.byType(IntroGroupHeader), findsNothing);
+      },
+    );
   });
 }

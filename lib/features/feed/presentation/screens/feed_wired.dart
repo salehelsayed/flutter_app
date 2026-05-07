@@ -73,6 +73,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
+import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -623,7 +624,14 @@ class _FeedWiredState extends State<FeedWired>
           messageRepo: widget.messageRepository,
           bridge: widget.bridge,
         );
-        introCount = await introRepo.countPendingIntroductions(ownPeerId);
+        final pendingIntroductions = await loadIntroductionsForUser(
+          introRepo: introRepo,
+          peerId: ownPeerId,
+        );
+        introCount = countFoldedPendingIntroductionTargets(
+          introductions: pendingIntroductions,
+          ownPeerId: ownPeerId,
+        );
       }
 
       var pendingInviteCount = 0;

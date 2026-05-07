@@ -5,9 +5,26 @@ set -euo pipefail
 DEVICE_A="347FB118-10D0-40C8-A05B-B0C3BD6B8CCD"
 DEVICE_B="5BA69F1C-B112-47BE-B1FF-8C1003728C8F"
 DEVICE_C="1B098DFF-6294-407A-A209-BBF360893485"
-DEVICES=("$DEVICE_A" "$DEVICE_B" "$DEVICE_C")
-NAMES=("a" "b" "c")
+DEVICE_D="38FECA55-03C1-4907-BD9D-8E64BF8E3469"
+INTRO_E2E_DEVICE_SET="${INTRO_E2E_DEVICE_SET:-three}"
+
+case "$INTRO_E2E_DEVICE_SET" in
+  three)
+    DEVICES=("$DEVICE_A" "$DEVICE_B" "$DEVICE_C")
+    NAMES=("a" "b" "c")
+    ;;
+  four)
+    DEVICES=("$DEVICE_A" "$DEVICE_B" "$DEVICE_C" "$DEVICE_D")
+    NAMES=("a" "b" "c" "d")
+    ;;
+  *)
+    echo "ERROR: Unknown INTRO_E2E_DEVICE_SET=$INTRO_E2E_DEVICE_SET" >&2
+    exit 1
+    ;;
+esac
+
 BUNDLE_ID="com.mknoon.app"
+DEVICE_COUNT="${#DEVICES[@]}"
 
 # ── Step 1: Uninstall ──────────────────────────────────────
 echo "=== Step 1/3: Uninstalling from all devices ==="
@@ -55,4 +72,4 @@ for i in "${!DEVICES[@]}"; do
   echo ""
 done
 
-echo "=== All 3 simulators running: a, b, c ==="
+echo "=== All $DEVICE_COUNT simulators running: ${NAMES[*]} ==="

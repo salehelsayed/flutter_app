@@ -40,12 +40,14 @@ void main() {
     String? waitingForUsername,
     bool isProcessing = false,
     BackgroundReadableColors? readableColors,
+    List<String>? introducerAttributionNames,
   }) {
     final body = IntroRow(
       introduction: introduction,
       displayUsername:
           displayUsername ?? introduction.introducedUsername ?? 'Unknown',
       displayPeerId: introduction.introducedId,
+      introducerAttributionNames: introducerAttributionNames,
       showActions: showActions,
       isProcessing: isProcessing,
       onAccept: onAccept,
@@ -212,6 +214,35 @@ void main() {
 
       expect(find.text('Introduced by'), findsOneWidget);
       expect(find.text('Alice'), findsOneWidget);
+    });
+
+    testWidgets('shows multiple introducer attributions in one row', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildWidget(
+          introduction: makeIntro(introducerUsername: 'Noor'),
+          showActions: true,
+          onAccept: () {},
+          onPass: () {},
+          introducerAttributionNames: const ['Noor', 'Layla'],
+        ),
+      );
+
+      final row = find.byType(IntroRow);
+      expect(row, findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.text('Introduced by')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.textContaining('Noor')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.textContaining('Layla')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('uses light readable colors for the daylight theme', (

@@ -20,12 +20,14 @@ class IntroRow extends StatelessWidget {
   final String? waitingForUsername;
   final VoidCallback? onSendMessage;
   final bool isOtherBlocked;
+  final List<String>? introducerAttributionNames;
 
   const IntroRow({
     super.key,
     required this.introduction,
     required this.displayUsername,
     this.displayPeerId,
+    this.introducerAttributionNames,
     required this.showActions,
     this.isProcessing = false,
     this.onAccept,
@@ -45,7 +47,14 @@ class IntroRow extends StatelessWidget {
     final onSuccessColor = readableColors.isLightSurface
         ? Colors.white
         : Colors.black;
-    final introducerUsername = introduction.introducerUsername ?? 'someone';
+    final providedAttributionNames = introducerAttributionNames
+        ?.map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toList(growable: false);
+    final introducerUsername =
+        providedAttributionNames != null && providedAttributionNames.isNotEmpty
+        ? providedAttributionNames.join(', ')
+        : introduction.introducerUsername ?? 'someone';
     final attributionStyle = TextStyle(
       fontSize: 12,
       color: readableColors.textMuted,

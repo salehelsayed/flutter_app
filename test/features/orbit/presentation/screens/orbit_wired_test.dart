@@ -70,6 +70,15 @@ Text _textFor(WidgetTester tester, String text) {
   return tester.widget<Text>(finder);
 }
 
+Finder _textContainingAll(List<String> values) {
+  return find.byWidgetPredicate(
+    (widget) =>
+        widget is Text &&
+        values.every((value) => widget.data?.contains(value) ?? false),
+    description: 'Text containing ${values.join(', ')}',
+  );
+}
+
 IntroductionModel pendingIntroduction({
   required String ownPeerId,
   required String otherPeerId,
@@ -750,6 +759,287 @@ void main() {
         expect(buttons[0].isActive, isFalse);
         expect(buttons[1].badgeCount, 1);
         expect(buttons[1].isActive, isTrue);
+      },
+    );
+
+    testWidgets(
+      'folds duplicate pending introduction targets in the Orbit intro count',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-noor',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: freshPendingIntroductionCreatedAt(),
+          ).copyWith(introducerId: 'peer-noor', introducerUsername: 'Noor'),
+        );
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-layla',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: freshPendingIntroductionCreatedAt(),
+          ).copyWith(introducerId: 'peer-layla', introducerUsername: 'Layla'),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[1].badgeCount, 1);
+        expect(buttons[1].isActive, isTrue);
+      },
+    );
+
+    testWidgets(
+      'folds duplicate pending introduction targets into one OrbitWired intro row and badge target',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final olderCreatedAt = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 1, minutes: 5))
+            .toIso8601String();
+        final newerCreatedAt = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 1))
+            .toIso8601String();
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-older',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: olderCreatedAt,
+          ).copyWith(introducerId: 'peer-noor', introducerUsername: 'Noor'),
+        );
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-newer',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: newerCreatedAt,
+          ).copyWith(introducerId: 'peer-layla', introducerUsername: 'Layla'),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Dora'), findsOneWidget);
+        expect(find.text('Accept'), findsOneWidget);
+        expect(find.text('Pass'), findsOneWidget);
+        expect(_textContainingAll(['Noor', 'Layla']), findsOneWidget);
+
+        final buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[1].badgeCount, 1);
+        expect(buttons[1].isActive, isTrue);
+      },
+    );
+
+    testWidgets(
+      'accepting a folded Orbit intro disables the folded row and updates every underlying intro once',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final olderCreatedAt = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 1, minutes: 5))
+            .toIso8601String();
+        final newerCreatedAt = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 1))
+            .toIso8601String();
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final introRepo = _BlockingIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-older',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: olderCreatedAt,
+          ).copyWith(introducerId: 'peer-noor', introducerUsername: 'Noor'),
+        );
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-newer',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: newerCreatedAt,
+          ).copyWith(introducerId: 'peer-layla', introducerUsername: 'Layla'),
+        );
+        introRepo.acceptGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final acceptFinder = find.byKey(
+          const ValueKey('intro-accept-intro-newer'),
+        );
+        final passFinder = find.byKey(const ValueKey('intro-pass-intro-newer'));
+
+        await tester.tap(acceptFinder);
+        await tester.pump();
+
+        expect(find.text('Accepting...'), findsOneWidget);
+        expect(find.text('Accept'), findsNothing);
+        expect(introRepo.acceptedUpdates, 1);
+        expect(tester.widget<FilledButton>(acceptFinder).onPressed, isNull);
+        expect(tester.widget<OutlinedButton>(passFinder).onPressed, isNull);
+
+        await tester.tap(acceptFinder);
+        await tester.pump();
+
+        expect(introRepo.acceptedUpdates, 1);
+
+        introRepo.acceptGate!.complete();
+        await pumpOrbitFrames(tester, count: 8);
+
+        final older = await introRepo.getIntroduction('intro-older');
+        final newer = await introRepo.getIntroduction('intro-newer');
+        expect(older!.recipientStatus, IntroductionStatus.accepted);
+        expect(newer!.recipientStatus, IntroductionStatus.accepted);
+        expect(find.text('Dora'), findsOneWidget);
+        expect(find.text('Accept'), findsNothing);
+        expect(find.text('Pass'), findsNothing);
+
+        final buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[1].badgeCount, 1);
+      },
+    );
+
+    testWidgets(
+      'passing a folded Orbit intro disables the folded row and updates every underlying intro once',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+
+        final olderCreatedAt = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 1, minutes: 5))
+            .toIso8601String();
+        final newerCreatedAt = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 1))
+            .toIso8601String();
+        final feedUnreadCountListenable = ValueNotifier<int>(0);
+        addTearDown(feedUnreadCountListenable.dispose);
+        final introRepo = _BlockingIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-older',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: olderCreatedAt,
+          ).copyWith(introducerId: 'peer-noor', introducerUsername: 'Noor'),
+        );
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-newer',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: newerCreatedAt,
+          ).copyWith(introducerId: 'peer-layla', introducerUsername: 'Layla'),
+        );
+        introRepo.passGate = Completer<void>();
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: introRepo,
+            initialFilterTab: 'intros',
+            appShellController: AppShellController(
+              initialTab: AppShellTab.orbit,
+            ),
+            feedUnreadCountListenable: feedUnreadCountListenable,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final acceptFinder = find.byKey(
+          const ValueKey('intro-accept-intro-newer'),
+        );
+        final passFinder = find.byKey(const ValueKey('intro-pass-intro-newer'));
+
+        await tester.tap(passFinder);
+        await tester.pump();
+
+        expect(introRepo.passedUpdates, 1);
+        expect(find.text('Accept'), findsNothing);
+        expect(tester.widget<OutlinedButton>(passFinder).onPressed, isNull);
+        expect(tester.widget<FilledButton>(acceptFinder).onPressed, isNull);
+
+        await tester.tap(passFinder);
+        await tester.pump();
+
+        expect(introRepo.passedUpdates, 1);
+
+        introRepo.passGate!.complete();
+        await pumpOrbitFrames(tester, count: 8);
+
+        final older = await introRepo.getIntroduction('intro-older');
+        final newer = await introRepo.getIntroduction('intro-newer');
+        expect(older!.recipientStatus, IntroductionStatus.passed);
+        expect(older.status, IntroductionOverallStatus.passed);
+        expect(newer!.recipientStatus, IntroductionStatus.passed);
+        expect(newer.status, IntroductionOverallStatus.passed);
+        expect(find.text('Dora'), findsNothing);
+        expect(find.text('No introductions yet'), findsOneWidget);
+
+        final buttons = tester
+            .widgetList<NavBarButton>(find.byType(NavBarButton))
+            .toList();
+        expect(buttons[1].badgeCount, 0);
       },
     );
 
@@ -1807,10 +2097,12 @@ void main() {
         expect(find.text('Game Night'), findsOneWidget);
 
         // Snapshot Bob's 1:1 chat counts BEFORE deletion.
-        final aliceMessagesBefore =
-            await messageRepo.getMessagesForContact(friendA.peerId);
-        final charlieMessagesBefore =
-            await messageRepo.getMessagesForContact(friendC.peerId);
+        final aliceMessagesBefore = await messageRepo.getMessagesForContact(
+          friendA.peerId,
+        );
+        final charlieMessagesBefore = await messageRepo.getMessagesForContact(
+          friendC.peerId,
+        );
         expect(aliceMessagesBefore.map((m) => m.id).toList(), aliceDmIds);
         expect(charlieMessagesBefore.map((m) => m.id).toList(), charlieDmIds);
 
@@ -1832,20 +2124,24 @@ void main() {
 
         // -- assert state: contacts table is intact.
         final contactsAfter = await contactRepo.getActiveContacts();
-        expect(contactsAfter.map((c) => c.peerId).toSet(),
-            {friendA.peerId, friendC.peerId});
+        expect(contactsAfter.map((c) => c.peerId).toSet(), {
+          friendA.peerId,
+          friendC.peerId,
+        });
 
         // -- assert state: 1:1 chat threads with each friend are intact —
         //    every original message row is still present in order.
-        final aliceMessagesAfter =
-            await messageRepo.getMessagesForContact(friendA.peerId);
+        final aliceMessagesAfter = await messageRepo.getMessagesForContact(
+          friendA.peerId,
+        );
         expect(
           aliceMessagesAfter.map((m) => m.id).toList(),
           aliceDmIds,
           reason: 'group delete must not touch 1:1 messages with Alice',
         );
-        final charlieMessagesAfter =
-            await messageRepo.getMessagesForContact(friendC.peerId);
+        final charlieMessagesAfter = await messageRepo.getMessagesForContact(
+          friendC.peerId,
+        );
         expect(
           charlieMessagesAfter.map((m) => m.id).toList(),
           charlieDmIds,

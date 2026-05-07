@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intros_tab.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -183,5 +184,66 @@ void main() {
       expect(find.text('Accept'), findsOneWidget);
       expect(find.text('Pass'), findsOneWidget);
     });
+
+    testWidgets(
+      'folded attribution falls back for blank introducer names and keeps long names actionable',
+      (tester) async {
+        const longIntroducer =
+            'A remarkably long introducer display name that should still render';
+        final now = DateTime.now().toUtc();
+        final blankIntro = IntroductionModel(
+          id: 'intro-blank',
+          introducerId: 'peer-blank',
+          recipientId: 'peer-B',
+          introducedId: 'peer-aboza',
+          introducerUsername: '   ',
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: now.subtract(const Duration(minutes: 1)).toIso8601String(),
+        );
+        final longIntro = IntroductionModel(
+          id: 'intro-long-name',
+          introducerId: 'peer-long',
+          recipientId: 'peer-B',
+          introducedId: 'peer-aboza',
+          introducerUsername: longIntroducer,
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: now.toIso8601String(),
+        );
+        final folded = foldIntroductionsForReview(
+          introductions: [blankIntro, longIntro],
+          ownPeerId: 'peer-B',
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: IntrosTab(
+                groupedIntros: {
+                  'peer-blank': [blankIntro],
+                  'peer-long': [longIntro],
+                },
+                introducerUsernames: const {
+                  'peer-blank': '   ',
+                  'peer-long': longIntroducer,
+                },
+                onAccept: (_) {},
+                onPass: (_) {},
+                ownPeerId: 'peer-B',
+                foldedReviewItems: folded,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('aboza'), findsOneWidget);
+        expect(find.textContaining('peer-blank'), findsOneWidget);
+        expect(find.textContaining(longIntroducer), findsOneWidget);
+        expect(find.text('Accept'), findsOneWidget);
+        expect(find.text('Pass'), findsOneWidget);
+      },
+    );
   });
 }

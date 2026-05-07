@@ -7,6 +7,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
+import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
@@ -30,6 +31,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/archived_empty_s
 @immutable
 class OrbitIntrosViewData {
   final Map<String, List<IntroductionModel>> groupedIntros;
+  final List<FoldedIntroductionReviewItem>? foldedReviewItems;
   final Map<String, String> introducerUsernames;
   final String ownPeerId;
   final List<PendingGroupInvite> pendingGroupInvites;
@@ -45,6 +47,7 @@ class OrbitIntrosViewData {
 
   const OrbitIntrosViewData({
     required this.groupedIntros,
+    this.foldedReviewItems,
     required this.introducerUsernames,
     required this.ownPeerId,
     this.pendingGroupInvites = const [],
@@ -60,6 +63,7 @@ class OrbitIntrosViewData {
   });
 
   int get introCount =>
+      foldedReviewItems?.length ??
       groupedIntros.values.fold(0, (sum, entries) => sum + entries.length);
 
   int get reviewCount => introCount + pendingGroupInvites.length;
@@ -119,6 +123,7 @@ enum _OrbitIntroEntryType {
   pendingInvite,
   introHeader,
   introRow,
+  foldedIntroRow,
   spacer,
 }
 
@@ -126,12 +131,14 @@ class _OrbitIntroEntry {
   final _OrbitIntroEntryType type;
   final String? introducerUsername;
   final IntroductionModel? introduction;
+  final FoldedIntroductionReviewItem? foldedIntroduction;
   final PendingGroupInvite? pendingInvite;
 
   const _OrbitIntroEntry._(
     this.type, {
     this.introducerUsername,
     this.introduction,
+    this.foldedIntroduction,
     this.pendingInvite,
   });
 
@@ -145,6 +152,13 @@ class _OrbitIntroEntry {
 
   const _OrbitIntroEntry.row(IntroductionModel introduction)
     : this._(_OrbitIntroEntryType.introRow, introduction: introduction);
+
+  const _OrbitIntroEntry.foldedRow(
+    FoldedIntroductionReviewItem foldedIntroduction,
+  ) : this._(
+        _OrbitIntroEntryType.foldedIntroRow,
+        foldedIntroduction: foldedIntroduction,
+      );
 
   const _OrbitIntroEntry.pendingInviteHeader()
     : this._(_OrbitIntroEntryType.pendingInviteHeader);
@@ -698,7 +712,7 @@ class OrbitScreen extends StatelessWidget {
   }
 
   List<_OrbitIntroEntry> _buildIntroEntries(OrbitIntrosViewData data) {
-    if (data.groupedIntros.isEmpty && data.pendingGroupInvites.isEmpty) {
+    if (data.introCount == 0 && data.pendingGroupInvites.isEmpty) {
       return const [_OrbitIntroEntry.context()];
     }
 
@@ -708,6 +722,17 @@ class OrbitScreen extends StatelessWidget {
       entries.addAll(
         data.pendingGroupInvites.map(_OrbitIntroEntry.pendingInvite),
       );
+    }
+
+    final foldedItems = data.foldedReviewItems;
+    if (foldedItems != null) {
+      if (foldedItems.isNotEmpty) {
+        if (data.pendingGroupInvites.isNotEmpty) {
+          entries.add(const _OrbitIntroEntry.spacer());
+        }
+        entries.addAll(foldedItems.map(_OrbitIntroEntry.foldedRow));
+      }
+      return entries;
     }
 
     final introducerIds = data.groupedIntros.keys.toList();
@@ -726,6 +751,23 @@ class OrbitScreen extends StatelessWidget {
     return entries;
   }
 
+  IntroductionStatus _ownPartyStatusForFolded(
+    FoldedIntroductionReviewItem item,
+  ) {
+    if (item.passedCurrentViewerDecisionIntroIds.isNotEmpty) {
+      return IntroductionStatus.passed;
+    }
+    if (item.acceptedCurrentViewerDecisionIntroIds.isNotEmpty) {
+      return IntroductionStatus.accepted;
+    }
+    return IntroductionStatus.pending;
+  }
+
+  bool _showActionsForFolded(FoldedIntroductionReviewItem item) {
+    return item.hasPendingCurrentViewerDecision &&
+        !item.hasCurrentViewerResponded;
+  }
+
   Widget _buildIntroEntry(
     BuildContext context,
     OrbitIntrosViewData data,
@@ -735,7 +777,7 @@ class OrbitScreen extends StatelessWidget {
 
     switch (entry.type) {
       case _OrbitIntroEntryType.context:
-        if (data.groupedIntros.isEmpty && data.pendingGroupInvites.isEmpty) {
+        if (data.introCount == 0 && data.pendingGroupInvites.isEmpty) {
           return Padding(
             padding: const EdgeInsets.all(32),
             child: Center(
@@ -840,6 +882,54 @@ class OrbitScreen extends StatelessWidget {
                   isArchived: false,
                   openRowNotifier: openRowNotifier,
                   onDelete: () => data.onDelete!(intro.id),
+                  child: introRow,
+                ),
+        );
+      case _OrbitIntroEntryType.foldedIntroRow:
+        final item = entry.foldedIntroduction!;
+        final intro = item.newestIntroduction;
+        final ownPartyStatus = _ownPartyStatusForFolded(item);
+        final showActions = _showActionsForFolded(item);
+        final isProcessing = item.introductionIds.any(
+          (id) => data.processingIntroductionIds.contains(id),
+        );
+        final introRow = IntroRow(
+          introduction: intro,
+          displayUsername: item.targetDisplayName,
+          displayPeerId: item.targetPeerId,
+          introducerAttributionNames: item.introducerAttributions
+              .map((attribution) => attribution.displayName)
+              .toList(growable: false),
+          showActions: showActions,
+          isProcessing: isProcessing,
+          onAccept: showActions
+              ? () => data.onAccept(item.displaySourceIntroductionId)
+              : null,
+          onPass: showActions
+              ? () => data.onPass(item.displaySourceIntroductionId)
+              : null,
+          ownPartyStatus: ownPartyStatus,
+          waitingForUsername: item.targetDisplayName,
+          onSendMessage:
+              intro.status == IntroductionOverallStatus.mutualAccepted &&
+                  data.onSendMessage != null
+              ? () => data.onSendMessage!(item.targetPeerId)
+              : null,
+          isOtherBlocked: data.blockedPeerIds.contains(item.targetPeerId),
+        );
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: data.onDelete == null
+              ? introRow
+              : SwipeableFriendRow(
+                  key: ValueKey(
+                    'orbit-intro-${item.displaySourceIntroductionId}',
+                  ),
+                  isArchived: false,
+                  openRowNotifier: openRowNotifier,
+                  onDelete: () =>
+                      data.onDelete!(item.displaySourceIntroductionId),
                   child: introRow,
                 ),
         );

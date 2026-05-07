@@ -852,6 +852,39 @@ void main() {
     );
 
     testWidgets(
+      'loads the Orbit badge from folded pending introduction targets on first load',
+      (tester) async {
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+
+        final introRepo = InMemoryIntroductionRepository();
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-noor',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: freshPendingIntroductionCreatedAt(),
+          ).copyWith(introducerId: 'peer-noor', introducerUsername: 'Noor'),
+        );
+        await introRepo.saveIntroduction(
+          pendingIntroduction(
+            id: 'intro-layla',
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'folded-peer-id',
+            createdAt: freshPendingIntroductionCreatedAt(),
+          ).copyWith(introducerId: 'peer-layla', introducerUsername: 'Layla'),
+        );
+
+        await tester.pumpWidget(
+          buildFeedWired(introductionRepository: introRepo),
+        );
+        await pumpFeedFrames(tester, count: 8);
+
+        expect(navButton(tester, 'Orbit').badgeCount, 1);
+      },
+    );
+
+    testWidgets(
       'loads the Orbit badge from pending group invites on first load',
       (tester) async {
         suppressFeedNavErrors();

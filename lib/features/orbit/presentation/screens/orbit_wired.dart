@@ -62,6 +62,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/folded_introduction_response_use_case.dart';
 import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
 import 'package:flutter_app/features/introduction/application/expire_old_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
@@ -213,6 +214,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       ImageQualityPreference.compressed;
   int _introsCount = 0;
   Map<String, List<IntroductionModel>> _groupedIntros = {};
+  List<FoldedIntroductionReviewItem> _foldedReviewItems = const [];
   Map<String, String> _introducerUsernames = {};
   List<PendingGroupInvite> _pendingGroupInvites = [];
   final Set<String> _processingIntroductionIds = <String>{};
@@ -271,6 +273,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       reviewCount: _introsCount + _pendingGroupInvites.length,
       introsData: OrbitIntrosViewData(
         groupedIntros: _groupedIntros,
+        foldedReviewItems: List<FoldedIntroductionReviewItem>.unmodifiable(
+          _foldedReviewItems,
+        ),
         introducerUsernames: _introducerUsernames,
         ownPeerId: _identity?.peerId ?? '',
         pendingGroupInvites: List<PendingGroupInvite>.unmodifiable(
@@ -699,6 +704,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         peerId: ownPeerId,
       );
       final grouped = groupByIntroducer(pending);
+      final foldedReviewItems = foldIntroductionsForReview(
+        introductions: pending,
+        ownPeerId: ownPeerId,
+      );
       final usernames = <String, String>{};
       for (final intro in pending) {
         usernames.putIfAbsent(
@@ -707,8 +716,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         );
       }
       if (!mounted || requestId != _introLoadRequestId) return;
-      _introsCount = pending.length;
+      _introsCount = countFoldedPendingIntroductionTargets(
+        introductions: pending,
+        ownPeerId: ownPeerId,
+      );
       _groupedIntros = grouped;
+      _foldedReviewItems = foldedReviewItems;
       _introducerUsernames = usernames;
       _publishListProjection();
     } catch (e) {
@@ -718,6 +731,33 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  FoldedIntroductionReviewItem? _foldedIntroForActionId(String introductionId) {
+    for (final item in _foldedReviewItems) {
+      if (item.displaySourceIntroductionId == introductionId ||
+          item.introductionIds.contains(introductionId)) {
+        return item;
+      }
+    }
+    return null;
+  }
+
+  bool _isAnyFoldedIntroIdProcessing(FoldedIntroductionReviewItem item) {
+    return item.introductionIds.any(_processingIntroductionIds.contains);
+  }
+
+  String _otherPeerIdForIntroduction(
+    IntroductionModel introduction,
+    String ownPeerId,
+  ) {
+    if (introduction.recipientId == ownPeerId) {
+      return introduction.introducedId;
+    }
+    if (introduction.introducedId == ownPeerId) {
+      return introduction.recipientId;
+    }
+    return '';
   }
 
   void _markContactChanged(String peerId) {
@@ -811,9 +851,61 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _onAcceptIntro(String introductionId) async {
     final identity = _identity;
     final introRepo = widget.introductionRepository;
-    if (identity == null ||
-        introRepo == null ||
-        _processingIntroductionIds.contains(introductionId)) {
+    if (identity == null || introRepo == null) {
+      return;
+    }
+
+    final foldedIntro = _foldedIntroForActionId(introductionId);
+    if (foldedIntro != null) {
+      if (_isAnyFoldedIntroIdProcessing(foldedIntro)) {
+        return;
+      }
+
+      final processingIds = Set<String>.from(foldedIntro.introductionIds);
+      _processingIntroductionIds.addAll(processingIds);
+      _publishListProjection();
+      try {
+        final batch = await acceptFoldedIntroduction(
+          introRepo: introRepo,
+          contactRepo: widget.contactRepo,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          foldedIntroduction: foldedIntro,
+          ownPeerId: identity.peerId,
+          ownUsername: identity.username,
+          messageRepo: widget.messageRepo,
+        );
+        final changedPeerIds = <String>{};
+        for (final result in batch.appliedResults) {
+          final updated = result.introduction;
+          if (updated == null ||
+              updated.status != IntroductionOverallStatus.mutualAccepted) {
+            continue;
+          }
+          final otherPeerId = _otherPeerIdForIntroduction(
+            updated,
+            identity.peerId,
+          );
+          if (otherPeerId.isNotEmpty) {
+            changedPeerIds.add(otherPeerId);
+          }
+        }
+        for (final peerId in changedPeerIds) {
+          _markContactChanged(peerId);
+          await _refreshOrbitFriend(peerId);
+        }
+        _refreshPendingIntroductionsOnPop = true;
+        await _loadIntroductions();
+      } finally {
+        _processingIntroductionIds.removeAll(processingIds);
+        if (mounted) {
+          _publishListProjection();
+        }
+      }
+      return;
+    }
+
+    if (_processingIntroductionIds.contains(introductionId)) {
       return;
     }
 
@@ -853,9 +945,41 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _onPassIntro(String introductionId) async {
     final identity = _identity;
     final introRepo = widget.introductionRepository;
-    if (identity == null ||
-        introRepo == null ||
-        _processingIntroductionIds.contains(introductionId)) {
+    if (identity == null || introRepo == null) {
+      return;
+    }
+
+    final foldedIntro = _foldedIntroForActionId(introductionId);
+    if (foldedIntro != null) {
+      if (_isAnyFoldedIntroIdProcessing(foldedIntro)) {
+        return;
+      }
+
+      final processingIds = Set<String>.from(foldedIntro.introductionIds);
+      _processingIntroductionIds.addAll(processingIds);
+      _publishListProjection();
+      try {
+        await passFoldedIntroduction(
+          introRepo: introRepo,
+          contactRepo: widget.contactRepo,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          foldedIntroduction: foldedIntro,
+          ownPeerId: identity.peerId,
+          ownUsername: identity.username,
+        );
+        _refreshPendingIntroductionsOnPop = true;
+        await _loadIntroductions();
+      } finally {
+        _processingIntroductionIds.removeAll(processingIds);
+        if (mounted) {
+          _publishListProjection();
+        }
+      }
+      return;
+    }
+
+    if (_processingIntroductionIds.contains(introductionId)) {
       return;
     }
 
