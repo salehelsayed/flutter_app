@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/introduction/application/load_introductions_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/presentation/widgets/intro_group_header.dart';
+import 'package:flutter_app/features/introduction/presentation/widgets/intro_row.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
@@ -244,6 +246,79 @@ void main() {
     });
 
     testWidgets(
+      'renders duplicate aboza introductions as one folded row in the active intros sliver',
+      (tester) async {
+        suppressOverflowErrors();
+        tester.view.physicalSize = testViewSize;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final now = DateTime.now().toUtc();
+        final intro1 = IntroductionModel(
+          id: 'intro-noor',
+          introducerId: 'peer-noor',
+          recipientId: 'peer-me',
+          introducedId: 'peer-aboza',
+          introducerUsername: 'Noor',
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: now.subtract(const Duration(minutes: 1)).toIso8601String(),
+        );
+        final intro2 = IntroductionModel(
+          id: 'intro-layla',
+          introducerId: 'peer-layla',
+          recipientId: 'peer-me',
+          introducedId: 'peer-aboza',
+          introducerUsername: 'Layla',
+          recipientUsername: 'Me',
+          introducedUsername: 'aboza',
+          createdAt: now.toIso8601String(),
+        );
+        final folded = foldIntroductionsForReview(
+          introductions: [intro1, intro2],
+          ownPeerId: 'peer-me',
+        );
+        final introsData = OrbitIntrosViewData(
+          groupedIntros: {
+            'peer-noor': [intro1],
+            'peer-layla': [intro2],
+          },
+          foldedReviewItems: folded,
+          introducerUsernames: const {
+            'peer-noor': 'Noor',
+            'peer-layla': 'Layla',
+          },
+          ownPeerId: 'peer-me',
+          onAccept: (_) {},
+          onPass: (_) {},
+          onDelete: (_) {},
+        );
+
+        await tester.pumpWidget(
+          buildOrbitScreen(filterTab: 'intros', introsData: introsData),
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+
+        final row = find.byType(IntroRow);
+        expect(find.byType(CustomScrollView), findsOneWidget);
+        expect(find.byType(ListView), findsNothing);
+        expect(row, findsOneWidget);
+        expect(find.text('aboza'), findsOneWidget);
+        expect(find.text('Accept'), findsOneWidget);
+        expect(find.text('Pass'), findsOneWidget);
+        expect(
+          find.descendant(of: row, matching: find.textContaining('Noor')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: row, matching: find.textContaining('Layla')),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
       'intros tab renders grouped intros and carries the correct pending count',
       (tester) async {
         suppressOverflowErrors();
@@ -311,23 +386,25 @@ void main() {
       },
     );
 
-    testWidgets('hides the intro banner when there are no pending review items',
-        (tester) async {
-      suppressOverflowErrors();
-      tester.view.physicalSize = testViewSize;
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+    testWidgets(
+      'hides the intro banner when there are no pending review items',
+      (tester) async {
+        suppressOverflowErrors();
+        tester.view.physicalSize = testViewSize;
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(buildOrbitScreen(filterTab: 'all'));
-      await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpWidget(buildOrbitScreen(filterTab: 'all'));
+        await tester.pump(const Duration(milliseconds: 500));
 
-      expect(find.textContaining('item pending'), findsNothing);
-      expect(
-        find.text('Review and accept introductions to start chatting'),
-        findsNothing,
-      );
-    });
+        expect(find.textContaining('item pending'), findsNothing);
+        expect(
+          find.text('Review and accept introductions to start chatting'),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('shows singular intro banner copy for one pending intro', (
       tester,

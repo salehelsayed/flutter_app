@@ -28,7 +28,7 @@ flutter test --no-pub \
 INTRO_E2E_SCENARIO=copy ./smoke_test_friends.sh
 ```
 
-**Three-simulator E2E** (requires `reset_simulators.sh` via `smoke_test_friends.sh` -- notification popup bypass is automatic with `E2E_TEST_MODE=true`):
+**Simulator E2E** (requires `reset_simulators.sh` via `smoke_test_friends.sh` -- notification popup bypass is automatic with `E2E_TEST_MODE=true`; the folded duplicate scenario uses four identities):
 
 | Command | What it runs |
 |---------|-------------|
@@ -41,7 +41,8 @@ INTRO_E2E_SCENARIO=copy ./smoke_test_friends.sh
 | `INTRO_E2E_SCENARIO=offline-chat ./smoke_test_friends.sh` | Offline relay to first chat |
 | `INTRO_E2E_SCENARIO=pass-fallback ./smoke_test_friends.sh` | Pass fallback inbox drain |
 | `INTRO_E2E_SCENARIO=split-brain ./smoke_test_friends.sh` | Waiting-vs-connected recovery |
-| `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh` | Full intro matrix |
+| `INTRO_E2E_SCENARIO=folded-duplicate ./smoke_test_friends.sh` | Four-identity folded duplicate acceptance |
+| `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh` | Full intro matrix, including folded duplicate acceptance |
 
 Screenshots from device runs are saved under `build/intro_e2e/`.
 
@@ -335,6 +336,29 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | | returns empty list when no intros exist | Empty state |
 | `groupByIntroducer` | groups correctly by introducer ID | Grouping logic |
 | | empty list returns empty map | Empty input |
+| `foldIntroductionsForReview` | folds two pending rows from different introducers to the same target | Folded duplicate review projection |
+| | keeps different target peers separate | Distinct target preservation |
+| | resolves target from introduced id for recipient viewer | Recipient-side target resolution |
+| | resolves target from recipient id for introduced viewer | Introduced-side target resolution |
+| | newest row drives display fallback without dropping older rows | Stable display-source fallback |
+| | preserves factual current-viewer action state ids | Per-row decision state preservation |
+| | projects deserialized persisted rows without mutating raw maps | Upgrade-style persisted-row compatibility |
+| `countFoldedPendingIntroductionTargets` | folds duplicate pending recipient-side targets | Folded badge/review count truth |
+| | folds duplicate pending introduced-side targets | Introduced-side folded count truth |
+| | counts distinct pending counterparties separately | Distinct target count truth |
+| | excludes non-pending rows while counting one-sided accepted pending rows | Terminal-state and pending-state count rules |
+
+### 3.10a Folded Introduction Response
+**File:** `test/features/introduction/application/folded_introduction_response_use_case_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| folded accept applies across mixed recipient and introduced roles | One folded Accept updates all pending underlying intro ids |
+| folded pass applies across mixed recipient and introduced roles | One folded Pass updates all pending underlying intro ids |
+| stale folded accept skips duplicate sends after first apply | Duplicate folded Accept idempotency |
+| stale folded pass skips duplicate sends after first apply | Duplicate folded Pass idempotency |
+| non-party folded accept and pass fail without mutation or sends | Caller membership guard |
+| ML-KEM mismatch returns failed results without hiding pending nulls | Per-id failure reporting and key mismatch guard |
 
 ### 3.11 IntroductionPayload Serialization
 **File:** `test/features/introduction/application/introduction_payload_test.dart`
@@ -463,6 +487,8 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | passed state shows Passed label | Passed UI |
 | alreadyConnected state shows status only and no actions | Already-connected UI |
 | shows introducer attribution | Attribution rendering |
+| shows multiple introducer attributions in one row | Folded duplicate multi-introducer attribution |
+| processing state disables both actions and shows feedback | Folded row processing affordance companion |
 | displayUsername uses RTL for Arabic-first mixed text | RTL text direction |
 | displayUsername uses LTR for English-first mixed text | LTR text direction |
 | introducer attribution keeps Arabic-first username explicit | RTL attribution |
@@ -483,6 +509,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | accept callback triggered on tap | Accept wiring |
 | pass callback triggered on tap | Pass wiring |
 | status label shown for responded intros | Post-response UI |
+| renders duplicate aboza introductions as one folded review row | Folded duplicate row rendering |
 
 **File:** `test/features/introduction/presentation/widgets/intros_tab_extended_test.dart`
 
@@ -493,6 +520,7 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | empty state shows placeholder text | Placeholder copy |
 | blank or null usernames fall back to peer ids | Fallback display name |
 | very long usernames still render with actions intact | Overflow handling |
+| folded attribution falls back for blank introducer names and keeps long names actionable | Folded attribution fallback and action preservation |
 
 ### 4.4 IntroGroupHeader
 **File:** `test/features/introduction/presentation/widgets/intro_group_header_test.dart`
@@ -773,6 +801,10 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | startup repairs a stale persisted mutual acceptance row | Lifecycle reconciliation on boot |
 | live intro delete confirmation removes the row, clears the badge, and marks route-return refresh | Delete confirmation flow |
 | canceling live intro delete keeps the row and badge count | Delete cancellation guard |
+| folds duplicate pending introduction targets in the Orbit intro count | Folded Orbit count truth |
+| folds duplicate pending introduction targets into one OrbitWired intro row and badge target | Active Orbit folded row publication |
+| accepting a folded Orbit intro disables the folded row and updates every underlying intro once | Folded Accept wiring and duplicate-tap guard |
+| passing a folded Orbit intro disables the folded row and updates every underlying intro once | Folded Pass wiring and duplicate-tap guard |
 | pending group invites are visible from the Intros tab and counted in the Orbit badge | Group invite in intros UI |
 | accepting a pending group invite from Intros joins the group | Group join from intros tab |
 
@@ -785,11 +817,19 @@ QA checklist from the `c4-code.md` source-of-truth review:
 | shows empty state when no archived friends and no groups | Archived empty state |
 | shows groups in all tab | Group rendering in default view |
 | renders intros in the sliver list without nested ListView | Orbit intro review sliver rendering |
+| renders duplicate aboza introductions as one folded row in the active intros sliver | Active Orbit folded duplicate rendering |
 | intros tab renders grouped intros and carries the correct pending count | Orbit intro grouping plus `Intros` count truth |
 | hides the intro banner when there are no pending review items | Orbit intro banner hidden state for zero pending intros |
 | shows singular intro banner copy for one pending intro | Orbit intro banner singular pending-count copy |
 | shows plural intro banner copy for multiple pending intros | Orbit intro banner plural pending-count copy |
 | live intro row reveals delete on swipe | Orbit intro row swipe affordance |
+
+### 7.9 Feed Wired (intro badge subset)
+**File:** `test/features/feed/presentation/screens/feed_wired_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| loads the Orbit badge from folded pending introduction targets on first load | Feed entry-point badge uses folded target count |
 
 ---
 
@@ -831,6 +871,8 @@ that used to lack direct coverage:
 - **Concurrent intro-chain isolation**: Covered on 2026-04-09 by the concurrent-chain isolation regression in `test/features/introduction/integration/introduction_multi_node_test.dart` and a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Offline relay intro to first chat**: Covered on 2026-04-09 by `INTRO_E2E_SCENARIO=offline-chat ./smoke_test_friends.sh`, the offline-relay-to-first-chat regression in `test/features/introduction/integration/introduction_multi_node_test.dart`, and a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Pass fallback after unreachable peers**: Covered on 2026-04-09 by `INTRO_E2E_SCENARIO=pass-fallback ./smoke_test_friends.sh`, the pass-fallback inbox regression in `test/features/introduction/integration/introduction_multi_node_test.dart`, and a green rerun of `./scripts/run_test_gates.sh intro`.
+- **Folded duplicate intro review and acceptance**: Covered on 2026-05-07 by the folded projection/count tests in `load_introductions_test.dart`, folded Accept/Pass wrapper tests in `folded_introduction_response_use_case_test.dart`, folded `IntroRow`/`IntrosTab`/`OrbitScreen` widget tests, folded `OrbitWired` action and badge tests, the Feed folded badge companion, `./scripts/run_test_gates.sh intro`, and a green uninterrupted retry of `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh`. The first `all` attempt timed out in scenario 3 `pass-handshake` before intro send/pass/folded behavior, with A/C complete and B still `running`; the exact retry passed scenarios 1-11 and ended with `=== Intro E2E harness passed ===`.
+- **Four-identity folded duplicate simulator fixture**: `INTRO_E2E_SCENARIO=folded-duplicate ./smoke_test_friends.sh` and scenario 11 of `INTRO_E2E_SCENARIO=all ./smoke_test_friends.sh` require introducer A, current viewer B, introduced target C, and second introducer D. Current 2026-05-07 fixture intake passed with `flutter devices --machine` and `xcrun simctl list devices available`; the final `all` retry proved the four-identity folded duplicate acceptance path.
 - **Push notification trigger path**: Exact intro title/body content is now covered on 2026-04-13 across the introducer- and participant-role listener regressions in `introduction_listener_test.dart`, the introducer copy helpers in `introduction_copy_test.dart`, the role-correct intro fallback copy regression in `background_push_notification_fallback_test.dart`, and green reruns of `./scripts/run_test_gates.sh intro` plus `./scripts/run_test_gates.sh baseline`; end-to-end FCM/APNs trigger delivery still is not exercised beyond routing.
 - **Post-expiry re-introduction**: Covered on 2026-04-09 by the expired-refresh regressions in `test/features/introduction/application/send_introduction_test.dart` and `test/features/introduction/integration/introduction_smoke_test.dart`, plus a green rerun of `./scripts/run_test_gates.sh intro`.
 - **Sender-side persistence window**: Covered on 2026-04-09 by the `send_introduction_test.dart` crash-window regression, `INTRO_E2E_SCENARIO=repair ./smoke_test_friends.sh`, and green intro/transport gates; future regressions should keep using the same repair path.
