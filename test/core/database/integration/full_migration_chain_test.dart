@@ -63,6 +63,7 @@ import 'package:flutter_app/core/database/migrations/063_group_pending_key_repai
 import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
+import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository_impl.dart';
@@ -149,7 +150,8 @@ void main() {
     await runGroupWelcomeKeyPackageTombstonesMigration(db);
     await runGroupHistoryGapRepairsMigration(db);
     await runGroupSyncReceiptsMigration(db);
-    await runGroupSyncReceiptsMigration(db);
+    await runGroupInviteDeliveryAttemptsMigration(db);
+    await runGroupInviteDeliveryAttemptsMigration(db);
 
     final groupCols53 = await getColumnNames(db, 'groups');
     expect(groupCols53, contains('last_membership_event_at'));
@@ -175,6 +177,7 @@ void main() {
     expect(await getTableNames(db), contains('group_history_gap_repairs'));
     expect(await getTableNames(db), contains('group_inbox_cursors'));
     expect(await getTableNames(db), contains('group_message_receipts'));
+    expect(await getTableNames(db), contains('group_invite_delivery_attempts'));
     final groupMessageCols61 = await getColumnNames(db, 'group_messages');
     expect(groupMessageCols61, contains('transport_peer_id'));
   }
@@ -241,6 +244,7 @@ void main() {
   }) async {
     await runUpgradePathFromV1ThroughV65(db, keyStore: keyStore);
     await runGroupSyncReceiptsMigration(db);
+    await runGroupInviteDeliveryAttemptsMigration(db);
   }
 
   MessageRepositoryImpl buildMessageRepository(Database db) {
@@ -388,6 +392,7 @@ void main() {
           'group_history_gap_repairs',
           'group_inbox_cursors',
           'group_message_receipts',
+          'group_invite_delivery_attempts',
         ]),
       );
 

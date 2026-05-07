@@ -53,6 +53,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
@@ -104,6 +105,8 @@ class OrbitWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupInviteDeliveryAttemptRepository?
+  groupInviteDeliveryAttemptRepository;
   final GroupPendingKeyRepairRepository? groupPendingKeyRepairRepository;
   final GroupHistoryGapRepairRepository? groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepository?
@@ -146,6 +149,7 @@ class OrbitWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupInviteDeliveryAttemptRepository,
     this.groupPendingKeyRepairRepository,
     this.groupHistoryGapRepairRepository,
     this.groupReactionReplayOutboxRepository,
@@ -1875,6 +1879,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
               groupMessageListener: groupMessageListener,
+              inviteDeliveryAttemptRepo:
+                  widget.groupInviteDeliveryAttemptRepository,
               bridge: widget.bridge,
               identityRepo: widget.identityRepo,
               contactRepo: widget.contactRepo,
@@ -1920,6 +1926,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               groupRepo: groupRepository,
               msgRepo: groupMessageRepository,
               groupMessageListener: groupMessageListener,
+              inviteDeliveryAttemptRepo:
+                  widget.groupInviteDeliveryAttemptRepository,
               contactRepo: widget.contactRepo,
               bridge: widget.bridge,
               identityRepo: widget.identityRepo,

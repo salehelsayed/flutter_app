@@ -20,6 +20,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_welcome_key_package.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -35,6 +36,7 @@ class GroupListWired extends StatefulWidget {
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
   final GroupMessageListener groupMessageListener;
+  final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final Bridge bridge;
   final IdentityRepository identityRepo;
   final ContactRepository contactRepo;
@@ -57,6 +59,7 @@ class GroupListWired extends StatefulWidget {
     required this.groupRepo,
     required this.msgRepo,
     required this.groupMessageListener,
+    this.inviteDeliveryAttemptRepo,
     required this.bridge,
     required this.identityRepo,
     required this.contactRepo,
@@ -203,6 +206,7 @@ class _GroupListWiredState extends State<GroupListWired>
               groupRepo: widget.groupRepo,
               msgRepo: widget.msgRepo,
               groupMessageListener: widget.groupMessageListener,
+              inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
               bridge: widget.bridge,
               identityRepo: widget.identityRepo,
               contactRepo: widget.contactRepo,

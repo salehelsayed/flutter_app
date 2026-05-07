@@ -891,7 +891,7 @@ void main() {
           groupConfig: rejoinConfig,
         );
 
-        expect(sendResult, equals(SendGroupInviteResult.success));
+        expect(sendResult, equals(SendGroupInviteResult.queued));
         expect(
           adminP2P.sendMessageCallCount,
           1,
@@ -1593,6 +1593,7 @@ void main() {
           msgRepo: receiverMsgRepo,
           getOwnMlKemSecretKey: () async => _receiverMlKemSecretKey,
           getOwnPeerId: () async => _receiverPeerId,
+          now: () => DateTime.utc(2026, 4, 30, 12, 10),
         );
         addTearDown(listener.dispose);
         addTearDown(groupInviteStreamController.close);

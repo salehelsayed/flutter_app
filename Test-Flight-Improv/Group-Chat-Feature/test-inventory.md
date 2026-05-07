@@ -121,7 +121,7 @@ cd go-mknoon && go test ./crypto/ ./internal/ ./node/ ./bridge/ ./cmd/testpeer/ 
 |-|------:|------:|
 | **All (Dart + Go)** | **159** | **1474** |
 
-> **Note:** Dart file counts reflect distinct `_test.dart` files. Some inventory sections cover multiple files (e.g., 4.9 covers `archive_group_use_case_test.dart` + `unarchive_group_use_case_test.dart`; 4.30 covers three reaction test files). Dart test counts are `grep`-verified against `test()`/`testWidgets()` declarations in each file. Cross-feature test counts include only the group-relevant subset from shared test files. Go test counts reflect only group-related `func Test*` functions in files that may also contain non-group tests; counts are `grep`-verified against `func Test.*[Gg]roup` patterns and manual review for files with indirect group test names. Aggregate totals reflect the tracked 2026-04-29 inventory updates plus row closure notes below; DB-002 closure evidence is recorded in the crosswalk, and aggregate totals were not fully recounted during that row closure. Report 90 GMAR-005 closure on 2026-05-03 adds final acceptance evidence without a full aggregate recount: direct GMAR suites, configured simulator media proofs, paired simulator routing/group and foreground group push smoke commands, device-pinned `all`, `completeness-check` (`712/712`), broad `flutter test`, `cd go-mknoon && go test ./...`, and `git diff --check` all passed.
+> **Note:** Dart file counts reflect distinct `_test.dart` files. Some inventory sections cover multiple files (e.g., 4.9 covers `archive_group_use_case_test.dart` + `unarchive_group_use_case_test.dart`; 4.30 covers three reaction test files). Dart test counts are `grep`-verified against `test()`/`testWidgets()` declarations in each file. Cross-feature test counts include only the group-relevant subset from shared test files. Go test counts reflect only group-related `func Test*` functions in files that may also contain non-group tests; counts are `grep`-verified against `func Test.*[Gg]roup` patterns and manual review for files with indirect group test names. Aggregate totals reflect the tracked 2026-04-29 inventory updates plus row closure notes below; DB-002 closure evidence is recorded in the crosswalk, and aggregate totals were not fully recounted during that row closure. Report 90 GMAR-005 closure on 2026-05-03 adds final acceptance evidence without a full aggregate recount: direct GMAR suites, configured simulator media proofs, paired simulator routing/group and foreground group push smoke commands, device-pinned `all`, `completeness-check` (`712/712`), broad `flutter test`, `cd go-mknoon && go test ./...`, and `git diff --check` all passed. GIS-001 closure on 2026-05-07 adds row-level invite-status coverage below without a full aggregate recount; the accepted gate evidence classified `730/730` test files.
 
 ## 0. Row Closure Crosswalk (2026-04-11)
 
@@ -360,6 +360,22 @@ EK-001 closes with a Go host-level transport-security proof. `TestSecureLibp2pCh
 
 EK-002 closes with infrastructure-visible payload proof across live relay, mailbox/inbox-store, and persisted retry storage paths. Go PubSub tests prove live group message and reaction envelopes expose only encrypted ciphertext/nonce while protected plaintext remains decryptable only with the group key. Go inbox-store tests prove mailbox request JSON preserves an opaque encrypted replay envelope and omits sensitive plaintext. The new Flutter retry test keeps `group.encrypt` opaque, forces inbox-store failure, and proves both persisted pending retry JSON and the attempted `group:inboxStore` command omit protected message body, invite/private-state fragments, media encryption key material, and plaintext push previews while carrying a `group_offline_replay` envelope. Focused Go, focused Flutter, broader storage-path Dart bundle, `groups`, `completeness-check`, and `git diff --check` passed. Signature, future-epoch, replay-protection, transport-security, and secure-storage rows remain separate.
 
+## 0L. GIS-001 Local Group Invite Delivery Status Closure (2026-05-07)
+
+GIS-001 closes local, backward-compatible invite delivery status tracking for
+group creation/add-member flows and Group Info. Evidence covers migration `067`,
+DB helper upsert/load/update/delete semantics, repository projection including
+legacy `unknown`, direct invite `queued` mapping for inbox fallback,
+create-flow `needs_resend` and `cannot_send` status recording, `member_joined`
+to `joined`, Group Info status badges and `Send again`, and manual resend
+without duplicate membership publication. Accepted gates: all direct
+GIS-001 persistence/application/presentation tests, `invite_round_trip_test.dart`,
+focused groups application/presentation regressions, contact-request
+integration, `baseline`, `groups`, device-pinned `transport`,
+`completeness-check` (`730/730`), and `git diff --check`. Protocol ACKs,
+delivery receipts, `members_added` changes, group invite wire-format changes,
+and key-format changes remain out of scope.
+
 ---
 
 ## 1. Domain Layer
@@ -553,6 +569,15 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | | saveConsumedInvite and getConsumedInvite round-trip | Consumption tombstone persistence |
 | | deleteExpiredConsumedInvites removes expired consumptions only | Consumption cleanup |
 
+### 1.15 GroupInviteDeliveryAttemptRepositoryImpl
+**File:** `test/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| round-trips all persisted invite delivery statuses | `sent`, `queued`, `needs_resend`, `cannot_send`, and `joined` repository persistence |
+| projects no-row legacy members as unknown | Legacy/pre-migration compatibility |
+| maps helper rows without UI logic | Repository row mapping and `lastError` preservation |
+
 ---
 
 ## 2. Data Layer (DB Helpers)
@@ -687,6 +712,16 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | | exact duplicate source event is idempotent but changed replay is rejected | Replay idempotence and tamper rejection |
 | `dbVerifyGroupEventLogChain` | chain verification detects row tampering | Manual DB tamper detection |
 
+### 2.8 Group Invite Delivery Attempts DB Helpers
+**File:** `test/core/database/helpers/group_invite_delivery_attempts_db_helpers_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| upserts and loads invite delivery attempts by group/member | Group/member lookup and username/status persistence |
+| loads all attempts for a group in stable member order | Group-scoped list ordering |
+| updates status without losing original attempt timestamp | Status update, updated timestamp, and error clearing |
+| deletes rows by group/member and by group | Targeted and group-wide cleanup |
+
 ---
 
 ## 3. Data Layer (DB Migrations)
@@ -801,6 +836,15 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 |------|----------------|
 | creates group event log table and indexes idempotently | Durable `group_event_log` table, uniqueness constraints, indexes, and insertability |
 
+### 3.13 Migration 067: group_invite_delivery_attempts
+**File:** `test/core/database/migrations/067_group_invite_delivery_attempts_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| creates local invite delivery attempts table and indexes | Local status table columns plus group/status and peer indexes |
+| is idempotent | Migration safety |
+| enforces one status row per group/member and allowed statuses | `(group_id, peer_id)` uniqueness and status check constraint |
+
 ---
 
 ## 4. Application Layer
@@ -839,7 +883,8 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | | uses auto-generated name with +N suffix for 3+ contacts | Auto-naming overflow |
 | | uses provided name when name is not null | Explicit naming |
 | | rejects over-limit selection before creating a group | Membership limit |
-| | succeeds locally even when P2P invite fails | Partial failure |
+| | succeeds locally even when P2P invite fails | Partial failure + `needs_resend` invite status |
+| | reports missing secure keys as explicit invite degradation | Missing-key truth + `cannot_send` invite status |
 | | propagates announcement type into created group, saved group, and updateConfig | Announcement type |
 
 ### 4.3 sendGroupMessage
@@ -915,7 +960,7 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | | returns nodeNotRunning when p2pService is not started | Node guard |
 | | returns sendFailed when bridge encrypt returns ok=false | Encrypt failure |
 | | returns sendFailed when p2pService returns false and inbox fails | Send + inbox failure |
-| | stores invite in inbox when direct send fails | Inbox fallback |
+| | stores invite in inbox when direct send fails | Inbox fallback + `queued` result |
 | | invite payload includes full groupConfig with members array | Payload shape |
 | | keeps join material and policy details inside encrypted invite payload | Direct + inbox invite privacy |
 | `sendGroupInvitesInParallel` | sends invites to all recipients and returns per-recipient outcomes | Batch send |
@@ -1303,6 +1348,7 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | | unauthorized group_metadata_updated is ignored | Auth guard |
 | | members_added saves all members and calls updateConfig | Batch member-add |
 | | member_joined saves a durable join timeline event | Durable join timeline |
+| | member_joined marks invite delivery status as joined | Invite status convergence |
 | | unauthorized members_added is ignored | Auth guard |
 | `member_removed system messages` | unauthorized member_removed is ignored | Auth guard |
 | | replayed unauthorized member_removed is ignored | Replay auth guard |
@@ -1441,6 +1487,15 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | receiver processes key update and syncs Go validator | Key update receipt |
 | first post-removal send uses the rotated epoch | Epoch advancement |
 | voluntary leave rotation excludes leaver and remaining members send on rotated epoch | Voluntary leave rotation baseline |
+
+### 4.34 resendGroupInvite
+**File:** `test/features/groups/application/resend_group_invite_use_case_test.dart`
+
+| Test | What it covers |
+|------|----------------|
+| resend sends only the invite and updates status to sent | Manual resend happy path, no `group:publish`, no duplicate member |
+| resend records needs_resend when direct and inbox delivery fail | Failed resend status persistence and inbox fallback attempt |
+| resend does not add missing members | Missing-member guard and no send side effects |
 
 ---
 
@@ -1662,6 +1717,7 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | shows Add Member button when isAdmin | Add-member CTA |
 | hides Add Member button when not admin | Add-member guard |
 | calls onAddMember callback when tapped | Add-member callback |
+| shows invite status and send again only for needs resend | Invite status badge and manual resend action visibility |
 | shows role-management controls only for eligible admin rows | Role controls |
 | shows Edit Details button when admin can edit metadata | Edit CTA |
 | hides Edit Details button when viewer is not admin | Edit guard |
@@ -1673,6 +1729,7 @@ EK-002 closes with infrastructure-visible payload proof across live relay, mailb
 | Group | Test | What it covers |
 |-------|------|----------------|
 | `GroupInfoWired` | loads and displays group members on init | Init loading |
+| | loads invite delivery statuses for member rows | Invite status hydration |
 | | shows Add Member button for admin role | Add-member CTA |
 | | shows the creator username from the real create flow for other members | Creator identity rendering |
 | | hides Add Member button for non-admin role | Add-member guard |

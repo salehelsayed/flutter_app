@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -18,6 +19,8 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 class GroupInfoScreen extends StatelessWidget {
   final GroupModel group;
   final List<GroupMember> members;
+  final Map<String, GroupInviteDeliveryStatus> inviteStatusesByPeerId;
+  final Set<String> resendingInvitePeerIds;
   final Map<String, GroupMemberIdentitySafety> memberSafetyByPeerId;
   final bool isAdmin;
   final String? ownPeerId;
@@ -32,6 +35,7 @@ class GroupInfoScreen extends StatelessWidget {
   final ValueChanged<GroupMember>? onRemoveMember;
   final ValueChanged<GroupMember>? onToggleAdminRole;
   final VoidCallback? onAddMember;
+  final ValueChanged<GroupMember>? onResendInvite;
   final BackgroundPreference backgroundPreference;
   final GroupSecurityStatusViewState? securityStatus;
 
@@ -39,6 +43,8 @@ class GroupInfoScreen extends StatelessWidget {
     super.key,
     required this.group,
     required this.members,
+    this.inviteStatusesByPeerId = const {},
+    this.resendingInvitePeerIds = const {},
     this.memberSafetyByPeerId = const {},
     required this.isAdmin,
     this.ownPeerId,
@@ -53,6 +59,7 @@ class GroupInfoScreen extends StatelessWidget {
     this.onRemoveMember,
     this.onToggleAdminRole,
     this.onAddMember,
+    this.onResendInvite,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.securityStatus,
   });
@@ -488,8 +495,12 @@ class GroupInfoScreen extends StatelessWidget {
           return GroupMemberRow(
             member: member,
             identitySafety: memberSafetyByPeerId[member.peerId],
+            inviteStatus:
+                inviteStatusesByPeerId[member.peerId] ??
+                GroupInviteDeliveryStatus.unknown,
             isAdmin: isAdmin,
             isSelf: isSelf,
+            isResendingInvite: resendingInvitePeerIds.contains(member.peerId),
             onToggleAdminRole:
                 !group.isDissolved &&
                     isAdmin &&
@@ -503,6 +514,16 @@ class GroupInfoScreen extends StatelessWidget {
                     !isSelf &&
                     onRemoveMember != null
                 ? () => onRemoveMember!(member)
+                : null,
+            onResendInvite:
+                !group.isDissolved &&
+                    isAdmin &&
+                    !isSelf &&
+                    onResendInvite != null &&
+                    (inviteStatusesByPeerId[member.peerId] ??
+                            GroupInviteDeliveryStatus.unknown) ==
+                        GroupInviteDeliveryStatus.needsResend
+                ? () => onResendInvite!(member)
                 : null,
           );
         }),

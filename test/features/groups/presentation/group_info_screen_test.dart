@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -55,6 +56,7 @@ void main() {
     VoidCallback? onDeleteLocally,
     ValueChanged<GroupMember>? onToggleAdminRole,
     ValueChanged<GroupMember>? onRemoveMember,
+    ValueChanged<GroupMember>? onResendInvite,
     VoidCallback? onAddMember,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
@@ -77,6 +79,7 @@ void main() {
         onRemoveMember: onRemoveMember,
         onToggleAdminRole: onToggleAdminRole,
         onAddMember: onAddMember,
+        onResendInvite: onResendInvite,
         backgroundPreference: backgroundPreference,
         securityStatus: securityStatus,
       ),
@@ -111,6 +114,43 @@ void main() {
 
     expect(find.text('admin'), findsOneWidget);
     expect(find.text('writer'), findsOneWidget);
+  });
+
+  testWidgets('shows invite status and send again only for needs resend', (
+    tester,
+  ) async {
+    GroupMember? resentMember;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GroupInfoScreen(
+          group: testGroup,
+          members: testMembers,
+          inviteStatusesByPeerId: const {
+            'peer-member': GroupInviteDeliveryStatus.needsResend,
+          },
+          isAdmin: true,
+          ownPeerId: 'peer-admin',
+          onBack: () {},
+          onLeave: () {},
+          onResendInvite: (member) => resentMember = member,
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('group-member-invite-status-peer-member')),
+      findsOneWidget,
+    );
+    expect(find.text('Needs resend'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('group-member-resend-invite-peer-member')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('group-member-resend-invite-peer-member')),
+    );
+    expect(resentMember?.peerId, 'peer-member');
   });
 
   testWidgets('shows identity warning and safety numbers for changed member', (
@@ -179,6 +219,13 @@ void main() {
   testWidgets('shows leave button', (tester) async {
     await tester.pumpWidget(buildTestWidget(members: testMembers));
 
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('group-leave-button')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+
     expect(find.text('Leave Group'), findsOneWidget);
     expect(find.byKey(const ValueKey('group-leave-button')), findsOneWidget);
     expect(
@@ -191,6 +238,13 @@ void main() {
     await tester.pumpWidget(
       buildTestWidget(members: testMembers, isAdmin: true, onDissolve: () {}),
     );
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('group-dissolve-button')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
 
     expect(find.text('Dissolve Group'), findsOneWidget);
     expect(find.byKey(const ValueKey('group-dissolve-button')), findsOneWidget);
