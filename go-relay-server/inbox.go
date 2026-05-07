@@ -681,16 +681,23 @@ func NewInboxStoreWithBackend(backend InboxBackend, push *PushService) *InboxSto
 	}
 }
 
-func (is *InboxStore) Store(toPeerId string, entry inboxMessage) bool {
+func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
 	entry = ensureInboxMessageID(entry)
-	stored := is.backend.Store(toPeerId, entry)
-	if !stored {
+	result, err := is.backend.Store(toPeerId, entry)
+	if err != nil {
+		log.Printf("[INBOX] Store failed for %s from %s: %v",
+			toPeerId[:min(20, len(toPeerId))],
+			entry.From[:min(20, len(entry.From))],
+			err)
+		return "", err
+	}
+	if result == InboxStoreResultDuplicate {
 		// Duplicate — do not fire push notification.
 		log.Printf("[INBOX] Duplicate message for %s from %s — skipped",
 			toPeerId[:min(20, len(toPeerId))],
 			entry.From[:min(20, len(entry.From))])
 		inboxStoredCounter.Inc() // still count for metrics visibility
-		return false
+		return InboxStoreResultDuplicate, nil
 	}
 	inboxStoredCounter.Inc()
 	if biz != nil {
@@ -705,7 +712,7 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) bool {
 	if metadata := extractChatPushMetadata(entry.Message); metadata.ShouldNotify {
 		go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
 	}
-	return true
+	return InboxStoreResultStored, nil
 }
 
 func (is *InboxStore) Retrieve(peerId string, limit int) []inboxMessage {
@@ -1218,6 +1225,7 @@ type inboxRequest struct {
 type inboxResponse struct {
 	Status        string                 `json:"status"`
 	Error         string                 `json:"error,omitempty"`
+	StoreStatus   string                 `json:"storeStatus,omitempty"`
 	Messages      []inboxMessage         `json:"messages,omitempty"`
 	HasMore       bool                   `json:"hasMore,omitempty"`
 	Acked         int                    `json:"acked,omitempty"`
@@ -1309,8 +1317,12 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 				Timestamp: time.Now().UnixMilli(),
 				Metadata:  req.Metadata,
 			}
-			inbox.Store(req.To, entry)
-			resp = inboxResponse{Status: "OK"}
+			result, err := inbox.Store(req.To, entry)
+			if err != nil {
+				resp = inboxResponse{Status: "ERROR", Error: fmt.Sprintf("store failed: %v", err)}
+			} else {
+				resp = inboxResponse{Status: "OK", StoreStatus: string(result)}
+			}
 			// Push notification is now fired inside InboxStore.Store
 			// (only for genuinely new messages, skipped for duplicates).
 		}

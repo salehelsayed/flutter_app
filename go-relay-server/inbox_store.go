@@ -1,10 +1,17 @@
 package main
 
+type InboxStoreResult string
+
+const (
+	InboxStoreResultStored    InboxStoreResult = "stored"
+	InboxStoreResultDuplicate InboxStoreResult = "duplicate"
+)
+
 // InboxBackend abstracts the storage layer for 1:1 inbox messages.
 type InboxBackend interface {
 	// Store appends a message to a peer's inbox.
-	// Returns false if the message is a duplicate (same messageId already stored).
-	Store(toPeerId string, entry inboxMessage) bool
+	// Duplicate means the same messageId is already pending for the peer.
+	Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error)
 
 	// Retrieve returns up to limit messages for a peer in FIFO order
 	// and removes them from the store (destructive read).

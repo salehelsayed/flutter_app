@@ -375,11 +375,11 @@ func TestInboxStore_RetrieveExactlyOnceAcrossInstances(t *testing.T) {
 	inboxB := NewInboxStoreWithBackend(backend, pushB)
 
 	// Store through instance A.
-	inboxA.Store("peer-recipient", inboxMessage{
+	requireInboxStoreResult(t, inboxA, "peer-recipient", inboxMessage{
 		From:      "peer-sender",
 		Message:   "hello from A",
 		Timestamp: time.Now().UnixMilli(),
-	})
+	}, InboxStoreResultStored)
 
 	// Retrieve through instance B (destructive).
 	msgs := inboxB.Retrieve("peer-recipient", 50)
@@ -471,11 +471,11 @@ func TestInboxStore_PaginatedRetrieveKeepsFIFOAcrossInstances(t *testing.T) {
 
 	// Store 5 messages through instance A.
 	for i := 0; i < 5; i++ {
-		inboxA.Store("peer-recipient", inboxMessage{
+		requireInboxStoreResult(t, inboxA, "peer-recipient", inboxMessage{
 			From:      "peer-sender",
 			Message:   fmt.Sprintf("msg-%d", i),
 			Timestamp: time.Now().UnixMilli(),
-		})
+		}, InboxStoreResultStored)
 		time.Sleep(1 * time.Millisecond) // ensure distinct timestamps
 	}
 
@@ -516,11 +516,11 @@ func TestInboxStore_RetrievePendingRequiresExplicitAckAcrossInstances(t *testing
 	inboxB := NewInboxStoreWithBackend(backend, pushB)
 
 	for i := 0; i < 3; i++ {
-		inboxA.Store("peer-recipient", inboxMessage{
+		requireInboxStoreResult(t, inboxA, "peer-recipient", inboxMessage{
 			From:      "peer-sender",
 			Message:   fmt.Sprintf("msg-%d", i),
 			Timestamp: time.Now().UnixMilli(),
-		})
+		}, InboxStoreResultStored)
 	}
 
 	page1, hasMore1 := inboxB.RetrievePendingWithMeta("peer-recipient", 2)
@@ -827,13 +827,16 @@ func TestInboxStore_UnsupportedEnvelopeDoesNotSendPush(t *testing.T) {
 	push.sender = recorder.Send
 	inbox := NewInboxStore(push)
 
-	stored := inbox.Store("peer-recipient", inboxMessage{
+	result, err := inbox.Store("peer-recipient", inboxMessage{
 		From:      "peer-sender",
 		Message:   `{"type":"presence_ping","id":"unsupported-1","payload":{"status":"online"}}`,
 		Timestamp: time.Now().UnixMilli(),
 	})
-	if !stored {
-		t.Fatal("expected unsupported envelope to still be stored in inbox")
+	if err != nil {
+		t.Fatalf("Store() error: %v", err)
+	}
+	if result != InboxStoreResultStored {
+		t.Fatalf("Store() result = %q, want %q", result, InboxStoreResultStored)
 	}
 
 	select {
@@ -852,13 +855,16 @@ func TestInboxStore_KeyExchangeRetryContactRequestDoesNotSendPush(t *testing.T) 
 	push.sender = recorder.Send
 	inbox := NewInboxStore(push)
 
-	stored := inbox.Store("peer-recipient", inboxMessage{
+	result, err := inbox.Store("peer-recipient", inboxMessage{
 		From:      "peer-sender",
 		Message:   `{"type":"contact_request","version":"2","intent":"key_exchange_retry","msgId":"req-1","senderUsername":"Alice","encrypted":{"ephemeralPublicKey":"e","ciphertext":"c","nonce":"n"}}`,
 		Timestamp: time.Now().UnixMilli(),
 	})
-	if !stored {
-		t.Fatal("expected retry contact request to still be stored in inbox")
+	if err != nil {
+		t.Fatalf("Store() error: %v", err)
+	}
+	if result != InboxStoreResultStored {
+		t.Fatalf("Store() result = %q, want %q", result, InboxStoreResultStored)
 	}
 
 	select {
@@ -1559,6 +1565,120 @@ func TestHandleInboxStream_RetrievePendingAndAck(t *testing.T) {
 	final := retrievePending()
 	if final.Status != "NO_MESSAGES" {
 		t.Fatalf("expected final retrieve_pending status NO_MESSAGES, got %q", final.Status)
+	}
+}
+
+type failingStoreInboxBackend struct {
+	*memoryInboxBackend
+	err error
+}
+
+func (b *failingStoreInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
+	return "", b.err
+}
+
+func TestHandleInboxStream_StoreBackendErrorReturnsError(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	backend := &failingStoreInboxBackend{
+		memoryInboxBackend: newMemoryInboxBackend(),
+		err:                fmt.Errorf("backend unavailable"),
+	}
+	inbox := NewInboxStoreWithBackend(backend, push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+	senderPeer := env.sender.ID().String()
+
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open store stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action:  "store",
+		To:      recipientPeer,
+		From:    senderPeer,
+		Message: `{"type":"chat_message","version":"2","id":"msg-store-error-001","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+	})
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "ERROR" {
+		t.Fatalf("store status = %q, want ERROR", resp.Status)
+	}
+	if !strings.Contains(resp.Error, "store failed") {
+		t.Fatalf("store error = %q, want store failure context", resp.Error)
+	}
+
+	messages, hasMore := inbox.RetrievePendingWithMeta(recipientPeer, 10)
+	if len(messages) != 0 || hasMore {
+		t.Fatalf("expected no pending messages after failed store, got %d hasMore=%v", len(messages), hasMore)
+	}
+}
+
+func TestHandleInboxStream_StoreDuplicateReturnsOKWithoutSecondPendingMessage(t *testing.T) {
+	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+	senderPeer := env.sender.ID().String()
+	message := `{"type":"chat_message","version":"2","id":"msg-stream-duplicate-001","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
+
+	storeMessage := func() inboxResponse {
+		t.Helper()
+
+		stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+		if err != nil {
+			t.Fatalf("open store stream: %v", err)
+		}
+		defer stream.Close()
+
+		sendInboxReq(t, stream, inboxRequest{
+			Action:  "store",
+			To:      recipientPeer,
+			From:    senderPeer,
+			Message: message,
+		})
+		return recvInboxResp(t, stream)
+	}
+
+	first := storeMessage()
+	if first.Status != "OK" {
+		t.Fatalf("first store status = %q, want OK", first.Status)
+	}
+	if first.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("first storeStatus = %q, want %q", first.StoreStatus, InboxStoreResultStored)
+	}
+
+	second := storeMessage()
+	if second.Status != "OK" {
+		t.Fatalf("second store status = %q, want OK", second.Status)
+	}
+	if second.StoreStatus != string(InboxStoreResultDuplicate) {
+		t.Fatalf("second storeStatus = %q, want %q", second.StoreStatus, InboxStoreResultDuplicate)
+	}
+
+	stream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open retrieve_pending stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action: "retrieve_pending",
+		Limit:  50,
+	})
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "OK" {
+		t.Fatalf("retrieve_pending status = %q, want OK", resp.Status)
+	}
+	if len(resp.Messages) != 1 {
+		t.Fatalf("expected exactly 1 pending message after duplicate store, got %d", len(resp.Messages))
+	}
+	if resp.Messages[0].Message != message {
+		t.Fatalf("pending message = %q, want %q", resp.Messages[0].Message, message)
 	}
 }
 

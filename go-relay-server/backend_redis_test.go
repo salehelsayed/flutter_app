@@ -22,6 +22,24 @@ func newTestRedisClient(t *testing.T, server *miniredis.Miniredis) *redis.Client
 	return client
 }
 
+func requireRedisInboxStoreResult(
+	t *testing.T,
+	backend *redisInboxBackend,
+	toPeerId string,
+	message inboxMessage,
+	want InboxStoreResult,
+) {
+	t.Helper()
+
+	got, err := backend.Store(toPeerId, message)
+	if err != nil {
+		t.Fatalf("Store() error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("Store() result = %q, want %q", got, want)
+	}
+}
+
 func TestRedisRendezvousBackend_RefreshesTTLAndSharesAcrossClients(t *testing.T) {
 	server := miniredis.RunT(t)
 
@@ -57,17 +75,17 @@ func TestRedisInboxBackend_RetrieveOnceAcrossClients(t *testing.T) {
 	backendA := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
 	backendB := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
 
-	backendA.Store("peer-recipient", inboxMessage{
+	requireRedisInboxStoreResult(t, backendA, "peer-recipient", inboxMessage{
 		From:      "peer-sender",
 		Message:   "expired",
 		Timestamp: time.Now().Add(-maxMessageAge - time.Hour).UnixMilli(),
-	})
+	}, InboxStoreResultStored)
 	for i := 0; i < 4; i++ {
-		backendA.Store("peer-recipient", inboxMessage{
+		requireRedisInboxStoreResult(t, backendA, "peer-recipient", inboxMessage{
 			From:      "peer-sender",
 			Message:   fmt.Sprintf("msg-%d", i),
 			Timestamp: time.Now().UnixMilli(),
-		})
+		}, InboxStoreResultStored)
 	}
 
 	page1, hasMore1 := backendB.Retrieve("peer-recipient", 2)
@@ -111,14 +129,43 @@ func TestRedisInboxBackend_DedupesByMessageIDAcrossClients(t *testing.T) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	if !backendA.Store("peer-recipient", entry) {
-		t.Fatal("expected first store to succeed")
+	result, err := backendA.Store("peer-recipient", entry)
+	if err != nil {
+		t.Fatalf("first Store() error: %v", err)
 	}
-	if backendB.Store("peer-recipient", entry) {
-		t.Fatal("expected duplicate store to be rejected")
+	if result != InboxStoreResultStored {
+		t.Fatalf("first Store() result = %q, want %q", result, InboxStoreResultStored)
+	}
+
+	result, err = backendB.Store("peer-recipient", entry)
+	if err != nil {
+		t.Fatalf("duplicate Store() error: %v", err)
+	}
+	if result != InboxStoreResultDuplicate {
+		t.Fatalf("duplicate Store() result = %q, want %q", result, InboxStoreResultDuplicate)
 	}
 	if count := backendA.Count("peer-recipient"); count != 1 {
 		t.Fatalf("expected 1 message after duplicate store, got %d", count)
+	}
+}
+
+func TestRedisInboxBackend_StoreReturnsErrorOnWriteFailure(t *testing.T) {
+	server := miniredis.RunT(t)
+
+	maxPerPeer := DefaultServerLimits().MaxInboxMessagesPerPeer
+	backend := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
+	server.Close()
+
+	result, err := backend.Store("peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   `{"type":"chat_message","version":"2","id":"msg-redis-write-failure-001","text":"hello"}`,
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if err == nil {
+		t.Fatal("expected Store() to return an error after Redis closes")
+	}
+	if result == InboxStoreResultStored || result == InboxStoreResultDuplicate {
+		t.Fatalf("Store() result = %q, want neither stored nor duplicate on failure", result)
 	}
 }
 
@@ -130,11 +177,11 @@ func TestRedisInboxBackend_RetrievePendingRequiresExplicitAckAcrossClients(t *te
 	backendB := newRedisInboxBackend(newTestRedisClient(t, server), "phase2:", maxPerPeer)
 
 	for i := 0; i < 4; i++ {
-		backendA.Store("peer-recipient", inboxMessage{
+		requireRedisInboxStoreResult(t, backendA, "peer-recipient", inboxMessage{
 			From:      "peer-sender",
 			Message:   fmt.Sprintf("msg-%d", i),
 			Timestamp: time.Now().UnixMilli(),
-		})
+		}, InboxStoreResultStored)
 	}
 
 	page1, hasMore1 := backendB.RetrievePending("peer-recipient", 2)

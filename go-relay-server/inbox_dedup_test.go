@@ -6,6 +6,24 @@ import (
 	"time"
 )
 
+func requireInboxStoreResult(
+	t *testing.T,
+	inbox *InboxStore,
+	toPeerId string,
+	message inboxMessage,
+	want InboxStoreResult,
+) {
+	t.Helper()
+
+	got, err := inbox.Store(toPeerId, message)
+	if err != nil {
+		t.Fatalf("Store() error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("Store() result = %q, want %q", got, want)
+	}
+}
+
 func TestInboxStoreDedup(t *testing.T) {
 	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
 	inbox := NewInboxStore(push)
@@ -17,7 +35,7 @@ func TestInboxStoreDedup(t *testing.T) {
 	}
 
 	// First store succeeds
-	inbox.Store("recipient-peer", msg1)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg1, InboxStoreResultStored)
 	count := inbox.Count("recipient-peer")
 	if count != 1 {
 		t.Fatalf("expected 1 message after first store, got %d", count)
@@ -29,7 +47,7 @@ func TestInboxStoreDedup(t *testing.T) {
 		Message:   msg1.Message, // same payload, same messageId
 		Timestamp: time.Now().UnixMilli(),
 	}
-	inbox.Store("recipient-peer", msg2)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg2, InboxStoreResultDuplicate)
 	count = inbox.Count("recipient-peer")
 	if count != 1 {
 		t.Fatalf("expected 1 message after duplicate store, got %d", count)
@@ -51,8 +69,8 @@ func TestInboxStoreDedup_DifferentMessageIds(t *testing.T) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", msg1)
-	inbox.Store("recipient-peer", msg2)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg1, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg2, InboxStoreResultStored)
 	count := inbox.Count("recipient-peer")
 	if count != 2 {
 		t.Fatalf("expected 2 messages for different IDs, got %d", count)
@@ -69,8 +87,8 @@ func TestInboxStoreDedup_SameIdDifferentRecipient(t *testing.T) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-A", msg)
-	inbox.Store("recipient-B", msg)
+	requireInboxStoreResult(t, inbox, "recipient-A", msg, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-B", msg, InboxStoreResultStored)
 	if inbox.Count("recipient-A") != 1 {
 		t.Fatal("recipient-A should have 1 message")
 	}
@@ -90,8 +108,8 @@ func TestInboxStoreDedup_V2EncryptedEnvelope(t *testing.T) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", msg)
-	inbox.Store("recipient-peer", msg) // duplicate
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultDuplicate)
 	if inbox.Count("recipient-peer") != 1 {
 		t.Fatalf("expected 1 message after duplicate v2 store, got %d", inbox.Count("recipient-peer"))
 	}
@@ -107,8 +125,8 @@ func TestInboxStoreDedup_IntroductionPlaintextEnvelope(t *testing.T) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", msg)
-	inbox.Store("recipient-peer", msg)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultDuplicate)
 	if inbox.Count("recipient-peer") != 1 {
 		t.Fatalf(
 			"expected 1 introduction after duplicate plaintext store, got %d",
@@ -122,18 +140,18 @@ func TestInboxStoreDedup_IntroductionPlaintextDifferentActionMessageIDs(t *testi
 	inbox := NewInboxStore(push)
 
 	send := inboxMessage{
-		From: "sender-peer",
-		Message: `{"type":"introduction","version":"1","messageId":"intro-plain-001::send::peer-A","payload":{"action":"send","introductionId":"intro-plain-001","timestamp":"2026-04-04T20:36:00Z"}}`,
+		From:      "sender-peer",
+		Message:   `{"type":"introduction","version":"1","messageId":"intro-plain-001::send::peer-A","payload":{"action":"send","introductionId":"intro-plain-001","timestamp":"2026-04-04T20:36:00Z"}}`,
 		Timestamp: time.Now().UnixMilli(),
 	}
 	accept := inboxMessage{
-		From: "recipient-peer-B",
-		Message: `{"type":"introduction","version":"1","messageId":"intro-plain-001::accept::peer-B","payload":{"action":"accept","introductionId":"intro-plain-001","responderId":"peer-B","timestamp":"2026-04-04T20:37:00Z"}}`,
+		From:      "recipient-peer-B",
+		Message:   `{"type":"introduction","version":"1","messageId":"intro-plain-001::accept::peer-B","payload":{"action":"accept","introductionId":"intro-plain-001","responderId":"peer-B","timestamp":"2026-04-04T20:37:00Z"}}`,
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", send)
-	inbox.Store("recipient-peer", accept)
+	requireInboxStoreResult(t, inbox, "recipient-peer", send, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", accept, InboxStoreResultStored)
 	if inbox.Count("recipient-peer") != 2 {
 		t.Fatalf(
 			"expected 2 introductions after action-distinct plaintext store, got %d",
@@ -141,7 +159,7 @@ func TestInboxStoreDedup_IntroductionPlaintextDifferentActionMessageIDs(t *testi
 		)
 	}
 
-	inbox.Store("recipient-peer", accept)
+	requireInboxStoreResult(t, inbox, "recipient-peer", accept, InboxStoreResultDuplicate)
 	if inbox.Count("recipient-peer") != 2 {
 		t.Fatalf(
 			"expected duplicate accept to stay deduped after plaintext action split, got %d",
@@ -160,8 +178,8 @@ func TestInboxStoreDedup_IntroductionEncryptedEnvelopeWithMessageID(t *testing.T
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", msg)
-	inbox.Store("recipient-peer", msg)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultDuplicate)
 	if inbox.Count("recipient-peer") != 1 {
 		t.Fatalf(
 			"expected 1 introduction after duplicate encrypted store, got %d",
@@ -185,8 +203,8 @@ func TestInboxStoreDedup_IntroductionEncryptedDifferentActionMessageIDs(t *testi
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", send)
-	inbox.Store("recipient-peer", accept)
+	requireInboxStoreResult(t, inbox, "recipient-peer", send, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", accept, InboxStoreResultStored)
 	if inbox.Count("recipient-peer") != 2 {
 		t.Fatalf(
 			"expected 2 introductions after action-distinct encrypted store, got %d",
@@ -194,7 +212,7 @@ func TestInboxStoreDedup_IntroductionEncryptedDifferentActionMessageIDs(t *testi
 		)
 	}
 
-	inbox.Store("recipient-peer", accept)
+	requireInboxStoreResult(t, inbox, "recipient-peer", accept, InboxStoreResultDuplicate)
 	if inbox.Count("recipient-peer") != 2 {
 		t.Fatalf(
 			"expected duplicate accept to stay deduped after encrypted action split, got %d",
@@ -214,8 +232,8 @@ func TestInboxStoreDedup_MalformedJsonFallsThrough(t *testing.T) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", msg)
-	inbox.Store("recipient-peer", msg) // same malformed payload
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultStored)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultStored)
 	// Both stored because we cannot extract a messageId
 	if inbox.Count("recipient-peer") != 2 {
 		t.Fatalf("expected 2 messages for malformed JSON, got %d", inbox.Count("recipient-peer"))
@@ -234,13 +252,13 @@ func (r *pushRecorder) sendCount() int {
 // newPushServiceWithSender creates a PushService with a custom sender for testing.
 // Since PushService.client is what triggers real sends, and our test tokens
 // won't match a real FCM client, we test dedup at the Store level instead.
-// The push notification test verifies that Store returns false for duplicates,
+// The push notification test verifies that Store returns duplicate for duplicates,
 // which prevents the `go inbox.push.SendNotification()` call in InboxStore.Store.
 
 func TestInboxStoreDedup_PushNotFiredOnDuplicate(t *testing.T) {
 	// We verify that InboxStore.Store does not call SendNotification on duplicate
 	// by checking that the Store method returns early (no push goroutine spawned).
-	// The production code skips the push goroutine when backend.Store returns false.
+	// The production code skips the push goroutine when backend.Store returns duplicate.
 	tokenStore := newMemoryPushTokenStore()
 	tokenStore.RegisterToken("recipient-peer", "fake-token", "ios")
 	push := NewPushServiceWithBackend(tokenStore)
@@ -252,7 +270,7 @@ func TestInboxStoreDedup_PushNotFiredOnDuplicate(t *testing.T) {
 		Timestamp: time.Now().UnixMilli(),
 	}
 
-	inbox.Store("recipient-peer", msg)
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultStored)
 	// First store should proceed (push goroutine would be spawned in production)
 
 	// Get count before duplicate
@@ -261,7 +279,7 @@ func TestInboxStoreDedup_PushNotFiredOnDuplicate(t *testing.T) {
 		t.Fatalf("expected 1 message after first store, got %d", count1)
 	}
 
-	inbox.Store("recipient-peer", msg) // duplicate
+	requireInboxStoreResult(t, inbox, "recipient-peer", msg, InboxStoreResultDuplicate)
 	// Count should still be 1 — duplicate was blocked at the backend level
 	count2 := inbox.Count("recipient-peer")
 	if count2 != 1 {

@@ -102,7 +102,7 @@ type memoryInboxBackendLimited struct {
 	maxPerPeer int
 }
 
-func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) bool {
+func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
 	// Delegate to inner — its Store already enforces the global cap,
 	// but we override the limit.
 	b.inner.mu.Lock()
@@ -114,7 +114,7 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) b
 	msgId := extractMessageId(entry.Message)
 	if msgId != "" {
 		if ids, ok := b.inner.messageIds[toPeerId]; ok && ids[msgId] {
-			return false
+			return InboxStoreResultDuplicate, nil
 		}
 	}
 
@@ -137,7 +137,7 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) b
 		b.inner.messageIds[toPeerId][msgId] = true
 	}
 
-	return true
+	return InboxStoreResultStored, nil
 }
 
 func (b *memoryInboxBackendLimited) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {

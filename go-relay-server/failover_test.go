@@ -101,11 +101,11 @@ func TestTwoRelayServers_SharedInboxBackend(t *testing.T) {
 	rp := newRelayPair()
 
 	// Store message through relay A.
-	rp.inboxA.Store("peer-recipient", inboxMessage{
+	requireInboxStoreResult(t, rp.inboxA, "peer-recipient", inboxMessage{
 		From:      "peer-sender",
 		Message:   "hello via relay A",
 		Timestamp: time.Now().UnixMilli(),
-	})
+	}, InboxStoreResultStored)
 
 	// Verify count visible through B.
 	if count := rp.inboxB.Count("peer-recipient"); count != 1 {
@@ -168,11 +168,11 @@ func TestTwoRelayServers_SharedInboxPaginationContinuation(t *testing.T) {
 
 	// Store 6 messages.
 	for i := 0; i < 6; i++ {
-		rp.inboxA.Store("peer-recipient", inboxMessage{
+		requireInboxStoreResult(t, rp.inboxA, "peer-recipient", inboxMessage{
 			From:      "peer-sender",
 			Message:   fmt.Sprintf("msg-%d", i),
 			Timestamp: time.Now().UnixMilli(),
-		})
+		}, InboxStoreResultStored)
 		time.Sleep(1 * time.Millisecond)
 	}
 
