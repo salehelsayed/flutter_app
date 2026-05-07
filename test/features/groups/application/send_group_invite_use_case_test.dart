@@ -527,7 +527,7 @@ void main() {
         groupConfig: _testGroupConfig,
       );
 
-      expect(result, equals(SendGroupInviteResult.success));
+      expect(result, equals(SendGroupInviteResult.queued));
 
       expect(p2pService.storeInInboxCallCount, equals(1));
       expect(p2pService.lastStoreInInboxPeerId, equals('12D3KooWBob'));
@@ -616,7 +616,12 @@ void main() {
             groupConfig: _testGroupConfig,
           );
 
-          expect(result, SendGroupInviteResult.success);
+          expect(
+            result,
+            directSendSucceeds
+                ? SendGroupInviteResult.success
+                : SendGroupInviteResult.queued,
+          );
           final envelopeJson = directSendSucceeds
               ? scopedP2P.lastSendMessageContent!
               : scopedP2P.lastStoreInInboxMessage!;

@@ -39,6 +39,7 @@ import 'package:flutter_app/core/database/helpers/group_invite_consumptions_db_h
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_revocations_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_welcome_key_package_tombstones_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_invite_delivery_attempts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
 import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
@@ -87,6 +88,7 @@ import 'package:flutter_app/core/database/migrations/063_group_pending_key_repai
 import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
+import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -144,6 +146,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_group_invite_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
@@ -298,7 +301,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 66,
+    version: 67,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -366,6 +369,7 @@ void main() async {
       await runGroupWelcomeKeyPackageTombstonesMigration(db);
       await runGroupHistoryGapRepairsMigration(db);
       await runGroupSyncReceiptsMigration(db);
+      await runGroupInviteDeliveryAttemptsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -560,6 +564,9 @@ void main() async {
       }
       if (oldVersion < 66) {
         await runGroupSyncReceiptsMigration(db);
+      }
+      if (oldVersion < 67) {
+        await runGroupInviteDeliveryAttemptsMigration(db);
       }
     },
   );
@@ -951,6 +958,43 @@ void main() async {
     dbDeleteExpiredGroupWelcomeKeyPackageTombstones: (cutoff) =>
         dbDeleteExpiredGroupWelcomeKeyPackageTombstones(db, cutoff),
   );
+
+  final groupInviteDeliveryAttemptRepository =
+      GroupInviteDeliveryAttemptRepositoryImpl(
+        dbUpsertGroupInviteDeliveryAttempt: (row) =>
+            dbUpsertGroupInviteDeliveryAttempt(db, row),
+        dbLoadGroupInviteDeliveryAttempt:
+            ({required groupId, required peerId}) =>
+                dbLoadGroupInviteDeliveryAttempt(
+                  db,
+                  groupId: groupId,
+                  peerId: peerId,
+                ),
+        dbLoadGroupInviteDeliveryAttemptsForGroup: (groupId) =>
+            dbLoadGroupInviteDeliveryAttemptsForGroup(db, groupId),
+        dbUpdateGroupInviteDeliveryAttemptStatus:
+            ({
+              required groupId,
+              required peerId,
+              required status,
+              required updatedAt,
+            }) => dbUpdateGroupInviteDeliveryAttemptStatus(
+              db,
+              groupId: groupId,
+              peerId: peerId,
+              status: status,
+              updatedAt: updatedAt,
+            ),
+        dbDeleteGroupInviteDeliveryAttempt:
+            ({required groupId, required peerId}) =>
+                dbDeleteGroupInviteDeliveryAttempt(
+                  db,
+                  groupId: groupId,
+                  peerId: peerId,
+                ),
+        dbDeleteGroupInviteDeliveryAttemptsForGroup: (groupId) =>
+            dbDeleteGroupInviteDeliveryAttemptsForGroup(db, groupId),
+      );
 
   GroupMessageRepositoryImpl createGroupMessageRepository(
     dynamic executor, {
@@ -1560,6 +1604,7 @@ void main() async {
     getAppLifecycleState: () =>
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
     reactionRepo: reactionRepository,
+    inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
     groupDiagnosticEvents: groupDiagnosticEventStream,
     pendingKeyRepairRepo: groupPendingKeyRepairRepository,
     requestGroupKeyRepair: emitGroupKeyRepairRequest,
@@ -1916,6 +1961,8 @@ void main() async {
       conversationTracker: conversationTracker,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
+      groupInviteDeliveryAttemptRepository:
+          groupInviteDeliveryAttemptRepository,
       groupPendingKeyRepairRepository: groupPendingKeyRepairRepository,
       groupHistoryGapRepairRepository: groupHistoryGapRepairRepository,
       groupReactionReplayOutboxRepository: groupReactionReplayOutboxRepository,
@@ -2063,6 +2110,8 @@ class MyApp extends StatefulWidget {
   final ActiveConversationTracker conversationTracker;
   final GroupRepositoryImpl groupRepository;
   final GroupMessageRepositoryImpl groupMessageRepository;
+  final GroupInviteDeliveryAttemptRepositoryImpl
+  groupInviteDeliveryAttemptRepository;
   final GroupPendingKeyRepairRepositoryImpl groupPendingKeyRepairRepository;
   final GroupHistoryGapRepairRepositoryImpl groupHistoryGapRepairRepository;
   final GroupReactionReplayOutboxRepositoryImpl
@@ -2122,6 +2171,7 @@ class MyApp extends StatefulWidget {
     required this.conversationTracker,
     required this.groupRepository,
     required this.groupMessageRepository,
+    required this.groupInviteDeliveryAttemptRepository,
     required this.groupPendingKeyRepairRepository,
     required this.groupHistoryGapRepairRepository,
     required this.groupReactionReplayOutboxRepository,
@@ -2509,6 +2559,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               groupRepo: widget.groupRepository,
               msgRepo: widget.groupMessageRepository,
               groupMessageListener: widget.groupMessageListener,
+              inviteDeliveryAttemptRepo:
+                  widget.groupInviteDeliveryAttemptRepository,
               bridge: widget.bridge,
               identityRepo: widget.repository,
               contactRepo: widget.contactRepository,
@@ -2577,6 +2629,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionListener: widget.reactionListener,
         groupRepository: widget.groupRepository,
         groupMessageRepository: widget.groupMessageRepository,
+        groupInviteDeliveryAttemptRepository:
+            widget.groupInviteDeliveryAttemptRepository,
         groupPendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
         groupHistoryGapRepairRepository: widget.groupHistoryGapRepairRepository,
         groupReactionReplayOutboxRepository:

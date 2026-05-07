@@ -12,10 +12,12 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
@@ -81,6 +83,7 @@ class ContactPickerWired extends StatefulWidget {
   final IdentityRepository identityRepo;
   final P2PService p2pService;
   final GroupMessageRepository? msgRepo;
+  final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final BackgroundPreference backgroundPreference;
 
   const ContactPickerWired({
@@ -92,6 +95,7 @@ class ContactPickerWired extends StatefulWidget {
     required this.identityRepo,
     required this.p2pService,
     this.msgRepo,
+    this.inviteDeliveryAttemptRepo,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
@@ -338,8 +342,18 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
           groupConfig: groupConfig,
           recipients: recipients,
         );
+        await recordGroupInviteDeliveryBatch(
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          groupId: widget.groupId,
+          attempts: inviteBatchResult.attempts,
+        );
       } else {
         inviteDeliverySkippedMissingKey = true;
+        await recordMissingGroupKeyInviteDeliveryAttempts(
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          groupId: widget.groupId,
+          members: addedMembers,
+        );
         emitFlowEvent(
           layer: 'FL',
           event: 'CONTACT_PICKER_FL_NO_GROUP_KEY',

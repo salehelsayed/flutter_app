@@ -16,6 +16,7 @@ import 'package:flutter_app/features/groups/application/create_group_with_member
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -36,6 +37,7 @@ class CreateGroupPickerWired extends StatefulWidget {
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
   final GroupMessageListener groupMessageListener;
+  final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final ContactRepository contactRepo;
   final Bridge bridge;
   final IdentityRepository identityRepo;
@@ -58,6 +60,7 @@ class CreateGroupPickerWired extends StatefulWidget {
     required this.groupRepo,
     required this.msgRepo,
     required this.groupMessageListener,
+    this.inviteDeliveryAttemptRepo,
     required this.contactRepo,
     required this.bridge,
     required this.identityRepo,
@@ -145,6 +148,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
         selectedContacts: selectedContacts,
         type: widget.groupType,
         name: name,
+        inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
         appendGroupEventLogEntry:
             widget.groupMessageListener.appendGroupEventLogEntry,
       );
@@ -160,6 +164,7 @@ class _CreateGroupPickerWiredState extends State<CreateGroupPickerWired> {
             groupRepo: widget.groupRepo,
             msgRepo: widget.msgRepo,
             groupMessageListener: widget.groupMessageListener,
+            inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
             bridge: widget.bridge,
             identityRepo: widget.identityRepo,
             contactRepo: widget.contactRepo,

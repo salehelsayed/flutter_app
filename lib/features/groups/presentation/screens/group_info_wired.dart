@@ -23,14 +23,17 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/resend_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_metadata_use_case.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
@@ -50,6 +53,7 @@ class GroupInfoWired extends StatefulWidget {
   final IdentityRepository identityRepo;
   final P2PService p2pService;
   final GroupMessageRepository? msgRepo;
+  final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
   final UploadMediaFn uploadMediaFn;
@@ -64,6 +68,7 @@ class GroupInfoWired extends StatefulWidget {
     required this.identityRepo,
     required this.p2pService,
     this.msgRepo,
+    this.inviteDeliveryAttemptRepo,
     this.imageProcessor,
     this.mediaPicker,
     this.uploadMediaFn = uploadMedia,
@@ -79,6 +84,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   late GroupModel _group;
   List<GroupMember> _members = [];
+  Map<String, GroupInviteDeliveryStatus> _inviteStatusesByPeerId = {};
+  final Set<String> _resendingInvitePeerIds = {};
   Map<String, GroupMemberIdentitySafety> _memberSafetyByPeerId = {};
   GroupSecurityStatusViewState? _securityStatus;
   String? _ownPeerId;
@@ -112,6 +119,11 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final ownPeerId = _ownPeerId ?? identity?.peerId;
       final group = await widget.groupRepo.getGroup(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
+      final inviteStatusesByPeerId =
+          await widget.inviteDeliveryAttemptRepo?.getStatusesForGroupMembers(
+            widget.group.id,
+          ) ??
+          const <String, GroupInviteDeliveryStatus>{};
       final memberSafetyByPeerId = await _loadMemberSafety(
         members,
         ownPeerId: ownPeerId,
@@ -136,6 +148,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           _ownPeerId = ownPeerId;
         }
         _members = members;
+        _inviteStatusesByPeerId = inviteStatusesByPeerId;
         _memberSafetyByPeerId = memberSafetyByPeerId;
         _securityStatus = securityStatus;
       });
@@ -1109,6 +1122,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
               identityRepo: widget.identityRepo,
               p2pService: widget.p2pService,
               msgRepo: widget.msgRepo,
+              inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
               backgroundPreference: widget.backgroundPreference,
             ),
           ),
@@ -1126,6 +1140,81 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         });
   }
 
+  Future<void> _onResendInvite(GroupMember member) async {
+    final repo = widget.inviteDeliveryAttemptRepo;
+    if (repo == null || _resendingInvitePeerIds.contains(member.peerId)) {
+      return;
+    }
+
+    setState(() => _resendingInvitePeerIds.add(member.peerId));
+    try {
+      final identity = await widget.identityRepo.loadIdentity();
+      if (identity == null) {
+        throw StateError('No identity found');
+      }
+      final result = await resendGroupInvite(
+        p2pService: widget.p2pService,
+        bridge: widget.bridge,
+        groupRepo: widget.groupRepo,
+        inviteDeliveryAttemptRepo: repo,
+        identity: identity,
+        groupId: _group.id,
+        memberPeerId: member.peerId,
+      );
+      await _loadGroupInfo();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(_resendInviteMessage(member, result))),
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INFO_FL_RESEND_INVITE_ERROR',
+        details: {
+          'groupId': _group.id.length > 8
+              ? _group.id.substring(0, 8)
+              : _group.id,
+          'peerId': member.peerId.length > 10
+              ? member.peerId.substring(0, 10)
+              : member.peerId,
+          'error': e.toString(),
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Failed to resend invite')));
+      await _loadGroupInfo();
+    } finally {
+      if (mounted) {
+        setState(() => _resendingInvitePeerIds.remove(member.peerId));
+      } else {
+        _resendingInvitePeerIds.remove(member.peerId);
+      }
+    }
+  }
+
+  String _resendInviteMessage(
+    GroupMember member,
+    ResendGroupInviteResult result,
+  ) {
+    final name = _displayName(member);
+    switch (result.status) {
+      case GroupInviteDeliveryStatus.sent:
+        return 'Invite sent to $name';
+      case GroupInviteDeliveryStatus.queued:
+        return 'Invite queued for $name';
+      case GroupInviteDeliveryStatus.needsResend:
+        return 'Invite still needs resend';
+      case GroupInviteDeliveryStatus.cannotSend:
+        return 'Invite cannot be sent yet';
+      case GroupInviteDeliveryStatus.joined:
+        return '$name already joined';
+      case GroupInviteDeliveryStatus.unknown:
+        return 'Invite status unknown';
+    }
+  }
+
   void _onBack() {
     Navigator.of(context).pop(_didMutateGroup);
   }
@@ -1140,6 +1229,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     return GroupInfoScreen(
       group: _group,
       members: _members,
+      inviteStatusesByPeerId: _inviteStatusesByPeerId,
+      resendingInvitePeerIds: _resendingInvitePeerIds,
       memberSafetyByPeerId: _memberSafetyByPeerId,
       securityStatus: _securityStatus,
       isAdmin: isAdmin,
@@ -1157,6 +1248,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       onRemoveMember: canManageGroup ? _confirmRemoveMember : null,
       onToggleAdminRole: canManageGroup ? _confirmRoleChange : null,
       onAddMember: canManageGroup ? _onAddMember : null,
+      onResendInvite: canManageGroup && widget.inviteDeliveryAttemptRepo != null
+          ? _onResendInvite
+          : null,
       backgroundPreference: widget.backgroundPreference,
     );
   }

@@ -31,6 +31,7 @@ import 'package:flutter_app/features/groups/application/trusted_private_group_sy
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -61,6 +62,7 @@ class GroupMessageListener {
   final AppLifecycleState Function()? _getAppLifecycleState;
   final RecentRemoteNotificationGate _remoteNotificationGate;
   final ReactionRepository? _reactionRepo;
+  final GroupInviteDeliveryAttemptRepository? _inviteDeliveryAttemptRepo;
   final DownloadGroupAvatarFn _downloadGroupAvatarFn;
   final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
   final Stream<Map<String, dynamic>>? _groupDiagnosticEvents;
@@ -92,6 +94,7 @@ class GroupMessageListener {
     AppLifecycleState Function()? getAppLifecycleState,
     RecentRemoteNotificationGate? remoteNotificationGate,
     ReactionRepository? reactionRepo,
+    GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
     DownloadGroupAvatarFn? downloadGroupAvatarFn,
     AppendGroupEventLogEntry? appendGroupEventLogEntry,
     Stream<Map<String, dynamic>>? groupDiagnosticEvents,
@@ -109,6 +112,7 @@ class GroupMessageListener {
        _remoteNotificationGate =
            remoteNotificationGate ?? recentRemoteNotificationGate,
        _reactionRepo = reactionRepo,
+       _inviteDeliveryAttemptRepo = inviteDeliveryAttemptRepo,
        _downloadGroupAvatarFn = downloadGroupAvatarFn ?? downloadGroupAvatar,
        _appendGroupEventLogEntry = appendGroupEventLogEntry,
        _groupDiagnosticEvents = groupDiagnosticEvents,
@@ -1284,6 +1288,12 @@ class GroupMessageListener {
     final savedTimelineMessage = await _saveTimelineMessagePreservingReadState(
       timelineMessage,
       msgRepo,
+    );
+    await _inviteDeliveryAttemptRepo?.markJoined(
+      groupId: groupId,
+      peerId: joinedPeerId,
+      username: memberData?['username'] as String?,
+      joinedAt: eventAt,
     );
     _messageController.add(savedTimelineMessage);
 

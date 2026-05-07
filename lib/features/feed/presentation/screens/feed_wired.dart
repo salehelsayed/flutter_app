@@ -65,6 +65,7 @@ import 'package:flutter_app/features/groups/application/group_invite_listener.da
 import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
@@ -161,6 +162,8 @@ class FeedWired extends StatefulWidget {
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
+  final GroupInviteDeliveryAttemptRepository?
+  groupInviteDeliveryAttemptRepository;
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
   final GroupMessageListener? groupMessageListener;
@@ -198,6 +201,7 @@ class FeedWired extends StatefulWidget {
     this.reactionListener,
     this.groupRepository,
     this.groupMessageRepository,
+    this.groupInviteDeliveryAttemptRepository,
     this.groupReactionReplayOutboxRepository,
     this.groupMessageListener,
     this.groupInviteListener,
@@ -2061,6 +2065,8 @@ class _FeedWiredState extends State<FeedWired>
               groupRepo: groupRepo,
               msgRepo: msgRepo,
               groupMessageListener: listener,
+              inviteDeliveryAttemptRepo:
+                  widget.groupInviteDeliveryAttemptRepository,
               bridge: widget.bridge,
               identityRepo: widget.repository,
               contactRepo: widget.contactRepository,
@@ -2833,6 +2839,8 @@ class _FeedWiredState extends State<FeedWired>
       reactionListener: widget.reactionListener,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      groupInviteDeliveryAttemptRepository:
+          widget.groupInviteDeliveryAttemptRepository,
       groupReactionReplayOutboxRepository:
           widget.groupReactionReplayOutboxRepository,
       groupMessageListener: widget.groupMessageListener,

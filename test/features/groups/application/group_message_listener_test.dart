@@ -18,11 +18,13 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -156,6 +158,119 @@ class _InMemoryGroupPendingKeyRepairRepository
       updatedAt: now,
       finalizedAt: now,
     );
+  }
+}
+
+class _TrackingInviteDeliveryAttemptRepository
+    implements GroupInviteDeliveryAttemptRepository {
+  final Map<String, GroupInviteDeliveryAttempt> attempts = {};
+
+  String _key(String groupId, String peerId) => '$groupId::$peerId';
+
+  @override
+  Future<void> saveAttempt(GroupInviteDeliveryAttempt attempt) async {
+    attempts[_key(attempt.groupId, attempt.peerId)] = attempt;
+  }
+
+  @override
+  Future<GroupInviteDeliveryAttempt?> getAttempt({
+    required String groupId,
+    required String peerId,
+  }) async {
+    return attempts[_key(groupId, peerId)];
+  }
+
+  @override
+  Future<List<GroupInviteDeliveryAttempt>> getAttemptsForGroup(
+    String groupId,
+  ) async {
+    return attempts.values
+        .where((attempt) => attempt.groupId == groupId)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<GroupInviteDeliveryStatus> getStatusForMember({
+    required String groupId,
+    required String peerId,
+  }) async {
+    return attempts[_key(groupId, peerId)]?.status ??
+        GroupInviteDeliveryStatus.unknown;
+  }
+
+  @override
+  Future<Map<String, GroupInviteDeliveryStatus>> getStatusesForGroupMembers(
+    String groupId,
+  ) async {
+    return {
+      for (final attempt in attempts.values.where((a) => a.groupId == groupId))
+        attempt.peerId: attempt.status,
+    };
+  }
+
+  @override
+  Future<void> updateStatus({
+    required String groupId,
+    required String peerId,
+    required GroupInviteDeliveryStatus status,
+    DateTime? updatedAt,
+  }) async {
+    final existing = attempts[_key(groupId, peerId)];
+    final now = updatedAt ?? DateTime.now().toUtc();
+    attempts[_key(groupId, peerId)] =
+        existing?.copyWith(
+          status: status,
+          updatedAt: now,
+          clearLastError: true,
+        ) ??
+        GroupInviteDeliveryAttempt(
+          groupId: groupId,
+          peerId: peerId,
+          status: status,
+          attemptedAt: now,
+          updatedAt: now,
+        );
+  }
+
+  @override
+  Future<void> markJoined({
+    required String groupId,
+    required String peerId,
+    String? username,
+    DateTime? joinedAt,
+  }) async {
+    final now = joinedAt ?? DateTime.now().toUtc();
+    final existing = attempts[_key(groupId, peerId)];
+    attempts[_key(groupId, peerId)] =
+        existing?.copyWith(
+          username: username,
+          status: GroupInviteDeliveryStatus.joined,
+          updatedAt: now,
+          clearLastError: true,
+        ) ??
+        GroupInviteDeliveryAttempt(
+          groupId: groupId,
+          peerId: peerId,
+          username: username,
+          status: GroupInviteDeliveryStatus.joined,
+          attemptedAt: now,
+          updatedAt: now,
+        );
+  }
+
+  @override
+  Future<int> deleteAttempt({
+    required String groupId,
+    required String peerId,
+  }) async {
+    return attempts.remove(_key(groupId, peerId)) == null ? 0 : 1;
+  }
+
+  @override
+  Future<int> deleteAttemptsForGroup(String groupId) async {
+    final before = attempts.length;
+    attempts.removeWhere((_, attempt) => attempt.groupId == groupId);
+    return before - attempts.length;
   }
 }
 
@@ -977,107 +1092,102 @@ void main() {
     expect(latest!.text, 'Hello group!');
   });
 
-  test(
-    'drops events with neither text nor media — empty bubble after cold '
-    'restart regression',
-    () async {
-      // Regression for the user-reported bug: after the app was killed
-      // and reopened, opening an old group thread showed empty bubbles.
-      // Root cause walked in this branch: group_message_listener._handleMessage
-      // used `data['text'] as String? ?? ''` and saved the row even when
-      // `text` was missing/null with no media. After a cold restart the
-      // empty-text row was reloaded and rendered as a blank bubble.
-      // The fix bails early on text-less + media-less events; this test
-      // is the regression guard.
-      final flowEvents = <Map<String, dynamic>>[];
-      debugSetFlowEventSink(flowEvents.add);
-      addTearDown(() => debugSetFlowEventSink(null));
+  test('drops events with neither text nor media — empty bubble after cold '
+      'restart regression', () async {
+    // Regression for the user-reported bug: after the app was killed
+    // and reopened, opening an old group thread showed empty bubbles.
+    // Root cause walked in this branch: group_message_listener._handleMessage
+    // used `data['text'] as String? ?? ''` and saved the row even when
+    // `text` was missing/null with no media. After a cold restart the
+    // empty-text row was reloaded and rendered as a blank bubble.
+    // The fix bails early on text-less + media-less events; this test
+    // is the regression guard.
+    final flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flowEvents.add);
+    addTearDown(() => debugSetFlowEventSink(null));
 
-      final emitted = <GroupMessage>[];
-      final subscription = listener.groupMessageStream.listen(emitted.add);
-      addTearDown(subscription.cancel);
+    final emitted = <GroupMessage>[];
+    final subscription = listener.groupMessageStream.listen(emitted.add);
+    addTearDown(subscription.cancel);
 
-      listener.start(sourceController.stream);
+    listener.start(sourceController.stream);
 
-      // Event from upstream that mimics a malformed/partial-decrypt payload:
-      // valid groupId + senderId, but no `text` field at all and no media.
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-sender',
-        'senderUsername': 'Sender',
-        'keyEpoch': 0,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-        'messageId': 'msg-empty-drop-1',
-      });
+    // Event from upstream that mimics a malformed/partial-decrypt payload:
+    // valid groupId + senderId, but no `text` field at all and no media.
+    sourceController.add({
+      'groupId': 'group-1',
+      'senderId': 'peer-sender',
+      'senderUsername': 'Sender',
+      'keyEpoch': 0,
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'messageId': 'msg-empty-drop-1',
+    });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+    await Future.delayed(const Duration(milliseconds: 50));
 
-      // No row persisted — this is the load-bearing assertion. Without
-      // the fix the row would be saved with text='' and survive cold
-      // restarts as an empty bubble.
-      expect(
-        msgRepo.count,
-        0,
-        reason:
-            'event with neither text nor media must not be persisted '
-            '(would render as empty bubble after cold restart)',
-      );
-      expect(await msgRepo.getMessage('msg-empty-drop-1'), isNull);
-      expect(await msgRepo.getLatestMessage('group-1'), isNull);
+    // No row persisted — this is the load-bearing assertion. Without
+    // the fix the row would be saved with text='' and survive cold
+    // restarts as an empty bubble.
+    expect(
+      msgRepo.count,
+      0,
+      reason:
+          'event with neither text nor media must not be persisted '
+          '(would render as empty bubble after cold restart)',
+    );
+    expect(await msgRepo.getMessage('msg-empty-drop-1'), isNull);
+    expect(await msgRepo.getLatestMessage('group-1'), isNull);
 
-      // No live UI emission either — the conversation screen would
-      // otherwise upsert an empty-text bubble in memory until restart.
-      expect(emitted, isEmpty);
+    // No live UI emission either — the conversation screen would
+    // otherwise upsert an empty-text bubble in memory until restart.
+    expect(emitted, isEmpty);
 
-      // Diagnostic event must fire so the failure is visible in FLOW
-      // logs from real devices.
-      final dropEvents = flowEvents
-          .where((e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP')
-          .toList();
-      expect(
-        dropEvents,
-        hasLength(1),
-        reason:
-            'GROUP_MESSAGE_LISTENER_EMPTY_DROP must be emitted once so '
-            'production logs reveal which upstream events are malformed',
-      );
-      final details = dropEvents.single['details'] as Map<String, dynamic>;
-      expect(details['hasTextField'], false);
-    },
-  );
+    // Diagnostic event must fire so the failure is visible in FLOW
+    // logs from real devices.
+    final dropEvents = flowEvents
+        .where((e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP')
+        .toList();
+    expect(
+      dropEvents,
+      hasLength(1),
+      reason:
+          'GROUP_MESSAGE_LISTENER_EMPTY_DROP must be emitted once so '
+          'production logs reveal which upstream events are malformed',
+    );
+    final details = dropEvents.single['details'] as Map<String, dynamic>;
+    expect(details['hasTextField'], false);
+  });
 
-  test(
-    'drops events where text is present but null, with no media',
-    () async {
-      // Sister case: Go bridge sends `text: null` instead of omitting
-      // the key. The String? coercion at the listener entry treats null
-      // and missing identically; the guard must catch both.
-      final flowEvents = <Map<String, dynamic>>[];
-      debugSetFlowEventSink(flowEvents.add);
-      addTearDown(() => debugSetFlowEventSink(null));
+  test('drops events where text is present but null, with no media', () async {
+    // Sister case: Go bridge sends `text: null` instead of omitting
+    // the key. The String? coercion at the listener entry treats null
+    // and missing identically; the guard must catch both.
+    final flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flowEvents.add);
+    addTearDown(() => debugSetFlowEventSink(null));
 
-      listener.start(sourceController.stream);
+    listener.start(sourceController.stream);
 
-      sourceController.add({
-        'groupId': 'group-1',
-        'senderId': 'peer-sender',
-        'senderUsername': 'Sender',
-        'keyEpoch': 0,
-        'text': null,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-        'messageId': 'msg-empty-drop-null',
-      });
+    sourceController.add({
+      'groupId': 'group-1',
+      'senderId': 'peer-sender',
+      'senderUsername': 'Sender',
+      'keyEpoch': 0,
+      'text': null,
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'messageId': 'msg-empty-drop-null',
+    });
 
-      await Future.delayed(const Duration(milliseconds: 50));
+    await Future.delayed(const Duration(milliseconds: 50));
 
-      expect(msgRepo.count, 0);
-      expect(
-        flowEvents
-            .where((e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP'),
-        hasLength(1),
-      );
-    },
-  );
+    expect(msgRepo.count, 0);
+    expect(
+      flowEvents.where(
+        (e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP',
+      ),
+      hasLength(1),
+    );
+  });
 
   test(
     'allows media-only messages with empty text — legitimate sender shape',
@@ -2356,6 +2466,60 @@ void main() {
       expect(saved!.text, 'Charlie joined the group');
 
       await subscription.cancel();
+    });
+
+    test('member_joined marks invite delivery status as joined', () async {
+      final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        inviteDeliveryAttemptRepo: inviteStatusRepo,
+      );
+      listener.start(sourceController.stream);
+
+      await inviteStatusRepo.saveAttempt(
+        GroupInviteDeliveryAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          status: GroupInviteDeliveryStatus.needsResend,
+          attemptedAt: DateTime.utc(2026, 5, 7, 12),
+          updatedAt: DateTime.utc(2026, 5, 7, 12),
+          lastError: 'send_failed',
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-charlie',
+        'senderUsername': 'Charlie',
+        'keyEpoch': 0,
+        'text': jsonEncode({
+          '__sys': 'member_joined',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+        }),
+        'timestamp': '2026-05-07T12:05:00.000Z',
+      });
+
+      await Future.delayed(const Duration(milliseconds: 50));
+
+      final attempt = await inviteStatusRepo.getAttempt(
+        groupId: 'group-1',
+        peerId: 'peer-charlie',
+      );
+      expect(attempt!.status, GroupInviteDeliveryStatus.joined);
+      expect(attempt.lastError, isNull);
     });
 
     test(

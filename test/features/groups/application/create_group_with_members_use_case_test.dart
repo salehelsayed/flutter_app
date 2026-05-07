@@ -5,10 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
@@ -101,6 +103,108 @@ class _FailingSaveMemberGroupRepository extends InMemoryGroupRepository {
       throw StateError('Injected saveMember failure for ${member.peerId}');
     }
     await super.saveMember(member);
+  }
+}
+
+class _TrackingInviteDeliveryAttemptRepository
+    implements GroupInviteDeliveryAttemptRepository {
+  final Map<String, GroupInviteDeliveryAttempt> attempts = {};
+
+  String _key(String groupId, String peerId) => '$groupId::$peerId';
+
+  @override
+  Future<void> saveAttempt(GroupInviteDeliveryAttempt attempt) async {
+    attempts[_key(attempt.groupId, attempt.peerId)] = attempt;
+  }
+
+  @override
+  Future<GroupInviteDeliveryAttempt?> getAttempt({
+    required String groupId,
+    required String peerId,
+  }) async {
+    return attempts[_key(groupId, peerId)];
+  }
+
+  @override
+  Future<List<GroupInviteDeliveryAttempt>> getAttemptsForGroup(
+    String groupId,
+  ) async {
+    return attempts.values
+        .where((attempt) => attempt.groupId == groupId)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<GroupInviteDeliveryStatus> getStatusForMember({
+    required String groupId,
+    required String peerId,
+  }) async {
+    return attempts[_key(groupId, peerId)]?.status ??
+        GroupInviteDeliveryStatus.unknown;
+  }
+
+  @override
+  Future<Map<String, GroupInviteDeliveryStatus>> getStatusesForGroupMembers(
+    String groupId,
+  ) async {
+    return {
+      for (final attempt in attempts.values.where((a) => a.groupId == groupId))
+        attempt.peerId: attempt.status,
+    };
+  }
+
+  @override
+  Future<void> updateStatus({
+    required String groupId,
+    required String peerId,
+    required GroupInviteDeliveryStatus status,
+    DateTime? updatedAt,
+  }) async {
+    final existing = attempts[_key(groupId, peerId)];
+    final now = updatedAt ?? DateTime.now().toUtc();
+    attempts[_key(groupId, peerId)] =
+        existing?.copyWith(
+          status: status,
+          updatedAt: now,
+          clearLastError: true,
+        ) ??
+        GroupInviteDeliveryAttempt(
+          groupId: groupId,
+          peerId: peerId,
+          status: status,
+          attemptedAt: now,
+          updatedAt: now,
+        );
+  }
+
+  @override
+  Future<void> markJoined({
+    required String groupId,
+    required String peerId,
+    String? username,
+    DateTime? joinedAt,
+  }) async {
+    await updateStatus(
+      groupId: groupId,
+      peerId: peerId,
+      status: GroupInviteDeliveryStatus.joined,
+      updatedAt: joinedAt,
+    );
+  }
+
+  @override
+  Future<int> deleteAttempt({
+    required String groupId,
+    required String peerId,
+  }) async {
+    return attempts.remove(_key(groupId, peerId)) == null ? 0 : 1;
+  }
+
+  @override
+  Future<int> deleteAttemptsForGroup(String groupId) async {
+    final before = attempts.length;
+    attempts.removeWhere((_, attempt) => attempt.groupId == groupId);
+    return before - attempts.length;
   }
 }
 
@@ -576,6 +680,7 @@ void main() {
       // Make P2P fail
       p2pService.sendMessageResult = false;
       p2pService.storeInInboxResult = false;
+      final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
 
       final result = await createGroupWithMembers(
         bridge: bridge,
@@ -585,6 +690,7 @@ void main() {
         selectedContacts: [contactAlice],
         type: GroupType.chat,
         name: 'My Group',
+        inviteDeliveryAttemptRepo: inviteStatusRepo,
       );
 
       // Group still created, member still added
@@ -599,6 +705,13 @@ void main() {
         result.inviteBatchResult!.failures.single.result,
         SendGroupInviteResult.sendFailed,
       );
+      expect(
+        await inviteStatusRepo.getStatusForMember(
+          groupId: 'test-group-id',
+          peerId: 'peer-alice',
+        ),
+        GroupInviteDeliveryStatus.needsResend,
+      );
     });
 
     test(
@@ -609,6 +722,7 @@ void main() {
           username: 'NoKey',
           omitMlKemPublicKey: true,
         );
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
 
         final result = await createGroupWithMembers(
           bridge: bridge,
@@ -618,6 +732,7 @@ void main() {
           selectedContacts: [contactAlice, noKeyContact],
           type: GroupType.chat,
           name: 'My Group',
+          inviteDeliveryAttemptRepo: inviteStatusRepo,
         );
 
         expect(result.membersAdded, 2);
@@ -633,6 +748,20 @@ void main() {
         expect(
           result.buildCreateWarningMessage(),
           contains('NoKey (missing secure key)'),
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: 'peer-alice',
+          ),
+          GroupInviteDeliveryStatus.sent,
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: 'peer-no-key',
+          ),
+          GroupInviteDeliveryStatus.cannotSend,
         );
       },
     );

@@ -9,11 +9,13 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
@@ -82,6 +84,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   required GroupType type,
   String? name,
   String? description,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
 }) async {
   emitFlowEvent(
@@ -268,8 +271,18 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       groupConfig: groupConfig,
       recipients: recipients,
     );
+    await recordGroupInviteDeliveryBatch(
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      groupId: group.id,
+      attempts: inviteBatchResult.attempts,
+    );
   } else if (addedMembers.isNotEmpty) {
     inviteDeliverySkippedMissingKey = true;
+    await recordMissingGroupKeyInviteDeliveryAttempts(
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      groupId: group.id,
+      members: addedMembers,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'CREATE_GROUP_WITH_MEMBERS_MISSING_GROUP_KEY',

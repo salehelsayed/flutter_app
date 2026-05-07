@@ -13,6 +13,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 /// Result of sending a group invite.
 enum SendGroupInviteResult {
   success,
+  queued,
   nodeNotRunning,
   encryptionRequired,
   invalidPayload,
@@ -30,7 +31,9 @@ class GroupInviteAttempt {
     required this.result,
   });
 
-  bool get wasDelivered => result == SendGroupInviteResult.success;
+  bool get wasDelivered =>
+      result == SendGroupInviteResult.success ||
+      result == SendGroupInviteResult.queued;
 
   String get displayName {
     final trimmed = username?.trim();
@@ -41,6 +44,8 @@ class GroupInviteAttempt {
     switch (result) {
       case SendGroupInviteResult.success:
         return 'delivered';
+      case SendGroupInviteResult.queued:
+        return 'queued';
       case SendGroupInviteResult.nodeNotRunning:
         return 'node stopped';
       case SendGroupInviteResult.encryptionRequired:
@@ -413,7 +418,7 @@ Future<SendGroupInviteResult> sendGroupInvite({
         event: 'GROUP_INVITE_SEND_SUCCESS',
         details: {'via': 'inbox'},
       );
-      return SendGroupInviteResult.success;
+      return SendGroupInviteResult.queued;
     }
   } catch (e) {
     emitFlowEvent(

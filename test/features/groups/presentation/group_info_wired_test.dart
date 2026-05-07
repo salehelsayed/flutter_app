@@ -10,10 +10,12 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -38,6 +40,72 @@ class FakeIdentityRepository implements IdentityRepository {
   Future<void> saveIdentity(IdentityModel identity) async {
     this.identity = identity;
   }
+}
+
+class _TrackingInviteDeliveryAttemptRepository
+    implements GroupInviteDeliveryAttemptRepository {
+  final Map<String, GroupInviteDeliveryAttempt> attempts = {};
+
+  String _key(String groupId, String peerId) => '$groupId::$peerId';
+
+  @override
+  Future<void> saveAttempt(GroupInviteDeliveryAttempt attempt) async {
+    attempts[_key(attempt.groupId, attempt.peerId)] = attempt;
+  }
+
+  @override
+  Future<GroupInviteDeliveryAttempt?> getAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => attempts[_key(groupId, peerId)];
+
+  @override
+  Future<List<GroupInviteDeliveryAttempt>> getAttemptsForGroup(
+    String groupId,
+  ) async => attempts.values
+      .where((attempt) => attempt.groupId == groupId)
+      .toList(growable: false);
+
+  @override
+  Future<GroupInviteDeliveryStatus> getStatusForMember({
+    required String groupId,
+    required String peerId,
+  }) async =>
+      attempts[_key(groupId, peerId)]?.status ??
+      GroupInviteDeliveryStatus.unknown;
+
+  @override
+  Future<Map<String, GroupInviteDeliveryStatus>> getStatusesForGroupMembers(
+    String groupId,
+  ) async => {
+    for (final attempt in attempts.values.where((a) => a.groupId == groupId))
+      attempt.peerId: attempt.status,
+  };
+
+  @override
+  Future<void> updateStatus({
+    required String groupId,
+    required String peerId,
+    required GroupInviteDeliveryStatus status,
+    DateTime? updatedAt,
+  }) async {}
+
+  @override
+  Future<void> markJoined({
+    required String groupId,
+    required String peerId,
+    String? username,
+    DateTime? joinedAt,
+  }) async {}
+
+  @override
+  Future<int> deleteAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => 0;
+
+  @override
+  Future<int> deleteAttemptsForGroup(String groupId) async => 0;
 }
 
 // --- Test data ---
@@ -244,6 +312,57 @@ void main() {
       expect(find.text('You'), findsOneWidget); // self member shows "You"
       expect(find.text('Alice'), findsOneWidget);
       expect(find.text('Bob'), findsOneWidget);
+    });
+
+    testWidgets('loads invite delivery statuses for member rows', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(peerId: 'peer-alice', username: 'Alice'),
+      );
+      await inviteStatusRepo.saveAttempt(
+        GroupInviteDeliveryAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-alice',
+          username: 'Alice',
+          status: GroupInviteDeliveryStatus.needsResend,
+          attemptedAt: DateTime.utc(2026, 5, 7, 12),
+          updatedAt: DateTime.utc(2026, 5, 7, 12),
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+            inviteDeliveryAttemptRepo: inviteStatusRepo,
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Needs resend'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('group-member-resend-invite-peer-alice')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('shows identity warning when member keys differ from contact', (

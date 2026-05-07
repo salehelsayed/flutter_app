@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
@@ -11,19 +12,25 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 class GroupMemberRow extends StatelessWidget {
   final GroupMember member;
   final GroupMemberIdentitySafety? identitySafety;
+  final GroupInviteDeliveryStatus inviteStatus;
   final bool isAdmin;
   final bool isSelf;
+  final bool isResendingInvite;
   final VoidCallback? onToggleAdminRole;
   final VoidCallback? onRemove;
+  final VoidCallback? onResendInvite;
 
   const GroupMemberRow({
     super.key,
     required this.member,
     this.identitySafety,
+    this.inviteStatus = GroupInviteDeliveryStatus.unknown,
     this.isAdmin = false,
     this.isSelf = false,
+    this.isResendingInvite = false,
     this.onToggleAdminRole,
     this.onRemove,
+    this.onResendInvite,
   });
 
   @override
@@ -56,6 +63,13 @@ class GroupMemberRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 _RoleBadge(role: member.role),
+                if (!isSelf) ...[
+                  const SizedBox(height: 6),
+                  _InviteStatusBadge(
+                    peerId: member.peerId,
+                    status: inviteStatus,
+                  ),
+                ],
                 if (identitySafety?.identityChanged == true) ...[
                   const SizedBox(height: 6),
                   _IdentityChangedWarning(
@@ -68,10 +82,20 @@ class GroupMemberRow extends StatelessWidget {
           ),
           if (isAdmin &&
               !isSelf &&
-              (onToggleAdminRole != null || onRemove != null))
+              (onToggleAdminRole != null ||
+                  onRemove != null ||
+                  onResendInvite != null))
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (onResendInvite != null)
+                  TextButton(
+                    key: ValueKey(
+                      'group-member-resend-invite-${member.peerId}',
+                    ),
+                    onPressed: isResendingInvite ? null : onResendInvite,
+                    child: Text(isResendingInvite ? 'Sending' : 'Send again'),
+                  ),
                 if (onToggleAdminRole != null)
                   PopupMenuButton<_GroupMemberAction>(
                     key: ValueKey('group-member-actions-${member.peerId}'),
@@ -121,6 +145,81 @@ class GroupMemberRow extends StatelessWidget {
 }
 
 enum _GroupMemberAction { toggleAdminRole }
+
+class _InviteStatusBadge extends StatelessWidget {
+  final String peerId;
+  final GroupInviteDeliveryStatus status;
+
+  const _InviteStatusBadge({required this.peerId, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final readableColors = context.backgroundReadableColors;
+    final color = _color(readableColors);
+
+    return Container(
+      key: ValueKey('group-member-invite-status-$peerId'),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(readableColors.isLightSurface ? 0.08 : 0.14),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: color.withOpacity(readableColors.isLightSurface ? 0.22 : 0.26),
+          width: 0.5,
+        ),
+      ),
+      child: Text(
+        _label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  String get _label {
+    switch (status) {
+      case GroupInviteDeliveryStatus.sent:
+        return 'Invite sent';
+      case GroupInviteDeliveryStatus.queued:
+        return 'Invite queued';
+      case GroupInviteDeliveryStatus.needsResend:
+        return 'Needs resend';
+      case GroupInviteDeliveryStatus.cannotSend:
+        return 'Cannot send';
+      case GroupInviteDeliveryStatus.joined:
+        return 'Joined';
+      case GroupInviteDeliveryStatus.unknown:
+        return 'Invite unknown';
+    }
+  }
+
+  Color _color(BackgroundReadableColors readableColors) {
+    switch (status) {
+      case GroupInviteDeliveryStatus.sent:
+      case GroupInviteDeliveryStatus.joined:
+        return readableColors.isLightSurface
+            ? const Color(0xFF116A3A)
+            : const Color(0xFF7BD88F);
+      case GroupInviteDeliveryStatus.queued:
+        return readableColors.isLightSurface
+            ? const Color(0xFF0F5F9C)
+            : const Color(0xFF64B5F6);
+      case GroupInviteDeliveryStatus.needsResend:
+        return readableColors.isLightSurface
+            ? const Color(0xFF8A4A00)
+            : const Color(0xFFFFC857);
+      case GroupInviteDeliveryStatus.cannotSend:
+        return readableColors.isLightSurface
+            ? const Color(0xFF9D1C12)
+            : const Color(0xFFFFB3AD);
+      case GroupInviteDeliveryStatus.unknown:
+        return readableColors.textMuted;
+    }
+  }
+}
 
 class _IdentityChangedWarning extends StatelessWidget {
   final String peerId;

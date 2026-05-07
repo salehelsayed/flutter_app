@@ -46,6 +46,7 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
@@ -84,6 +85,7 @@ class GroupConversationWired extends StatefulWidget {
   final GroupRepository groupRepo;
   final GroupMessageRepository msgRepo;
   final GroupMessageListener groupMessageListener;
+  final GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo;
   final Bridge bridge;
   final IdentityRepository identityRepo;
   final ContactRepository contactRepo;
@@ -115,6 +117,7 @@ class GroupConversationWired extends StatefulWidget {
     required this.groupRepo,
     required this.msgRepo,
     required this.groupMessageListener,
+    this.inviteDeliveryAttemptRepo,
     required this.bridge,
     required this.identityRepo,
     required this.contactRepo,
@@ -2866,6 +2869,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               group: _group,
               groupRepo: widget.groupRepo,
               msgRepo: widget.msgRepo,
+              inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
               contactRepo: widget.contactRepo,
               bridge: widget.bridge,
               identityRepo: widget.identityRepo,
