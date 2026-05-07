@@ -207,11 +207,11 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 		}
 	case "store_inbox":
 		for _, message := range req.Messages {
-			stores.Inbox.Store(req.PeerID, inboxMessage{
+			requireInboxStoreResult(t, stores.Inbox, req.PeerID, inboxMessage{
 				From:      req.From,
 				Message:   message,
 				Timestamp: time.Now().UnixMilli(),
-			})
+			}, InboxStoreResultStored)
 		}
 	case "retrieve_inbox":
 		messages, hasMore := stores.Inbox.RetrieveWithMeta(req.PeerID, req.Limit)

@@ -25,11 +25,11 @@ func TestFiniteLimits_RejectExcessInboxMessages(t *testing.T) {
 
 	// Store up to the limit — all should succeed.
 	for i := 0; i < cfg.MaxInboxMessagesPerPeer; i++ {
-		inbox.Store("peer-1", inboxMessage{
+		requireInboxStoreResult(t, inbox, "peer-1", inboxMessage{
 			From:      "sender",
 			Message:   "msg",
 			Timestamp: time.Now().UnixMilli(),
-		})
+		}, InboxStoreResultStored)
 	}
 
 	count := inbox.Count("peer-1")
@@ -38,11 +38,11 @@ func TestFiniteLimits_RejectExcessInboxMessages(t *testing.T) {
 	}
 
 	// Store one more — the oldest should be evicted (bounded).
-	inbox.Store("peer-1", inboxMessage{
+	requireInboxStoreResult(t, inbox, "peer-1", inboxMessage{
 		From:      "sender",
 		Message:   "overflow-msg",
 		Timestamp: time.Now().UnixMilli(),
-	})
+	}, InboxStoreResultStored)
 
 	count = inbox.Count("peer-1")
 	if count != cfg.MaxInboxMessagesPerPeer {
@@ -104,11 +104,11 @@ func TestAdmissionControl_PreservesLatencyForAdmittedPeersUnderPressure(t *testi
 	for p := 0; p < peerCount; p++ {
 		peerId := "peer-" + time.Now().Format("150405") + "-" + string(rune(p))
 		for m := 0; m < messagesPerPeer; m++ {
-			inbox.Store(peerId, inboxMessage{
+			requireInboxStoreResult(t, inbox, peerId, inboxMessage{
 				From:      "sender",
 				Message:   "msg",
 				Timestamp: time.Now().UnixMilli(),
-			})
+			}, InboxStoreResultStored)
 		}
 	}
 	elapsed := time.Since(start)

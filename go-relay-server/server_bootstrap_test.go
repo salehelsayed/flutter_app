@@ -227,9 +227,9 @@ func TestNewControlPlaneStores_UsesConfiguredServerLimits(t *testing.T) {
 	}
 
 	now := time.Now().UnixMilli()
-	stores.Inbox.Store("peer-1", inboxMessage{From: "a", Message: "1", Timestamp: now})
-	stores.Inbox.Store("peer-1", inboxMessage{From: "a", Message: "2", Timestamp: now})
-	stores.Inbox.Store("peer-1", inboxMessage{From: "a", Message: "3", Timestamp: now})
+	requireInboxStoreResult(t, stores.Inbox, "peer-1", inboxMessage{From: "a", Message: "1", Timestamp: now}, InboxStoreResultStored)
+	requireInboxStoreResult(t, stores.Inbox, "peer-1", inboxMessage{From: "a", Message: "2", Timestamp: now}, InboxStoreResultStored)
+	requireInboxStoreResult(t, stores.Inbox, "peer-1", inboxMessage{From: "a", Message: "3", Timestamp: now}, InboxStoreResultStored)
 	if count := stores.Inbox.Count("peer-1"); count != 2 {
 		t.Fatalf("expected inbox cap 2, got %d", count)
 	}

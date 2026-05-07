@@ -111,7 +111,7 @@ func newMemoryInboxBackend() *memoryInboxBackend {
 	}
 }
 
-func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
+func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -122,7 +122,7 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 	if msgId != "" {
 		if ids, ok := b.messageIds[toPeerId]; ok && ids[msgId] {
 			// Duplicate — skip store and push.
-			return false
+			return InboxStoreResultDuplicate, nil
 		}
 	}
 
@@ -146,7 +146,7 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 		b.messageIds[toPeerId][msgId] = true
 	}
 
-	return true
+	return InboxStoreResultStored, nil
 }
 
 func (b *memoryInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMessage, bool) {

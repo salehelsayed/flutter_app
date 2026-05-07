@@ -260,18 +260,17 @@ func (b *redisInboxBackend) allPattern() string {
 	return b.prefix + "inbox:*"
 }
 
-func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
+func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxStoreResult, error) {
 	entry = ensureInboxMessageID(entry)
 	payload, err := json.Marshal(entry)
 	if err != nil {
-		log.Printf("[REDIS][INBOX] encode failed: %v", err)
-		return false
+		return "", fmt.Errorf("encode inbox message: %w", err)
 	}
 
 	key := b.key(toPeerId)
 	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
 	msgID := extractMessageId(entry.Message)
-	stored := false
+	var result InboxStoreResult
 
 	err = withRedisWatchRetry(b.client, key, func(tx *redis.Tx) error {
 		rawEntries, err := tx.LRange(context.Background(), key, 0, -1).Result()
@@ -287,9 +286,11 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 			for _, message := range validMessages {
 				if extractMessageId(message.Message) == msgID {
 					if len(validRaw) != len(rawEntries) {
-						return redisReplaceList(tx, key, validRaw)
+						if err := redisReplaceList(tx, key, validRaw); err != nil {
+							return err
+						}
 					}
-					stored = false
+					result = InboxStoreResultDuplicate
 					return nil
 				}
 			}
@@ -301,14 +302,16 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) bool {
 			values = values[len(values)-b.maxPerPeer:]
 		}
 
-		stored = true
-		return redisReplaceList(tx, key, values)
+		if err := redisReplaceList(tx, key, values); err != nil {
+			return err
+		}
+		result = InboxStoreResultStored
+		return nil
 	})
 	if err != nil {
-		log.Printf("[REDIS][INBOX] store failed: %v", err)
-		return false
+		return "", fmt.Errorf("store redis inbox message: %w", err)
 	}
-	return stored
+	return result, nil
 }
 
 func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, bool) {
