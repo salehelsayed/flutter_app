@@ -167,7 +167,7 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
         senderPeerId: actorPeerId,
         senderPublicKey: actorPublicKey,
         senderPrivateKey: actorPrivateKey,
-        messageId: timelineMessage.id,
+        messageId: sourceEventId,
         senderDeviceId: actorDeviceId,
         senderTransportPeerId: actorTransportPeerId,
         senderKeyPackageId: actorKeyPackageId,

@@ -59,10 +59,11 @@ echo ""
 for i in "${!DEVICES[@]}"; do
   dev="${DEVICES[$i]}"
   name="${NAMES[$i]}"
-  echo "  [$name] Building with AUTO_SETUP_USERNAME=$name E2E_TEST_MODE=true ..."
+  echo "  [$name] Building with AUTO_SETUP_USERNAME=$name E2E_TEST_MODE=true DISABLE_LOCAL_DISCOVERY=true ..."
   flutter build ios --simulator --no-pub \
     --dart-define="AUTO_SETUP_USERNAME=$name" \
     --dart-define=E2E_TEST_MODE=true \
+    --dart-define=DISABLE_LOCAL_DISCOVERY=true \
     2>&1 | tail -3
   echo "  [$name] Installing + launching ..."
   xcrun simctl install "$dev" build/ios/iphonesimulator/Runner.app

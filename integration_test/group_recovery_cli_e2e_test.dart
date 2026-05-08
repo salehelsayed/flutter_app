@@ -67,6 +67,20 @@ import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart
 import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
 import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
+import 'package:flutter_app/core/database/migrations/054_group_reaction_replay_outbox.dart';
+import 'package:flutter_app/core/database/migrations/055_group_invite_revocations.dart';
+import 'package:flutter_app/core/database/migrations/056_group_invite_consumptions.dart';
+import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
+import 'package:flutter_app/core/database/migrations/058_media_attachment_integrity_columns.dart';
+import 'package:flutter_app/core/database/migrations/059_media_attachment_encryption_columns.dart';
+import 'package:flutter_app/core/database/migrations/060_group_event_log.dart';
+import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
+import 'package:flutter_app/core/database/migrations/063_group_pending_key_repairs.dart';
+import 'package:flutter_app/core/database/migrations/064_group_welcome_key_package_tombstones.dart';
+import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
+import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
+import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -221,7 +235,7 @@ Future<_TestStack> _setupStack() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: _dbName,
-    version: 53,
+    version: 67,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -275,6 +289,20 @@ Future<_TestStack> _setupStack() async {
       await runPendingGroupInvitesMigration(db);
       await runGroupsDissolveColumnsMigration(db);
       await runGroupsBacklogRetentionColumnsMigration(db);
+      await runGroupReactionReplayOutboxMigration(db);
+      await runGroupInviteRevocationsMigration(db);
+      await runGroupInviteConsumptionsMigration(db);
+      await runGroupMemberPermissionsMigration(db);
+      await runMediaAttachmentIntegrityColumnsMigration(db);
+      await runMediaAttachmentEncryptionColumnsMigration(db);
+      await runGroupEventLogMigration(db);
+      await runGroupMessageTransportPeerIdMigration(db);
+      await runGroupMemberDeviceIdentitiesMigration(db);
+      await runGroupPendingKeyRepairsMigration(db);
+      await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      await runGroupHistoryGapRepairsMigration(db);
+      await runGroupSyncReceiptsMigration(db);
+      await runGroupInviteDeliveryAttemptsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) await runMessagesTableMigration(db);
@@ -333,6 +361,28 @@ Future<_TestStack> _setupStack() async {
       if (oldVersion < 51) await runPendingGroupInvitesMigration(db);
       if (oldVersion < 52) await runGroupsDissolveColumnsMigration(db);
       if (oldVersion < 53) await runGroupsBacklogRetentionColumnsMigration(db);
+      if (oldVersion < 54) await runGroupReactionReplayOutboxMigration(db);
+      if (oldVersion < 55) await runGroupInviteRevocationsMigration(db);
+      if (oldVersion < 56) await runGroupInviteConsumptionsMigration(db);
+      if (oldVersion < 57) await runGroupMemberPermissionsMigration(db);
+      if (oldVersion < 58) {
+        await runMediaAttachmentIntegrityColumnsMigration(db);
+      }
+      if (oldVersion < 59) {
+        await runMediaAttachmentEncryptionColumnsMigration(db);
+      }
+      if (oldVersion < 60) await runGroupEventLogMigration(db);
+      if (oldVersion < 61) {
+        await runGroupMessageTransportPeerIdMigration(db);
+      }
+      if (oldVersion < 62) await runGroupMemberDeviceIdentitiesMigration(db);
+      if (oldVersion < 63) await runGroupPendingKeyRepairsMigration(db);
+      if (oldVersion < 64) {
+        await runGroupWelcomeKeyPackageTombstonesMigration(db);
+      }
+      if (oldVersion < 65) await runGroupHistoryGapRepairsMigration(db);
+      if (oldVersion < 66) await runGroupSyncReceiptsMigration(db);
+      if (oldVersion < 67) await runGroupInviteDeliveryAttemptsMigration(db);
     },
   );
 

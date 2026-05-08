@@ -38,12 +38,17 @@ import 'group_multi_device_real_harness.dart';
 // Config from dart-defines
 // ---------------------------------------------------------------------------
 
-const _sharedDir =
-    String.fromEnvironment('E2E_SHARED_DIR', defaultValue: '/tmp');
+const _sharedDir = String.fromEnvironment(
+  'E2E_SHARED_DIR',
+  defaultValue: '/tmp',
+);
 const _runId = String.fromEnvironment('SMOKE_RUN_ID', defaultValue: 'adhoc');
 const _dbName = String.fromEnvironment(
   'E2E_DB_NAME',
   defaultValue: 'notif_sound_smoke_bob.db',
+);
+const _nonInteractive = bool.fromEnvironment(
+  'NOTIFICATION_SOUND_NON_INTERACTIVE',
 );
 
 String _sig(String name) => '$_sharedDir/nsmoke_${_runId}_$name';
@@ -85,8 +90,10 @@ Future<Map<String, dynamic>> _waitForJson(
   throw TimeoutException('Bob(notif): timed out waiting for json: $name');
 }
 
-Future<bool> _waitForOnline(dynamic service,
-    {Duration timeout = const Duration(seconds: 60)}) async {
+Future<bool> _waitForOnline(
+  dynamic service, {
+  Duration timeout = const Duration(seconds: 60),
+}) async {
   final sw = Stopwatch()..start();
   while (sw.elapsed < timeout) {
     if (healthFromState(service.currentState) == ConnectionHealth.online) {
@@ -131,19 +138,23 @@ class _RecordingNotificationService implements NotificationService {
     required String messageText,
     String? payload,
   }) async {
-    shown.add(_RecordedShow(
+    await _inner.showMessageNotification(
       contactPeerId: contactPeerId,
       senderUsername: senderUsername,
       messageText: messageText,
       payload: payload,
-      at: DateTime.now(),
-    ));
-    print('[BOB-N-REC] showMessageNotification called contactPeerId=$contactPeerId shown.length=${shown.length}');
-    return _inner.showMessageNotification(
-      contactPeerId: contactPeerId,
-      senderUsername: senderUsername,
-      messageText: messageText,
-      payload: payload,
+    );
+    shown.add(
+      _RecordedShow(
+        contactPeerId: contactPeerId,
+        senderUsername: senderUsername,
+        messageText: messageText,
+        payload: payload,
+        at: DateTime.now(),
+      ),
+    );
+    print(
+      '[BOB-N-REC] showMessageNotification called contactPeerId=$contactPeerId shown.length=${shown.length}',
     );
   }
 
@@ -152,8 +163,7 @@ class _RecordingNotificationService implements NotificationService {
     required String title,
     required String body,
     String? payload,
-  }) =>
-      _inner.showNotification(title: title, body: body, payload: payload);
+  }) => _inner.showNotification(title: title, body: body, payload: payload);
 
   @override
   Future<String?> consumeInitialPayload() => _inner.consumeInitialPayload();
@@ -181,12 +191,12 @@ class _RecordedShow {
   });
 
   Map<String, dynamic> toJson() => {
-        'contactPeerId': contactPeerId,
-        'senderUsername': senderUsername,
-        'messageText': messageText,
-        'payload': payload,
-        'at': at.toIso8601String(),
-      };
+    'contactPeerId': contactPeerId,
+    'senderUsername': senderUsername,
+    'messageText': messageText,
+    'payload': payload,
+    'at': at.toIso8601String(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -227,13 +237,28 @@ void main() {
     );
     await _waitForOnline(stack.p2pService);
 
+    // Publish identity before initializing the local notification plugin. On a
+    // fresh iOS simulator the permission request can block an unattended run;
+    // Alice still waits for bob_ready before sending any scenario messages.
+    _writeJson('bob_identity.json', {
+      'peerId': stack.identity.peerId,
+      'publicKey': stack.identity.publicKey,
+      'mlKemPublicKey': stack.identity.mlKemPublicKey,
+    });
+
     // Replace the stack's FakeNotificationService-wired group listener with
     // one that targets the REAL FlutterNotificationService.
     stack.groupListener.dispose();
 
-    final recording =
-        _RecordingNotificationService(FlutterNotificationService());
-    await recording.initialize();
+    final recording = _RecordingNotificationService(
+      FlutterNotificationService(requestApplePermissions: !_nonInteractive),
+    );
+    await recording.initialize().timeout(
+      const Duration(seconds: 30),
+      onTimeout: () => throw TimeoutException(
+        'Bob(notif): FlutterNotificationService.initialize() timed out',
+      ),
+    );
     final NotificationService notificationService = recording;
 
     final chatConversationTracker = ActiveConversationTracker();
@@ -265,33 +290,51 @@ void main() {
       dbCountTotalUnread: () => dbCountTotalUnread(stack.db),
       dbCountTotalUnreadExcludingArchived: () =>
           dbCountTotalUnreadExcludingArchived(stack.db),
-      dbDeleteMessagesForContact: (p) => dbDeleteMessagesForContact(stack.db, p),
+      dbDeleteMessagesForContact: (p) =>
+          dbDeleteMessagesForContact(stack.db, p),
       dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
       dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
-          dbLoadMessagesPage(stack.db, p,
-              limit: limit, beforeTimestamp: beforeTimestamp),
-      dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(stack.db),
+          dbLoadMessagesPage(
+            stack.db,
+            p,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
+      dbLoadFailedOutgoingMessages: () =>
+          dbLoadFailedOutgoingMessages(stack.db),
       dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
-          dbLoadUnackedOutgoingMessages(stack.db,
-              olderThan: olderThan, limit: limit),
+          dbLoadUnackedOutgoingMessages(
+            stack.db,
+            olderThan: olderThan,
+            limit: limit,
+          ),
       dbLoadConversationThreadSummaries: (ids) =>
           dbLoadConversationThreadSummaries(stack.db, ids),
-      dbRecoverStuckSendingMessages: (
-              {required DateTime olderThan, int limit = 50}) =>
-          dbRecoverStuckSendingMessages(stack.db,
-              olderThan: olderThan, limit: limit),
-      dbUpdateWireEnvelope: (id, we) =>
-          dbUpdateWireEnvelope(stack.db, id, we),
-      dbLoadStuckSendingOutgoingMessages: (
-              {required DateTime olderThan, int limit = 50}) =>
-          dbLoadStuckSendingOutgoingMessages(stack.db,
-              olderThan: olderThan, limit: limit),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(stack.db, id, we),
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
       dbLoadSendingOutgoingMessages: () =>
           dbLoadSendingOutgoingMessages(stack.db),
-      dbConditionalTransitionStatus: (id,
-              {required fromStatus, required toStatus}) =>
-          dbConditionalTransitionStatus(stack.db, id,
-              fromStatus: fromStatus, toStatus: toStatus),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                stack.db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
     );
 
     // ── 1:1 chat listener wired to the REAL notification service ──
@@ -308,25 +351,22 @@ void main() {
     chatListener.start();
 
     // ── Identity exchange ──
-    _writeJson('bob_identity.json', {
-      'peerId': stack.identity.peerId,
-      'publicKey': stack.identity.publicKey,
-      'mlKemPublicKey': stack.identity.mlKemPublicKey,
-    });
     print('[BOB-N] Identity written, waiting for Alice...');
 
     final aliceFixture = await _waitForJson('alice_identity.json');
     final alicePeerId = aliceFixture['peerId'] as String;
 
-    await stack.contactRepo.addContact(ContactModel(
-      peerId: alicePeerId,
-      publicKey: aliceFixture['publicKey'] as String,
-      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-      username: 'AliceNotif',
-      signature: 'sig-alice-notif',
-      scannedAt: DateTime.now().toUtc().toIso8601String(),
-      mlKemPublicKey: aliceFixture['mlKemPublicKey'] as String?,
-    ));
+    await stack.contactRepo.addContact(
+      ContactModel(
+        peerId: alicePeerId,
+        publicKey: aliceFixture['publicKey'] as String,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'AliceNotif',
+        signature: 'sig-alice-notif',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: aliceFixture['mlKemPublicKey'] as String?,
+      ),
+    );
     print('[BOB-N] Alice added as contact');
 
     _writeSignal('bob_ready', 'ok');
@@ -391,9 +431,11 @@ void main() {
       expectedContactPeerId: alicePeerId,
     );
     _writeJson('s1_bob_verdict', s1Verdict);
-    print('[BOB-N] S1 verdict: pass=${s1Verdict['programmaticPass']} '
-        'shown=${s1Verdict['notificationShown']} '
-        'count=${s1Verdict['shownCount']}');
+    print(
+      '[BOB-N] S1 verdict: pass=${s1Verdict['programmaticPass']} '
+      'shown=${s1Verdict['notificationShown']} '
+      'count=${s1Verdict['shownCount']}',
+    );
 
     // ════════════════════════════════════════════════════════════════
     //  S2: Group discussion (GroupType.chat) → should NOTIFY
@@ -421,20 +463,26 @@ void main() {
       expectedContactPeerId: 'group:$chatGroupId',
     );
     _writeJson('s2_bob_verdict', s2Verdict);
-    print('[BOB-N] S2 verdict: pass=${s2Verdict['programmaticPass']} '
-        'count=${s2Verdict['shownCount']}');
+    print(
+      '[BOB-N] S2 verdict: pass=${s2Verdict['programmaticPass']} '
+      'count=${s2Verdict['shownCount']}',
+    );
 
     // ════════════════════════════════════════════════════════════════
     //  S3: Group announcement (GroupType.announcement) → should NOTIFY
     // ════════════════════════════════════════════════════════════════
     print('\n--- S3: Group announcement ---');
     await _waitForSignal('alice_group_announcement_ready');
-    final annGroupFixture = await _waitForJson('group_announcement_fixture.json');
+    final annGroupFixture = await _waitForJson(
+      'group_announcement_fixture.json',
+    );
     final annGroupId = await importJoinedGroupFixture(
       stack: stack,
       fixture: annGroupFixture,
     );
-    print('[BOB-N] Joined announcement group: ${annGroupId.substring(0, 16)}...');
+    print(
+      '[BOB-N] Joined announcement group: ${annGroupId.substring(0, 16)}...',
+    );
     await Future<void>.delayed(const Duration(seconds: 5));
     _writeSignal('bob_group_announcement_joined', 'ok');
 
@@ -449,8 +497,10 @@ void main() {
       expectedContactPeerId: 'group:$annGroupId',
     );
     _writeJson('s3_bob_verdict', s3Verdict);
-    print('[BOB-N] S3 verdict: pass=${s3Verdict['programmaticPass']} '
-        'count=${s3Verdict['shownCount']}');
+    print(
+      '[BOB-N] S3 verdict: pass=${s3Verdict['programmaticPass']} '
+      'count=${s3Verdict['shownCount']}',
+    );
 
     // ════════════════════════════════════════════════════════════════
     //  S4: Suppression control — Bob simulates viewing Alice's 1:1
@@ -473,9 +523,11 @@ void main() {
       expectedContactPeerId: alicePeerId,
     );
     _writeJson('s4_bob_verdict', s4Verdict);
-    print('[BOB-N] S4 verdict: pass=${s4Verdict['programmaticPass']} '
-        'suppressed=${s4Verdict['notificationSuppressed']} '
-        'count=${s4Verdict['shownCount']}');
+    print(
+      '[BOB-N] S4 verdict: pass=${s4Verdict['programmaticPass']} '
+      'suppressed=${s4Verdict['notificationSuppressed']} '
+      'count=${s4Verdict['shownCount']}',
+    );
 
     chatConversationTracker.clear();
 

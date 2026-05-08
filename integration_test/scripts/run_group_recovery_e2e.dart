@@ -243,7 +243,8 @@ Future<String?> _readAppFile(String path) async {
 }
 
 Future<String> _createAndroidTempDir(String deviceId) async {
-  final path = '/data/local/tmp/group_recovery_e2e_${DateTime.now().millisecondsSinceEpoch}';
+  final path =
+      '/data/local/tmp/group_recovery_e2e_${DateTime.now().millisecondsSinceEpoch}';
   final mkdir = await Process.run(_adb(), [
     '-s',
     deviceId,
@@ -255,27 +256,13 @@ Future<String> _createAndroidTempDir(String deviceId) async {
   if (mkdir.exitCode != 0) {
     throw StateError('Failed to create Android temp dir: ${mkdir.stderr}');
   }
-  await Process.run(_adb(), [
-    '-s',
-    deviceId,
-    'shell',
-    'chmod',
-    '777',
-    path,
-  ]);
+  await Process.run(_adb(), ['-s', deviceId, 'shell', 'chmod', '777', path]);
   return path;
 }
 
 Future<void> _cleanupAndroidTempDir(String deviceId, String path) async {
   try {
-    await Process.run(_adb(), [
-      '-s',
-      deviceId,
-      'shell',
-      'rm',
-      '-rf',
-      path,
-    ]);
+    await Process.run(_adb(), ['-s', deviceId, 'shell', 'rm', '-rf', path]);
   } catch (_) {}
 }
 
@@ -307,6 +294,32 @@ Future<Map<String, dynamic>> _waitForGroupFixture(
     await Future<void>.delayed(const Duration(milliseconds: 250));
   }
   throw TimeoutException('Timed out waiting for group fixture at $path');
+}
+
+List<String> _recipientPeerIdsForCliStore(
+  Map<String, dynamic> groupFixture,
+  String senderPeerId,
+) {
+  final groupConfig = groupFixture['groupConfig'];
+  if (groupConfig is! Map) {
+    throw StateError('Group fixture is missing groupConfig');
+  }
+  final members = groupConfig['members'];
+  if (members is! List) {
+    throw StateError('Group fixture is missing groupConfig.members');
+  }
+
+  final recipientPeerIds = members
+      .whereType<Map>()
+      .map((member) => member['peerId'])
+      .whereType<String>()
+      .where((peerId) => peerId.isNotEmpty && peerId != senderPeerId)
+      .toSet()
+      .toList(growable: false);
+  if (recipientPeerIds.isEmpty) {
+    throw StateError('CLI group inbox store requires at least one recipient');
+  }
+  return recipientPeerIds;
 }
 
 Future<bool> _waitForSignal(
@@ -432,6 +445,10 @@ Future<void> main(List<String> args) async {
 
     final groupFixture = await _waitForGroupFixture(groupFixturePath);
     _log('ORCH', 'Group fixture received for ${groupFixture['groupId']}');
+    final cliRecipientPeerIds = _recipientPeerIdsForCliStore(
+      groupFixture,
+      peer.peerId!,
+    );
 
     await peer.commandOk('group_join', groupFixture);
 
@@ -463,6 +480,8 @@ Future<void> main(List<String> args) async {
       'messageId': 'cli-missed-inbox-message',
       'senderUsername': 'CLIGroupPeer',
       'keyEpoch': groupFixture['keyEpoch'],
+      'groupKey': groupFixture['groupKey'],
+      'recipientPeerIds': cliRecipientPeerIds,
     });
     await _writeFile(inboxStoredPath, 'ok');
     _log('ORCH', 'Missed inbox message stored');

@@ -142,6 +142,11 @@ Usage:
   ./scripts/run_test_gates.sh transport
   ./scripts/run_test_gates.sh runtime-telemetry
   ./scripts/run_test_gates.sh group-real-network-nightly
+  ./scripts/run_test_gates.sh reliability-sim [all|1to1|group|intro] [options]
+  ./scripts/run_test_gates.sh host-all [options]
+  ./scripts/run_test_gates.sh feature-host-all [options]
+  ./scripts/run_test_gates.sh core-host-all [options]
+  ./scripts/run_test_gates.sh performance-host [options]
   ./scripts/run_test_gates.sh all
   ./scripts/run_test_gates.sh benchmark
   ./scripts/run_test_gates.sh benchmark-sim
@@ -395,6 +400,7 @@ run_completeness_check() {
 
 main() {
   local gate="${1:-}"
+  local -a gate_args=("${@:2}")
 
   case "$gate" in
     baseline)
@@ -423,6 +429,19 @@ main() {
       ;;
     group-real-network-nightly)
       run_group_real_network_nightly_gate
+      ;;
+    reliability-sim)
+      if ((${#gate_args[@]} == 0)); then
+        gate_args=(all)
+      fi
+      ./scripts/run_reliability_simulations.sh "${gate_args[@]}"
+      ;;
+    host-all|feature-host-all|core-host-all|performance-host)
+      if ((${#gate_args[@]} == 0)); then
+        ./scripts/run_host_test_gates.sh "$gate"
+      else
+        ./scripts/run_host_test_gates.sh "$gate" "${gate_args[@]}"
+      fi
       ;;
     all)
       run_gate_command "Baseline Gate" "${BASELINE_TESTS[@]}"

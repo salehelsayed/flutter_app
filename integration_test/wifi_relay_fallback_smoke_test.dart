@@ -2,7 +2,7 @@
 //
 // High-fidelity end-to-end smoke test using two real app instances to validate:
 //   S1: Baseline live chat (CLI peer sends message; direct/relay both valid)
-//   S2: Send message to CLI peer
+//   S2: Send encrypted message to CLI peer
 //   S3: Transport fallback (CLI stops -> inbox -> CLI restarts -> retrieval)
 //   S4: Recovery after CLI restart (new messages work over direct/relay)
 //
@@ -587,10 +587,10 @@ void main() {
       }
 
       // ================================================================
-      // S2: Send message to CLI peer
+      // S2: Send encrypted message to CLI peer
       // ================================================================
       if (hasCli) {
-        print('\n--- S2: Send v1 message to CLI peer ---');
+        print('\n--- S2: Send encrypted message to CLI peer ---');
         try {
           final (r2, m2) = await sendChatMessage(
             p2pService: stack.p2pService,
@@ -599,6 +599,8 @@ void main() {
             text: 'S2: Hello from Flutter smoke test',
             senderPeerId: stack.ownPeerId,
             senderUsername: 'FlutterSmoke',
+            bridge: stack.bridge,
+            recipientMlKemPublicKey: stack.cliMlKemPublicKey,
           );
 
           final stored = await stack.messageRepo.getMessagesForContact(
@@ -612,11 +614,13 @@ void main() {
               ? outgoing.last.transport
               : 'none';
           final detail = 'status=$status transport=$transport';
-          // Accept delivered via relay or inbox.
+          // Accept delivered via any successful live or fallback path.
           final pass =
               m2 != null &&
               status == 'delivered' &&
-              (transport == 'relay' || transport == 'inbox');
+              (transport == 'direct' ||
+                  transport == 'relay' ||
+                  transport == 'inbox');
           results.add(_ScenarioResult('S2', pass, detail));
           print('[SMOKE] S2 ${pass ? 'PASS' : 'FAIL'}: $detail');
         } catch (e) {
@@ -662,6 +666,8 @@ void main() {
               text: 'S3: Message while CLI is down (inbox fallback)',
               senderPeerId: stack.ownPeerId,
               senderUsername: 'FlutterSmoke',
+              bridge: stack.bridge,
+              recipientMlKemPublicKey: stack.cliMlKemPublicKey,
             );
 
             // Signal orchestrator that we sent the S3 message.
@@ -800,6 +806,8 @@ void main() {
             text: 'S4-reply: Recovery confirmed from Flutter',
             senderPeerId: stack.ownPeerId,
             senderUsername: 'FlutterSmoke',
+            bridge: stack.bridge,
+            recipientMlKemPublicKey: stack.cliMlKemPublicKey,
           );
           print('[SMOKE] S4: reply sent');
         } catch (e) {

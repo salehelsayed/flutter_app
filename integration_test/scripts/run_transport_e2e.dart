@@ -577,38 +577,58 @@ List<_IncomingProof> _matchingIncomingProof(
   }).toList();
 }
 
-Map<String, dynamic>? _firstJsonEnvelopeFromProof(
-  Iterable<_IncomingProof> evidence, {
-  required String fromPeerId,
-  required bool Function(String content) contentMatches,
-  bool Function(_IncomingProof proof)? proofMatches,
-}) {
-  final matches = _matchingIncomingProof(
-    evidence,
-    fromPeerId: fromPeerId,
-    contentMatches: contentMatches,
-    proofMatches: proofMatches,
-  );
-  for (final match in matches) {
-    try {
-      final decoded = jsonDecode(match.content);
-      if (decoded is Map<String, dynamic>) {
-        return decoded;
-      }
-      if (decoded is Map) {
-        return Map<String, dynamic>.from(decoded);
-      }
-    } catch (_) {}
-  }
-  return null;
-}
-
 String _proofSources(List<_IncomingProof> proof) {
   final sources = proof.map((item) => item.source).toSet().toList()..sort();
   return sources.join(',');
 }
 
 String _stringValue(dynamic value) => value?.toString() ?? '';
+
+String _messageWireContent(Map<String, dynamic> message) =>
+    _stringValue(message['content'] ?? message['message']);
+
+String _messagePayloadText(Map<String, dynamic> message) =>
+    _stringValue(message['payloadText']);
+
+List<dynamic> _messagePayloadMedia(Map<String, dynamic> message) {
+  final media = message['payloadMedia'];
+  if (media is List) {
+    return media;
+  }
+  final payload = message['payload'];
+  if (payload is Map) {
+    final payloadMedia = payload['media'];
+    if (payloadMedia is List) {
+      return payloadMedia;
+    }
+  }
+  return const [];
+}
+
+bool _messageTextContains(Map<String, dynamic> message, String needle) {
+  return _messagePayloadText(message).contains(needle) ||
+      _messageWireContent(message).contains(needle);
+}
+
+bool _messageReferencesAttachment(
+  Map<String, dynamic> message, {
+  required String blobId,
+  required String mime,
+  required String mediaType,
+}) {
+  for (final item in _messagePayloadMedia(message)) {
+    if (item is! Map) {
+      continue;
+    }
+    final attachment = Map<String, dynamic>.from(item);
+    if (attachment['id'] == blobId &&
+        attachment['mime'] == mime &&
+        attachment['mediaType'] == mediaType) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Scenario Runners
@@ -1187,9 +1207,8 @@ Future<List<_OrchestratorResult>> _runScenarios(
       // Check if any inbox message contains the C1 text.
       var c1Found = false;
       for (final m in msgs) {
-        final mMap = m as Map<String, dynamic>;
-        final message = mMap['message'] as String? ?? '';
-        if (message.contains('C1:')) {
+        final mMap = Map<String, dynamic>.from(m as Map);
+        if (_messageTextContains(mMap, 'C1:')) {
           c1Found = true;
           break;
         }
@@ -1376,54 +1395,69 @@ Future<List<_OrchestratorResult>> _runScenarios(
       );
       _log('ORCH', 'E8: SKIP — no blob ID');
     } else {
-      Map<String, dynamic>? e8Envelope;
+      Map<String, dynamic>? e8Message;
       for (var i = 0; i < 30; i++) {
-        e8Envelope = _firstJsonEnvelopeFromProof(
-          peer.incomingProofSnapshot(),
-          fromPeerId: flutterPeerId,
-          contentMatches: (content) => content.contains(e8BlobIdVal),
-        );
-        if (e8Envelope != null) {
-          break;
-        }
         final messagesResult = await peer.commandOk('get_messages');
         peer.retainCollectorMessages(messagesResult, source: 'collector:e8');
-        e8Envelope = _firstJsonEnvelopeFromProof(
-          peer.incomingProofSnapshot(),
-          fromPeerId: flutterPeerId,
-          contentMatches: (content) => content.contains(e8BlobIdVal),
-        );
-        if (e8Envelope != null) {
+        final messages = messagesResult['messages'] as List<dynamic>? ?? [];
+        for (final raw in messages) {
+          if (raw is! Map) {
+            continue;
+          }
+          final message = Map<String, dynamic>.from(raw);
+          if (message['from'] == flutterPeerId &&
+              _messagePayloadText(message) == 'E8: Media attachment test' &&
+              _messageReferencesAttachment(
+                message,
+                blobId: e8BlobIdVal,
+                mime: 'image/png',
+                mediaType: 'image',
+              )) {
+            e8Message = message;
+            break;
+          }
+        }
+        if (e8Message != null) {
           break;
         }
         await Future.delayed(const Duration(seconds: 1));
       }
 
-      if (e8Envelope == null) {
+      if (e8Message == null) {
         final inboxResult = await peer.commandOk('inbox_retrieve');
         peer.retainInboxMessages(inboxResult, source: 'inbox:e8');
-        e8Envelope = _firstJsonEnvelopeFromProof(
-          peer.incomingProofSnapshot(),
-          fromPeerId: flutterPeerId,
-          contentMatches: (content) => content.contains(e8BlobIdVal),
-        );
-      }
-
-      final payload = e8Envelope?['payload'] as Map<String, dynamic>?;
-      final payloadText = payload?['text'] as String? ?? '';
-      final media = payload?['media'] as List<dynamic>? ?? const [];
-      var attachmentReferenced = false;
-      for (final item in media) {
-        if (item is! Map) continue;
-        final attachment = Map<String, dynamic>.from(item);
-        if (attachment['id'] == e8BlobIdVal &&
-            attachment['mime'] == 'image/png' &&
-            attachment['mediaType'] == 'image') {
-          attachmentReferenced = true;
-          break;
+        final messages = inboxResult['messages'] as List<dynamic>? ?? [];
+        for (final raw in messages) {
+          if (raw is! Map) {
+            continue;
+          }
+          final message = Map<String, dynamic>.from(raw);
+          if (message['from'] == flutterPeerId &&
+              _messagePayloadText(message) == 'E8: Media attachment test' &&
+              _messageReferencesAttachment(
+                message,
+                blobId: e8BlobIdVal,
+                mime: 'image/png',
+                mediaType: 'image',
+              )) {
+            e8Message = message;
+            break;
+          }
         }
       }
-      final messageSeen = e8Envelope != null;
+
+      final payloadText = e8Message == null
+          ? ''
+          : _messagePayloadText(e8Message);
+      final attachmentReferenced =
+          e8Message != null &&
+          _messageReferencesAttachment(
+            e8Message,
+            blobId: e8BlobIdVal,
+            mime: 'image/png',
+            mediaType: 'image',
+          );
+      final messageSeen = e8Message != null;
       _log(
         'ORCH',
         'E8: messageSeen=$messageSeen attachmentReferenced=$attachmentReferenced '
@@ -1548,24 +1582,10 @@ List<_OrchestratorResult> _verifyCliReceivedMessages(
   bool isLiveProof(_IncomingProof proof) =>
       proof.source.startsWith('event') || proof.source.startsWith('collector');
 
-  // A1: Flutter sent v1 plaintext — retain live receive proof across restarts.
-  final a1Proof = _matchingIncomingProof(
-    evidence,
-    fromPeerId: flutterPeerId,
-    contentMatches: (content) => content.contains('"A1:'),
-    proofMatches: isLiveProof,
-  );
-  final hasA1 = a1Proof.isNotEmpty;
-  results.add(
-    _OrchestratorResult(
-      'RECV-A1',
-      hasA1,
-      hasA1
-          ? 'v1 envelope received via ${_proofSources(a1Proof)}'
-          : 'not found in retained live proof',
-    ),
-  );
-  _log('VERIFY', 'RECV-A1: ${hasA1 ? 'PASS' : 'FAIL'}');
+  // A1 is a fail-closed plaintext fallback assertion. The expected receiver
+  // proof is absence of a wire message, which the Flutter-side test already
+  // checks by asserting encryptionRequired and no persisted message.
+  _log('VERIFY', 'RECV-A1: SKIP — A1 is a no-send fail-closed assertion');
 
   // A4: Flutter sent v2 encrypted over the live path. Ignore inbox-only v2
   // traffic such as B8 when checking this residual.

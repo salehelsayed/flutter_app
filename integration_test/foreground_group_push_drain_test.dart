@@ -9,6 +9,7 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -164,6 +165,45 @@ class _ForegroundGroupPushHarness {
     );
   }
 
+  Future<void> addSignedInboxPage(
+    String groupId,
+    String cursor,
+    List<Map<String, dynamic>> payloads,
+    String nextCursor,
+  ) async {
+    final messages = <Map<String, dynamic>>[];
+    for (final payload in payloads) {
+      final keyEpoch = payload['keyEpoch'] as int? ?? 0;
+      final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: admin.bridge,
+        groupRepo: admin.groupRepo,
+        groupId: groupId,
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode(payload),
+        senderPeerId: admin.peerId,
+        senderPublicKey: admin.publicKey,
+        senderPrivateKey: admin.privateKey,
+        keyInfo: GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: keyEpoch,
+          encryptedKey: 'foreground-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+        messageId: payload['messageId'] as String?,
+        senderDeviceId: admin.deviceId,
+        senderTransportPeerId: admin.deviceId,
+        senderKeyPackageId: admin.deviceIdentity.keyPackageId,
+        recipientPeerIds: <String>[member.peerId],
+      );
+      messages.add({
+        'from': admin.deviceId,
+        'message': replayEnvelope,
+        'timestamp': payload['timestamp'],
+      });
+    }
+    memberBridge.addPage(groupId, cursor, messages, nextCursor);
+  }
+
   Future<List<GroupMessage>> incomingMessages() async {
     return (await member.loadGroupMessages(
       'group-foreground',
@@ -191,7 +231,7 @@ void main() {
         addTearDown(harness.dispose);
 
         harness.member.unsubscribeFromGroup('group-foreground');
-        harness.memberBridge.addPage('group-foreground', '', [
+        await harness.addSignedInboxPage('group-foreground', '', [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',
@@ -231,7 +271,7 @@ void main() {
         addTearDown(harness.dispose);
 
         harness.member.unsubscribeFromGroup('group-foreground');
-        harness.memberBridge.addPage('group-foreground', '', [
+        await harness.addSignedInboxPage('group-foreground', '', [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',
@@ -313,7 +353,7 @@ void main() {
         addTearDown(harness.dispose);
 
         harness.member.unsubscribeFromGroup('group-foreground');
-        harness.memberBridge.addPage('group-foreground', '', [
+        await harness.addSignedInboxPage('group-foreground', '', [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',
@@ -385,7 +425,7 @@ void main() {
         addTearDown(harness.dispose);
 
         harness.member.unsubscribeFromGroup('group-foreground');
-        harness.memberBridge.addPage('group-foreground', '', [
+        await harness.addSignedInboxPage('group-foreground', '', [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',
@@ -448,7 +488,7 @@ void main() {
         expect(liveMessage, isNotNull);
         await _settle();
 
-        harness.memberBridge.addPage('group-foreground', '', [
+        await harness.addSignedInboxPage('group-foreground', '', [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',
@@ -533,7 +573,7 @@ void main() {
         );
 
         harness.member.unsubscribeFromGroup('group-foreground');
-        harness.memberBridge.addPage('group-foreground', '', [
+        await harness.addSignedInboxPage('group-foreground', '', [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',
@@ -571,7 +611,7 @@ void main() {
           reason: 'Same-message dedupe must not clear unrelated entries',
         );
 
-        harness.memberBridge.addPage('group-foreground', '', [
+        await harness.addSignedInboxPage('group-foreground', '', [
           {
             'groupId': 'group-foreground',
             'senderId': 'alice-peer',

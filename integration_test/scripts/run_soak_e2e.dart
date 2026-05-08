@@ -522,12 +522,15 @@ Future<void> main(List<String> args) async {
   final phase4DiscoverMissAfter =
       phase4Result['discoverMissAfterResume'] == true;
   final phase4LivePath = phase4Result['livePath'] == true;
-  final phase4Content = cliReceived['content']?.toString() ?? '';
-  final phase4ReceivedExpectedText = phase4Content.contains(phase4Text);
+  final phase4ReceivedEncrypted =
+      cliReceived['version'] == '2' && cliReceived['decrypted'] == true;
+  final phase4ReceivedExpectedText =
+      cliReceived['payloadText']?.toString() == phase4Text;
 
   if (!phase4DiscoverMissBefore ||
       !phase4DiscoverMissAfter ||
       !phase4LivePath ||
+      !phase4ReceivedEncrypted ||
       !phase4ReceivedExpectedText) {
     _log(
       'SOAK',
@@ -535,10 +538,12 @@ Future<void> main(List<String> args) async {
           'discoverBefore=$phase4DiscoverMissBefore '
           'discoverAfter=$phase4DiscoverMissAfter '
           'livePath=$phase4LivePath '
+          'encrypted=$phase4ReceivedEncrypted '
           'receivedText=$phase4ReceivedExpectedText '
           'transport=${phase4Result['persistedTransport']} '
           'status=${phase4Result['persistedStatus']} '
-          'recovery=${phase4Result['lastRecoveryMethod']}',
+          'recovery=${phase4Result['lastRecoveryMethod']} '
+          'parseError=${cliReceived['parseError']}',
     );
     _writeSignal('soak_done');
     await peer.kill();

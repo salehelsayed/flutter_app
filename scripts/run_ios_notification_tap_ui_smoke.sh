@@ -9,6 +9,7 @@ APP_PATH="$ROOT_DIR/build/ios/iphonesimulator/Runner.app"
 BUNDLE_ID="${IOS_BUNDLE_ID:-com.mknoon.app}"
 READY_MARKER="MKNOON_APNS_TAP_READY"
 RESULT_ROOT="$ROOT_DIR/build/ios-notification-tap-ui-smoke/$(date -u +%Y%m%dT%H%M%SZ)"
+TAP_CONFIG_FILE="$ROOT_DIR/build/ios-notification-tap-ui-smoke/current_tap_config.json"
 
 device_csv=""
 skip_build=0
@@ -167,7 +168,7 @@ safe_name() {
 start_log_stream() {
   local device="$1"
   local output_file="$2"
-  local predicate='eventMessage CONTAINS "PUSH_DIAG" OR eventMessage CONTAINS "[FLOW]" OR eventMessage CONTAINS "IOS_APNS_" OR eventMessage CONTAINS "NOTIFICATION_TAP"'
+  local predicate='eventMessage CONTAINS "PUSH_DIAG" OR eventMessage CONTAINS "[FLOW]" OR eventMessage CONTAINS "IOS_APNS_" OR eventMessage CONTAINS "NOTIFICATION_TAP" OR eventMessage CONTAINS "MKNOON_APNS_TAP_READY"'
 
   xcrun simctl spawn "$device" log stream \
     --style compact \
@@ -197,6 +198,55 @@ wait_for_pattern() {
   return 1
 }
 
+wait_for_ready_signal() {
+  local ready_file="$1"
+  local log_file="$2"
+  local watched_pid="$3"
+  local timeout_seconds="$4"
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while ((SECONDS < deadline)); do
+    if [[ -f "$ready_file" ]]; then
+      return 0
+    fi
+    if [[ -f "$log_file" ]] && grep -Fq "$READY_MARKER" "$log_file"; then
+      return 0
+    fi
+    if ! kill -0 "$watched_pid" >/dev/null 2>&1; then
+      return 1
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
+wait_for_any_pattern_after_line() {
+  local file="$1"
+  local start_line="$2"
+  local watched_pid="$3"
+  local timeout_seconds="$4"
+  shift 4
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while ((SECONDS < deadline)); do
+    if [[ -f "$file" ]]; then
+      local pattern
+      for pattern in "$@"; do
+        if tail -n "+$((start_line + 1))" "$file" | grep -Fq "$pattern"; then
+          return 0
+        fi
+      done
+    fi
+    if ! kill -0 "$watched_pid" >/dev/null 2>&1; then
+      return 1
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
 assert_log_contains() {
   local file="$1"
   local pattern="$2"
@@ -215,6 +265,21 @@ assert_log_not_contains() {
   fi
 }
 
+write_tap_config() {
+  local expected_title="$1"
+  local ready_file="$2"
+
+  mkdir -p "$(dirname "$TAP_CONFIG_FILE")"
+  TAP_EXPECTED_TITLE="$expected_title" TAP_READY_FILE="$ready_file" node <<'NODE' >"$TAP_CONFIG_FILE"
+const config = {
+  expectedTitle: process.env.TAP_EXPECTED_TITLE || 'New Message',
+  readyFile: process.env.TAP_READY_FILE || '',
+  preBackgroundWaitSeconds: process.env.TAP_PRE_BACKGROUND_WAIT_SECONDS || '8',
+};
+process.stdout.write(`${JSON.stringify(config, null, 2)}\n`);
+NODE
+}
+
 install_app_on_device() {
   local device="$1"
   local name="$2"
@@ -226,20 +291,20 @@ install_app_on_device() {
 
 run_xcode_ui_test() {
   local device="$1"
-  local mode="$2"
+  local xctest_selector="$2"
   local log_file="$3"
   local result_bundle="$4"
-  local xctest_selector="-only-testing:RunnerUITests/NotificationTapUITests/testNotificationTap"
+  local ready_file="$5"
+  local expected_title="$6"
 
-  if [[ "$mode" == "cold" ]]; then
-    xctest_selector="-only-testing:RunnerUITests/NotificationTapUITests/testColdNotificationTap"
-  fi
+  write_tap_config "$expected_title" "$ready_file"
 
   (
     cd "$ROOT_DIR/ios"
-    MKNOON_APNS_TAP_MODE="$mode" \
     MKNOON_APNS_TAP_APP_BUNDLE_ID="$BUNDLE_ID" \
-    MKNOON_APNS_TAP_EXPECTED_TITLE="New Message" \
+    MKNOON_APNS_TAP_EXPECTED_TITLE="$expected_title" \
+    MKNOON_APNS_TAP_READY_FILE="$ready_file" \
+    MKNOON_APNS_TAP_PRE_BACKGROUND_WAIT_SECONDS=8 \
     xcodebuild test \
       -workspace "$WORKSPACE" \
       -scheme "$SCHEME" \
@@ -254,8 +319,15 @@ push_fixture() {
   local device="$1"
   local fixture="$2"
   local log_file="$3"
+  local expected_title="$4"
 
-  # Keep real simctl push in the acceptance path through the shared fixture shaper.
+  # Keep real simctl push in the acceptance path through the shared fixture
+  # shaper. This smoke validates user-visible APNs tap routing; Simulator
+  # Springboard hides alerts that also carry content-available=1, so keep
+  # mutable-content coverage while omitting only the silent/background delivery
+  # flag here.
+  IOS_APNS_ALERT_TITLE="$expected_title" \
+  IOS_APNS_CONTENT_AVAILABLE=0 \
   "$ROOT_DIR/scripts/push_fixture_to_simulator.sh" \
     --device "$device" \
     --bundle-id "$BUNDLE_ID" \
@@ -263,23 +335,51 @@ push_fixture() {
     >>"$log_file" 2>&1
 }
 
+launch_warm_app_for_host_push() {
+  local device="$1"
+  local log_file="$2"
+  local log_pid="$3"
+  local start_line
+  start_line="$(wc -l <"$log_file" | tr -d ' ')"
+
+  printf 'Launching %s for warm APNs tap setup\n' "$BUNDLE_ID" >>"$log_file"
+  xcrun simctl launch "$device" "$BUNDLE_ID" >>"$log_file" 2>&1
+
+  if ! wait_for_any_pattern_after_line \
+    "$log_file" \
+    "$start_line" \
+    "$log_pid" \
+    90 \
+    "P2P_SERVICE_START_NODE_CORE_SUCCESS" \
+    "P2P_SERVICE_START_NODE_CORE_ALREADY_RUNNING"; then
+    printf 'Timed out waiting for warm app node readiness in %s\n' "$log_file" >&2
+    return 1
+  fi
+
+  xcrun simctl launch "$device" com.apple.springboard >>"$log_file" 2>&1
+  sleep 2
+}
+
 assert_scenario_markers() {
   local mode="$1"
   local log_file="$2"
+  local status=0
 
-  assert_log_contains "$log_file" "ios_native_un_didReceive"
+  assert_log_contains "$log_file" "ios_native_un_didReceive" || status=1
 
   if [[ "$mode" == "cold" ]]; then
-    assert_log_contains "$log_file" "ios_notification_open_stored_pending"
-    assert_log_contains "$log_file" "IOS_APNS_INITIAL_NOTIFICATION_OPENED"
+    assert_log_contains "$log_file" "ios_notification_open_stored_pending" || status=1
+    assert_log_contains "$log_file" "IOS_APNS_INITIAL_NOTIFICATION_OPENED" || status=1
   else
-    assert_log_contains "$log_file" "ios_notification_open_forwarded_warm"
-    assert_log_contains "$log_file" "IOS_APNS_NOTIFICATION_OPENED"
+    assert_log_contains "$log_file" "ios_notification_open_forwarded_warm" || status=1
+    assert_log_contains "$log_file" "IOS_APNS_NOTIFICATION_OPENED" || status=1
   fi
 
-  assert_log_not_contains "$log_file" "IOS_APNS_NOTIFICATION_OPEN_ERROR"
-  assert_log_not_contains "$log_file" "NOTIFICATION_TAP_NAV_ERROR"
-  assert_log_not_contains "$log_file" "INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR"
+  assert_log_not_contains "$log_file" "IOS_APNS_NOTIFICATION_OPEN_ERROR" || status=1
+  assert_log_not_contains "$log_file" "NOTIFICATION_TAP_NAV_ERROR" || status=1
+  assert_log_not_contains "$log_file" "INITIAL_LOCAL_NOTIFICATION_ROUTE_ERROR" || status=1
+
+  return "$status"
 }
 
 run_scenario_once() {
@@ -291,10 +391,14 @@ run_scenario_once() {
   local safe_label
   safe_label="$(safe_name "$label")"
   local log_file="$RESULT_ROOT/$safe_label.combined.log"
-  local result_bundle="$RESULT_ROOT/$safe_label.xcresult"
+  local ready_file="$RESULT_ROOT/$safe_label.ready"
+  local expected_title="New Message ${SECONDS}_${RANDOM}"
+  local prepare_selector="-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap"
+  local tap_selector="-only-testing:RunnerUITests/NotificationTapUITests/testTapExistingNotification"
 
   printf '\nRunning %s on %s (%s)\n' "$label" "$device_name" "$device"
   : >"$log_file"
+  rm -f "$ready_file"
 
   local log_pid
   start_log_stream "$device" "$log_file"
@@ -302,35 +406,58 @@ run_scenario_once() {
 
   if [[ "$mode" == "cold" ]]; then
     xcrun simctl terminate "$device" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  else
+    local prepare_pid
+    local prepare_result_bundle="$RESULT_ROOT/$safe_label.prepare.xcresult"
+    run_xcode_ui_test "$device" "$prepare_selector" "$log_file" "$prepare_result_bundle" "$ready_file" "$expected_title"
+    prepare_pid="$started_pid"
+
+    if ! wait_for_ready_signal "$ready_file" "$log_file" "$prepare_pid" 120; then
+      printf 'Timed out waiting for %s in %s or %s\n' "$READY_MARKER" "$log_file" "$ready_file" >&2
+      kill "$prepare_pid" >/dev/null 2>&1 || true
+      kill "$log_pid" >/dev/null 2>&1 || true
+      wait "$prepare_pid" >/dev/null 2>&1 || true
+      wait "$log_pid" >/dev/null 2>&1 || true
+      return 1
+    fi
+
+    local prepare_status=0
+    wait "$prepare_pid" || prepare_status=$?
+    if ((prepare_status != 0)); then
+      kill "$log_pid" >/dev/null 2>&1 || true
+      wait "$log_pid" >/dev/null 2>&1 || true
+      printf 'xcodebuild warm prepare failed for %s; see %s\n' "$label" "$log_file" >&2
+      return "$prepare_status"
+    fi
+
+    if ! launch_warm_app_for_host_push "$device" "$log_file" "$log_pid"; then
+      kill "$log_pid" >/dev/null 2>&1 || true
+      wait "$log_pid" >/dev/null 2>&1 || true
+      return 1
+    fi
   fi
 
-  local xcode_pid
-  run_xcode_ui_test "$device" "$mode" "$log_file" "$result_bundle"
-  xcode_pid="$started_pid"
+  push_fixture "$device" "$fixture" "$log_file" "$expected_title"
 
-  if ! wait_for_pattern "$log_file" "$READY_MARKER" "$xcode_pid" 120; then
-    printf 'Timed out waiting for %s in %s\n' "$READY_MARKER" "$log_file" >&2
-    kill "$xcode_pid" >/dev/null 2>&1 || true
-    kill "$log_pid" >/dev/null 2>&1 || true
-    wait "$xcode_pid" >/dev/null 2>&1 || true
-    wait "$log_pid" >/dev/null 2>&1 || true
-    return 1
-  fi
+  local tap_pid
+  local tap_result_bundle="$RESULT_ROOT/$safe_label.tap.xcresult"
+  run_xcode_ui_test "$device" "$tap_selector" "$log_file" "$tap_result_bundle" "$ready_file" "$expected_title"
+  tap_pid="$started_pid"
 
-  push_fixture "$device" "$fixture" "$log_file"
-
-  local xcode_status=0
-  wait "$xcode_pid" || xcode_status=$?
+  local tap_status=0
+  wait "$tap_pid" || tap_status=$?
   sleep 2
   kill "$log_pid" >/dev/null 2>&1 || true
   wait "$log_pid" >/dev/null 2>&1 || true
 
-  if ((xcode_status != 0)); then
+  if ((tap_status != 0)); then
     printf 'xcodebuild UI test failed for %s; see %s\n' "$label" "$log_file" >&2
-    return "$xcode_status"
+    return "$tap_status"
   fi
 
-  assert_scenario_markers "$mode" "$log_file"
+  if ! assert_scenario_markers "$mode" "$log_file"; then
+    return 1
+  fi
   printf 'PASS %s; log=%s\n' "$label" "$log_file"
 }
 
@@ -379,7 +506,8 @@ main() {
   mkdir -p "$RESULT_ROOT"
 
   if [[ "$skip_build" -eq 0 ]]; then
-    flutter build ios --simulator --debug
+    flutter build ios --simulator --debug \
+      --dart-define=AUTO_SETUP_USERNAME=TapSmoke
   fi
 
   if [[ ! -d "$APP_PATH" ]]; then

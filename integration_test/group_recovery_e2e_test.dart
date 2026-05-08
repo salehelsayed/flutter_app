@@ -7,10 +7,10 @@ import 'package:integration_test/integration_test.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
-import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 
@@ -63,6 +63,28 @@ class _CursorInboxBridge extends FakeBridge {
       });
     }
 
+    if (cmd == 'payload.sign' && !responses.containsKey(cmd)) {
+      return jsonEncode({'ok': true, 'signature': 'fake-signature'});
+    }
+
+    if (cmd == 'payload.verify' && !responses.containsKey(cmd)) {
+      return jsonEncode({'ok': true, 'valid': true});
+    }
+
+    if (cmd == 'group.encrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      return jsonEncode({
+        'ok': true,
+        'ciphertext': payload['plaintext'],
+        'nonce': 'fake-group-nonce',
+      });
+    }
+
+    if (cmd == 'group.decrypt' && !responses.containsKey(cmd)) {
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      return jsonEncode({'ok': true, 'plaintext': payload['ciphertext']});
+    }
+
     if (cmd != null && responses.containsKey(cmd)) {
       return jsonEncode(responses[cmd]!);
     }
@@ -86,14 +108,61 @@ Future<void> _pumpFrames(WidgetTester tester, {int count = 10}) async {
   }
 }
 
-Map<String, dynamic> _decodeReplayPayload(Map<String, dynamic> inboxPayload) {
-  final envelope =
-      jsonDecode(inboxPayload['message'] as String) as Map<String, dynamic>;
-  final ciphertext = envelope['ciphertext'];
-  if (envelope['kind'] == 'group_offline_replay' && ciphertext is String) {
-    return jsonDecode(ciphertext) as Map<String, dynamic>;
+Future<void> _addSignedInboxPage({
+  required _CursorInboxBridge bridge,
+  required GroupTestUser sender,
+  required String groupId,
+  required String cursor,
+  required List<Map<String, dynamic>> payloads,
+  required String nextCursor,
+  required String groupKey,
+  required int keyGeneration,
+  List<String> recipientPeerIds = const <String>[],
+}) async {
+  final messages = <Map<String, dynamic>>[];
+  for (final payload in payloads) {
+    final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+      bridge: sender.bridge,
+      groupRepo: sender.groupRepo,
+      groupId: groupId,
+      payloadType: groupOfflineReplayPayloadTypeMessage,
+      plaintext: jsonEncode(payload),
+      senderPeerId: sender.peerId,
+      senderPublicKey: sender.publicKey,
+      senderPrivateKey: sender.privateKey,
+      keyInfo: GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: keyGeneration,
+        encryptedKey: groupKey,
+        createdAt: DateTime.now().toUtc(),
+      ),
+      messageId: payload['messageId'] as String?,
+      senderDeviceId: sender.deviceId,
+      senderTransportPeerId: sender.deviceId,
+      senderKeyPackageId: sender.deviceIdentity.keyPackageId,
+      recipientPeerIds: recipientPeerIds,
+    );
+    messages.add(
+      _relayInboxMessage(
+        sender: sender,
+        message: replayEnvelope,
+        timestamp: payload['timestamp'] as String?,
+      ),
+    );
   }
-  return envelope;
+  bridge.addPage(groupId, cursor, messages, nextCursor);
+}
+
+Map<String, dynamic> _relayInboxMessage({
+  required GroupTestUser sender,
+  required String message,
+  String? timestamp,
+}) {
+  return {
+    'from': sender.deviceId,
+    'message': message,
+    if (timestamp != null) 'timestamp': timestamp,
+  };
 }
 
 void main() {
@@ -160,17 +229,27 @@ void main() {
           hasLength(1),
         );
 
-        bobBridge.addPage(groupId, '', [
-          {
-            'groupId': groupId,
-            'senderId': 'alice-peer',
-            'senderUsername': 'Alice',
-            'keyEpoch': 0,
-            'text': 'While backgrounded',
-            'timestamp': DateTime.now().toUtc().toIso8601String(),
-            'messageId': 'group-missed-1',
-          },
-        ], '');
+        await _addSignedInboxPage(
+          bridge: bobBridge,
+          sender: alice,
+          groupId: groupId,
+          cursor: '',
+          payloads: [
+            {
+              'groupId': groupId,
+              'senderId': 'alice-peer',
+              'senderUsername': 'Alice',
+              'keyEpoch': 1,
+              'text': 'While backgrounded',
+              'timestamp': DateTime.now().toUtc().toIso8601String(),
+              'messageId': 'group-missed-1',
+            },
+          ],
+          nextCursor: '',
+          groupKey: 'group-key-smoke',
+          keyGeneration: 1,
+          recipientPeerIds: [bob.peerId],
+        );
 
         await drainGroupOfflineInbox(
           bridge: bob.bridge,
@@ -240,17 +319,27 @@ void main() {
           hasLength(1),
         );
 
-        readerBridge.addPage(groupId, '', [
-          {
-            'groupId': groupId,
-            'senderId': 'admin-peer',
-            'senderUsername': 'Admin',
-            'keyEpoch': 0,
-            'text': 'Announcement 2',
-            'timestamp': DateTime.now().toUtc().toIso8601String(),
-            'messageId': 'announcement-missed-1',
-          },
-        ], '');
+        await _addSignedInboxPage(
+          bridge: readerBridge,
+          sender: admin,
+          groupId: groupId,
+          cursor: '',
+          payloads: [
+            {
+              'groupId': groupId,
+              'senderId': 'admin-peer',
+              'senderUsername': 'Admin',
+              'keyEpoch': 1,
+              'text': 'Announcement 2',
+              'timestamp': DateTime.now().toUtc().toIso8601String(),
+              'messageId': 'announcement-missed-1',
+            },
+          ],
+          nextCursor: '',
+          groupKey: 'announcement-key',
+          keyGeneration: 1,
+          recipientPeerIds: [reader.peerId],
+        );
 
         await drainGroupOfflineInbox(
           bridge: reader.bridge,
@@ -327,8 +416,13 @@ void main() {
         final inboxPayload =
             (jsonDecode(inboxRaw) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
-        final replayPayload = _decodeReplayPayload(inboxPayload);
-        bobBridge.addPage(groupId, '', [replayPayload], '');
+        bobBridge.addPage(groupId, '', [
+          _relayInboxMessage(
+            sender: alice,
+            message: inboxPayload['message'] as String,
+            timestamp: dissolvedGroup.dissolvedAt?.toUtc().toIso8601String(),
+          ),
+        ], '');
 
         await drainGroupOfflineInbox(
           bridge: bob.bridge,
@@ -390,7 +484,6 @@ void main() {
           ),
           findsOneWidget,
         );
-        expect(find.text('Delete from this device'), findsOneWidget);
 
         bobBridge.commandLog.clear();
 
@@ -403,6 +496,7 @@ void main() {
           scrollable: find.byType(Scrollable).first,
         );
         await _pumpFrames(tester, count: 5);
+        expect(find.text('Delete from this device'), findsOneWidget);
         await tester.tap(deleteButton);
         await _pumpFrames(tester, count: 5);
 
@@ -432,6 +526,11 @@ void main() {
     testWidgets(
       'group inbox drain deduplicates message already received live',
       (tester) async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-peer',
+          username: 'Alice',
+          network: network,
+        );
         final user = GroupTestUser.create(
           peerId: 'bob-peer',
           username: 'Bob',
@@ -444,37 +543,12 @@ void main() {
         const messageId = 'group-dedupe-msg';
         final now = DateTime.now().toUtc();
 
-        await user.groupRepo.saveGroup(
-          GroupModel(
-            id: groupId,
-            name: 'Dedupe',
-            type: GroupType.chat,
-            topicName: 'topic-$groupId',
-            createdAt: now,
-            createdBy: 'alice-peer',
-            myRole: GroupRole.member,
-          ),
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'Dedupe',
+          createdAt: now,
         );
-        await user.groupRepo.saveMember(
-          GroupMember(
-            groupId: groupId,
-            peerId: 'alice-peer',
-            username: 'Alice',
-            role: MemberRole.admin,
-            publicKey: 'pk-alice',
-            joinedAt: now,
-          ),
-        );
-        await user.groupRepo.saveMember(
-          GroupMember(
-            groupId: groupId,
-            peerId: 'bob-peer',
-            username: 'Bob',
-            role: MemberRole.writer,
-            publicKey: 'pk-bob',
-            joinedAt: now,
-          ),
-        );
+        await alice.addMember(groupId: groupId, invitee: user, joinedAt: now);
         await user.groupRepo.saveKey(
           GroupKeyInfo(
             groupId: groupId,
@@ -499,17 +573,27 @@ void main() {
           messageId: messageId,
         );
 
-        userBridge.addPage(groupId, '', [
-          {
-            'groupId': groupId,
-            'senderId': 'alice-peer',
-            'senderUsername': 'Alice',
-            'keyEpoch': 0,
-            'text': 'Deduped message',
-            'timestamp': now.toIso8601String(),
-            'messageId': messageId,
-          },
-        ], '');
+        await _addSignedInboxPage(
+          bridge: userBridge,
+          sender: alice,
+          groupId: groupId,
+          cursor: '',
+          payloads: [
+            {
+              'groupId': groupId,
+              'senderId': 'alice-peer',
+              'senderUsername': 'Alice',
+              'keyEpoch': 1,
+              'text': 'Deduped message',
+              'timestamp': now.toIso8601String(),
+              'messageId': messageId,
+            },
+          ],
+          nextCursor: '',
+          groupKey: 'dedupe-key',
+          keyGeneration: 1,
+          recipientPeerIds: [user.peerId],
+        );
 
         await drainGroupOfflineInbox(
           bridge: user.bridge,
@@ -522,6 +606,7 @@ void main() {
           hasLength(1),
         );
 
+        alice.dispose();
         user.dispose();
       },
     );
@@ -540,6 +625,11 @@ void main() {
           network: network,
           bridge: _CursorInboxBridge(),
         );
+        final other = GroupTestUser.create(
+          peerId: 'other-peer',
+          username: 'Other',
+          network: network,
+        );
         final bobBridge = bob.bridge as _CursorInboxBridge;
 
         const rejoinGroupId = 'group-watchdog-smoke';
@@ -557,6 +647,7 @@ void main() {
         final extraGroupIds = List.generate(4, (i) => 'group-burst-$i');
         for (final groupId in extraGroupIds) {
           await bob.createGroup(groupId: groupId, name: groupId);
+          await bob.addMember(groupId: groupId, invitee: other);
           await bob.groupRepo.saveKey(
             GroupKeyInfo(
               groupId: groupId,
@@ -565,17 +656,27 @@ void main() {
               createdAt: DateTime.now().toUtc(),
             ),
           );
-          bobBridge.addPage(groupId, '', [
-            {
-              'groupId': groupId,
-              'senderId': 'other-peer',
-              'senderUsername': 'Other',
-              'keyEpoch': 0,
-              'text': 'Missed $groupId',
-              'timestamp': DateTime.now().toUtc().toIso8601String(),
-              'messageId': 'missed-$groupId',
-            },
-          ], '');
+          await _addSignedInboxPage(
+            bridge: bobBridge,
+            sender: other,
+            groupId: groupId,
+            cursor: '',
+            payloads: [
+              {
+                'groupId': groupId,
+                'senderId': 'other-peer',
+                'senderUsername': 'Other',
+                'keyEpoch': 1,
+                'text': 'Missed $groupId',
+                'timestamp': DateTime.now().toUtc().toIso8601String(),
+                'messageId': 'missed-$groupId',
+              },
+            ],
+            nextCursor: '',
+            groupKey: 'key-$groupId',
+            keyGeneration: 1,
+            recipientPeerIds: [bob.peerId],
+          );
         }
         bobBridge.addPage(rejoinGroupId, '', <Map<String, dynamic>>[], '');
 
@@ -644,6 +745,7 @@ void main() {
 
         alice.dispose();
         bob.dispose();
+        other.dispose();
       },
     );
   });
