@@ -424,6 +424,8 @@ void main() {
           text: phase4Text,
           senderPeerId: myPeerId,
           senderUsername: 'FlutterSoak',
+          bridge: bridge,
+          recipientMlKemPublicKey: cliMlKemPK,
         );
 
         final stored = await messageRepo.getMessagesForContact(cliPeerId);

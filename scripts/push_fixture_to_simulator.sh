@@ -21,6 +21,10 @@ Fixture can be an absolute/relative JSON path or a fixture id from:
 Environment:
   SIMULATOR_DEVICE   Default simulator target, defaults to booted
   IOS_BUNDLE_ID      Default app bundle id, defaults to com.mknoon.app
+  IOS_APNS_ALERT_TITLE       Alert title, defaults to "New Message"
+  IOS_APNS_ALERT_BODY        Alert body, defaults to "You have a new message"
+  IOS_APNS_MUTABLE_CONTENT    Set to 0/false/no to omit mutable-content
+  IOS_APNS_CONTENT_AVAILABLE  Set to 0/false/no to omit content-available
 EOF
 }
 
@@ -96,15 +100,27 @@ const fixturePath = process.argv[2];
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
 const routeData = fixture.routeData || fixture.data || fixture;
 
-const payload = {
-  aps: {
-    alert: {
-      title: 'New Message',
-      body: 'You have a new message',
-    },
-    'mutable-content': 1,
-    'content-available': 1,
+function enabled(name) {
+  const value = String(process.env[name] || '1').trim().toLowerCase();
+  return value !== '0' && value !== 'false' && value !== 'no';
+}
+
+const aps = {
+  alert: {
+    title: process.env.IOS_APNS_ALERT_TITLE || 'New Message',
+    body: process.env.IOS_APNS_ALERT_BODY || 'You have a new message',
   },
+};
+
+if (enabled('IOS_APNS_MUTABLE_CONTENT')) {
+  aps['mutable-content'] = 1;
+}
+if (enabled('IOS_APNS_CONTENT_AVAILABLE')) {
+  aps['content-available'] = 1;
+}
+
+const payload = {
+  aps,
   ...routeData,
 };
 

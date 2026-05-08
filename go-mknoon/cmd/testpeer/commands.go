@@ -1,10 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
@@ -668,11 +670,15 @@ func cmdInboxRetrieve() map[string]interface{} {
 
 	list := make([]map[string]interface{}, 0, len(msgs))
 	for _, m := range msgs {
-		list = append(list, map[string]interface{}{
+		item := map[string]interface{}{
 			"from":      m.From,
+			"to":        state.identity.PeerId,
+			"content":   m.Message,
 			"message":   m.Message,
 			"timestamp": m.Timestamp,
-		})
+		}
+		enrichChatMessageResult(item, m.Message)
+		list = append(list, item)
 	}
 
 	return okResult(map[string]interface{}{
@@ -684,15 +690,27 @@ func cmdInboxRetrieve() map[string]interface{} {
 func cmdGetMessages() map[string]interface{} {
 	if state.collector == nil {
 		return okResult(map[string]interface{}{
-			"messages": []incomingMessage{},
+			"messages": []map[string]interface{}{},
 			"count":    0,
 		})
 	}
 
 	msgs := state.collector.getMessages()
+	list := make([]map[string]interface{}, 0, len(msgs))
+	for _, m := range msgs {
+		item := map[string]interface{}{
+			"from":         m.From,
+			"to":           m.To,
+			"content":      m.Content,
+			"timestamp":    m.Timestamp,
+			"confirmNonce": m.ConfirmNonce,
+		}
+		enrichChatMessageResult(item, m.Content)
+		list = append(list, item)
+	}
 	return okResult(map[string]interface{}{
-		"messages": msgs,
-		"count":    len(msgs),
+		"messages": list,
+		"count":    len(list),
 	})
 }
 
@@ -710,12 +728,73 @@ func cmdWaitMessage(params map[string]interface{}) map[string]interface{} {
 		return errResult("timeout waiting for message")
 	}
 
-	return okResult(map[string]interface{}{
+	result := map[string]interface{}{
 		"from":      msg.From,
 		"to":        msg.To,
 		"content":   msg.Content,
 		"timestamp": msg.Timestamp,
-	})
+	}
+	enrichChatMessageResult(result, msg.Content)
+
+	return okResult(result)
+}
+
+func enrichChatMessageResult(result map[string]interface{}, content string) {
+	var envelope struct {
+		Type    string `json:"type"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(content), &envelope); err != nil {
+		return
+	}
+	if envelope.Type != "chat_message" {
+		return
+	}
+
+	result["wireType"] = envelope.Type
+	result["version"] = envelope.Version
+
+	var (
+		payload   map[string]interface{}
+		err       error
+		decrypted bool
+	)
+	switch envelope.Version {
+	case "1":
+		payload, err = parseV1Envelope(content)
+	case "2":
+		decrypted = true
+		if state.mlKemSecretKey == "" {
+			result["decrypted"] = false
+			result["parseError"] = "missing ML-KEM secret key"
+			return
+		}
+		payload, err = parseV2Envelope(content, state.mlKemSecretKey)
+	default:
+		return
+	}
+	if err != nil {
+		result["decrypted"] = false
+		result["parseError"] = err.Error()
+		return
+	}
+
+	result["decrypted"] = decrypted
+	result["payload"] = payload
+	copyPayloadString(result, payload, "id", "messageId")
+	copyPayloadString(result, payload, "text", "payloadText")
+	copyPayloadString(result, payload, "senderPeerId", "senderPeerId")
+	copyPayloadString(result, payload, "senderUsername", "senderUsername")
+	copyPayloadString(result, payload, "timestamp", "payloadTimestamp")
+	if media, ok := payload["media"]; ok {
+		result["payloadMedia"] = media
+	}
+}
+
+func copyPayloadString(result map[string]interface{}, payload map[string]interface{}, fromKey, toKey string) {
+	if value, ok := payload[fromKey].(string); ok {
+		result[toKey] = value
+	}
 }
 
 func cmdGetGroupMessages() map[string]interface{} {
@@ -1024,6 +1103,14 @@ func cmdGroupInboxStore(params map[string]interface{}) map[string]interface{} {
 	}
 
 	keyEpoch := intParam(params, "keyEpoch", 0)
+	recipientPeerIds := stringSliceParam(params, "recipientPeerIds")
+	if len(recipientPeerIds) == 0 {
+		return errResult("missing recipientPeerIds")
+	}
+	groupKey, _ := params["groupKey"].(string)
+	if groupKey == "" {
+		return errResult("missing groupKey")
+	}
 
 	payloadBytes, err := json.Marshal(map[string]interface{}{
 		"groupId":        groupId,
@@ -1037,8 +1124,19 @@ func cmdGroupInboxStore(params map[string]interface{}) map[string]interface{} {
 	if err != nil {
 		return errResult(fmt.Sprintf("marshal group inbox payload: %v", err))
 	}
+	replayEnvelope, err := buildGroupOfflineReplayEnvelope(
+		groupId,
+		string(payloadBytes),
+		messageId,
+		keyEpoch,
+		groupKey,
+		recipientPeerIds,
+	)
+	if err != nil {
+		return errResult(fmt.Sprintf("build group inbox replay envelope: %v", err))
+	}
 
-	if err := state.node.GroupInboxStore(groupId, string(payloadBytes), nil, "", ""); err != nil {
+	if err := state.node.GroupInboxStore(groupId, replayEnvelope, recipientPeerIds, "", ""); err != nil {
 		return errResult(fmt.Sprintf("group inbox store: %v", err))
 	}
 
@@ -1055,6 +1153,96 @@ func okResult(result map[string]interface{}) map[string]interface{} {
 	}
 	result["ok"] = true
 	return result
+}
+
+func buildGroupOfflineReplayEnvelope(
+	groupId,
+	plaintext,
+	messageId string,
+	keyEpoch int,
+	groupKey string,
+	recipientPeerIds []string,
+) (string, error) {
+	ciphertext, nonce, err := mcrypto.EncryptGroupMessage(groupKey, plaintext)
+	if err != nil {
+		return "", fmt.Errorf("encrypt replay plaintext: %w", err)
+	}
+
+	senderPeerId := state.identity.PeerId
+	recipientSetHash := hashString(canonicalStringList(recipientPeerIds))
+	signedPayload := canonicalJSON(map[string]interface{}{
+		"schemaVersion":          1,
+		"kind":                   "group_offline_replay",
+		"groupId":                groupId,
+		"payloadType":            "group_message",
+		"keyEpoch":               keyEpoch,
+		"messageId":              messageId,
+		"senderPeerId":           senderPeerId,
+		"senderDeviceId":         senderPeerId,
+		"senderTransportPeerId":  senderPeerId,
+		"senderSigningPublicKey": state.identity.PublicKey,
+		"ciphertextHash":         hashString(ciphertext),
+		"nonceHash":              hashString(nonce),
+		"plaintextHash":          hashString(plaintext),
+		"recipientSetHash":       recipientSetHash,
+	})
+	signature, err := mcrypto.SignPayload(state.identity.PrivateKey, signedPayload)
+	if err != nil {
+		return "", fmt.Errorf("sign replay payload: %w", err)
+	}
+
+	envelope, err := json.Marshal(map[string]interface{}{
+		"kind":                  "group_offline_replay",
+		"version":               1,
+		"groupId":               groupId,
+		"payloadType":           "group_message",
+		"keyEpoch":              keyEpoch,
+		"messageId":             messageId,
+		"senderPeerId":          senderPeerId,
+		"senderDeviceId":        senderPeerId,
+		"senderTransportPeerId": senderPeerId,
+		"senderPublicKey":       state.identity.PublicKey,
+		"recipientSetHash":      recipientSetHash,
+		"ciphertext":            ciphertext,
+		"nonce":                 nonce,
+		"signatureAlgorithm":    "ed25519",
+		"signedPayload":         signedPayload,
+		"signature":             signature,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal replay envelope: %w", err)
+	}
+	return string(envelope), nil
+}
+
+func canonicalJSON(value interface{}) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}
+
+func canonicalStringList(values []string) string {
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	sort.Strings(normalized)
+	return canonicalJSON(normalized)
+}
+
+func hashString(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func errResult(msg string) map[string]interface{} {
@@ -1076,4 +1264,41 @@ func intParam(params map[string]interface{}, key string, defaultVal int) int {
 		return int(v)
 	}
 	return defaultVal
+}
+
+func stringSliceParam(params map[string]interface{}, key string) []string {
+	raw, ok := params[key]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	var values []string
+	switch typed := raw.(type) {
+	case []string:
+		values = typed
+	case []interface{}:
+		values = make([]string, 0, len(typed))
+		for _, item := range typed {
+			value, ok := item.(string)
+			if ok {
+				values = append(values, value)
+			}
+		}
+	default:
+		return nil
+	}
+
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

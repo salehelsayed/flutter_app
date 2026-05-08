@@ -65,8 +65,38 @@ Future<void> _waitForSignal(
 void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
   stream.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
     _log(tag, line);
-    sink.writeln(line);
+    try {
+      sink.writeln(line);
+    } on StateError {
+      // The harness may still flush process output after teardown closes logs.
+    }
   });
+}
+
+List<String> _recipientPeerIdsForCliStore(
+  Map<String, dynamic> cliGroupJoinFixture,
+  String senderPeerId,
+) {
+  final groupConfig = cliGroupJoinFixture['groupConfig'];
+  if (groupConfig is! Map) {
+    throw StateError('CLI group join fixture is missing groupConfig');
+  }
+  final members = groupConfig['members'];
+  if (members is! List) {
+    throw StateError('CLI group join fixture is missing groupConfig.members');
+  }
+
+  final recipientPeerIds = members
+      .whereType<Map>()
+      .map((member) => member['peerId'])
+      .whereType<String>()
+      .where((peerId) => peerId.isNotEmpty && peerId != senderPeerId)
+      .toSet()
+      .toList(growable: false);
+  if (recipientPeerIds.isEmpty) {
+    throw StateError('CLI group inbox store requires at least one recipient');
+  }
+  return recipientPeerIds;
 }
 
 class TestPeer {
@@ -297,6 +327,10 @@ Future<void> main(List<String> args) async {
       _signalPath(sharedDir, runId, 'cli_group_join_fixture.json'),
       timeout: const Duration(minutes: 5),
     );
+    final cliRecipientPeerIds = _recipientPeerIdsForCliStore(
+      cliGroupJoinFixture,
+      peer.peerId!,
+    );
     _log(
       'ORCH',
       'CLI joining group ${cliGroupJoinFixture['groupId']} on behalf of peer ${peer.peerId}',
@@ -323,6 +357,9 @@ Future<void> main(List<String> args) async {
       'messageId': cliMessageId,
       'timestamp': cliTimestamp,
       'senderUsername': 'CLIGroupPeer',
+      'keyEpoch': cliGroupJoinFixture['keyEpoch'],
+      'groupKey': cliGroupJoinFixture['groupKey'],
+      'recipientPeerIds': cliRecipientPeerIds,
     });
     File(
       _signalPath(sharedDir, runId, 'cli_message_published'),

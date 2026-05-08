@@ -176,8 +176,10 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository_impl.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/disabled_local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -1231,8 +1233,9 @@ void main() async {
               updatedAt: identity.updatedAt,
             ),
           );
-          if (kDebugMode)
+          if (kDebugMode) {
             print('[AUTO-SETUP] Identity created: $autoSetupUsername');
+          }
 
           // Export signed QR payload for cross-device smoke tests
           final (qrResult, qrJson) = await buildQRPayload(
@@ -1259,7 +1262,9 @@ void main() async {
   }
 
   // Create local P2P service for WiFi-first delivery
-  final localDiscovery = BonsoirDiscoveryService();
+  final LocalDiscoveryService localDiscovery = kDisableLocalDiscovery
+      ? DisabledLocalDiscoveryService()
+      : BonsoirDiscoveryService();
   final localWsServer = LocalWsServer();
   final localP2PService = LocalP2PService(
     discovery: localDiscovery,

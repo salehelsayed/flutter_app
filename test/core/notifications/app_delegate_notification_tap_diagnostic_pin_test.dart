@@ -273,13 +273,13 @@ void main() {
     expect(smokeSource.contains('xcodebuild test'), isTrue);
     expect(
       smokeSource.contains(
-        '-only-testing:RunnerUITests/NotificationTapUITests/testNotificationTap',
+        '-only-testing:RunnerUITests/NotificationTapUITests/testPrepareWarmNotificationTap',
       ),
       isTrue,
     );
     expect(
       smokeSource.contains(
-        'RunnerUITests/NotificationTapUITests/testColdNotificationTap',
+        'RunnerUITests/NotificationTapUITests/testTapExistingNotification',
       ),
       isTrue,
     );

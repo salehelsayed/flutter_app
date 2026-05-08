@@ -70,13 +70,15 @@ func (mc *messageCollector) OnEvent(jsonStr string) {
 		}
 
 		// Also emit as async event on stdout.
-		emitAsyncEvent("message:received", map[string]interface{}{
+		eventData := map[string]interface{}{
 			"from":         msg.From,
 			"to":           msg.To,
 			"content":      msg.Content,
 			"timestamp":    msg.Timestamp,
 			"confirmNonce": msg.ConfirmNonce,
-		})
+		}
+		enrichChatMessageResult(eventData, msg.Content)
+		emitAsyncEvent("message:received", eventData)
 		return
 	}
 

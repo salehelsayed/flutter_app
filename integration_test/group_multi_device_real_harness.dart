@@ -899,6 +899,13 @@ Future<void> _runPrimaryScenario() async {
     final updatedGroup = await stack.groupRepo.getGroup(group.id);
     expect(updatedGroup, isNotNull);
     final membershipEventAt = DateTime.now().toUtc();
+    final membershipMessageId =
+        'members_added:${group.id}:${stack.identity.peerId}:${membershipEventAt.microsecondsSinceEpoch}';
+    final membershipReplayRecipients = updatedMembers
+        .map((member) => member.peerId)
+        .where((peerId) => peerId.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
     final membersAddedSystemPayload = jsonEncode({
       '__sys': 'members_added',
       'members': [
@@ -921,6 +928,7 @@ Future<void> _runPrimaryScenario() async {
       senderPublicKey: stack.identity.publicKey,
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
+      messageId: membershipMessageId,
     );
     expect(
       membershipPublish['ok'],
@@ -938,10 +946,13 @@ Future<void> _runPrimaryScenario() async {
         'senderUsername': stack.identity.username,
         'text': membersAddedSystemPayload,
         'timestamp': membershipEventAt.toIso8601String(),
+        'messageId': membershipMessageId,
       }),
       senderPeerId: stack.identity.peerId,
       senderPublicKey: stack.identity.publicKey,
       senderPrivateKey: stack.identity.privateKey,
+      messageId: membershipMessageId,
+      recipientPeerIds: membershipReplayRecipients,
     );
     await waitForSharedSignal(_signalName('sibling_membership_verified'));
 

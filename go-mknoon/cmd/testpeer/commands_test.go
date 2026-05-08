@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/mknoon/go-mknoon/identity"
@@ -173,7 +174,7 @@ func TestHandleCommandGroupPublishWithoutIdentity(t *testing.T) {
 func TestHandleCommandGroupInboxStoreMissingText(t *testing.T) {
 	state = &peerState{
 		node:     node.NewNode(),
-		identity: &identity.Identity{PeerId: "peer-1"},
+		identity: &identity.Identity{PeerId: "peer-1234"},
 	}
 	result := handleCommand("group_inbox_store", map[string]interface{}{
 		"groupId": "group-1",
@@ -181,6 +182,90 @@ func TestHandleCommandGroupInboxStoreMissingText(t *testing.T) {
 
 	if result["ok"] != false {
 		t.Error("expected ok=false for missing text")
+	}
+}
+
+func TestHandleCommandGroupInboxStoreMissingRecipients(t *testing.T) {
+	state = &peerState{
+		node:     node.NewNode(),
+		identity: &identity.Identity{PeerId: "peer-1234"},
+	}
+	result := handleCommand("group_inbox_store", map[string]interface{}{
+		"groupId": "group-1",
+		"text":    "hello",
+	})
+
+	if result["ok"] != false {
+		t.Error("expected ok=false for missing recipientPeerIds")
+	}
+	if result["errorMessage"] != "missing recipientPeerIds" {
+		t.Fatalf("errorMessage = %v, want missing recipientPeerIds", result["errorMessage"])
+	}
+}
+
+func TestHandleCommandGroupInboxStoreMissingGroupKey(t *testing.T) {
+	state = &peerState{
+		node:     node.NewNode(),
+		identity: &identity.Identity{PeerId: "peer-1234"},
+	}
+	result := handleCommand("group_inbox_store", map[string]interface{}{
+		"groupId":          "group-1",
+		"text":             "hello",
+		"recipientPeerIds": []interface{}{"peer-2"},
+	})
+
+	if result["ok"] != false {
+		t.Error("expected ok=false for missing groupKey")
+	}
+	if result["errorMessage"] != "missing groupKey" {
+		t.Fatalf("errorMessage = %v, want missing groupKey", result["errorMessage"])
+	}
+}
+
+func TestStringSliceParamDedupesJsonLists(t *testing.T) {
+	got := stringSliceParam(map[string]interface{}{
+		"recipientPeerIds": []interface{}{"peer-2", "", "peer-2", "peer-3", 4},
+	}, "recipientPeerIds")
+
+	if len(got) != 2 || got[0] != "peer-2" || got[1] != "peer-3" {
+		t.Fatalf("recipientPeerIds = %#v, want [peer-2 peer-3]", got)
+	}
+}
+
+func TestBuildGroupOfflineReplayEnvelopeSignsEncryptedReplay(t *testing.T) {
+	id, err := identity.GenerateIdentity()
+	if err != nil {
+		t.Fatalf("generate identity: %v", err)
+	}
+	state = &peerState{identity: id}
+
+	const plaintext = `{"groupId":"group-1","messageId":"m1","text":"secret"}`
+	envelope, err := buildGroupOfflineReplayEnvelope(
+		"group-1",
+		plaintext,
+		"m1",
+		1,
+		"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=",
+		[]string{"peer-2", "peer-3"},
+	)
+	if err != nil {
+		t.Fatalf("build envelope: %v", err)
+	}
+	if strings.Contains(envelope, "secret") {
+		t.Fatalf("envelope leaked plaintext: %s", envelope)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(envelope), &decoded); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if decoded["kind"] != "group_offline_replay" ||
+		decoded["payloadType"] != "group_message" ||
+		decoded["signatureAlgorithm"] != "ed25519" {
+		t.Fatalf("unexpected envelope metadata: %#v", decoded)
+	}
+	if decoded["signedPayload"] == "" || decoded["signature"] == "" {
+		t.Fatalf("expected signedPayload and signature: %#v", decoded)
 	}
 }
 
@@ -204,6 +289,148 @@ func TestHandleCommandClearMessages(t *testing.T) {
 	msgs := state.collector.getMessages()
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 messages after clear, got %d", len(msgs))
+	}
+}
+
+func TestHandleCommandWaitMessageParsesV1Payload(t *testing.T) {
+	state = &peerState{
+		collector: newMessageCollector(),
+	}
+
+	envelope, messageID, err := buildV1Envelope(
+		"hello plaintext",
+		"peer1",
+		"Peer One",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("build v1 envelope: %v", err)
+	}
+	state.collector.messages = append(state.collector.messages, incomingMessage{
+		From:    "peer1",
+		To:      "peer2",
+		Content: envelope,
+	})
+
+	result := handleCommand("wait_message", map[string]interface{}{
+		"fromPeerId": "peer1",
+		"timeoutSec": 1,
+	})
+	if result["ok"] != true {
+		t.Fatalf("expected ok=true, got errorMessage=%v", result["errorMessage"])
+	}
+	if result["version"] != "1" || result["decrypted"] != false {
+		t.Fatalf("unexpected parsed metadata: %#v", result)
+	}
+	if result["payloadText"] != "hello plaintext" {
+		t.Errorf("payloadText=%v", result["payloadText"])
+	}
+	if result["messageId"] != messageID {
+		t.Errorf("messageId=%v, want %s", result["messageId"], messageID)
+	}
+}
+
+func TestHandleCommandWaitMessageDecryptsV2Payload(t *testing.T) {
+	state = &peerState{
+		collector: newMessageCollector(),
+	}
+	keygen := handleCommand("mlkem_keygen", nil)
+	if keygen["ok"] != true {
+		t.Fatalf("mlkem_keygen failed: %v", keygen["errorMessage"])
+	}
+
+	envelope, messageID, err := buildV2Envelope(
+		"hello encrypted",
+		"peer1",
+		"Peer One",
+		state.mlKemPublicKey,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("build v2 envelope: %v", err)
+	}
+	state.collector.messages = append(state.collector.messages, incomingMessage{
+		From:    "peer1",
+		To:      "peer2",
+		Content: envelope,
+	})
+
+	result := handleCommand("wait_message", map[string]interface{}{
+		"fromPeerId": "peer1",
+		"timeoutSec": 1,
+	})
+	if result["ok"] != true {
+		t.Fatalf("expected ok=true, got errorMessage=%v", result["errorMessage"])
+	}
+	if result["version"] != "2" || result["decrypted"] != true {
+		t.Fatalf("unexpected parsed metadata: %#v", result)
+	}
+	if result["payloadText"] != "hello encrypted" {
+		t.Errorf("payloadText=%v", result["payloadText"])
+	}
+	if result["messageId"] != messageID {
+		t.Errorf("messageId=%v, want %s", result["messageId"], messageID)
+	}
+	if _, ok := result["parseError"]; ok {
+		t.Errorf("unexpected parseError: %v", result["parseError"])
+	}
+}
+
+func TestHandleCommandGetMessagesEnrichesV2PayloadMedia(t *testing.T) {
+	state = &peerState{
+		collector: newMessageCollector(),
+	}
+	keygen := handleCommand("mlkem_keygen", nil)
+	if keygen["ok"] != true {
+		t.Fatalf("mlkem_keygen failed: %v", keygen["errorMessage"])
+	}
+
+	envelope, _, err := buildV2Envelope(
+		"message with media",
+		"peer1",
+		"Peer One",
+		state.mlKemPublicKey,
+		map[string]interface{}{
+			"media": []map[string]interface{}{
+				{
+					"id":        "blob-1",
+					"mime":      "image/png",
+					"mediaType": "image",
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("build v2 envelope: %v", err)
+	}
+	state.collector.messages = append(state.collector.messages, incomingMessage{
+		From:    "peer1",
+		To:      "peer2",
+		Content: envelope,
+	})
+
+	result := handleCommand("get_messages", nil)
+	if result["ok"] != true {
+		t.Fatalf("expected ok=true, got errorMessage=%v", result["errorMessage"])
+	}
+	messages, ok := result["messages"].([]map[string]interface{})
+	if !ok || len(messages) != 1 {
+		t.Fatalf("unexpected messages payload: %#v", result["messages"])
+	}
+	message := messages[0]
+	if message["version"] != "2" || message["decrypted"] != true {
+		t.Fatalf("unexpected parsed metadata: %#v", message)
+	}
+	if message["payloadText"] != "message with media" {
+		t.Errorf("payloadText=%v", message["payloadText"])
+	}
+	media, ok := message["payloadMedia"].([]interface{})
+	if !ok || len(media) != 1 {
+		t.Fatalf("payloadMedia=%#v", message["payloadMedia"])
+	}
+	attachment, ok := media[0].(map[string]interface{})
+	if !ok || attachment["id"] != "blob-1" || attachment["mediaType"] != "image" {
+		t.Fatalf("unexpected media attachment: %#v", media[0])
 	}
 }
 

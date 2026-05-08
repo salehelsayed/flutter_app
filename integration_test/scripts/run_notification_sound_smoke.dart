@@ -39,6 +39,11 @@ List<String> _relayDartDefines() {
   return ['--dart-define=MKNOON_RELAY_ADDRESSES=${relay.trim()}'];
 }
 
+List<String> _notificationDartDefines() {
+  if (!_nonInteractive) return const [];
+  return const ['--dart-define=NOTIFICATION_SOUND_NON_INTERACTIVE=true'];
+}
+
 void _log(String tag, String msg) {
   final ts = DateTime.now().toIso8601String().substring(11, 23);
   stderr.writeln('[$ts] [$tag] $msg');
@@ -119,6 +124,7 @@ Future<Process> _launchHarness({
     '--dart-define=SMOKE_RUN_ID=$_runId',
     '--dart-define=E2E_DB_NAME=$dbName',
     ..._relayDartDefines(),
+    ..._notificationDartDefines(),
     '-d',
     deviceId,
   ];
@@ -144,11 +150,13 @@ void _printChecklist() {
   stdout.writeln('═' * 70);
   stdout.writeln('Before starting, confirm on Bob\'s simulator:');
   stdout.writeln(
-      '  [ ] Simulator menu > I/O > Audio Output > your Mac\'s speakers');
+    '  [ ] Simulator menu > I/O > Audio Output > your Mac\'s speakers',
+  );
   stdout.writeln('  [ ] macOS host volume > 50% and NOT muted');
   stdout.writeln('  [ ] Simulator Settings > Focus / Do Not Disturb = OFF');
   stdout.writeln(
-      '  [ ] Settings > <app> > Notifications > Allow Notifications = ON');
+    '  [ ] Settings > <app> > Notifications > Allow Notifications = ON',
+  );
   stdout.writeln('  [ ] Settings > <app> > Notifications > Sounds = ON');
   stdout.writeln('${'═' * 70}\n');
   _promptOperator('Press Enter when ready to run S1..S4: ');
@@ -166,11 +174,11 @@ class ScenarioOutcome {
     required this.verdict,
   });
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'programmaticPass': programmaticPass,
-        'audibleConfirmed': audibleConfirmed,
-        'verdict': verdict,
-      };
+    'id': id,
+    'programmaticPass': programmaticPass,
+    'audibleConfirmed': audibleConfirmed,
+    'verdict': verdict,
+  };
 }
 
 Future<ScenarioOutcome> _runScenario({
@@ -221,10 +229,7 @@ Future<void> main(List<String> args) async {
   for (var i = 0; i < args.length; i++) {
     if ((args[i] == '--device' || args[i] == '-d') && i + 1 < args.length) {
       devices.addAll(
-        args[i + 1]
-            .split(',')
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty),
+        args[i + 1].split(',').map((s) => s.trim()).where((s) => s.isNotEmpty),
       );
       i++;
     } else if (args[i] == '--non-interactive') {
@@ -244,10 +249,12 @@ Future<void> main(List<String> args) async {
   _runId = DateTime.now().millisecondsSinceEpoch.toString();
   _sharedDir = await Directory.systemTemp.createTemp('notif_sound_smoke_');
 
-  final aliceLog = File('${_sharedDir.path}/alice.log')
-      .openWrite(mode: FileMode.writeOnlyAppend);
-  final bobLog = File('${_sharedDir.path}/bob.log')
-      .openWrite(mode: FileMode.writeOnlyAppend);
+  final aliceLog = File(
+    '${_sharedDir.path}/alice.log',
+  ).openWrite(mode: FileMode.writeOnlyAppend);
+  final bobLog = File(
+    '${_sharedDir.path}/bob.log',
+  ).openWrite(mode: FileMode.writeOnlyAppend);
 
   _log('ORCH', 'Shared dir: ${_sharedDir.path}');
   _log('ORCH', 'Alice=$aliceDevice  Bob=$bobDevice  runId=$_runId');
@@ -287,51 +294,59 @@ Future<void> main(List<String> args) async {
     _printChecklist();
 
     // S1: 1:1 direct
-    outcomes.add(await _runScenario(
-      id: 'S1',
-      goSignal: 's1_go',
-      bobVerdictSignal: 's1_bob_verdict',
-      verdictAckSignal: 's1_verdict_ack',
-      description: '1:1 direct chat (expect notification + sound)',
-      expectAudible: true,
-    ));
+    outcomes.add(
+      await _runScenario(
+        id: 'S1',
+        goSignal: 's1_go',
+        bobVerdictSignal: 's1_bob_verdict',
+        verdictAckSignal: 's1_verdict_ack',
+        description: '1:1 direct chat (expect notification + sound)',
+        expectAudible: true,
+      ),
+    );
 
     // S2: Group discussion (GroupType.chat). Group creation + join runs
     // inside the harnesses; orchestrator just triggers the send.
     _log('ORCH', 'Waiting for Bob to join chat group...');
     await _waitForSignal('bob_group_chat_joined');
-    outcomes.add(await _runScenario(
-      id: 'S2',
-      goSignal: 's2_go',
-      bobVerdictSignal: 's2_bob_verdict',
-      verdictAckSignal: 's2_verdict_ack',
-      description: 'Group discussion (expect notification + sound)',
-      expectAudible: true,
-    ));
+    outcomes.add(
+      await _runScenario(
+        id: 'S2',
+        goSignal: 's2_go',
+        bobVerdictSignal: 's2_bob_verdict',
+        verdictAckSignal: 's2_verdict_ack',
+        description: 'Group discussion (expect notification + sound)',
+        expectAudible: true,
+      ),
+    );
 
     // S3: Group announcement
     _log('ORCH', 'Waiting for Bob to join announcement group...');
     await _waitForSignal('bob_group_announcement_joined');
-    outcomes.add(await _runScenario(
-      id: 'S3',
-      goSignal: 's3_go',
-      bobVerdictSignal: 's3_bob_verdict',
-      verdictAckSignal: 's3_verdict_ack',
-      description: 'Group announcement (expect notification + sound)',
-      expectAudible: true,
-    ));
+    outcomes.add(
+      await _runScenario(
+        id: 'S3',
+        goSignal: 's3_go',
+        bobVerdictSignal: 's3_bob_verdict',
+        verdictAckSignal: 's3_verdict_ack',
+        description: 'Group announcement (expect notification + sound)',
+        expectAudible: true,
+      ),
+    );
 
     // S4: Suppression control — Bob simulates viewing Alice's 1:1 conversation.
     _log('ORCH', 'Waiting for Bob to simulate viewing conversation...');
     await _waitForSignal('bob_viewing_conversation');
-    outcomes.add(await _runScenario(
-      id: 'S4',
-      goSignal: 's4_go',
-      bobVerdictSignal: 's4_bob_verdict',
-      verdictAckSignal: 's4_verdict_ack',
-      description: 'Suppression control (expect SILENCE)',
-      expectAudible: false,
-    ));
+    outcomes.add(
+      await _runScenario(
+        id: 'S4',
+        goSignal: 's4_go',
+        bobVerdictSignal: 's4_bob_verdict',
+        verdictAckSignal: 's4_verdict_ack',
+        description: 'Suppression control (expect SILENCE)',
+        expectAudible: false,
+      ),
+    );
 
     _writeSignal('all_done');
     await _waitForSignal('alice_done', timeout: const Duration(seconds: 60));
@@ -353,9 +368,9 @@ Future<void> main(List<String> args) async {
     };
     final summaryPath =
         '${Directory.systemTemp.path}/notification_sound_smoke_summary_$_runId.json';
-    File(summaryPath).writeAsStringSync(
-      const JsonEncoder.withIndent('  ').convert(summary),
-    );
+    File(
+      summaryPath,
+    ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(summary));
 
     stdout.writeln('\n${'═' * 70}');
     stdout.writeln('  NOTIFICATION SOUND SMOKE — RESULTS');
@@ -365,9 +380,7 @@ Future<void> main(List<String> args) async {
           ? 'skip'
           : (o.audibleConfirmed! ? 'YES' : 'NO');
       final progMark = o.programmaticPass ? 'PASS' : 'FAIL';
-      stdout.writeln(
-        '  ${o.id}: programmatic=$progMark  audible=$audioMark',
-      );
+      stdout.writeln('  ${o.id}: programmatic=$progMark  audible=$audioMark');
     }
     stdout.writeln('\n  Summary JSON: $summaryPath');
     stdout.writeln('${'═' * 70}\n');

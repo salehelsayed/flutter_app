@@ -450,6 +450,18 @@ class TestPeer {
 // Scenario Runners
 // ---------------------------------------------------------------------------
 
+String _messagePayloadText(Map<String, dynamic> message) {
+  final payloadText = message['payloadText'];
+  if (payloadText is String) return payloadText;
+
+  final payload = message['payload'];
+  if (payload is Map && payload['text'] is String) {
+    return payload['text'] as String;
+  }
+
+  return (message['content'] ?? message['message'])?.toString() ?? '';
+}
+
 /// Runs the S1-S4 scenarios against the Flutter smoke test.
 Future<List<_OrchestratorResult>> _runScenarios(
   TestPeer peer,
@@ -555,14 +567,14 @@ Future<List<_OrchestratorResult>> _runScenarios(
 
   await Future.delayed(const Duration(seconds: 2));
 
-  // --- S2: Wait for Flutter's message in collector ---
+  // --- S2: Wait for Flutter's encrypted message in collector ---
   _log('ORCH', 'Scenario S2: Waiting for Flutter message...');
   try {
     final msg = await peer.commandOk('wait_message', {
       'fromPeerId': flutterPeerId,
       'timeoutSec': 60,
     });
-    final content = msg['content'] as String? ?? '';
+    final content = _messagePayloadText(msg);
     final hasS2 = content.contains('S2:');
     results.add(
       _OrchestratorResult(
@@ -622,11 +634,11 @@ Future<List<_OrchestratorResult>> _runScenarios(
       final msgs = inboxResult['messages'] as List<dynamic>? ?? [];
       _log('ORCH', 'S3: retrieved ${msgs.length} inbox messages');
 
-      // Check if any inbox message contains the S3 text.
+      // Check if any inbox message decrypts to the S3 text.
       var s3Found = false;
       for (final m in msgs) {
         final mMap = m as Map<String, dynamic>;
-        final message = mMap['message'] as String? ?? '';
+        final message = _messagePayloadText(mMap);
         if (message.contains('S3:')) {
           s3Found = true;
           break;

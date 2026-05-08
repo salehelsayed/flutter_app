@@ -212,6 +212,8 @@ void main() {
           contactRepo: bobContactRepo,
           bridge: bridge,
           ownMlKemSecretKey: bob.mlKemSecretKey,
+          ownPeerId: bob.peerId,
+          ownMlKemPublicKey: bob.mlKemPublicKey,
         );
         expect(readdAcceptResult, HandleGroupInviteResult.success);
         expect(readdGroupId, groupId);

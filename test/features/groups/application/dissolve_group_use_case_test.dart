@@ -115,6 +115,10 @@ void main() {
       expect(replayEnvelope['signatureAlgorithm'], 'ed25519');
       expect(replayEnvelope['signedPayload'], isA<String>());
       expect(replayEnvelope['signature'], isA<String>());
+      final replayPlaintext =
+          jsonDecode(replayEnvelope['ciphertext'] as String)
+              as Map<String, dynamic>;
+      expect(replayEnvelope['messageId'], replayPlaintext['messageId']);
     },
   );
 

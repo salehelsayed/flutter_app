@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Flutter Host Gates"
+  short_description: "Run host-side Flutter gates"
+  default_prompt: "Run the requested Flutter host-side test gate, using dry-run discovery first for broad host scopes and fix-as-you-go when requested."
