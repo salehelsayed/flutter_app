@@ -1,6 +1,6 @@
 # 93 - Group System Push Preview Sanitization Plan
 
-Status: execution-ready
+Status: accepted
 
 ## Planning Progress
 
@@ -9,6 +9,60 @@ Status: execution-ready
 - 2026-05-09 12:17:00 CEST - Planner completed. Files inspected since last update: no new files; planner used evidence already captured above. Decision/blocker: plan is a two-platform preview sanitizer with parity tests before implementation; no blocker. Next action: reviewer pass for test sufficiency and scope containment.
 - 2026-05-09 12:22:00 CEST - Reviewer completed. Files inspected since last update: plan draft only. Decision/blocker: plan is sufficient if the implementation keeps system bodies unprefixed and never falls back to peer IDs; no blocker. Next action: arbiter decision.
 - 2026-05-09 12:25:00 CEST - Arbiter completed. Files inspected since last update: reviewed plan only. Decision/blocker: accepted as execution-ready; no reopen or replan needed. Next action: implement later from this plan using the RED/GREEN sequence.
+
+## Execution Progress
+
+- 2026-05-09 13:17:08 CEST - Contract extracted. Files inspected since last update: `Test-Flight-Improv/93-group-system-push-preview-sanitization-plan.md`, `Test-Flight-Improv/test-gate-definitions.md`, `Test-Flight-Improv/test-gates-reference.md`, `lib/features/push/application/push_decrypt_preview.dart`, `test/features/push/application/push_decrypt_preview_test.dart`, `ios/NotificationService/NotificationPreviewResolver.swift`, `ios/RunnerTests/NotificationPreviewResolverTests.swift`. Command currently running: none. Decision/blocker: execution contract is complete; scope is preview-only Dart/Swift sanitization with RED tests first and focused/adjacent tests required. Next action: spawn isolated Executor.
+- 2026-05-09 13:24:54 CEST - Executor spawn no-progress. Files inspected since last update: `git status --short`, `git diff --stat`, this plan file. Command currently running: none. Decision/blocker: spawned Executor `019e0c75-d4d6-7350-a502-786d1d550bcc` did not return after bounded waits and produced no visible code/test/doc evidence beyond prior controller entry; closed as `spawn_or_tool_failure`. Next action: use local sequential fallback for the same Executor then QA contract.
+- 2026-05-09 13:19:03 CEST - Isolated Executor started. Files inspected since last update: `Test-Flight-Improv/93-group-system-push-preview-sanitization-plan.md`, `lib/features/push/application/push_decrypt_preview.dart`, `test/features/push/application/push_decrypt_preview_test.dart`, `ios/NotificationService/NotificationPreviewResolver.swift`, `ios/RunnerTests/NotificationPreviewResolverTests.swift`. Command currently running: none. Decision/blocker: current dirty state is limited to this plan file; no blocker. Next action: add RED Dart and Swift preview-sanitization regressions before production edits.
+- 2026-05-09 13:20:17 CEST - RED regressions added. Files touched since last update: `test/features/push/application/push_decrypt_preview_test.dart`, `ios/RunnerTests/NotificationPreviewResolverTests.swift`, `Test-Flight-Improv/93-group-system-push-preview-sanitization-plan.md`. Command currently running: `flutter test test/features/push/application/push_decrypt_preview_test.dart`. Decision/blocker: production files are still untouched; expecting Dart RED failure for raw group system preview. Next action: capture RED result.
+- 2026-05-09 13:21:20 CEST - Dart RED finished. Files touched since last update: none. Command finished: `flutter test test/features/push/application/push_decrypt_preview_test.dart`. Decision/blocker: expected RED confirmed; `member_joined` actual body was `Rasha: {"__sys":"member_joined","member":{"peerId":"12D3KooWRawPeerId","username":"Rasha"}}`, unknown system actual body was `Rasha: {"__sys":"member_role_changed","member":{"peerId":"12D3KooWRawPeerId"}}`. Next action: run Swift RED focused test before production edits.
+- 2026-05-09 13:30:44 CEST - Swift RED finished. Files touched since last update: none. Command finished: `xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination 'platform=iOS Simulator,name=iPhone 17' CODE_SIGNING_ALLOWED=NO -only-testing:RunnerTests/NotificationPreviewResolverTests`. Decision/blocker: expected RED confirmed; `testSanitizesGroupMemberJoinedSystemPreview` and `testSanitizesUnknownGroupSystemPreview` failed while existing focused NSE tests passed. Next action: implement preview-only Dart and Swift sanitizers.
+- 2026-05-09 13:31:51 CEST - Preview sanitizers implemented. Files touched since last update: `lib/features/push/application/push_decrypt_preview.dart`, `ios/NotificationService/NotificationPreviewResolver.swift`; formatted `lib/features/push/application/push_decrypt_preview.dart` and `test/features/push/application/push_decrypt_preview_test.dart`. Command currently running: none. Decision/blocker: Dart and Swift now decode only object-looking group text with `__sys`, map `member_joined` to unprefixed join copy, map unknown system events to `Group update`, and leave ordinary group text on the existing sender-prefixed path. Next action: run focused Dart and Swift tests.
+- 2026-05-09 13:32:22 CEST - Focused Dart GREEN finished. Files touched since last update: none. Command finished: `flutter test test/features/push/application/push_decrypt_preview_test.dart`. Decision/blocker: passed; 10 tests including normal group preview, `member_joined`, and unknown `__sys` preview sanitization. Next action: run focused Swift NSE test.
+- 2026-05-09 13:35:19 CEST - Focused Swift GREEN finished. Files touched since last update: none. Command finished: `xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination 'platform=iOS Simulator,name=iPhone 17' CODE_SIGNING_ALLOWED=NO -only-testing:RunnerTests/NotificationPreviewResolverTests`. Decision/blocker: passed; 8 NSE focused tests including normal group preview, `member_joined`, and unknown `__sys` preview sanitization. Next action: run adjacent notification tests.
+- 2026-05-09 13:36:06 CEST - Adjacent notification tests finished. Files touched since last update: none. Command finished: `flutter test test/features/push/application/background_push_notification_fallback_test.dart test/core/notifications/notification_route_contract_matrix_test.dart`. Decision/blocker: passed; 62 tests. Conditional group gate not required because no group membership/listener/drain/replay/relay files changed; completeness gate not required because no new test file or gate doc was added. Next action: local QA review.
+- 2026-05-09 13:36:36 CEST - Local QA completed and final verdict written. Files inspected since last update: final diff, `git diff --name-only`, `git diff --check`, `git status --short`. Command finished: `git diff --check`. Decision/blocker: no blocking issues; diff is confined to allowed preview/test/plan files, required tests passed, and conditional gates were correctly skipped. Next action: none.
+
+## Execution Verdict
+
+Final verdict: accepted.
+
+Spawned-agent isolation used: yes. Spawned Executor `019e0c75-d4d6-7350-a502-786d1d550bcc` was created with the required model/effort and later closed after bounded waits without a final handoff; its delayed RED test/doc edits were inspected and used as file-backed evidence.
+
+Local sequential fallback used: yes, after the spawned Executor failed to return a trustworthy final result. The fallback continued from the visible RED tests, implemented only the preview sanitizers, ran required tests, and completed local QA.
+
+Files changed:
+
+- `lib/features/push/application/push_decrypt_preview.dart`
+- `test/features/push/application/push_decrypt_preview_test.dart`
+- `ios/NotificationService/NotificationPreviewResolver.swift`
+- `ios/RunnerTests/NotificationPreviewResolverTests.swift`
+- `Test-Flight-Improv/93-group-system-push-preview-sanitization-plan.md`
+
+Tests added or updated:
+
+- Dart regressions for decrypted group `member_joined` and unknown `__sys` system payload previews.
+- Swift/NSE regressions for decrypted group `member_joined` and unknown `__sys` system payload previews.
+
+Exact tests and gates run:
+
+- `flutter test test/features/push/application/push_decrypt_preview_test.dart` - RED first, then passed after implementation.
+- `xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination 'platform=iOS Simulator,name=iPhone 17' CODE_SIGNING_ALLOWED=NO -only-testing:RunnerTests/NotificationPreviewResolverTests` - RED first, then passed after implementation.
+- `flutter test test/features/push/application/background_push_notification_fallback_test.dart test/core/notifications/notification_route_contract_matrix_test.dart` - passed.
+- `git diff --check` - passed.
+
+Conditional gates skipped:
+
+- `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh groups` - skipped because no group membership, listener, drain, replay, or relay files changed.
+- `./scripts/run_test_gates.sh completeness-check` - skipped because no new test file or gate doc was added.
+- Baseline gate - skipped by plan contract.
+
+Blocking issues remaining: none.
+
+Non-blocking follow-ups deferred: none.
+
+Why the session is safe to consider complete: valid group system payloads now render safe unprefixed copy on both Dart and iOS preview paths, unknown `__sys` payloads degrade to `Group update`, normal group user previews remain sender-prefixed, notification route/fallback behavior stayed green, and no out-of-scope group, relay, database, or telemetry contracts changed.
 
 ## Evidence Collector Findings
 

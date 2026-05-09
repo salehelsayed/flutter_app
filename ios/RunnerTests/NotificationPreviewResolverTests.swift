@@ -69,6 +69,97 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(eventEmitter.events[0].details, ["kind": "group"])
   }
 
+  func testSanitizesGroupMemberJoinedSystemPreview() throws {
+    let plaintext = try jsonString([
+      "messageId": "msg-group-join",
+      "senderUsername": "Rasha",
+      "text": jsonString([
+        "__sys": "member_joined",
+        "member": [
+          "peerId": "12D3KooWRawPeerId",
+          "username": "Rasha",
+        ],
+      ]),
+    ])
+    let routeData: [String: Any] = [
+      "type": "group_message",
+      "groupId": "group-team",
+      "message_id": "msg-group-join",
+      "keyEpoch": "7",
+      "ciphertext": "ciphertext",
+      "nonce": "nonce",
+    ]
+    let keyReader = MemoryPushKeyReader([
+      PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7): "group-secret",
+    ])
+    let decryptor = MemoryPushDecryptor(groupPlaintext: plaintext)
+    let resolver = NotificationPreviewResolver(
+      keyReader: keyReader,
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore()
+    )
+
+    let result = resolver.resolve(
+      userInfo: routeData,
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(result.didDecrypt)
+    XCTAssertEqual(result.reason, "group")
+    XCTAssertEqual(result.title, "New Message")
+    XCTAssertEqual(result.body, "Rasha joined the group")
+    XCTAssertEqual(result.threadIdentifier, "group-team")
+    for forbidden in ["{", "}", "__sys", "peerId", "12D3"] {
+      XCTAssertFalse(result.body.contains(forbidden))
+    }
+  }
+
+  func testSanitizesUnknownGroupSystemPreview() throws {
+    let plaintext = try jsonString([
+      "messageId": "msg-group-role",
+      "senderUsername": "Rasha",
+      "text": jsonString([
+        "__sys": "member_role_changed",
+        "member": [
+          "peerId": "12D3KooWRawPeerId",
+        ],
+      ]),
+    ])
+    let routeData: [String: Any] = [
+      "type": "group_message",
+      "groupId": "group-team",
+      "message_id": "msg-group-role",
+      "keyEpoch": "7",
+      "ciphertext": "ciphertext",
+      "nonce": "nonce",
+    ]
+    let keyReader = MemoryPushKeyReader([
+      PushSharedKeyNames.groupKey(groupId: "group-team", keyEpoch: 7): "group-secret",
+    ])
+    let decryptor = MemoryPushDecryptor(groupPlaintext: plaintext)
+    let resolver = NotificationPreviewResolver(
+      keyReader: keyReader,
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore()
+    )
+
+    let result = resolver.resolve(
+      userInfo: routeData,
+      fallbackTitle: "New Message",
+      fallbackBody: "You have a new message"
+    )
+
+    XCTAssertTrue(result.didDecrypt)
+    XCTAssertEqual(result.reason, "group")
+    XCTAssertEqual(result.title, "New Message")
+    XCTAssertEqual(result.body, "Group update")
+    XCTAssertEqual(result.threadIdentifier, "group-team")
+    for forbidden in ["{", "}", "__sys", "peerId", "12D3"] {
+      XCTAssertFalse(result.body.contains(forbidden))
+    }
+  }
+
   func testMissingChatSecretKeepsStaticFallbackWithoutDecrypting() {
     let decryptor = MemoryPushDecryptor(chatPlaintext: #"{"senderUsername":"Alice","text":"Secret"}"#)
     let eventEmitter = MemoryPushPreviewEventEmitter()
@@ -221,6 +312,11 @@ final class NotificationPreviewResolverTests: XCTestCase {
   private func fixturePlaintextJSON(_ fixture: [String: Any]) throws -> String {
     let plaintext = try XCTUnwrap(fixture["plaintext"])
     let data = try JSONSerialization.data(withJSONObject: plaintext)
+    return try XCTUnwrap(String(data: data, encoding: .utf8))
+  }
+
+  private func jsonString(_ object: [String: Any]) throws -> String {
+    let data = try JSONSerialization.data(withJSONObject: object)
     return try XCTUnwrap(String(data: data, encoding: .utf8))
   }
 }

@@ -132,8 +132,17 @@ Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
     final senderUsername = _trimToNull(payload['senderUsername']?.toString());
     final text = payload['text']?.toString() ?? '';
     final media = payload['media'] as List<dynamic>?;
-    final preview = pushPreviewBody(text, media);
-    final body = senderUsername == null ? preview : '$senderUsername: $preview';
+    final systemPreview = _groupSystemPreviewBody(
+      text: text,
+      senderUsername: senderUsername,
+    );
+    final body =
+        systemPreview ??
+        _groupUserPreviewBody(
+          text: text,
+          media: media,
+          senderUsername: senderUsername,
+        );
 
     emitFlowEvent(
       layer: 'FL',
@@ -183,6 +192,56 @@ String pushPreviewBody(String text, List<dynamic>? media) {
     'file' => 'File',
     _ => 'Media',
   };
+}
+
+String _groupUserPreviewBody({
+  required String text,
+  required List<dynamic>? media,
+  required String? senderUsername,
+}) {
+  final preview = pushPreviewBody(text, media);
+  return senderUsername == null ? preview : '$senderUsername: $preview';
+}
+
+String? _groupSystemPreviewBody({
+  required String text,
+  required String? senderUsername,
+}) {
+  final trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+    return null;
+  }
+
+  final Map<String, dynamic> decoded;
+  try {
+    final raw = jsonDecode(trimmed);
+    if (raw is Map<String, dynamic>) {
+      decoded = raw;
+    } else if (raw is Map) {
+      decoded = raw.cast<String, dynamic>();
+    } else {
+      return null;
+    }
+  } catch (_) {
+    return null;
+  }
+
+  final systemType = _trimToNull(decoded['__sys']?.toString());
+  if (systemType == null) {
+    return null;
+  }
+  if (systemType != 'member_joined') {
+    return 'Group update';
+  }
+
+  final member = decoded['member'];
+  final memberUsername = member is Map
+      ? _trimToNull(member['username']?.toString())
+      : null;
+  final displayName = memberUsername ?? senderUsername;
+  return displayName == null
+      ? 'A member joined the group'
+      : '$displayName joined the group';
 }
 
 String _capPreview(String text, {int maxScalars = 140}) {
