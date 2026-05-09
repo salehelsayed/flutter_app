@@ -37,6 +37,11 @@ If this document and `scripts/run_test_gates.sh` ever disagree, the script wins.
 - `integration_test/scripts/run_group_multi_device_real.dart` remains a
   Nightly / Release Pool orchestrator rather than a named gate member because
   it launches two device processes plus a CLI peer fixture.
+- `integration_test/scripts/run_group_invite_status_matrix_sim.dart` remains a
+  Nightly / Release Pool orchestrator rather than a named gate member because
+  it launches four simulator processes for seeded creator-side Group Info
+  Members invite-status display proof; it does not claim relay/testpeer
+  lifecycle evidence.
 - `./scripts/run_test_gates.sh group-real-network-nightly` is the recurring
   fixture-backed group real-network command. It requires `FLUTTER_DEVICE_ID`
   and passes `MKNOON_REQUIRE_MULTI_RELAY=true`, so missing relay config fails
@@ -389,6 +394,7 @@ These are intentionally classified, but not promoted into the frozen named gates
 | `integration_test/foreground_group_push_drain_test.dart` | Optional / manual direct suite | Foreground group push targeted drain, no-duplicate, and Report 85 representative media descriptor/download regression without widening the frozen named gates. Companion simulator approximation: `dart run integration_test/scripts/run_foreground_group_push_simulator_smoke.dart -d <alice>,<bob>` for real-stack two-simulator gap + replay coverage. |
 | `integration_test/group_delete_preserves_friends_simulator_test.dart` | Optional / manual direct suite | Simulator-bound Orbit delete regression proving deleting one group does not remove friends or 1:1 threads |
 | `integration_test/group_invite_accept_spinner_simulator_test.dart` | Optional / manual direct suite | Simulator-bound pending group invite accept regression proving the spinner clears and the group joins |
+| `integration_test/scripts/run_group_invite_status_matrix_sim.dart` | Optional / manual simulator orchestrator | Four-simulator seeded creator-side `GroupInfoWired` Members invite-status display proof for `Invite sent`, `Invite queued`, `Needs resend`, `Cannot send`, `Joined`, and `Invite unknown`; remains outside named gates and does not claim relay/testpeer lifecycle proof |
 | `integration_test/feed_wired_init_performance_test.dart` | Optional / manual direct suite | Performance-only validation for feed initialization |
 | `integration_test/group_new_member_media_simulator_proof_test.dart` | Optional / manual direct suite | Report 89 simulator-backed new discussion member video and voice render/play/reopen proof; Report 90 GMAR-005 configured-simulator proof without widening frozen named gates |
 | `integration_test/identity_progress_performance_test.dart` | Optional / manual direct suite | Performance-only validation |

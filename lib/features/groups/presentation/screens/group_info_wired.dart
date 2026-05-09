@@ -119,11 +119,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final ownPeerId = _ownPeerId ?? identity?.peerId;
       final group = await widget.groupRepo.getGroup(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
-      final inviteStatusesByPeerId =
-          await widget.inviteDeliveryAttemptRepo?.getStatusesForGroupMembers(
-            widget.group.id,
-          ) ??
-          const <String, GroupInviteDeliveryStatus>{};
+      final inviteStatusesByPeerId = await _loadInviteStatusesByPeerId(members);
       final memberSafetyByPeerId = await _loadMemberSafety(
         members,
         ownPeerId: ownPeerId,
@@ -159,6 +155,95 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  Future<Map<String, GroupInviteDeliveryStatus>> _loadInviteStatusesByPeerId(
+    List<GroupMember> members,
+  ) async {
+    final attempts =
+        await widget.inviteDeliveryAttemptRepo?.getAttemptsForGroup(
+          widget.group.id,
+        ) ??
+        const <GroupInviteDeliveryAttempt>[];
+    final attemptsByPeerId = {
+      for (final attempt in attempts) attempt.peerId: attempt,
+    };
+    final statuses = {
+      for (final attempt in attempts) attempt.peerId: attempt.status,
+    };
+
+    final msgRepo = widget.msgRepo;
+    if (msgRepo == null || members.isEmpty) {
+      return statuses;
+    }
+
+    final resolvedStatuses = await Future.wait(
+      members.map((member) async {
+        final joinedAt = await msgRepo.getLatestSystemEventTimestampForTarget(
+          widget.group.id,
+          eventType: 'member_joined',
+          targetId: member.peerId,
+        );
+        final removedAt = await msgRepo.getLatestSystemEventTimestampForTarget(
+          widget.group.id,
+          eventType: 'member_removed',
+          targetId: member.peerId,
+        );
+        final attempt = attemptsByPeerId[member.peerId];
+        if (joinedAt != null &&
+            _isCurrentJoinEvidence(
+              joinedAt: joinedAt,
+              removedAt: removedAt,
+              attempt: attempt,
+            )) {
+          return MapEntry(member.peerId, GroupInviteDeliveryStatus.joined);
+        }
+        if (_isJoinedAttemptInvalidatedByRemoval(
+          attempt: attempt,
+          removedAt: removedAt,
+        )) {
+          return MapEntry(member.peerId, GroupInviteDeliveryStatus.unknown);
+        }
+        return null;
+      }),
+    );
+    for (final entry
+        in resolvedStatuses
+            .whereType<MapEntry<String, GroupInviteDeliveryStatus>>()) {
+      if (entry.value == GroupInviteDeliveryStatus.unknown) {
+        statuses.remove(entry.key);
+      } else {
+        statuses[entry.key] = entry.value;
+      }
+    }
+    return statuses;
+  }
+
+  bool _isCurrentJoinEvidence({
+    required DateTime joinedAt,
+    DateTime? removedAt,
+    GroupInviteDeliveryAttempt? attempt,
+  }) {
+    final normalizedJoinedAt = joinedAt.toUtc();
+    if (removedAt != null && !normalizedJoinedAt.isAfter(removedAt.toUtc())) {
+      return false;
+    }
+    if (attempt == null || attempt.status == GroupInviteDeliveryStatus.joined) {
+      return true;
+    }
+    return !normalizedJoinedAt.isBefore(attempt.attemptedAt.toUtc());
+  }
+
+  bool _isJoinedAttemptInvalidatedByRemoval({
+    GroupInviteDeliveryAttempt? attempt,
+    DateTime? removedAt,
+  }) {
+    if (attempt == null ||
+        attempt.status != GroupInviteDeliveryStatus.joined ||
+        removedAt == null) {
+      return false;
+    }
+    return removedAt.toUtc().isAfter(attempt.updatedAt.toUtc());
   }
 
   Future<Map<String, GroupMemberIdentitySafety>> _loadMemberSafety(
