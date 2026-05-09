@@ -7,6 +7,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -88,7 +89,24 @@ class _TrackingInviteDeliveryAttemptRepository
     required String peerId,
     required GroupInviteDeliveryStatus status,
     DateTime? updatedAt,
-  }) async {}
+  }) async {
+    final now = (updatedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: status,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: status,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
 
   @override
   Future<void> markJoined({
@@ -96,7 +114,26 @@ class _TrackingInviteDeliveryAttemptRepository
     required String peerId,
     String? username,
     DateTime? joinedAt,
-  }) async {}
+  }) async {
+    final now = (joinedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
 
   @override
   Future<int> deleteAttempt({
@@ -183,6 +220,25 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
   for (var i = 0; i < count; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
+}
+
+Future<void> waitForInviteStatus({
+  required _TrackingInviteDeliveryAttemptRepository repo,
+  required String groupId,
+  required String peerId,
+  required GroupInviteDeliveryStatus status,
+}) async {
+  for (var i = 0; i < 20; i++) {
+    final current = await repo.getStatusForMember(
+      groupId: groupId,
+      peerId: peerId,
+    );
+    if (current == status) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  fail('Timed out waiting for $peerId invite status $status');
 }
 
 Future<void> confirmRemoveMemberDialog(WidgetTester tester) async {
@@ -363,6 +419,415 @@ void main() {
         find.byKey(const ValueKey('group-member-resend-invite-peer-alice')),
         findsOneWidget,
       );
+    });
+
+    testWidgets(
+      'overlays durable member_joined timeline state onto invite statuses',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-charlie', username: 'Charlie'),
+        );
+
+        for (final member in [
+          (peerId: 'peer-alice', username: 'Alice'),
+          (peerId: 'peer-bob', username: 'Bob'),
+          (peerId: 'peer-charlie', username: 'Charlie'),
+        ]) {
+          await inviteStatusRepo.saveAttempt(
+            GroupInviteDeliveryAttempt(
+              groupId: 'group-1',
+              peerId: member.peerId,
+              username: member.username,
+              status: GroupInviteDeliveryStatus.sent,
+              attemptedAt: DateTime.utc(2026, 5, 7, 12),
+              updatedAt: DateTime.utc(2026, 5, 7, 12),
+            ),
+          );
+        }
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-alice',
+            joinedUsername: 'Alice',
+            eventAt: DateTime.utc(2026, 5, 7, 12, 5),
+          ),
+        );
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-bob',
+            joinedUsername: 'Bob',
+            eventAt: DateTime.utc(2026, 5, 7, 12, 6),
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Joined'), findsNWidgets(2));
+        expect(find.text('Invite sent'), findsOneWidget);
+        expect(find.text('Invite unknown'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'shows joined accepted members even when invite status rows are missing',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-charlie', username: 'Charlie'),
+        );
+
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-alice',
+            joinedUsername: 'Alice',
+            eventAt: DateTime.utc(2026, 5, 7, 12, 5),
+          ),
+        );
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-bob',
+            joinedUsername: 'Bob',
+            eventAt: DateTime.utc(2026, 5, 7, 12, 6),
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Joined'), findsNWidgets(2));
+        expect(find.text('Invite unknown'), findsOneWidget);
+        expect(find.text('Invite sent'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'creator lifecycle shows only accepted invited members as joined',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: FakeBridge(),
+          inviteDeliveryAttemptRepo: inviteStatusRepo,
+        );
+        addTearDown(listener.dispose);
+
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-charlie', username: 'Charlie'),
+        );
+
+        for (final member in [
+          (peerId: 'peer-alice', username: 'Alice'),
+          (peerId: 'peer-bob', username: 'Bob'),
+          (peerId: 'peer-charlie', username: 'Charlie'),
+        ]) {
+          await inviteStatusRepo.saveAttempt(
+            GroupInviteDeliveryAttempt(
+              groupId: 'group-1',
+              peerId: member.peerId,
+              username: member.username,
+              status: GroupInviteDeliveryStatus.sent,
+              attemptedAt: DateTime.utc(2026, 5, 7, 12),
+              updatedAt: DateTime.utc(2026, 5, 7, 12),
+            ),
+          );
+        }
+
+        for (final member in [
+          (peerId: 'peer-alice', username: 'Alice', minute: 5),
+          (peerId: 'peer-bob', username: 'Bob', minute: 6),
+        ]) {
+          await listener.handleReplayEnvelope({
+            'groupId': 'group-1',
+            'senderId': member.peerId,
+            'senderUsername': member.username,
+            'keyEpoch': 0,
+            'text': jsonEncode({
+              '__sys': 'member_joined',
+              'member': {'peerId': member.peerId, 'username': member.username},
+            }),
+            'timestamp': DateTime.utc(
+              2026,
+              5,
+              7,
+              12,
+              member.minute,
+            ).toIso8601String(),
+          });
+        }
+        await waitForInviteStatus(
+          repo: inviteStatusRepo,
+          groupId: 'group-1',
+          peerId: 'peer-alice',
+          status: GroupInviteDeliveryStatus.joined,
+        );
+        await waitForInviteStatus(
+          repo: inviteStatusRepo,
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          status: GroupInviteDeliveryStatus.joined,
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Joined'), findsNWidgets(2));
+        expect(find.text('Invite sent'), findsOneWidget);
+        expect(find.text('Invite unknown'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'does not let stale member_joined evidence override a current re-invite',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-alice', username: 'Alice'),
+        );
+
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-alice',
+            joinedUsername: 'Alice',
+            eventAt: DateTime.utc(2026, 5, 7, 10),
+          ),
+        );
+        await msgRepo.saveMessage(
+          buildMemberRemovedTimelineMessage(
+            groupId: 'group-1',
+            removedPeerId: 'peer-alice',
+            removedUsername: 'Alice',
+            senderId: 'peer-admin',
+            senderUsername: 'Admin',
+            eventAt: DateTime.utc(2026, 5, 7, 11),
+          ),
+        );
+        await inviteStatusRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: 'group-1',
+            peerId: 'peer-alice',
+            username: 'Alice',
+            status: GroupInviteDeliveryStatus.sent,
+            attemptedAt: DateTime.utc(2026, 5, 7, 12),
+            updatedAt: DateTime.utc(2026, 5, 7, 12),
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Invite sent'), findsOneWidget);
+        expect(find.text('Joined'), findsNothing);
+      },
+    );
+
+    testWidgets('covers the deterministic invite status label matrix', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+
+      final members = [
+        (
+          peerId: 'peer-sent',
+          username: 'Sent Member',
+          status: GroupInviteDeliveryStatus.sent,
+        ),
+        (
+          peerId: 'peer-queued',
+          username: 'Queued Member',
+          status: GroupInviteDeliveryStatus.queued,
+        ),
+        (
+          peerId: 'peer-resend',
+          username: 'Resend Member',
+          status: GroupInviteDeliveryStatus.needsResend,
+        ),
+        (
+          peerId: 'peer-cannot',
+          username: 'Cannot Member',
+          status: GroupInviteDeliveryStatus.cannotSend,
+        ),
+        (
+          peerId: 'peer-joined',
+          username: 'Joined Member',
+          status: GroupInviteDeliveryStatus.joined,
+        ),
+      ];
+      for (final member in members) {
+        await groupRepo.saveMember(
+          makeMember(peerId: member.peerId, username: member.username),
+        );
+        await inviteStatusRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: 'group-1',
+            peerId: member.peerId,
+            username: member.username,
+            status: member.status,
+            attemptedAt: DateTime.utc(2026, 5, 7, 12),
+            updatedAt: DateTime.utc(2026, 5, 7, 12),
+          ),
+        );
+      }
+      await groupRepo.saveMember(
+        makeMember(peerId: 'peer-unknown', username: 'Unknown Member'),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+            inviteDeliveryAttemptRepo: inviteStatusRepo,
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Invite sent'), findsOneWidget);
+      expect(find.text('Invite queued'), findsOneWidget);
+      expect(find.text('Needs resend'), findsOneWidget);
+      expect(find.text('Cannot send'), findsOneWidget);
+      expect(find.text('Joined'), findsOneWidget);
+      expect(find.text('Invite unknown'), findsOneWidget);
     });
 
     testWidgets('shows identity warning when member keys differ from contact', (
