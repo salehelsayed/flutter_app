@@ -262,15 +262,21 @@ final class NotificationPreviewResolver {
         )
       }
 
-      let preview = pushPreviewBody(
-        text: trimmedString(payload["text"]) ?? "",
-        media: payload["media"]
-      )
+      let text = trimmedString(payload["text"]) ?? ""
       let senderUsername = trimmedString(payload["senderUsername"])
+      let systemPreview = groupSystemPreviewBody(
+        text: text,
+        senderUsername: senderUsername
+      )
+      let body = systemPreview ?? groupUserPreviewBody(
+        text: text,
+        media: payload["media"],
+        senderUsername: senderUsername
+      )
       emitDecryptOK(kind: "group")
       return NotificationPreviewResult(
         title: fallbackTitle,
-        body: senderUsername == nil ? preview : "\(senderUsername!): \(preview)",
+        body: body,
         threadIdentifier: groupId,
         didDecrypt: true,
         reason: "group"
@@ -468,6 +474,41 @@ private struct PushRouteData {
 
 private func pushPreviewEventKind(type: String) -> String {
   type == "group_message" ? "group" : "chat"
+}
+
+private func groupUserPreviewBody(
+  text: String,
+  media: Any?,
+  senderUsername: String?
+) -> String {
+  let preview = pushPreviewBody(text: text, media: media)
+  guard let senderUsername else {
+    return preview
+  }
+  return "\(senderUsername): \(preview)"
+}
+
+private func groupSystemPreviewBody(
+  text: String,
+  senderUsername: String?
+) -> String? {
+  let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
+        let decoded = decodeJSONObject(trimmed),
+        let systemType = trimmedString(decoded["__sys"]) else {
+    return nil
+  }
+
+  guard systemType == "member_joined" else {
+    return "Group update"
+  }
+
+  let member = decoded["member"] as? [String: Any]
+  let displayName = trimmedString(member?["username"]) ?? senderUsername
+  guard let displayName else {
+    return "A member joined the group"
+  }
+  return "\(displayName) joined the group"
 }
 
 private func bridgePlaintext(_ response: String) throws -> String {

@@ -166,6 +166,89 @@ void main() {
       },
     );
 
+    test('sanitizes group member_joined system preview', () async {
+      const message = RemoteMessage(
+        data: {
+          'type': 'group_message',
+          'groupId': 'group-team',
+          'message_id': 'msg-group-join',
+          'keyEpoch': '7',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        },
+      );
+
+      final resolved = await resolveBackgroundPushNotification(
+        message,
+        decryptGroup:
+            ({
+              required groupId,
+              required keyEpoch,
+              required ciphertext,
+              required nonce,
+            }) async {
+              return jsonEncode({
+                'messageId': 'msg-group-join',
+                'senderUsername': 'Rasha',
+                'text': jsonEncode({
+                  '__sys': 'member_joined',
+                  'member': {
+                    'peerId': '12D3KooWRawPeerId',
+                    'username': 'Rasha',
+                  },
+                }),
+              });
+            },
+      );
+
+      expect(resolved.title, backgroundPushDefaultTitle);
+      expect(resolved.body, 'Rasha joined the group');
+      expect(resolved.payload, 'group:group-team|message:msg-group-join');
+      for (final forbidden in ['{', '}', '__sys', 'peerId', '12D3']) {
+        expect(resolved.body, isNot(contains(forbidden)));
+      }
+    });
+
+    test('sanitizes unknown group system preview', () async {
+      const message = RemoteMessage(
+        data: {
+          'type': 'group_message',
+          'groupId': 'group-team',
+          'message_id': 'msg-group-role',
+          'keyEpoch': '7',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        },
+      );
+
+      final resolved = await resolveBackgroundPushNotification(
+        message,
+        decryptGroup:
+            ({
+              required groupId,
+              required keyEpoch,
+              required ciphertext,
+              required nonce,
+            }) async {
+              return jsonEncode({
+                'messageId': 'msg-group-role',
+                'senderUsername': 'Rasha',
+                'text': jsonEncode({
+                  '__sys': 'member_role_changed',
+                  'member': {'peerId': '12D3KooWRawPeerId'},
+                }),
+              });
+            },
+      );
+
+      expect(resolved.title, backgroundPushDefaultTitle);
+      expect(resolved.body, 'Group update');
+      expect(resolved.payload, 'group:group-team|message:msg-group-role');
+      for (final forbidden in ['{', '}', '__sys', 'peerId', '12D3']) {
+        expect(resolved.body, isNot(contains(forbidden)));
+      }
+    });
+
     test('degrades to fallback when decrypt input is missing', () async {
       const message = RemoteMessage(
         data: {'type': 'new_message', 'sender_id': 'peer-alice'},
