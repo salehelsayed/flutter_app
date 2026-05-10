@@ -87,6 +87,96 @@ func TestHandleGroupSubscription_EmitsDecryptionFailedEvent(t *testing.T) {
 	}
 }
 
+func TestGL013HandleGroupSubscriptionEmitsDecryptionFailedAfterKeyRemoval(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	_, receiverPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "gl013-subscription-key-removed"
+	senderPeerId := nodeA.PeerId()
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 13}
+	config := &GroupConfig{
+		Name:      "GL013 Subscription Key Removed",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: receiverPubB64},
+		},
+		CreatedBy: senderPeerId,
+	}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 3*time.Second)
+
+	// Exercise the accepted-then-key-removed race path; normal missing-key
+	// traffic is rejected by nodeB's validator before reaching this handler.
+	if err := nodeB.pubsub.UnregisterTopicValidator(GroupTopicPrefix + groupId); err != nil {
+		t.Fatalf("nodeB unregister validator before key removal publish: %v", err)
+	}
+	nodeB.UpdateGroupKey(groupId, nil)
+	if got := nodeB.GetGroupKeyInfo(groupId); got != nil {
+		t.Fatalf("nodeB GetGroupKeyInfo after nil update = %#v, want nil", got)
+	}
+
+	envelopeJSON := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"GL013 valid envelope after receiver key removal",
+	)
+	baseline := len(nodeBCapture.snapshot())
+	publishRawGroupEnvelope(t, nodeA, groupId, envelopeJSON)
+
+	data := waitForCollectedEvent(t, nodeBCapture, "group:decryption_failed", 5*time.Second)
+	if got := data["groupId"]; got != groupId {
+		t.Fatalf("groupId = %v, want %q", got, groupId)
+	}
+	if got := data["senderId"]; got != senderPeerId {
+		t.Fatalf("senderId = %v, want %q", got, senderPeerId)
+	}
+	if got := int(data["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("keyEpoch = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+	gotErr, _ := data["error"].(string)
+	if !strings.Contains(gotErr, "missing group key info") {
+		t.Fatalf("error = %q, want missing group key info", gotErr)
+	}
+	if _, ok := data["decryptMs"]; !ok {
+		t.Fatal("expected decryptMs field")
+	}
+	if got, ok := data["localKeyEpoch"]; ok && got != nil {
+		t.Fatalf("localKeyEpoch = %v, want absent or null after key removal", got)
+	}
+
+	events := nodeBCapture.snapshot()
+	for _, raw := range events[baseline:] {
+		if strings.Contains(raw, `"event":"group_message:received"`) {
+			t.Fatal("group_message:received should not be emitted after missing key")
+		}
+		if strings.Contains(raw, `"event":"group_reaction:received"`) {
+			t.Fatal("group_reaction:received should not be emitted after missing key")
+		}
+	}
+}
+
 func TestHandleGroupSubscription_EmitsPayloadParseFailedEvent(t *testing.T) {
 	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()

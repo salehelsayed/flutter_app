@@ -36,6 +36,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/presentation/group_invite_status_presentation.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
@@ -85,6 +86,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   late GroupModel _group;
   List<GroupMember> _members = [];
   Map<String, GroupInviteDeliveryStatus> _inviteStatusesByPeerId = {};
+  Map<String, GroupInviteDeliveryAttempt> _inviteAttemptsByPeerId = {};
   final Set<String> _resendingInvitePeerIds = {};
   Map<String, GroupMemberIdentitySafety> _memberSafetyByPeerId = {};
   GroupSecurityStatusViewState? _securityStatus;
@@ -119,7 +121,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final ownPeerId = _ownPeerId ?? identity?.peerId;
       final group = await widget.groupRepo.getGroup(widget.group.id);
       final members = await widget.groupRepo.getMembers(widget.group.id);
-      final inviteStatusesByPeerId = await _loadInviteStatusesByPeerId(members);
+      final inviteDeliveryInfo = await _loadInviteDeliveryInfo(members);
       final memberSafetyByPeerId = await _loadMemberSafety(
         members,
         ownPeerId: ownPeerId,
@@ -144,7 +146,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           _ownPeerId = ownPeerId;
         }
         _members = members;
-        _inviteStatusesByPeerId = inviteStatusesByPeerId;
+        _inviteStatusesByPeerId = inviteDeliveryInfo.statusesByPeerId;
+        _inviteAttemptsByPeerId = inviteDeliveryInfo.attemptsByPeerId;
         _memberSafetyByPeerId = memberSafetyByPeerId;
         _securityStatus = securityStatus;
       });
@@ -157,9 +160,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     }
   }
 
-  Future<Map<String, GroupInviteDeliveryStatus>> _loadInviteStatusesByPeerId(
-    List<GroupMember> members,
-  ) async {
+  Future<
+    ({
+      Map<String, GroupInviteDeliveryStatus> statusesByPeerId,
+      Map<String, GroupInviteDeliveryAttempt> attemptsByPeerId,
+    })
+  >
+  _loadInviteDeliveryInfo(List<GroupMember> members) async {
     final attempts =
         await widget.inviteDeliveryAttemptRepo?.getAttemptsForGroup(
           widget.group.id,
@@ -174,7 +181,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
     final msgRepo = widget.msgRepo;
     if (msgRepo == null || members.isEmpty) {
-      return statuses;
+      return (statusesByPeerId: statuses, attemptsByPeerId: attemptsByPeerId);
     }
 
     final resolvedStatuses = await Future.wait(
@@ -216,7 +223,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         statuses[entry.key] = entry.value;
       }
     }
-    return statuses;
+    return (statusesByPeerId: statuses, attemptsByPeerId: attemptsByPeerId);
   }
 
   bool _isCurrentJoinEvidence({
@@ -1248,8 +1255,17 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       );
       await _loadGroupInfo();
       if (!mounted) return;
+      final updatedAttempt = _inviteAttemptsByPeerId[member.peerId];
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_resendInviteMessage(member, result))),
+        SnackBar(
+          content: Text(
+            _resendInviteMessage(
+              member,
+              result,
+              lastError: updatedAttempt?.lastError,
+            ),
+          ),
+        ),
       );
     } catch (e) {
       emitFlowEvent(
@@ -1281,18 +1297,19 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
   String _resendInviteMessage(
     GroupMember member,
-    ResendGroupInviteResult result,
-  ) {
+    ResendGroupInviteResult result, {
+    String? lastError,
+  }) {
     final name = _displayName(member);
     switch (result.status) {
       case GroupInviteDeliveryStatus.sent:
         return 'Invite sent to $name';
       case GroupInviteDeliveryStatus.queued:
-        return 'Invite queued for $name';
+        return "Invite is in $name's inbox";
       case GroupInviteDeliveryStatus.needsResend:
-        return 'Invite still needs resend';
+        return 'Invite still needs to be resent';
       case GroupInviteDeliveryStatus.cannotSend:
-        return 'Invite cannot be sent yet';
+        return groupInviteCannotSendSnackBarMessage(lastError);
       case GroupInviteDeliveryStatus.joined:
         return '$name already joined';
       case GroupInviteDeliveryStatus.unknown:
@@ -1315,6 +1332,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       group: _group,
       members: _members,
       inviteStatusesByPeerId: _inviteStatusesByPeerId,
+      inviteAttemptsByPeerId: _inviteAttemptsByPeerId,
       resendingInvitePeerIds: _resendingInvitePeerIds,
       memberSafetyByPeerId: _memberSafetyByPeerId,
       securityStatus: _securityStatus,

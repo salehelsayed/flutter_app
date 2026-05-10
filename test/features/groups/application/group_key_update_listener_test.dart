@@ -1644,9 +1644,80 @@ void main() {
   });
 
   test(
-    'conflicting same-generation key updates converge to one final stored key',
+    'delayed older key update after newer generation does not promote active key',
+    () async {
+      await _saveActiveGroup('group-delayed-older');
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          repairCalls.add(request);
+        },
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-delayed-older',
+            keyGeneration: 3,
+            encryptedKey: 'key-epoch-3',
+          ),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-delayed-older',
+            keyGeneration: 2,
+            encryptedKey: 'historical-key-epoch-2',
+          ),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final historical = await groupRepo.getKeyByGeneration(
+        'group-delayed-older',
+        2,
+      );
+      expect(historical, isNotNull);
+      expect(historical!.encryptedKey, 'historical-key-epoch-2');
+
+      final latest = await groupRepo.getLatestKey('group-delayed-older');
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 3);
+      expect(latest.encryptedKey, 'key-epoch-3');
+
+      final updateKeyCount = bridge.commandLog
+          .where((c) => c == 'group:updateKey')
+          .length;
+      expect(updateKeyCount, 1);
+      expect(repairCalls, hasLength(1));
+      expect(repairCalls.single.keyEpoch, 3);
+    },
+  );
+
+  test(
+    'conflicting same-generation key updates keep first accepted material',
     () async {
       await _saveActiveGroup('group-race');
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          repairCalls.add(request);
+        },
+      );
       listener.start();
 
       controller.add(
@@ -1671,19 +1742,116 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      final converged = await groupRepo.getKeyByGeneration('group-race', 2);
-      expect(converged, isNotNull);
-      expect(converged!.encryptedKey, 'key-epoch-2b');
+      final kept = await groupRepo.getKeyByGeneration('group-race', 2);
+      expect(kept, isNotNull);
+      expect(kept!.encryptedKey, 'key-epoch-2a');
 
       final latest = await groupRepo.getLatestKey('group-race');
       expect(latest, isNotNull);
       expect(latest!.keyGeneration, 2);
-      expect(latest.encryptedKey, 'key-epoch-2b');
+      expect(latest.encryptedKey, 'key-epoch-2a');
 
       final updateKeyCount = bridge.commandLog
           .where((c) => c == 'group:updateKey')
           .length;
-      expect(updateKeyCount, 2);
+      expect(updateKeyCount, 1);
+      expect(repairCalls, hasLength(1));
+      expect(repairCalls.single.keyEpoch, 2);
+    },
+  );
+
+  test(
+    'duplicate same-generation key update with same material is idempotent',
+    () async {
+      await _saveActiveGroup('group-duplicate-same-generation');
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          repairCalls.add(request);
+        },
+      );
+      listener.start();
+
+      final update = _makeMessage(
+        _validEnvelope(
+          groupId: 'group-duplicate-same-generation',
+          keyGeneration: 2,
+          encryptedKey: 'key-epoch-2',
+        ),
+      );
+      controller.add(update);
+      await Future<void>.delayed(Duration.zero);
+      controller.add(update);
+      await Future<void>.delayed(Duration.zero);
+
+      final saved = await groupRepo.getKeyByGeneration(
+        'group-duplicate-same-generation',
+        2,
+      );
+      expect(saved, isNotNull);
+      expect(saved!.encryptedKey, 'key-epoch-2');
+
+      final updateKeyCount = bridge.commandLog
+          .where((c) => c == 'group:updateKey')
+          .length;
+      expect(updateKeyCount, 1);
+      expect(repairCalls, hasLength(1));
+      expect(repairCalls.single.keyEpoch, 2);
+    },
+  );
+
+  test(
+    'conflicting delayed older key update does not replace historical material',
+    () async {
+      await _saveActiveGroup('group-delayed-older-conflict');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-delayed-older-conflict',
+          keyGeneration: 2,
+          encryptedKey: 'existing-historical-key-2',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-delayed-older-conflict',
+          keyGeneration: 3,
+          encryptedKey: 'current-key-3',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      listener.start();
+
+      controller.add(
+        _makeMessage(
+          _validEnvelope(
+            groupId: 'group-delayed-older-conflict',
+            keyGeneration: 2,
+            encryptedKey: 'conflicting-historical-key-2',
+          ),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final historical = await groupRepo.getKeyByGeneration(
+        'group-delayed-older-conflict',
+        2,
+      );
+      expect(historical, isNotNull);
+      expect(historical!.encryptedKey, 'existing-historical-key-2');
+
+      final latest = await groupRepo.getLatestKey(
+        'group-delayed-older-conflict',
+      );
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 3);
+      expect(latest.encryptedKey, 'current-key-3');
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
     },
   );
 

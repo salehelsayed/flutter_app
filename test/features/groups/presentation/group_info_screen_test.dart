@@ -45,6 +45,9 @@ void main() {
 
   Widget buildTestWidget({
     List<GroupMember> members = const [],
+    Map<String, GroupInviteDeliveryStatus> inviteStatusesByPeerId = const {},
+    Map<String, GroupInviteDeliveryAttempt> inviteAttemptsByPeerId = const {},
+    Set<String> resendingInvitePeerIds = const {},
     Map<String, GroupMemberIdentitySafety> memberSafetyByPeerId = const {},
     bool isAdmin = true,
     String? ownPeerId,
@@ -66,6 +69,9 @@ void main() {
       home: GroupInfoScreen(
         group: group ?? testGroup,
         members: members,
+        inviteStatusesByPeerId: inviteStatusesByPeerId,
+        inviteAttemptsByPeerId: inviteAttemptsByPeerId,
+        resendingInvitePeerIds: resendingInvitePeerIds,
         memberSafetyByPeerId: memberSafetyByPeerId,
         isAdmin: isAdmin,
         ownPeerId: ownPeerId,
@@ -116,43 +122,108 @@ void main() {
     expect(find.text('writer'), findsOneWidget);
   });
 
-  testWidgets('shows invite status and send again only for needs resend', (
+  testWidgets('shows invite status copy and resend only for needs resend', (
     tester,
   ) async {
     GroupMember? resentMember;
+    final queuedMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-queued',
+      username: 'Queued Member',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+    final resendMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-resend',
+      username: 'Resend Member',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+    final cannotMember = GroupMember(
+      groupId: 'group-1',
+      peerId: 'peer-cannot',
+      username: 'Cannot Member',
+      role: MemberRole.writer,
+      joinedAt: DateTime.now().toUtc(),
+    );
+    final attemptedAt = DateTime.utc(2026, 5, 9, 12);
+
     await tester.pumpWidget(
-      MaterialApp(
-        home: GroupInfoScreen(
-          group: testGroup,
-          members: testMembers,
-          inviteStatusesByPeerId: const {
-            'peer-member': GroupInviteDeliveryStatus.needsResend,
-          },
-          isAdmin: true,
-          ownPeerId: 'peer-admin',
-          onBack: () {},
-          onLeave: () {},
-          onResendInvite: (member) => resentMember = member,
-        ),
+      buildTestWidget(
+        members: [testMembers.first, queuedMember, resendMember, cannotMember],
+        ownPeerId: 'peer-admin',
+        inviteStatusesByPeerId: const {
+          'peer-queued': GroupInviteDeliveryStatus.queued,
+          'peer-resend': GroupInviteDeliveryStatus.needsResend,
+          'peer-cannot': GroupInviteDeliveryStatus.cannotSend,
+        },
+        inviteAttemptsByPeerId: {
+          'peer-cannot': GroupInviteDeliveryAttempt(
+            groupId: 'group-1',
+            peerId: 'peer-cannot',
+            username: 'Cannot Member',
+            status: GroupInviteDeliveryStatus.cannotSend,
+            attemptedAt: attemptedAt,
+            updatedAt: attemptedAt,
+            lastError: 'missing_secure_key',
+          ),
+        },
+        onResendInvite: (member) => resentMember = member,
       ),
     );
 
+    expect(find.text('In their inbox'), findsOneWidget);
+    expect(find.text('Resend needed'), findsOneWidget);
+    expect(find.text('Cannot send'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('group-member-invite-status-peer-member')),
+      find.text(
+        "We don't have the secure info needed to invite this friend. Ask them to open or reinstall the app, then try again.",
+      ),
       findsOneWidget,
     );
-    expect(find.text('Needs resend'), findsOneWidget);
+    expect(find.text('Resend'), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('group-member-resend-invite-peer-member')),
+      find.byKey(const ValueKey('group-member-resend-invite-peer-queued')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('group-member-resend-invite-peer-cannot')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('group-member-resend-invite-peer-resend')),
       findsOneWidget,
     );
 
-    await tester.tap(
-      find.byKey(const ValueKey('group-member-resend-invite-peer-member')),
+    final resendButton = find.byKey(
+      const ValueKey('group-member-resend-invite-peer-resend'),
     );
-    expect(resentMember?.peerId, 'peer-member');
+    await tester.ensureVisible(resendButton);
+    await tester.pump();
+    await tester.tap(resendButton, warnIfMissed: false);
+    expect(resentMember?.peerId, 'peer-resend');
   });
 
+  testWidgets('shows disabled invite resend busy state', (tester) async {
+    await tester.pumpWidget(
+      buildTestWidget(
+        members: testMembers,
+        ownPeerId: 'peer-admin',
+        inviteStatusesByPeerId: const {
+          'peer-member': GroupInviteDeliveryStatus.needsResend,
+        },
+        resendingInvitePeerIds: const {'peer-member'},
+        onResendInvite: (_) {},
+      ),
+    );
+
+    expect(find.text('Sending...'), findsOneWidget);
+    final resendButton = tester.widget<TextButton>(
+      find.byKey(const ValueKey('group-member-resend-invite-peer-member')),
+    );
+    expect(resendButton.onPressed, isNull);
+  });
   testWidgets('shows identity warning and safety numbers for changed member', (
     tester,
   ) async {

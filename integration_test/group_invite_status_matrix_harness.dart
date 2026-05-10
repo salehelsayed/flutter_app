@@ -311,6 +311,7 @@ Future<_MatrixFixture> _buildFixture(String role) async {
     username: 'Cannot Member',
     status: GroupInviteDeliveryStatus.cannotSend,
     minute: 15,
+    lastError: 'missing_secure_key',
   );
 
   return _MatrixFixture(
@@ -331,6 +332,7 @@ Future<void> _saveAttempt(
   required String username,
   required GroupInviteDeliveryStatus status,
   required int minute,
+  String? lastError,
 }) async {
   final timestamp = DateTime.utc(2026, 5, 9, 12, minute);
   await repo.saveAttempt(
@@ -341,6 +343,7 @@ Future<void> _saveAttempt(
       status: status,
       attemptedAt: timestamp,
       updatedAt: timestamp,
+      lastError: lastError,
     ),
   );
 }
@@ -423,16 +426,22 @@ void main() {
 
     if (configuredRole == 'creator') {
       expect(find.text('Invite sent'), findsOneWidget);
-      expect(find.text('Invite queued'), findsOneWidget);
-      expect(find.text('Needs resend'), findsOneWidget);
+      expect(find.text('In their inbox'), findsOneWidget);
+      expect(find.text('Resend needed'), findsOneWidget);
       expect(find.text('Cannot send'), findsOneWidget);
+      expect(
+        find.text(
+          "We don't have the secure info needed to invite this friend. Ask them to open or reinstall the app, then try again.",
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Joined'), findsNWidgets(2));
       expect(find.text('Invite unknown'), findsOneWidget);
       verdict['creatorMatrixPass'] = true;
       verdict['labels'] = const [
         'Invite sent',
-        'Invite queued',
-        'Needs resend',
+        'In their inbox',
+        'Resend needed',
         'Cannot send',
         'Joined',
         'Invite unknown',

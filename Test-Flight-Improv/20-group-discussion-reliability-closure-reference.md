@@ -269,6 +269,123 @@ That is the correct level of honesty for a publish + inbox-backed, receipt-less 
   `MKNOON_REQUIRE_MULTI_RELAY=true`, so missing relay config fails clearly
   instead of becoming skipped evidence.
 
+### 9. Direct epoch-key monotonicity proof
+
+- GEK-001 closed the direct key-update listener and Go active-key boundary on
+  `2026-05-09`: delayed older direct key updates no longer promote active key
+  state after a newer accepted generation, conflicting same-generation key
+  material no longer replaces the first accepted material, and duplicate
+  same-generation material is idempotent.
+- The accepted contract is intentionally split: Dart may retain
+  non-conflicting historical older key material for replay, while Go keeps the
+  latest active key and previous-key grace state monotonic.
+- Evidence passed: focused GEK-001 listener red/green tests, the full
+  `group_key_update_listener_test.dart` suite, the focused Go
+  `TestUpdateGroupKey_*` monotonic command, `./scripts/run_test_gates.sh groups`,
+  and `git diff --check`.
+- This closes only the GEK-001 direct host/Go-boundary slice. GEK-003 and
+  GEK-004 are recorded separately below, and GEK-005 final reconciliation is
+  recorded in section 13 as `residual_only`.
+
+### 10. Live decrypt durable repair proof
+
+- GEK-002 is covered after its `2026-05-09` host proof plus GEK-005 recovery
+  closure of the receipt-fixture follow-up. The host app-layer journey is where
+  a live `group:decryption_failed` diagnostic creates a
+  safe pending state, durable replay later arrives for the same missing message,
+  the synthetic no-envelope live placeholder is superseded, and key arrival
+  repairs the durable replay into exactly one visible plaintext row.
+- `group_pending_key_repair_service.dart` now keeps the durable replay
+  `messageId` canonical and emits `GROUP_LIVE_DECRYPTION_REPAIR_SUPERSEDED`
+  when it removes a matching synthetic live placeholder.
+- Evidence passed: the focused GEK-002 red/green regression, focused
+  prerequisite selectors 2 through 6, the full `group_message_listener_test.dart`
+  suite, `./scripts/run_test_gates.sh groups`, and `git diff --check`.
+- Closed follow-up: the older `PREREQ-GROUP-SYNC-RECEIPTS` fixed-date receipt
+  fixtures now use deterministic retention clock control. Full
+  `drain_group_offline_inbox_use_case_test.dart` and broad
+  `flutter test --no-pub test/features/groups` reruns pass.
+- That GEK-002 closure did not itself close later sessions. GEK-003 and GEK-004
+  are recorded separately below, and GEK-005 final reconciliation is recorded in
+  section 13 as `residual_only`.
+
+### 11. Partial key-update rotation race proof
+
+- GEK-003 closed the deterministic host app-layer partial key-update rotation
+  race on `2026-05-09`: Alice can rotate to epoch 2, Bob can receive and
+  commit the key while Charlie remains on epoch 1, Bob can send immediately on
+  epoch 2, and Charlie does not silently lose that message.
+- `group_pending_key_repair_service.dart` now derives durable replay repair
+  identity from the signed replay envelope account sender and transport
+  identity before falling back to relay `from`, so a relay device sender can
+  still converge with the live diagnostic account sender.
+- The accepted proof shows Alice/current-key replay succeeds, Charlie's live
+  decrypt failure creates a pending-key state, durable replay becomes canonical
+  under Bob's real message id, later Charlie key arrival repairs one delivered
+  plaintext row, and duplicate replay/retry stays exactly once.
+- Evidence passed: the focused GEK-003 regression in
+  `drain_group_offline_inbox_use_case_test.dart`, focused key-update/send and
+  GEK-002 repair-convergence safety selectors, the `groups` gate (`103`
+  tests), QA review, and `git diff --check`.
+- This closes only the GEK-003 host app-layer rotation/send/repair slice. GEK-004
+  is recorded separately below; this GEK-003 entry does not close final
+  simulator/relay reconciliation. The old GEK-002 `PREREQ-GROUP-SYNC-RECEIPTS`
+  fixed-date fixture follow-up is now closed by GEK-005 recovery.
+
+### 12. Delayed membership/config durable replay proof
+
+- GEK-004 closed the deterministic host app-layer delayed membership/config
+  replay-ordering gap on `2026-05-09`: a signed durable message from a newly
+  accepted sender can arrive before the recipient has the delayed membership
+  config, defer safely, and recover after config catch-up.
+- `drain_group_offline_inbox_use_case.dart` now defers signed durable group
+  message replays rejected as `unknown_sender` within the page, then retries
+  them before cursor commit after membership/config/system replay has run.
+- The accepted proof shows the pre-catch-up replay creates no ghost row and does
+  not advance the cursor, the delayed `member_added` config makes the sender and
+  device locally known, the same durable message is delivered once with the
+  expected sender/device/message identity, and duplicate replay stays exactly
+  once.
+- Unresolved unknown senders still reject before cursor advancement, and live
+  unknown senders remain fail-closed. GEK-004 did not change invite eligibility
+  semantics, per-recipient ACKs, Go/native behavior, or relay/simulator behavior.
+- Evidence passed: the focused GEK-004 red/green regression in
+  `drain_group_offline_inbox_use_case_test.dart`, all required GEK-001/GEK-002/
+  GEK-003 safety selectors, membership/config and invite-truth selectors, QA
+  reruns of the GEK-002 and GEK-003 drain selectors, the `groups` gate, and
+  `git diff --check`. `completeness-check` was skipped because no
+  `_test.dart` file was added, removed, or renamed.
+- This closes only the GEK-004 host app-layer membership/config replay slice.
+  GEK-005 final reconciliation is recorded in section 13 as `residual_only`, and
+  the GEK-002 `PREREQ-GROUP-SYNC-RECEIPTS` fixed-date fixture follow-up is closed.
+
+### 13. Final epoch-key reconciliation
+
+- GEK-005 ran the final Report 94 acceptance-only evidence sweep and recovery
+  rerun on `2026-05-10` and wrote the final program verdict `residual_only`.
+- Green evidence: all 17 GEK-focused Dart selectors passed, full
+  `group_key_update_listener_test.dart`, `group_message_listener_test.dart`,
+  `drain_group_offline_inbox_use_case_test.dart`, and broad
+  `flutter test --no-pub test/features/groups` passed, the focused and broad Go
+  commands passed, the `groups` gate passed,
+  `./scripts/run_test_gates.sh completeness-check` passed with `730/730` test
+  files classified, and `git diff --check` passed.
+- Closed follow-up: the exact old `PREREQ-GROUP-SYNC-RECEIPTS` fixed-date receipt
+  fixtures now pass under deterministic retention clock control.
+- Former broad-host blocker resolved: direct `drain_followup_invariants_test.dart`
+  reruns prove local-delivered receipt re-derivation on dedup and
+  `GROUP_MESSAGE_LISTENER_EMPTY_DROP` flow-event logging for malformed drained
+  envelopes.
+- Device/relay evidence: the configured iOS simulators
+  `347FB118-10D0-40C8-A05B-B0C3BD6B8CCD` and
+  `5BA69F1C-B112-47BE-B1FF-8C1003728C8F` were booted and used with the supplied
+  relay addresses. The single-device nightly passed as self-contained smoke
+  because no CLI peer fixture was present; the paired iOS relay script passed
+  its MD-004 primary/sibling proof. These are supporting evidence, not a claim
+  of full live three-party GEK split-delivery closure.
+- `Test-Flight-Improv/test-gate-definitions.md` was inspected through
+  `completeness-check` and was not changed by GEK-005.
+
 ---
 
 ## Accepted Architectural Differences From 1:1
@@ -298,6 +415,17 @@ There are still narrow residuals worth remembering:
   authorization proof, newly-added/non-creator host app-layer media parity,
   configured visible render/playback/reopen/retry/offline/duplicate proof, and
   the GMAR-005 final gate/full-suite reconciliation.
+- Report 94 epoch-key reliability final program verdict is `residual_only` after
+  GEK-005. GEK-001 through GEK-004 stay closed, including the old GEK-002
+  receipt-fixture follow-up. The remaining limitation is exact live three-party
+  GEK stale-key/decrypt-repair split-delivery proof scope, not a focused GEK-001
+  through GEK-004 regression. Do not reopen GEK-001 unless
+  direct stale-older or same-generation conflict behavior regresses, do not
+  reopen GEK-002 unless the live diagnostic plus durable replay plus key-arrival
+  convergence regresses, do not reopen GEK-003 unless the partial key-update
+  delivery plus immediate post-rotation send repair path regresses, and do not
+  reopen GEK-004 unless delayed membership/config catch-up plus durable
+  unknown-sender replay recovery regresses.
 
 These are **not** reasons to reopen the whole group reliability program. Reopen only if they become real escaped bugs or clearly justified trust gaps.
 

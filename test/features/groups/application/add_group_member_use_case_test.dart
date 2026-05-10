@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
@@ -113,6 +114,110 @@ void main() {
     expect(saved, isNotNull);
     final members = await groupRepo.getMembers('group-1');
     expect(members.length, groupMembershipLimit);
+  });
+
+  test('GM-002 addGroupMember syncs updated A/B/C/D config payload', () async {
+    final joinedAt = DateTime.utc(2026, 5, 10, 9);
+
+    GroupMemberDeviceIdentity device(String peerId) =>
+        GroupMemberDeviceIdentity(
+          deviceId: '$peerId-device',
+          transportPeerId: '$peerId-device',
+          deviceSigningPublicKey: 'pk-$peerId',
+          mlKemPublicKey: 'mlkem-$peerId-device',
+          keyPackageId: 'key-package-$peerId-device',
+          keyPackagePublicMaterial: 'key-package-public-$peerId-device',
+        );
+
+    GroupMember member({
+      required String peerId,
+      required String username,
+      required MemberRole role,
+    }) {
+      return GroupMember(
+        groupId: 'group-1',
+        peerId: peerId,
+        username: username,
+        role: role,
+        publicKey: 'pk-$peerId',
+        mlKemPublicKey: 'mlkem-$peerId',
+        devices: [device(peerId)],
+        joinedAt: joinedAt,
+      );
+    }
+
+    await groupRepo.saveMember(
+      member(peerId: 'peer-admin', username: 'Admin', role: MemberRole.admin),
+    );
+    await groupRepo.saveMember(
+      member(peerId: 'peer-b', username: 'Bob', role: MemberRole.writer),
+    );
+    await groupRepo.saveMember(
+      member(peerId: 'peer-c', username: 'Charlie', role: MemberRole.writer),
+    );
+
+    final diana = member(
+      peerId: 'peer-d',
+      username: 'Diana',
+      role: MemberRole.writer,
+    );
+
+    await addGroupMember(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      newMember: diana,
+      selfPeerId: 'peer-admin',
+    );
+
+    final saved = await groupRepo.getMember('group-1', 'peer-d');
+    expect(saved, isNotNull);
+    expect(saved!.publicKey, 'pk-peer-d');
+    expect(saved.mlKemPublicKey, 'mlkem-peer-d');
+    expect(saved.devices.map((device) => device.deviceId), ['peer-d-device']);
+
+    expect(
+      bridge.commandLog.where((command) => command == 'group:updateConfig'),
+      hasLength(1),
+    );
+
+    final updateConfigMessage = bridge.sentMessages.firstWhere((message) {
+      final parsed = jsonDecode(message) as Map<String, dynamic>;
+      return parsed['cmd'] == 'group:updateConfig';
+    });
+    final payload =
+        (jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+            as Map<String, dynamic>;
+    expect(payload['groupId'], 'group-1');
+
+    final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+    expect(
+      isGroupConfigStateHashValid(groupId: 'group-1', groupConfig: groupConfig),
+      isTrue,
+    );
+
+    final members = (groupConfig['members'] as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    expect(members.map((member) => member['peerId']).toSet(), {
+      'peer-admin',
+      'peer-b',
+      'peer-c',
+      'peer-d',
+    });
+
+    final dianaConfig = members.singleWhere(
+      (member) => member['peerId'] == 'peer-d',
+    );
+    expect(dianaConfig['username'], 'Diana');
+    expect(dianaConfig['role'], 'writer');
+    expect(dianaConfig['publicKey'], 'pk-peer-d');
+    expect(dianaConfig['mlKemPublicKey'], 'mlkem-peer-d');
+    final dianaDevices = (dianaConfig['devices'] as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    expect(dianaDevices, hasLength(1));
+    expect(dianaDevices.single['deviceId'], 'peer-d-device');
+    expect(dianaDevices.single['transportPeerId'], 'peer-d-device');
+    expect(dianaDevices.single['deviceSigningPublicKey'], 'pk-peer-d');
   });
 
   test('rejects when caller is not admin', () async {

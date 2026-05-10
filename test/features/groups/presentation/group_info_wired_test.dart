@@ -21,6 +21,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_info_scre
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -318,6 +319,87 @@ Future<void> _saveGroupReplayKey(
   );
 }
 
+Future<
+  ({
+    _TrackingInviteDeliveryAttemptRepository inviteStatusRepo,
+    FakeP2PService p2pService,
+  })
+>
+_pumpResendInviteSurface(
+  WidgetTester tester, {
+  required bool sendMessageResult,
+  required bool storeInInboxResult,
+  bool hasRecipientSecureKey = true,
+}) async {
+  final groupRepo = InMemoryGroupRepository();
+  final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+  final group = makeAdminGroup();
+  await groupRepo.saveGroup(group);
+  await _saveGroupReplayKey(groupRepo);
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-admin',
+      username: 'Admin',
+      role: MemberRole.admin,
+      publicKey: testIdentity.publicKey,
+      mlKemPublicKey: testIdentity.mlKemPublicKey,
+    ),
+  );
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-alice',
+      username: 'Alice',
+      publicKey: 'pk-alice',
+      mlKemPublicKey: hasRecipientSecureKey ? 'mlkem-pk-alice' : null,
+    ),
+  );
+  await inviteStatusRepo.saveAttempt(
+    GroupInviteDeliveryAttempt(
+      groupId: 'group-1',
+      peerId: 'peer-alice',
+      username: 'Alice',
+      status: GroupInviteDeliveryStatus.needsResend,
+      attemptedAt: DateTime.utc(2026, 5, 7, 12),
+      updatedAt: DateTime.utc(2026, 5, 7, 12),
+      lastError: 'send_failed',
+    ),
+  );
+
+  final p2pService = FakeP2PService(
+    initialState: const NodeState(isStarted: true),
+    sendMessageResult: sendMessageResult,
+    storeInInboxResult: storeInInboxResult,
+  );
+
+  await tester.pumpWidget(
+    MaterialApp(
+      home: GroupInfoWired(
+        group: group,
+        groupRepo: groupRepo,
+        contactRepo: InMemoryContactRepository(),
+        bridge: FakeBridge(),
+        identityRepo: FakeIdentityRepository(identity: testIdentity),
+        p2pService: p2pService,
+        inviteDeliveryAttemptRepo: inviteStatusRepo,
+      ),
+    ),
+  );
+  await pumpFrames(tester);
+
+  return (inviteStatusRepo: inviteStatusRepo, p2pService: p2pService);
+}
+
+Future<void> _tapResendInviteButton(
+  WidgetTester tester, {
+  String peerId = 'peer-alice',
+}) async {
+  final button = find.byKey(ValueKey('group-member-resend-invite-$peerId'));
+  await tester.ensureVisible(button);
+  await pumpFrames(tester, count: 5);
+  await tester.tap(button, warnIfMissed: false);
+  await pumpFrames(tester, count: 40);
+}
+
 Map<String, dynamic> _storedGroupReplayEnvelope(String message) {
   return jsonDecode(message) as Map<String, dynamic>;
 }
@@ -414,7 +496,7 @@ void main() {
       );
       await pumpFrames(tester);
 
-      expect(find.text('Needs resend'), findsOneWidget);
+      expect(find.text('Resend needed'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('group-member-resend-invite-peer-alice')),
         findsOneWidget,
@@ -800,6 +882,9 @@ void main() {
             status: member.status,
             attemptedAt: DateTime.utc(2026, 5, 7, 12),
             updatedAt: DateTime.utc(2026, 5, 7, 12),
+            lastError: member.status == GroupInviteDeliveryStatus.cannotSend
+                ? 'missing_secure_key'
+                : null,
           ),
         );
       }
@@ -823,12 +908,167 @@ void main() {
       await pumpFrames(tester);
 
       expect(find.text('Invite sent'), findsOneWidget);
-      expect(find.text('Invite queued'), findsOneWidget);
-      expect(find.text('Needs resend'), findsOneWidget);
+      expect(find.text('In their inbox'), findsOneWidget);
+      expect(find.text('Resend needed'), findsOneWidget);
       expect(find.text('Cannot send'), findsOneWidget);
+      expect(
+        find.text(
+          "We don't have the secure info needed to invite this friend. Ask them to open or reinstall the app, then try again.",
+        ),
+        findsOneWidget,
+      );
       expect(find.text('Joined'), findsOneWidget);
       expect(find.text('Invite unknown'), findsOneWidget);
     });
+
+    testWidgets('shows cannot-send reason copy from persisted lastError', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+
+      final cases = [
+        (
+          peerId: 'peer-missing',
+          username: 'Missing Secure',
+          lastError: 'missing_secure_key',
+          reason:
+              "We don't have the secure info needed to invite this friend. Ask them to open or reinstall the app, then try again.",
+        ),
+        (
+          peerId: 'peer-invalid',
+          username: 'Invalid Payload',
+          lastError: 'invalid_invite_payload',
+          reason:
+              'This invite could not be prepared. Reopen the app and try again.',
+        ),
+        (
+          peerId: 'peer-group-key',
+          username: 'Group Key',
+          lastError: 'group_key_missing',
+          reason:
+              'This group is missing the secure invite key. Reopen the app and try again.',
+        ),
+        (
+          peerId: 'peer-unknown-error',
+          username: 'Unknown Error',
+          lastError: 'future_error_code',
+          reason:
+              'We could not prepare a secure invite for this friend. They may need to open or reinstall the app before you can invite them.',
+        ),
+        (
+          peerId: 'peer-null-error',
+          username: 'Null Error',
+          lastError: null,
+          reason:
+              'We could not prepare a secure invite for this friend. They may need to open or reinstall the app before you can invite them.',
+        ),
+      ];
+
+      for (final caseData in cases) {
+        await groupRepo.saveMember(
+          makeMember(peerId: caseData.peerId, username: caseData.username),
+        );
+        await inviteStatusRepo.saveAttempt(
+          GroupInviteDeliveryAttempt(
+            groupId: 'group-1',
+            peerId: caseData.peerId,
+            username: caseData.username,
+            status: GroupInviteDeliveryStatus.cannotSend,
+            attemptedAt: DateTime.utc(2026, 5, 7, 12),
+            updatedAt: DateTime.utc(2026, 5, 7, 12),
+            lastError: caseData.lastError,
+          ),
+        );
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GroupInfoWired(
+            group: group,
+            groupRepo: groupRepo,
+            contactRepo: InMemoryContactRepository(),
+            bridge: FakeBridge(),
+            identityRepo: FakeIdentityRepository(identity: testIdentity),
+            p2pService: FakeP2PService(),
+            inviteDeliveryAttemptRepo: inviteStatusRepo,
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Cannot send'), findsNWidgets(cases.length));
+      expect(find.text(cases[0].reason), findsOneWidget);
+      expect(find.text(cases[1].reason), findsOneWidget);
+      expect(find.text(cases[2].reason), findsOneWidget);
+      expect(find.text(cases[3].reason), findsNWidgets(2));
+    });
+
+    for (final scenario
+        in <
+          ({
+            String name,
+            bool sendMessageResult,
+            bool storeInInboxResult,
+            bool hasRecipientSecureKey,
+            String expectedSnackBar,
+          })
+        >[
+          (
+            name: 'sent',
+            sendMessageResult: true,
+            storeInInboxResult: true,
+            hasRecipientSecureKey: true,
+            expectedSnackBar: 'Invite sent to Alice',
+          ),
+          (
+            name: 'queued',
+            sendMessageResult: false,
+            storeInInboxResult: true,
+            hasRecipientSecureKey: true,
+            expectedSnackBar: "Invite is in Alice's inbox",
+          ),
+          (
+            name: 'needs resend',
+            sendMessageResult: false,
+            storeInInboxResult: false,
+            hasRecipientSecureKey: true,
+            expectedSnackBar: 'Invite still needs to be resent',
+          ),
+          (
+            name: 'cannot send',
+            sendMessageResult: true,
+            storeInInboxResult: true,
+            hasRecipientSecureKey: false,
+            expectedSnackBar:
+                "Cannot send: we don't have the secure info needed to invite this friend.",
+          ),
+        ]) {
+      testWidgets('shows ${scenario.name} resend snackbar copy', (
+        tester,
+      ) async {
+        await _pumpResendInviteSurface(
+          tester,
+          sendMessageResult: scenario.sendMessageResult,
+          storeInInboxResult: scenario.storeInInboxResult,
+          hasRecipientSecureKey: scenario.hasRecipientSecureKey,
+        );
+
+        await _tapResendInviteButton(tester);
+
+        expect(find.text(scenario.expectedSnackBar), findsOneWidget);
+      });
+    }
 
     testWidgets('shows identity warning when member keys differ from contact', (
       tester,

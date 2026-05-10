@@ -20,6 +20,7 @@ class GroupInfoScreen extends StatelessWidget {
   final GroupModel group;
   final List<GroupMember> members;
   final Map<String, GroupInviteDeliveryStatus> inviteStatusesByPeerId;
+  final Map<String, GroupInviteDeliveryAttempt> inviteAttemptsByPeerId;
   final Set<String> resendingInvitePeerIds;
   final Map<String, GroupMemberIdentitySafety> memberSafetyByPeerId;
   final bool isAdmin;
@@ -44,6 +45,7 @@ class GroupInfoScreen extends StatelessWidget {
     required this.group,
     required this.members,
     this.inviteStatusesByPeerId = const {},
+    this.inviteAttemptsByPeerId = const {},
     this.resendingInvitePeerIds = const {},
     this.memberSafetyByPeerId = const {},
     required this.isAdmin,
@@ -498,6 +500,7 @@ class GroupInfoScreen extends StatelessWidget {
             inviteStatus:
                 inviteStatusesByPeerId[member.peerId] ??
                 GroupInviteDeliveryStatus.unknown,
+            inviteAttempt: inviteAttemptsByPeerId[member.peerId],
             isAdmin: isAdmin,
             isSelf: isSelf,
             isResendingInvite: resendingInvitePeerIds.contains(member.peerId),

@@ -101,7 +101,17 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
   }
 
   final keyEpoch = replayEnvelope['keyEpoch'] as int;
-  final senderPeerId = (relayEnvelope['from'] as String?)?.trim();
+  final replaySenderPeerId = (replayEnvelope['senderPeerId'] as String?)
+      ?.trim();
+  final replayTransportPeerId =
+      (replayEnvelope['senderTransportPeerId'] as String?)?.trim();
+  final relaySenderPeerId = (relayEnvelope['from'] as String?)?.trim();
+  final senderPeerId = replaySenderPeerId?.isNotEmpty == true
+      ? replaySenderPeerId
+      : relaySenderPeerId;
+  final transportPeerId = replayTransportPeerId?.isNotEmpty == true
+      ? replayTransportPeerId
+      : relaySenderPeerId;
   final now = DateTime.now().toUtc();
   final repairId = offlineGroupPendingKeyRepairId(
     groupId: groupId,
@@ -115,9 +125,9 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
       senderPeerId: senderPeerId == null || senderPeerId.isEmpty
           ? null
           : senderPeerId,
-      transportPeerId: senderPeerId == null || senderPeerId.isEmpty
+      transportPeerId: transportPeerId == null || transportPeerId.isEmpty
           ? null
-          : senderPeerId,
+          : transportPeerId,
       payloadType: payloadType,
       keyEpoch: keyEpoch,
       replayEnvelopeJson: jsonEncode(replayEnvelope),
@@ -127,6 +137,13 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
       createdAt: now,
       updatedAt: now,
     ),
+  );
+  await _supersedeLiveDiagnosticRepairForDurableReplay(
+    pendingKeyRepairRepo: pendingKeyRepairRepo,
+    msgRepo: msgRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    keyEpoch: keyEpoch,
   );
 
   final existingMessage = await msgRepo.getMessage(messageId);
@@ -138,9 +155,9 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
         senderPeerId: senderPeerId == null || senderPeerId.isEmpty
             ? 'unknown'
             : senderPeerId,
-        transportPeerId: senderPeerId == null || senderPeerId.isEmpty
+        transportPeerId: transportPeerId == null || transportPeerId.isEmpty
             ? null
-            : senderPeerId,
+            : transportPeerId,
         senderUsername: null,
         text: groupPendingKeyRepairPlaceholderText,
         timestamp: _parseRelayTimestamp(relayEnvelope['timestamp']) ?? now,
@@ -173,6 +190,52 @@ Future<bool> queueMissingGroupReplayKeyRepairFromEnvelope({
   }
 
   return true;
+}
+
+Future<void> _supersedeLiveDiagnosticRepairForDurableReplay({
+  required GroupPendingKeyRepairRepository pendingKeyRepairRepo,
+  required GroupMessageRepository msgRepo,
+  required String groupId,
+  required String? senderPeerId,
+  required int keyEpoch,
+}) async {
+  final sender = senderPeerId?.trim();
+  if (sender == null || sender.isEmpty) return;
+
+  final repairs = await pendingKeyRepairRepo.getPendingRepairsForGroupEpoch(
+    groupId: groupId,
+    keyEpoch: keyEpoch,
+  );
+  var supersededCount = 0;
+  for (final repair in repairs) {
+    if (!_isLiveDiagnosticRepairForSender(repair, sender)) {
+      continue;
+    }
+    await msgRepo.deleteMessage(repair.messageId);
+    await pendingKeyRepairRepo.finalizeRepaired(repair.id);
+    supersededCount++;
+  }
+  if (supersededCount == 0) return;
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_LIVE_DECRYPTION_REPAIR_SUPERSEDED',
+    details: {
+      'groupId': _safeId(groupId),
+      'keyEpoch': keyEpoch,
+      'count': supersededCount,
+    },
+  );
+}
+
+bool _isLiveDiagnosticRepairForSender(
+  GroupPendingKeyRepair repair,
+  String senderPeerId,
+) {
+  if (!repair.id.startsWith('live:')) return false;
+  if (repair.replayEnvelopeJson != null) return false;
+  return repair.senderPeerId == senderPeerId ||
+      repair.transportPeerId == senderPeerId;
 }
 
 Future<GroupMessage?> queueLiveGroupDecryptionFailureRepair({
