@@ -54,6 +54,7 @@ Future<void> drainGroupOfflineInbox({
   RequestGroupKeyRepair? requestGroupKeyRepair,
   RequestGroupHistoryRepairRange? requestHistoryRepairRange,
   String? selfPeerId,
+  DateTime? retentionNowUtc,
   bool drainAllPages = true,
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
@@ -84,6 +85,7 @@ Future<void> drainGroupOfflineInbox({
           requestGroupKeyRepair: requestGroupKeyRepair,
           requestHistoryRepairRange: requestHistoryRepairRange,
           selfPeerId: selfPeerId,
+          retentionNowUtc: retentionNowUtc,
           drainAllPages: drainAllPages,
           pageSize: pageSize,
           maxPages: maxPages,
@@ -147,6 +149,7 @@ Future<void> drainGroupOfflineInboxForGroup({
   RequestGroupKeyRepair? requestGroupKeyRepair,
   RequestGroupHistoryRepairRange? requestHistoryRepairRange,
   String? selfPeerId,
+  DateTime? retentionNowUtc,
   bool drainAllPages = true,
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
@@ -174,6 +177,7 @@ Future<void> drainGroupOfflineInboxForGroup({
       requestGroupKeyRepair: requestGroupKeyRepair,
       requestHistoryRepairRange: requestHistoryRepairRange,
       selfPeerId: selfPeerId,
+      retentionNowUtc: retentionNowUtc,
       drainAllPages: drainAllPages,
       pageSize: pageSize,
       maxPages: maxPages,
@@ -231,12 +235,15 @@ Future<void> _drainGroupInbox({
   RequestGroupKeyRepair? requestGroupKeyRepair,
   RequestGroupHistoryRepairRange? requestHistoryRepairRange,
   String? selfPeerId,
+  DateTime? retentionNowUtc,
   bool drainAllPages = true,
   int pageSize = 50,
   int maxPages = defaultGroupInboxDrainMaxPages,
 }) async {
   final drainStopwatch = Stopwatch()..start();
-  final retentionCutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
+  final retentionCutoff = groupBacklogRetentionCutoff(
+    (retentionNowUtc ?? DateTime.now()).toUtc(),
+  );
   String cursor = (await msgRepo.getInboxCursor(groupId)) ?? '';
   final seenCursors = <String>{cursor};
   int totalMessages = 0;
@@ -265,82 +272,87 @@ Future<void> _drainGroupInbox({
     final phase1PersistedMessageIds = <String>[];
     var stopGroupDrain = false;
 
-    // ── Phase 1 ── process every message OUTSIDE any DB write transaction.
-    //
-    // The previous shape did decode (bridge round-trip), system-message
-    // handling (more bridge), and writes against the outer GroupRepository
-    // INSIDE the runInboxPageTransaction body. Holding the SQLCipher write
-    // lock across native method-channel hops produces the canonical 10s
-    // "database has been locked" warning and starves every concurrent reader
-    // (notably OrbitWired._loadOrbitData, which is why the Orbit screen
-    // appears stuck on its skeleton placeholders during cold start).
-    //
-    // Phase 1 keeps the outer msgRepo (each insert is its own implicit txn).
-    // Phase 2 then commits the page receipts + cursor in one tiny atomic
-    // step. handleIncomingGroupMessage is idempotent on messageId, so if a
-    // failure between Phase 1 and Phase 2 leaves the cursor un-advanced, the
-    // re-drain on the next pass dedupes naturally.
-    for (final msg in messages) {
-      Map<String, dynamic> payload;
-      try {
-        payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
-      } catch (e) {
-        final allowDeletedGroupPlaceholder =
-            e is GroupOfflineReplaySignatureException &&
-            await _isUnknownSenderForDeletedLocalGroup(
-              groupRepo: groupRepo,
-              groupId: groupId,
-              error: e,
-            );
-        if (e is GroupOfflineReplaySignatureException &&
-            !allowDeletedGroupPlaceholder) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_SIGNATURE_REJECTED',
-            details: {
-              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-              'error': e.reason,
-            },
-          );
-          rethrow;
-        }
+    final deferredUnknownSenderMessages = <Map<String, dynamic>>[];
 
-        var placeholderSaved = false;
-        if (_isMissingGroupReplayKeyError(e) && pendingKeyRepairRepo != null) {
-          final replayEnvelope = _tryDecodeReplayEnvelope(msg['message']);
-          if (replayEnvelope != null) {
-            placeholderSaved =
-                await queueMissingGroupReplayKeyRepairFromEnvelope(
-                  pendingKeyRepairRepo: pendingKeyRepairRepo,
-                  msgRepo: msgRepo,
-                  groupId: groupId,
-                  relayEnvelope: msg,
-                  replayEnvelope: replayEnvelope,
-                  requestGroupKeyRepair:
-                      requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
-                );
-          }
-        }
-        if (!placeholderSaved) {
-          placeholderSaved = await _persistUndecryptablePlaceholderFromEnvelope(
-            msgRepo: msgRepo,
+    Future<bool> handleDecodeError(
+      Object error,
+      Map<String, dynamic> msg, {
+      required bool allowUnknownSenderDeferral,
+    }) async {
+      final allowDeletedGroupPlaceholder =
+          error is GroupOfflineReplaySignatureException &&
+          await _isUnknownSenderForDeletedLocalGroup(
+            groupRepo: groupRepo,
             groupId: groupId,
-            envelope: msg,
-            error: e,
-            allowDeletedGroupUnknownSender: allowDeletedGroupPlaceholder,
+            error: error,
           );
-        }
+      if (allowUnknownSenderDeferral &&
+          error is GroupOfflineReplaySignatureException &&
+          _shouldDeferUnknownSenderReplay(error, msg)) {
+        deferredUnknownSenderMessages.add(msg);
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
+          event: 'GROUP_DRAIN_OFFLINE_INBOX_UNKNOWN_SENDER_REPLAY_DEFERRED',
           details: {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-            'error': e.toString(),
-            'placeholderSaved': placeholderSaved,
           },
         );
-        continue;
+        return true;
       }
+      if (error is GroupOfflineReplaySignatureException &&
+          !allowDeletedGroupPlaceholder) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_SIGNATURE_REJECTED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'error': error.reason,
+          },
+        );
+        throw error;
+      }
+
+      var placeholderSaved = false;
+      if (_isMissingGroupReplayKeyError(error) &&
+          pendingKeyRepairRepo != null) {
+        final replayEnvelope = _tryDecodeReplayEnvelope(msg['message']);
+        if (replayEnvelope != null) {
+          placeholderSaved = await queueMissingGroupReplayKeyRepairFromEnvelope(
+            pendingKeyRepairRepo: pendingKeyRepairRepo,
+            msgRepo: msgRepo,
+            groupId: groupId,
+            relayEnvelope: msg,
+            replayEnvelope: replayEnvelope,
+            requestGroupKeyRepair:
+                requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
+          );
+        }
+      }
+      if (!placeholderSaved) {
+        placeholderSaved = await _persistUndecryptablePlaceholderFromEnvelope(
+          msgRepo: msgRepo,
+          groupId: groupId,
+          envelope: msg,
+          error: error,
+          allowDeletedGroupUnknownSender: allowDeletedGroupPlaceholder,
+        );
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_DECODE_SKIPPED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'error': error.toString(),
+          'placeholderSaved': placeholderSaved,
+        },
+      );
+      return true;
+    }
+
+    Future<void> processDecodedPayload(
+      Map<String, dynamic> payload,
+      Map<String, dynamic> msg,
+    ) async {
       final text = payload['text'] as String? ?? '';
       final timestamp =
           payload['timestamp'] as String? ??
@@ -355,7 +367,7 @@ Future<void> _drainGroupInbox({
             latestExpiredBacklogAt,
             parsedTimestamp,
           );
-          continue;
+          return;
         }
         latestRetainedBacklogAt = _latestTimestamp(
           latestRetainedBacklogAt,
@@ -380,7 +392,7 @@ Future<void> _drainGroupInbox({
             reactionJson: reactionJson,
           );
         }
-        continue;
+        return;
       }
 
       final mediaRaw = payload['media'] as List<dynamic>?;
@@ -406,7 +418,7 @@ Future<void> _drainGroupInbox({
                 : resolvedGroupId,
           },
         );
-        continue;
+        return;
       }
       final effectiveTransportPeerId =
           payloadTransportPeerId?.isNotEmpty == true
@@ -477,15 +489,14 @@ Future<void> _drainGroupInbox({
             );
           }
           stopGroupDrain = true;
-          break;
+          return;
         }
-        continue;
+        return;
       }
 
       if (groupMessageListener != null) {
         final listenerWireMessageId = payload['messageId'] as String?;
-        if (listenerWireMessageId != null &&
-            listenerWireMessageId.isNotEmpty) {
+        if (listenerWireMessageId != null && listenerWireMessageId.isNotEmpty) {
           phase1PersistedMessageIds.add(listenerWireMessageId);
         }
         await groupMessageListener.handleReplayEnvelope({
@@ -512,7 +523,7 @@ Future<void> _drainGroupInbox({
         pageReadMessageIds.addAll(
           _localReadReceiptMessageIds(payloadReceipts, localPeerId: selfPeerId),
         );
-        continue;
+        return;
       }
 
       final wireMessageId = payload['messageId'] as String?;
@@ -564,6 +575,47 @@ Future<void> _drainGroupInbox({
       pageReadMessageIds.addAll(
         _localReadReceiptMessageIds(payloadReceipts, localPeerId: selfPeerId),
       );
+    }
+
+    // ── Phase 1 ── process every message OUTSIDE any DB write transaction.
+    //
+    // The previous shape did decode (bridge round-trip), system-message
+    // handling (more bridge), and writes against the outer GroupRepository
+    // INSIDE the runInboxPageTransaction body. Holding the SQLCipher write
+    // lock across native method-channel hops produces the canonical 10s
+    // "database has been locked" warning and starves every concurrent reader
+    // (notably OrbitWired._loadOrbitData, which is why the Orbit screen
+    // appears stuck on its skeleton placeholders during cold start).
+    //
+    // Phase 1 keeps the outer msgRepo (each insert is its own implicit txn).
+    // Phase 2 then commits the page receipts + cursor in one tiny atomic
+    // step. handleIncomingGroupMessage is idempotent on messageId, so if a
+    // failure between Phase 1 and Phase 2 leaves the cursor un-advanced, the
+    // re-drain on the next pass dedupes naturally.
+    for (final msg in messages) {
+      Map<String, dynamic> payload;
+      try {
+        payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
+      } catch (e) {
+        await handleDecodeError(e, msg, allowUnknownSenderDeferral: true);
+        continue;
+      }
+      await processDecodedPayload(payload, msg);
+      if (stopGroupDrain) break;
+    }
+
+    if (!stopGroupDrain && deferredUnknownSenderMessages.isNotEmpty) {
+      for (final msg in deferredUnknownSenderMessages) {
+        Map<String, dynamic> payload;
+        try {
+          payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
+        } catch (e) {
+          await handleDecodeError(e, msg, allowUnknownSenderDeferral: false);
+          continue;
+        }
+        await processDecodedPayload(payload, msg);
+        if (stopGroupDrain) break;
+      }
     }
 
     if (stopGroupDrain) return;
@@ -1236,6 +1288,21 @@ Future<bool> _isUnknownSenderForDeletedLocalGroup({
 }) async {
   if (error.reason != 'unknown_sender') return false;
   return await groupRepo.getGroup(groupId) == null;
+}
+
+bool _shouldDeferUnknownSenderReplay(
+  GroupOfflineReplaySignatureException error,
+  Map<String, dynamic> envelope,
+) {
+  if (error.reason != 'unknown_sender') return false;
+  final replayEnvelope = _tryDecodeReplayEnvelope(envelope['message']);
+  if (replayEnvelope == null || !isGroupOfflineReplayEnvelope(replayEnvelope)) {
+    return false;
+  }
+  final payloadType =
+      replayEnvelope['payloadType'] as String? ??
+      groupOfflineReplayPayloadTypeMessage;
+  return payloadType == groupOfflineReplayPayloadTypeMessage;
 }
 
 Map<String, dynamic>? _tryDecodeReplayEnvelope(Object? rawMessage) {

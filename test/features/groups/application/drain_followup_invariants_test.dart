@@ -18,6 +18,8 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 
+final _fixedDateFixtureRetentionNow = DateTime.utc(2026, 5, 8, 12);
+
 /// Cursor-page bridge backed by FakeBridge so its passthrough sign / verify
 /// / encrypt / decrypt handlers let `buildGroupOfflineReplayEnvelope` produce
 /// properly-shaped signed envelopes that `decodeInboxMessage` will accept.
@@ -250,313 +252,302 @@ void main() {
       };
     }
 
-    test(
-      'detected history gaps are persisted before the cursor commit so they '
-      'survive a Phase 2 transaction failure',
-      () async {
-        final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
-        final msg = await signedRelayMessage(
-          messageId: 'msg-after-gap',
-          text: 'first message after gap',
-          timestamp: DateTime.utc(2026, 5, 2, 12),
-        );
+    test('detected history gaps are persisted before the cursor commit so they '
+        'survive a Phase 2 transaction failure', () async {
+      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+      final msg = await signedRelayMessage(
+        messageId: 'msg-after-gap',
+        text: 'first message after gap',
+        timestamp: DateTime.utc(2026, 5, 2, 12),
+      );
 
-        bridge.addPage(
-          'group-1',
-          '',
-          [msg],
-          'cursor-after-page-1',
-          historyGaps: [
-            {
-              'groupId': 'group-1',
-              'gapId': 'gap-1',
-              'missingAfterMessageId': 'msg-anchor-before',
-              'missingBeforeMessageId': 'msg-after-gap',
-              'expectedRangeHash': 'hash-1',
-              'expectedHeadMessageId': 'msg-after-gap',
-              'candidateSourcePeerIds': ['peer-admin'],
-            },
-          ],
-        );
+      bridge.addPage(
+        'group-1',
+        '',
+        [msg],
+        'cursor-after-page-1',
+        historyGaps: [
+          {
+            'groupId': 'group-1',
+            'gapId': 'gap-1',
+            'missingAfterMessageId': 'msg-anchor-before',
+            'missingBeforeMessageId': 'msg-after-gap',
+            'expectedRangeHash': 'hash-1',
+            'expectedHeadMessageId': 'msg-after-gap',
+            'candidateSourcePeerIds': ['peer-admin'],
+          },
+        ],
+      );
 
-        msgRepo.failInboxPageTransaction = true;
+      msgRepo.failInboxPageTransaction = true;
 
-        await drainGroupOfflineInbox(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          historyGapRepairRepo: historyRepo,
-        );
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
 
-        expect(
-          historyRepo.repairs.containsKey('group-1:gap-1'),
-          isTrue,
-          reason:
-              'Gap stub must be persisted via upsertDetected BEFORE the Phase 2 '
-              'cursor commit. Otherwise a crash between Phase 2 and Phase 3 '
-              'leaves the cursor advanced past a page whose gap was never '
-              'recorded — the relay-side gap detector only emits a gap on the '
-              'page where it is first observed, so the gap is lost forever.',
-        );
-        expect(
-          await msgRepo.getInboxCursor('group-1'),
-          isNull,
-          reason: 'cursor must NOT advance when Phase 2 fails',
-        );
-      },
-    );
+      expect(
+        historyRepo.repairs.containsKey('group-1:gap-1'),
+        isTrue,
+        reason:
+            'Gap stub must be persisted via upsertDetected BEFORE the Phase 2 '
+            'cursor commit. Otherwise a crash between Phase 2 and Phase 3 '
+            'leaves the cursor advanced past a page whose gap was never '
+            'recorded — the relay-side gap detector only emits a gap on the '
+            'page where it is first observed, so the gap is lost forever.',
+      );
+      expect(
+        await msgRepo.getInboxCursor('group-1'),
+        isNull,
+        reason: 'cursor must NOT advance when Phase 2 fails',
+      );
+    });
 
-    test(
-      'local-delivered receipts are re-derived on dedup so a Phase 2 retry '
-      'does not lose them',
-      () async {
-        final messageId = 'msg-dedup-receipt';
-        final ts = DateTime.utc(2026, 5, 2, 12);
+    test('local-delivered receipts are re-derived on dedup so a Phase 2 retry '
+        'does not lose them', () async {
+      final messageId = 'msg-dedup-receipt';
+      final ts = DateTime.utc(2026, 5, 2, 12);
 
-        // Pre-seed the message in msgRepo to simulate "Phase 1 of a previous
-        // drain attempt persisted this message; Phase 2 then failed; the
-        // current drain re-fetches the same page".
-        await msgRepo.saveMessage(
-          GroupMessage(
-            id: messageId,
-            groupId: 'group-1',
-            senderPeerId: 'peer-admin',
-            senderUsername: 'Sender',
-            text: 'pre-seeded',
-            timestamp: ts,
-            keyGeneration: 1,
-            status: 'delivered',
-            isIncoming: true,
-            createdAt: ts,
-          ),
-        );
-
-        final msg = await signedRelayMessage(
-          messageId: messageId,
+      // Pre-seed the message in msgRepo to simulate "Phase 1 of a previous
+      // drain attempt persisted this message; Phase 2 then failed; the
+      // current drain re-fetches the same page".
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Sender',
           text: 'pre-seeded',
           timestamp: ts,
-        );
-        bridge.addPage('group-1', '', [msg], '');
+          keyGeneration: 1,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: ts,
+        ),
+      );
 
-        await drainGroupOfflineInbox(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          selfPeerId: 'peer-self',
-        );
+      final msg = await signedRelayMessage(
+        messageId: messageId,
+        text: 'pre-seeded',
+        timestamp: ts,
+      );
+      bridge.addPage('group-1', '', [msg], '');
 
-        final receipts = await msgRepo.getReceiptsForMessage(
-          'group-1',
-          messageId,
-        );
-        expect(
-          receipts.any(
-            (r) =>
-                r.memberPeerId == 'peer-self' &&
-                r.receiptType == groupMessageReceiptTypeDelivered &&
-                r.messageId == messageId,
-          ),
-          isTrue,
-          reason:
-              'On re-drain of an already-persisted message, the local-delivered '
-              'receipt must still be added to pageReceipts. Otherwise a Phase 2 '
-              'failure permanently loses the receipt: handleIncomingGroupMessage '
-              'returns null on dedup, the original code skipped receipt '
-              'generation, and there is no other call site that derives '
-              '"local-delivered" from an existing message row.',
-        );
-      },
-    );
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        selfPeerId: 'peer-self',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
 
-    test(
-      'mid-page sys-removal cleans up earlier-persisted messages so no rows '
-      'orphan against the deleted groupId',
-      () async {
-        final listener = GroupMessageListener(
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          bridge: bridge,
-          getSelfPeerId: () async => 'peer-self',
-        );
-        addTearDown(listener.dispose);
+      final receipts = await msgRepo.getReceiptsForMessage(
+        'group-1',
+        messageId,
+      );
+      expect(
+        receipts.any(
+          (r) =>
+              r.memberPeerId == 'peer-self' &&
+              r.receiptType == groupMessageReceiptTypeDelivered &&
+              r.messageId == messageId,
+        ),
+        isTrue,
+        reason:
+            'On re-drain of an already-persisted message, the local-delivered '
+            'receipt must still be added to pageReceipts. Otherwise a Phase 2 '
+            'failure permanently loses the receipt: handleIncomingGroupMessage '
+            'returns null on dedup, the original code skipped receipt '
+            'generation, and there is no other call site that derives '
+            '"local-delivered" from an existing message row.',
+      );
+    });
 
-        final t0 = DateTime.utc(2026, 5, 2, 12);
-        final t1 = DateTime.utc(2026, 5, 2, 12, 0, 1);
-        final t2 = DateTime.utc(2026, 5, 2, 12, 0, 2);
+    test('mid-page sys-removal cleans up earlier-persisted messages so no rows '
+        'orphan against the deleted groupId', () async {
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+      addTearDown(listener.dispose);
 
-        final pre = await signedRelayMessage(
-          messageId: 'msg-before-removal',
-          text: 'pre-removal chatter',
-          timestamp: t1,
-        );
+      final t0 = DateTime.utc(2026, 5, 2, 12);
+      final t1 = DateTime.utc(2026, 5, 2, 12, 0, 1);
+      final t2 = DateTime.utc(2026, 5, 2, 12, 0, 2);
 
-        // sys "member_removed" envelope addressed to peer-self
-        final sysEnvelope = await buildGroupOfflineReplayEnvelope(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          groupId: 'group-1',
-          payloadType: groupOfflineReplayPayloadTypeMessage,
-          plaintext: jsonEncode({
-            'groupId': 'group-1',
-            'senderId': 'peer-admin',
-            'senderUsername': 'Admin',
-            'keyEpoch': 0,
-            'text': jsonEncode({
-              '__sys': 'member_removed',
-              'member': {'peerId': 'peer-self', 'username': 'Self'},
-              'groupConfig': {
-                'name': 'G1',
-                'groupType': 'chat',
-                'members': [
-                  {'peerId': 'peer-admin', 'role': 'admin'},
-                ],
-                'createdBy': 'peer-admin',
-                'createdAt': t0.toIso8601String(),
-              },
-            }),
-            'timestamp': t2.toIso8601String(),
-            'messageId': 'msg-remove-self',
+      final pre = await signedRelayMessage(
+        messageId: 'msg-before-removal',
+        text: 'pre-removal chatter',
+        timestamp: t1,
+      );
+
+      // sys "member_removed" envelope addressed to peer-self
+      final sysEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': 'peer-self', 'username': 'Self'},
+            'groupConfig': {
+              'name': 'G1',
+              'groupType': 'chat',
+              'members': [
+                {'peerId': 'peer-admin', 'role': 'admin'},
+              ],
+              'createdBy': 'peer-admin',
+              'createdAt': t0.toIso8601String(),
+            },
           }),
-          messageId: 'msg-remove-self',
-          senderPeerId: 'peer-admin',
-          senderPublicKey: 'pk-admin',
-          senderPrivateKey: 'sk-peer-admin',
-        );
-        final sysMsg = {
+          'timestamp': t2.toIso8601String(),
+          'messageId': 'msg-remove-self',
+        }),
+        messageId: 'msg-remove-self',
+        senderPeerId: 'peer-admin',
+        senderPublicKey: 'pk-admin',
+        senderPrivateKey: 'sk-peer-admin',
+      );
+      final sysMsg = {
+        'from': 'peer-admin',
+        'message': sysEnvelope,
+        'timestamp': t2.millisecondsSinceEpoch,
+      };
+
+      // Page order: [normal-msg-FIRST, sys-removal-SECOND]. Phase 1 commits
+      // the normal message via the outer msgRepo before reaching the sys
+      // payload that deletes the group — so without explicit cleanup the
+      // normal message orphans against a now-deleted groupId.
+      bridge.addPage('group-1', '', [pre, sysMsg], 'cursor-after-removal');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
+
+      expect(
+        await groupRepo.getGroup('group-1'),
+        isNull,
+        reason: 'sys-removal handler must run leaveGroup → deleteGroup',
+      );
+      expect(
+        msgRepo.count,
+        0,
+        reason:
+            'When a sys "member_removed" payload appears mid-page, the drain '
+            'must clean up any group-1 rows already written in Phase 1 of '
+            'the same page so they do not orphan against the now-deleted '
+            'groupId. Rows committed via the outer msgRepo are durable '
+            'until explicitly deleted; the prior runInboxPageTransaction '
+            'shape rolled them back via the SQLCipher txn, but the new '
+            'three-phase shape has no implicit rollback for outer-repo '
+            'writes — fix must call deleteMessagesForGroup before exit.',
+      );
+    });
+
+    test('drain → listener: malformed envelope decoding to text-less, '
+        'media-less payload does NOT persist an empty row', () async {
+      // Cross-system regression for the user-reported "test delete shows
+      // empty bubbles" symptom. The listener-side empty-drop guard is
+      // pinned by GroupMessageListener tests in
+      // test/features/groups/application/group_message_listener_test.dart
+      // (see "drops events with neither text nor media — empty bubble
+      // after cold restart regression"). What was missing: a test that
+      // confirms the SAME guard fires when the malformed event arrives
+      // through the offline-drain path, not via the live GossipSub
+      // stream. Production hardware soak hit this case (the Go side
+      // sometimes emits skeleton replay envelopes with no `text` after
+      // partial decrypt) and our well-formed-input drain test could
+      // never reach it.
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-self',
+      );
+      addTearDown(listener.dispose);
+
+      // Build a perfectly-signed envelope whose decrypted plaintext has
+      // an empty text field and no media. decodeInboxMessage will
+      // accept it (signature verifies, ciphertext decrypts to the
+      // plaintext we provided) and the drain will dispatch it through
+      // the listener, where the empty-drop guard must fire.
+      final emptyEnvelope = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': '', // <-- empty after decrypt
+          'timestamp': DateTime.utc(2026, 5, 2, 12).toIso8601String(),
+          'messageId': 'msg-empty-from-drain',
+          // no 'media' key — text-less + media-less is the regression
+        }),
+        messageId: 'msg-empty-from-drain',
+        senderPeerId: 'peer-admin',
+        senderPublicKey: 'pk-admin',
+        senderPrivateKey: 'sk-peer-admin',
+      );
+
+      bridge.addPage('group-1', '', [
+        {
           'from': 'peer-admin',
-          'message': sysEnvelope,
-          'timestamp': t2.millisecondsSinceEpoch,
-        };
+          'message': emptyEnvelope,
+          'timestamp': DateTime.utc(2026, 5, 2, 12).millisecondsSinceEpoch,
+        },
+      ], '');
 
-        // Page order: [normal-msg-FIRST, sys-removal-SECOND]. Phase 1 commits
-        // the normal message via the outer msgRepo before reaching the sys
-        // payload that deletes the group — so without explicit cleanup the
-        // normal message orphans against a now-deleted groupId.
-        bridge.addPage('group-1', '', [pre, sysMsg], 'cursor-after-removal');
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
+      );
 
-        await drainGroupOfflineInbox(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          groupMessageListener: listener,
-        );
-
-        expect(
-          await groupRepo.getGroup('group-1'),
-          isNull,
-          reason: 'sys-removal handler must run leaveGroup → deleteGroup',
-        );
-        expect(
-          msgRepo.count,
-          0,
-          reason:
-              'When a sys "member_removed" payload appears mid-page, the drain '
-              'must clean up any group-1 rows already written in Phase 1 of '
-              'the same page so they do not orphan against the now-deleted '
-              'groupId. Rows committed via the outer msgRepo are durable '
-              'until explicitly deleted; the prior runInboxPageTransaction '
-              'shape rolled them back via the SQLCipher txn, but the new '
-              'three-phase shape has no implicit rollback for outer-repo '
-              'writes — fix must call deleteMessagesForGroup before exit.',
-        );
-      },
-    );
-
-    test(
-      'drain → listener: malformed envelope decoding to text-less, '
-      'media-less payload does NOT persist an empty row',
-      () async {
-        // Cross-system regression for the user-reported "test delete shows
-        // empty bubbles" symptom. The listener-side empty-drop guard is
-        // pinned by GroupMessageListener tests in
-        // test/features/groups/application/group_message_listener_test.dart
-        // (see "drops events with neither text nor media — empty bubble
-        // after cold restart regression"). What was missing: a test that
-        // confirms the SAME guard fires when the malformed event arrives
-        // through the offline-drain path, not via the live GossipSub
-        // stream. Production hardware soak hit this case (the Go side
-        // sometimes emits skeleton replay envelopes with no `text` after
-        // partial decrypt) and our well-formed-input drain test could
-        // never reach it.
-        final flowEvents = <Map<String, dynamic>>[];
-        debugSetFlowEventSink(flowEvents.add);
-        addTearDown(() => debugSetFlowEventSink(null));
-
-        final listener = GroupMessageListener(
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          bridge: bridge,
-          getSelfPeerId: () async => 'peer-self',
-        );
-        addTearDown(listener.dispose);
-
-        // Build a perfectly-signed envelope whose decrypted plaintext has
-        // an empty text field and no media. decodeInboxMessage will
-        // accept it (signature verifies, ciphertext decrypts to the
-        // plaintext we provided) and the drain will dispatch it through
-        // the listener, where the empty-drop guard must fire.
-        final emptyEnvelope = await buildGroupOfflineReplayEnvelope(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          groupId: 'group-1',
-          payloadType: groupOfflineReplayPayloadTypeMessage,
-          plaintext: jsonEncode({
-            'groupId': 'group-1',
-            'senderId': 'peer-admin',
-            'senderUsername': 'Admin',
-            'keyEpoch': 1,
-            'text': '', // <-- empty after decrypt
-            'timestamp': DateTime.utc(2026, 5, 2, 12).toIso8601String(),
-            'messageId': 'msg-empty-from-drain',
-            // no 'media' key — text-less + media-less is the regression
-          }),
-          messageId: 'msg-empty-from-drain',
-          senderPeerId: 'peer-admin',
-          senderPublicKey: 'pk-admin',
-          senderPrivateKey: 'sk-peer-admin',
-        );
-
-        bridge.addPage('group-1', '', [
-          {
-            'from': 'peer-admin',
-            'message': emptyEnvelope,
-            'timestamp':
-                DateTime.utc(2026, 5, 2, 12).millisecondsSinceEpoch,
-          },
-        ], '');
-
-        await drainGroupOfflineInbox(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: msgRepo,
-          groupMessageListener: listener,
-        );
-
-        expect(
-          msgRepo.count,
-          0,
-          reason:
-              'Drain must NOT persist an envelope whose decoded payload '
-              'has no text and no media — that produces an empty bubble '
-              'on the conversation screen that survives cold restart.',
-        );
-        expect(
-          await msgRepo.getMessage('msg-empty-from-drain'),
-          isNull,
-          reason: 'no row should exist for the empty envelope',
-        );
-        expect(
-          flowEvents
-              .where(
-                (e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP',
-              )
-              .toList(),
-          hasLength(1),
-          reason:
-              'GROUP_MESSAGE_LISTENER_EMPTY_DROP must fire so production '
-              'logs can identify which upstream events are malformed.',
-        );
-      },
-    );
+      expect(
+        msgRepo.count,
+        0,
+        reason:
+            'Drain must NOT persist an envelope whose decoded payload '
+            'has no text and no media — that produces an empty bubble '
+            'on the conversation screen that survives cold restart.',
+      );
+      expect(
+        await msgRepo.getMessage('msg-empty-from-drain'),
+        isNull,
+        reason: 'no row should exist for the empty envelope',
+      );
+      expect(
+        flowEvents
+            .where((e) => e['event'] == 'GROUP_MESSAGE_LISTENER_EMPTY_DROP')
+            .toList(),
+        hasLength(1),
+        reason:
+            'GROUP_MESSAGE_LISTENER_EMPTY_DROP must fire so production '
+            'logs can identify which upstream events are malformed.',
+      );
+    });
   });
 }

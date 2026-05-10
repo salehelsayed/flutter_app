@@ -3,12 +3,15 @@ import 'dart:convert';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
     as group_dissolve;
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
 import 'package:flutter/widgets.dart';
@@ -21,6 +24,7 @@ import 'package:flutter_app/features/groups/domain/models/group_invite_payload.d
 import 'package:flutter_app/features/groups/domain/models/pending_group_invite.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
@@ -54,6 +58,10 @@ void main() {
       return jsonDecode(ciphertext) as Map<String, dynamic>;
     }
     return envelope;
+  }
+
+  _GroupMembershipCursorBridge cursorBridge() {
+    return _GroupMembershipCursorBridge();
   }
 
   GroupInviteMembershipFreshnessProof makeFreshnessProof({
@@ -1542,6 +1550,1003 @@ void main() {
     });
 
     test(
+      'GM-004 removes C while online, rotates key, A/B continue, and C loses access',
+      () async {
+        const groupId = 'grp-gm004-remove-online';
+        const initialKey = 'gm004-initial-key';
+        const rotatedKeyValue = 'gm004-rotated-key';
+        const aliceAfterRemoval = 'GM-004 Alice after Charlie removal';
+        const bobAfterRemoval = 'GM-004 Bob after Charlie removal';
+        const charlieAfterRemoval = 'GM-004 Charlie should not send';
+        final initialKeyCreatedAt = DateTime.now().toUtc();
+        final removedAt = initialKeyCreatedAt.add(const Duration(minutes: 1));
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-gm004-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-gm004-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-gm004-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> saveKey(
+          GroupTestUser user, {
+          required int epoch,
+          required String encryptedKey,
+          required DateTime createdAt,
+        }) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await alice.createGroup(groupId: groupId, name: 'GM-004 Group');
+        await saveKey(
+          alice,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveKey(
+          bob,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveKey(
+          charlie,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await pump();
+
+        expect(network.isSubscribed(groupId, alice.peerId), isTrue);
+        expect(network.isSubscribed(groupId, bob.peerId), isTrue);
+        expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
+        expect(
+          await charlie.groupRepo.getMember(groupId, charlie.peerId),
+          isNotNull,
+        );
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await waitUntil(() async {
+          final bobMember = await bob.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+          return bobMember == null && charlieGroup == null;
+        }, maxTicks: 40);
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': rotatedKeyValue,
+          'keyEpoch': 2,
+        };
+        final keyDistributionTargets = <String>[];
+        final rotatedKey = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          sendP2PMessage: (peerId, _) async {
+            keyDistributionTargets.add(peerId);
+            return true;
+          },
+        );
+
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+        expect(rotatedKey.encryptedKey, rotatedKeyValue);
+        expect(keyDistributionTargets, contains(bob.deviceId));
+        expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
+
+        await bob.groupRepo.saveKey(rotatedKey);
+
+        Future<void> expectRemainingMemberState(GroupTestUser user) async {
+          final group = await user.groupRepo.getGroup(groupId);
+          expect(group, isNotNull, reason: '${user.peerId} still has group');
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            alice.peerId,
+            bob.peerId,
+          });
+          final latestKey = await user.groupRepo.getLatestKey(groupId);
+          expect(latestKey, isNotNull);
+          expect(latestKey!.keyGeneration, 2);
+          expect(latestKey.encryptedKey, rotatedKeyValue);
+        }
+
+        await expectRemainingMemberState(alice);
+        await expectRemainingMemberState(bob);
+        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
+        expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+        final (aliceSendResult, aliceMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: aliceAfterRemoval,
+              messageId: 'gm004-alice-after-removal',
+            );
+        final (bobSendResult, bobMessage) = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: bobAfterRemoval,
+          messageId: 'gm004-bob-after-removal',
+        );
+
+        expect(aliceSendResult, group_send.SendGroupMessageResult.success);
+        expect(bobSendResult, group_send.SendGroupMessageResult.success);
+        expect(aliceMessage, isNotNull);
+        expect(bobMessage, isNotNull);
+        expect(aliceMessage!.keyGeneration, 2);
+        expect(bobMessage!.keyGeneration, 2);
+
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          final aliceTexts = (await alice.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return bobTexts.contains(aliceAfterRemoval) &&
+              aliceTexts.contains(bobAfterRemoval);
+        }, maxTicks: 40);
+
+        final (charlieSendResult, charlieMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: charlieAfterRemoval,
+              messageId: 'gm004-charlie-after-removal',
+            );
+        expect(
+          charlieSendResult,
+          isIn(<group_send.SendGroupMessageResult>[
+            group_send.SendGroupMessageResult.groupNotFound,
+            group_send.SendGroupMessageResult.unauthorized,
+          ]),
+        );
+        expect(charlieMessage, isNull);
+        expect(
+          charlie.bridge.commandLog.where(
+            (command) => command == 'group:publish',
+          ),
+          isEmpty,
+        );
+
+        final aliceIncomingTexts = (await alice.loadGroupMessages(groupId))
+            .where((message) => message.isIncoming)
+            .map((message) => message.text);
+        final bobIncomingTexts = (await bob.loadGroupMessages(groupId))
+            .where((message) => message.isIncoming)
+            .map((message) => message.text);
+        final charlieTexts = (await charlie.loadGroupMessages(
+          groupId,
+        )).map((message) => message.text).toSet();
+
+        expect(aliceIncomingTexts, contains(bobAfterRemoval));
+        expect(bobIncomingTexts, contains(aliceAfterRemoval));
+        expect(charlieTexts, isNot(contains(aliceAfterRemoval)));
+        expect(charlieTexts, isNot(contains(bobAfterRemoval)));
+        expect(charlieTexts, isNot(contains(charlieAfterRemoval)));
+      },
+    );
+
+    test(
+      'GM-005 removes C while offline, C catches up removed, cannot access post-removal content, and A/B delivery continues',
+      () async {
+        const groupId = 'grp-gm005-remove-offline';
+        const initialKey = 'gm005-initial-key';
+        const rotatedKeyValue = 'gm005-rotated-key';
+        final initialKeyCreatedAt = DateTime.now().toUtc();
+        final removedAt = initialKeyCreatedAt.add(const Duration(minutes: 1));
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-gm005-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-gm005-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-gm005-charlie',
+          username: 'Charlie',
+          network: network,
+          bridge: cursorBridge(),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> saveKey(
+          GroupTestUser user, {
+          required int epoch,
+          required String encryptedKey,
+          required DateTime createdAt,
+        }) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await alice.createGroup(groupId: groupId, name: 'GM-005 Group');
+        await saveKey(
+          alice,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveKey(
+          bob,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveKey(
+          charlie,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+
+        expect(await charlie.groupRepo.getGroup(groupId), isNotNull);
+        expect(await charlie.groupRepo.getLatestKey(groupId), isNotNull);
+        charlie.unsubscribeFromGroup(groupId);
+        alice.start();
+        bob.start();
+        await pump();
+        expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await waitUntil(() async {
+          final bobMember = await bob.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          return bobMember == null;
+        }, maxTicks: 40);
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': rotatedKeyValue,
+          'keyEpoch': 2,
+        };
+        final keyDistributionTargets = <String>[];
+        final rotatedKey = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          sendP2PMessage: (peerId, _) async {
+            keyDistributionTargets.add(peerId);
+            return true;
+          },
+        );
+        expect(rotatedKey, isNotNull);
+        expect(rotatedKey!.keyGeneration, 2);
+        expect(keyDistributionTargets, contains(bob.deviceId));
+        expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
+        await bob.groupRepo.saveKey(rotatedKey);
+
+        final postRemovalTexts = <String>[
+          'GM-005 Alice after offline Charlie removal 1',
+          'GM-005 Alice after offline Charlie removal 2',
+          'GM-005 Alice after offline Charlie removal 3',
+        ];
+        final sentMessages = <GroupMessage>[];
+        for (var i = 0; i < postRemovalTexts.length; i++) {
+          final (sendResult, sentMessage) = await alice
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: postRemovalTexts[i],
+                messageId: 'gm005-alice-after-removal-${i + 1}',
+                timestamp: removedAt.add(Duration(minutes: i + 1)),
+              );
+          expect(sendResult, group_send.SendGroupMessageResult.success);
+          expect(sentMessage, isNotNull);
+          expect(sentMessage!.keyGeneration, 2);
+          sentMessages.add(sentMessage);
+        }
+
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toList();
+          return postRemovalTexts.every(
+            (text) => bobTexts.where((seen) => seen == text).length == 1,
+          );
+        }, maxTicks: 40);
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        for (final text in postRemovalTexts) {
+          expect(
+            bobMessages.where((message) => message.text == text),
+            hasLength(1),
+          );
+        }
+
+        final group = await alice.groupRepo.getGroup(groupId);
+        final remainingMembers = await alice.groupRepo.getMembers(groupId);
+        final groupConfig = {
+          'name': group!.name,
+          'groupType': group.type.toValue(),
+          if (group.description != null) 'description': group.description,
+          'members': remainingMembers
+              .map((member) => member.toConfigJson())
+              .toList(),
+          'createdBy': group.createdBy,
+          'createdAt': group.createdAt.toUtc().toIso8601String(),
+        };
+        final removalText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': charlie.peerId, 'username': charlie.username},
+          'removedAt': removedAt.toIso8601String(),
+          'groupConfig': groupConfig,
+        });
+
+        Future<Map<String, dynamic>> signedReplay({
+          required String id,
+          required String text,
+          required DateTime timestamp,
+          required GroupKeyInfo keyInfo,
+        }) async {
+          final envelope = await buildGroupOfflineReplayEnvelope(
+            bridge: alice.bridge,
+            groupRepo: alice.groupRepo,
+            groupId: groupId,
+            payloadType: groupOfflineReplayPayloadTypeMessage,
+            plaintext: jsonEncode({
+              'groupId': groupId,
+              'senderId': alice.peerId,
+              'senderUsername': alice.username,
+              'senderDeviceId': alice.deviceId,
+              'transportPeerId': alice.deviceId,
+              'keyEpoch': keyInfo.keyGeneration,
+              'text': text,
+              'timestamp': timestamp.toUtc().toIso8601String(),
+              'messageId': id,
+            }),
+            messageId: id,
+            senderPeerId: alice.peerId,
+            senderPublicKey: alice.publicKey,
+            senderPrivateKey: alice.privateKey,
+            senderDeviceId: alice.deviceId,
+            senderTransportPeerId: alice.deviceId,
+            keyInfo: keyInfo,
+          );
+          return {
+            'from': alice.peerId,
+            'message': envelope,
+            'timestamp': timestamp.millisecondsSinceEpoch,
+          };
+        }
+
+        final bridge = charlie.bridge as _GroupMembershipCursorBridge;
+        bridge.addPage(
+          groupId: groupId,
+          cursor: '',
+          messages: [
+            await signedReplay(
+              id: 'gm005-member-removed',
+              text: removalText,
+              timestamp: removedAt,
+              keyInfo: GroupKeyInfo(
+                groupId: groupId,
+                keyGeneration: 1,
+                encryptedKey: initialKey,
+                createdAt: initialKeyCreatedAt,
+              ),
+            ),
+            for (final message in sentMessages)
+              await signedReplay(
+                id: message.id,
+                text: message.text,
+                timestamp: message.timestamp,
+                keyInfo: rotatedKey,
+              ),
+          ],
+        );
+
+        charlie.start();
+        await drainGroupOfflineInboxForGroup(
+          bridge: charlie.bridge,
+          groupRepo: charlie.groupRepo,
+          msgRepo: charlie.msgRepo,
+          groupId: groupId,
+          groupMessageListener: charlie.groupMessageListener,
+          selfPeerId: charlie.peerId,
+        );
+
+        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        final charlieLatestKey = await charlie.groupRepo.getLatestKey(groupId);
+        expect(
+          charlieLatestKey?.keyGeneration ?? 0,
+          lessThan(rotatedKey.keyGeneration),
+        );
+        final charlieTexts = (await charlie.loadGroupMessages(
+          groupId,
+        )).map((message) => message.text).toSet();
+        for (final text in postRemovalTexts) {
+          expect(charlieTexts, isNot(contains(text)));
+        }
+
+        final (charlieSendResult, charlieMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'GM-005 Charlie should not send',
+              messageId: 'gm005-charlie-after-removal',
+            );
+        expect(
+          charlieSendResult,
+          isIn(<group_send.SendGroupMessageResult>[
+            group_send.SendGroupMessageResult.groupNotFound,
+            group_send.SendGroupMessageResult.unauthorized,
+          ]),
+        );
+        expect(charlieMessage, isNull);
+        expect(
+          charlie.bridge.commandLog.where(
+            (command) => command == 'group:publish',
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'GM-006 removes and immediately re-adds C with current epoch and accepts only post-readd traffic',
+      () async {
+        const groupId = 'grp-gm006-immediate-readd';
+        const initialKey = 'gm006-initial-key';
+        const rejoinKeyValue = 'gm006-rejoin-key';
+        const aliceDuringRemoval = 'GM-006 Alice during Charlie removal';
+        const charlieAfterReadd = 'GM-006 Charlie after immediate readd';
+        const aliceAfterReadd = 'GM-006 Alice after immediate readd';
+        final initialKeyCreatedAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 1),
+        );
+        final removedAt = DateTime.now().toUtc();
+        final rejoinKeyCreatedAt = removedAt.add(const Duration(seconds: 10));
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-gm006-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-gm006-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-gm006-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> saveKey(
+          GroupTestUser user, {
+          required int epoch,
+          required String encryptedKey,
+          required DateTime createdAt,
+        }) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await alice.createGroup(groupId: groupId, name: 'GM-006 Group');
+        await saveKey(
+          alice,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveKey(
+          bob,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveKey(
+          charlie,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await pump();
+
+        expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await waitUntil(() async {
+          final bobMember = await bob.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+          return bobMember == null && charlieGroup == null;
+        }, maxTicks: 40);
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': rejoinKeyValue,
+          'keyEpoch': 2,
+        };
+        final keyDistributionTargets = <String>[];
+        final rejoinKey = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          sendP2PMessage: (peerId, _) async {
+            keyDistributionTargets.add(peerId);
+            return true;
+          },
+        );
+        expect(rejoinKey, isNotNull);
+        expect(rejoinKey!.keyGeneration, 2);
+        expect(rejoinKey.encryptedKey, rejoinKeyValue);
+        expect(keyDistributionTargets, contains(bob.deviceId));
+        expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
+        await bob.groupRepo.saveKey(rejoinKey);
+
+        final (duringRemovalResult, duringRemovalMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: aliceDuringRemoval,
+              messageId: 'gm006-alice-during-removal',
+              timestamp: removedAt.add(const Duration(seconds: 1)),
+            );
+        expect(duringRemovalResult, group_send.SendGroupMessageResult.success);
+        expect(duringRemovalMessage, isNotNull);
+        expect(duringRemovalMessage!.keyGeneration, 2);
+
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text);
+          return bobTexts.contains(aliceDuringRemoval);
+        }, maxTicks: 40);
+        expect(
+          (await charlie.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text),
+          isNot(contains(aliceDuringRemoval)),
+        );
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: rejoinKeyCreatedAt,
+        );
+        await saveKey(
+          charlie,
+          epoch: rejoinKey.keyGeneration,
+          encryptedKey: rejoinKey.encryptedKey,
+          createdAt: rejoinKeyCreatedAt,
+        );
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await waitUntil(() async {
+          final aliceMembers = await alice.groupRepo.getMembers(groupId);
+          final bobMembers = await bob.groupRepo.getMembers(groupId);
+          final charlieMembers = await charlie.groupRepo.getMembers(groupId);
+          final expectedMembers = {alice.peerId, bob.peerId, charlie.peerId};
+          return aliceMembers
+                  .map((member) => member.peerId)
+                  .toSet()
+                  .containsAll(expectedMembers) &&
+              bobMembers
+                  .map((member) => member.peerId)
+                  .toSet()
+                  .containsAll(expectedMembers) &&
+              charlieMembers
+                  .map((member) => member.peerId)
+                  .toSet()
+                  .containsAll(expectedMembers);
+        }, maxTicks: 40);
+
+        Future<void> expectCurrentMemberState(GroupTestUser user) async {
+          final group = await user.groupRepo.getGroup(groupId);
+          expect(group, isNotNull, reason: '${user.peerId} has group');
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            alice.peerId,
+            bob.peerId,
+            charlie.peerId,
+          });
+          final latestKey = await user.groupRepo.getLatestKey(groupId);
+          expect(latestKey, isNotNull);
+          expect(latestKey!.keyGeneration, 2);
+          expect(latestKey.encryptedKey, rejoinKeyValue);
+        }
+
+        await expectCurrentMemberState(alice);
+        await expectCurrentMemberState(bob);
+        await expectCurrentMemberState(charlie);
+
+        final (charlieSendResult, charlieMessage) = await charlie
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: charlieAfterReadd,
+              messageId: 'gm006-charlie-after-readd',
+              timestamp: rejoinKeyCreatedAt.add(const Duration(seconds: 1)),
+            );
+        final (aliceSendResult, aliceMessage) = await alice
+            .sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: aliceAfterReadd,
+              messageId: 'gm006-alice-after-readd',
+              timestamp: rejoinKeyCreatedAt.add(const Duration(seconds: 2)),
+            );
+
+        expect(charlieSendResult, group_send.SendGroupMessageResult.success);
+        expect(aliceSendResult, group_send.SendGroupMessageResult.success);
+        expect(charlieMessage, isNotNull);
+        expect(aliceMessage, isNotNull);
+        expect(charlieMessage!.keyGeneration, 2);
+        expect(aliceMessage!.keyGeneration, 2);
+
+        await waitUntil(() async {
+          final aliceIncomingTexts = (await alice.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming)
+              .map((message) => message.text)
+              .toSet();
+          final bobIncomingTexts = (await bob.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming)
+              .map((message) => message.text)
+              .toSet();
+          final charlieIncomingTexts =
+              (await charlie.loadGroupMessages(groupId))
+                  .where((message) => message.isIncoming)
+                  .map((message) => message.text)
+                  .toSet();
+          return aliceIncomingTexts.contains(charlieAfterReadd) &&
+              bobIncomingTexts.contains(charlieAfterReadd) &&
+              bobIncomingTexts.contains(aliceAfterReadd) &&
+              charlieIncomingTexts.contains(aliceAfterReadd);
+        }, maxTicks: 40);
+
+        final charlieTexts = (await charlie.loadGroupMessages(
+          groupId,
+        )).map((message) => message.text).toSet();
+        expect(charlieTexts, contains(charlieAfterReadd));
+        expect(charlieTexts, contains(aliceAfterReadd));
+        expect(charlieTexts, isNot(contains(aliceDuringRemoval)));
+      },
+    );
+
+    test(
+      'GM-007 preserves allowed pre-removal and post-readd messages while excluding removed-window messages',
+      () async {
+        const groupId = 'grp-gm007-history-boundary';
+        const initialKey = 'gm007-initial-key';
+        const rejoinKeyValue = 'gm007-rejoin-key';
+        const m0 = 'GM-007 M0 before Charlie removal';
+        const m1 = 'GM-007 M1 during Charlie removal';
+        const m2 = 'GM-007 M2 during Charlie removal';
+        const m3 = 'GM-007 M3 during Charlie removal';
+        const m4 = 'GM-007 M4 after Charlie readd';
+        const removedWindowMessages = [m1, m2, m3];
+        final initialKeyCreatedAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 1),
+        );
+        final removedAt = DateTime.now().toUtc();
+        final rejoinKeyCreatedAt = removedAt.add(const Duration(seconds: 10));
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-gm007-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-gm007-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-gm007-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> saveKey(
+          GroupTestUser user, {
+          required int epoch,
+          required String encryptedKey,
+          required DateTime createdAt,
+        }) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: epoch,
+              encryptedKey: encryptedKey,
+              createdAt: createdAt,
+            ),
+          );
+        }
+
+        await alice.createGroup(groupId: groupId, name: 'GM-007 Group');
+        await saveKey(
+          alice,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveKey(
+          bob,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveKey(
+          charlie,
+          epoch: 1,
+          encryptedKey: initialKey,
+          createdAt: initialKeyCreatedAt,
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await pump();
+
+        final (m0Result, m0Message) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: m0,
+          messageId: 'gm007-m0-before-removal',
+          timestamp: removedAt.subtract(const Duration(seconds: 1)),
+        );
+        expect(m0Result, group_send.SendGroupMessageResult.success);
+        expect(m0Message, isNotNull);
+        expect(m0Message!.keyGeneration, 1);
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          final charlieTexts = (await charlie.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return bobTexts.contains(m0) && charlieTexts.contains(m0);
+        }, maxTicks: 40);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await waitUntil(() async {
+          final bobMember = await bob.groupRepo.getMember(
+            groupId,
+            charlie.peerId,
+          );
+          final charlieGroup = await charlie.groupRepo.getGroup(groupId);
+          return bobMember == null && charlieGroup == null;
+        }, maxTicks: 40);
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': rejoinKeyValue,
+          'keyEpoch': 2,
+        };
+        final keyDistributionTargets = <String>[];
+        final rejoinKey = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          sendP2PMessage: (peerId, _) async {
+            keyDistributionTargets.add(peerId);
+            return true;
+          },
+        );
+        expect(rejoinKey, isNotNull);
+        expect(rejoinKey!.keyGeneration, 2);
+        expect(keyDistributionTargets, contains(bob.deviceId));
+        expect(keyDistributionTargets, isNot(contains(charlie.deviceId)));
+        await bob.groupRepo.saveKey(rejoinKey);
+
+        for (var i = 0; i < removedWindowMessages.length; i++) {
+          final text = removedWindowMessages[i];
+          final (sendResult, sentMessage) = await alice
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: text,
+                messageId: 'gm007-m${i + 1}-during-removal',
+                timestamp: removedAt.add(Duration(seconds: i + 1)),
+              );
+          expect(sendResult, group_send.SendGroupMessageResult.success);
+          expect(sentMessage, isNotNull);
+          expect(sentMessage!.keyGeneration, 2);
+        }
+        await waitUntil(() async {
+          final bobTexts = (await bob.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return bobTexts.containsAll(removedWindowMessages);
+        }, maxTicks: 40);
+        final charlieBeforeReaddTexts = (await charlie.loadGroupMessages(
+          groupId,
+        )).map((message) => message.text).toSet();
+        expect(charlieBeforeReaddTexts, contains(m0));
+        for (final text in removedWindowMessages) {
+          expect(charlieBeforeReaddTexts, isNot(contains(text)));
+        }
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: rejoinKeyCreatedAt,
+        );
+        await saveKey(
+          charlie,
+          epoch: rejoinKey.keyGeneration,
+          encryptedKey: rejoinKey.encryptedKey,
+          createdAt: rejoinKeyCreatedAt,
+        );
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await waitUntil(() async {
+          final aliceMembers = await alice.groupRepo.getMembers(groupId);
+          final bobMembers = await bob.groupRepo.getMembers(groupId);
+          final charlieMembers = await charlie.groupRepo.getMembers(groupId);
+          final expectedMembers = {alice.peerId, bob.peerId, charlie.peerId};
+          return aliceMembers
+                  .map((member) => member.peerId)
+                  .toSet()
+                  .containsAll(expectedMembers) &&
+              bobMembers
+                  .map((member) => member.peerId)
+                  .toSet()
+                  .containsAll(expectedMembers) &&
+              charlieMembers
+                  .map((member) => member.peerId)
+                  .toSet()
+                  .containsAll(expectedMembers);
+        }, maxTicks: 40);
+
+        final (m4Result, m4Message) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: m4,
+          messageId: 'gm007-m4-after-readd',
+          timestamp: rejoinKeyCreatedAt.add(const Duration(seconds: 1)),
+        );
+        expect(m4Result, group_send.SendGroupMessageResult.success);
+        expect(m4Message, isNotNull);
+        expect(m4Message!.keyGeneration, 2);
+
+        await waitUntil(() async {
+          final bobIncomingTexts = (await bob.loadGroupMessages(groupId))
+              .where((message) => message.isIncoming)
+              .map((message) => message.text)
+              .toSet();
+          final charlieTexts = (await charlie.loadGroupMessages(
+            groupId,
+          )).map((message) => message.text).toSet();
+          return bobIncomingTexts.contains(m4) && charlieTexts.contains(m4);
+        }, maxTicks: 40);
+
+        Future<void> expectCurrentMemberState(GroupTestUser user) async {
+          final group = await user.groupRepo.getGroup(groupId);
+          expect(group, isNotNull, reason: '${user.peerId} has group');
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(members.map((member) => member.peerId).toSet(), {
+            alice.peerId,
+            bob.peerId,
+            charlie.peerId,
+          });
+          final latestKey = await user.groupRepo.getLatestKey(groupId);
+          expect(latestKey, isNotNull);
+          expect(latestKey!.keyGeneration, 2);
+          expect(latestKey.encryptedKey, rejoinKeyValue);
+        }
+
+        await expectCurrentMemberState(alice);
+        await expectCurrentMemberState(bob);
+        await expectCurrentMemberState(charlie);
+
+        final charlieTexts = (await charlie.loadGroupMessages(
+          groupId,
+        )).map((message) => message.text).toSet();
+        expect(charlieTexts, contains(m0));
+        expect(charlieTexts, contains(m4));
+        for (final text in removedWindowMessages) {
+          expect(charlieTexts, isNot(contains(text)));
+        }
+      },
+    );
+
+    test(
       'remaining peers accept only delayed removed-sender envelopes from before the persisted cutoff',
       () async {
         const groupId = 'grp-remove-boundary-005';
@@ -2703,4 +3708,42 @@ void main() {
       },
     );
   });
+}
+
+class _GroupMembershipCursorBridge extends FakeBridge {
+  final Map<String, ({List<Map<String, dynamic>> messages, String cursor})>
+  _pages = {};
+
+  void addPage({
+    required String groupId,
+    required String cursor,
+    required List<Map<String, dynamic>> messages,
+    String nextCursor = '',
+  }) {
+    _pages['$groupId:$cursor'] = (messages: messages, cursor: nextCursor);
+  }
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:inboxRetrieveCursor') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final groupId = payload['groupId'] as String;
+      final cursor = payload['cursor'] as String? ?? '';
+      final page = _pages['$groupId:$cursor'];
+      return jsonEncode({
+        'ok': true,
+        'messages': page?.messages ?? const <Map<String, dynamic>>[],
+        'cursor': page?.cursor ?? '',
+      });
+    }
+    return super.send(message);
+  }
 }

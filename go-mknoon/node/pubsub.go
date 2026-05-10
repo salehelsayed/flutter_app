@@ -65,6 +65,14 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 		return fmt.Errorf("already joined group topic: %s", groupId)
 	}
 
+	if keyInfo == nil {
+		return fmt.Errorf("missing group key info for group %s", groupId)
+	}
+
+	if config == nil {
+		return fmt.Errorf("missing group config for group %s", groupId)
+	}
+
 	topicName := GroupTopicPrefix + groupId
 
 	// Register topic validator before joining.
@@ -75,19 +83,26 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 
 	topic, err := n.pubsub.Join(topicName)
 	if err != nil {
+		_ = n.pubsub.UnregisterTopicValidator(topicName)
 		return fmt.Errorf("join topic %s: %w", topicName, err)
 	}
 
-	sub, err := topic.Subscribe()
+	var sub *pubsub.Subscription
+	if n.joinGroupTopicSubscribeHook != nil {
+		sub, err = n.joinGroupTopicSubscribeHook(topic)
+	} else {
+		sub, err = topic.Subscribe()
+	}
 	if err != nil {
-		topic.Close()
+		_ = topic.Close()
+		_ = n.pubsub.UnregisterTopicValidator(topicName)
 		return fmt.Errorf("subscribe to topic %s: %w", topicName, err)
 	}
 
 	// Store config and key.
 	n.groupTopics[groupId] = topic
 	n.groupSubs[groupId] = sub
-	n.groupConfigs[groupId] = config
+	n.groupConfigs[groupId] = cloneGroupConfig(config)
 	n.groupKeys[groupId] = joinedGroupKeyInfo(keyInfo)
 
 	// Start subscription handler in a cancellable goroutine.
@@ -157,7 +172,7 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	keyInfo, keyOk := n.groupKeys[groupId]
 	n.mu.RUnlock()
 
-	if !topicOk || !configOk || !keyOk {
+	if !topicOk || !configOk || config == nil || !keyOk || keyInfo == nil {
 		return "", 0, fmt.Errorf("group not joined: %s", groupId)
 	}
 
@@ -279,7 +294,7 @@ func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, sender
 	keyInfo, keyOk := n.groupKeys[groupId]
 	n.mu.RUnlock()
 
-	if !topicOk || !configOk || !keyOk {
+	if !topicOk || !configOk || config == nil || !keyOk || keyInfo == nil {
 		return fmt.Errorf("group not joined: %s", groupId)
 	}
 
@@ -356,7 +371,13 @@ func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, sender
 func (n *Node) UpdateGroupConfig(groupId string, config *GroupConfig) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.groupConfigs[groupId] = config
+
+	if config == nil {
+		delete(n.groupConfigs, groupId)
+		return
+	}
+
+	n.groupConfigs[groupId] = cloneGroupConfig(config)
 }
 
 // UpdateGroupKey updates the stored group encryption key.
@@ -398,6 +419,25 @@ func cloneGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
 		return nil
 	}
 	cloned := *keyInfo
+	return &cloned
+}
+
+func cloneGroupConfig(config *GroupConfig) *GroupConfig {
+	if config == nil {
+		return nil
+	}
+
+	cloned := *config
+	if config.Members != nil {
+		cloned.Members = make([]GroupMember, len(config.Members))
+		copy(cloned.Members, config.Members)
+		for i := range config.Members {
+			if config.Members[i].Devices != nil {
+				cloned.Members[i].Devices = make([]GroupMemberDevice, len(config.Members[i].Devices))
+				copy(cloned.Members[i].Devices, config.Members[i].Devices)
+			}
+		}
+	}
 	return &cloned
 }
 
@@ -643,7 +683,7 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 		n.mu.RLock()
 		config, ok := n.groupConfigs[groupId]
 		n.mu.RUnlock()
-		if !ok {
+		if !ok || config == nil {
 			n.logPubSubValidationReject("unknown_group", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
@@ -671,7 +711,7 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 		n.mu.RLock()
 		keyInfo, keyOk := n.groupKeys[groupId]
 		n.mu.RUnlock()
-		if !keyOk {
+		if !keyOk || keyInfo == nil {
 			n.logPubSubValidationReject("missing_key", groupId, pid, env)
 			return pubsub.ValidationReject
 		}
@@ -718,8 +758,9 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 			continue
 		}
 
-		if !keyOk {
+		if !keyOk || keyInfo == nil {
 			log.Printf("[PUBSUB] No key info for group %s, skipping message", groupId)
+			n.emitGroupDecryptionFailed(groupId, env, nil, fmt.Errorf("missing group key info"), 0)
 			continue
 		}
 
@@ -729,14 +770,7 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		decryptMs := time.Since(decryptStart).Milliseconds()
 		if err != nil {
 			log.Printf("[PUBSUB] Failed to decrypt message in group %s: %v", groupId, err)
-			n.emitEvent("group:decryption_failed", map[string]interface{}{
-				"groupId":       groupId,
-				"senderId":      env.SenderId,
-				"keyEpoch":      env.KeyEpoch,
-				"localKeyEpoch": keyInfo.KeyEpoch,
-				"error":         err.Error(),
-				"decryptMs":     decryptMs,
-			})
+			n.emitGroupDecryptionFailed(groupId, env, keyInfo, err, decryptMs)
 			continue
 		}
 
@@ -782,6 +816,20 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		}
 		n.emitEvent("group_message:received", receivedEvent)
 	}
+}
+
+func (n *Node) emitGroupDecryptionFailed(groupId string, env *internal.GroupEnvelope, keyInfo *GroupKeyInfo, decryptErr error, decryptMs int64) {
+	data := map[string]interface{}{
+		"groupId":   groupId,
+		"senderId":  env.SenderId,
+		"keyEpoch":  env.KeyEpoch,
+		"error":     decryptErr.Error(),
+		"decryptMs": decryptMs,
+	}
+	if keyInfo != nil {
+		data["localKeyEpoch"] = keyInfo.KeyEpoch
+	}
+	n.emitEvent("group:decryption_failed", data)
 }
 
 func buildGroupMessageExtra(messageId string, opts map[string]interface{}) map[string]interface{} {
@@ -1209,7 +1257,7 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 	}
 	n.mu.RUnlock()
 
-	if !ok || h == nil {
+	if !ok || config == nil || h == nil {
 		return
 	}
 
@@ -1363,7 +1411,7 @@ func (n *Node) dialKnownGroupMembersDirectOnly(groupId string) {
 	}
 	n.mu.RUnlock()
 
-	if !ok || h == nil {
+	if !ok || config == nil || h == nil {
 		return
 	}
 
@@ -1439,7 +1487,7 @@ func (n *Node) countConnectedGroupMembers(groupId string) int {
 	config, ok := n.groupConfigs[groupId]
 	n.mu.RUnlock()
 
-	if !ok {
+	if !ok || config == nil {
 		return 0
 	}
 
@@ -1951,6 +1999,10 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 
 // findMember returns the GroupMember with the given peerId, or nil if not found.
 func findMember(config *GroupConfig, peerId string) *GroupMember {
+	if config == nil {
+		return nil
+	}
+
 	for i := range config.Members {
 		if config.Members[i].PeerId == peerId {
 			return &config.Members[i]

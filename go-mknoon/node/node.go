@@ -80,6 +80,7 @@ type Node struct {
 	refreshRelaySessionHook            func() *RecoveryResult
 	openChatStreamHook                 func(context.Context, host.Host, peer.ID) (network.Stream, error)
 	recoverPeerForSendHook             func(host.Host, peer.ID, string, time.Duration) error
+	joinGroupTopicSubscribeHook        func(*pubsub.Topic) (*pubsub.Subscription, error)
 
 	// Personal rendezvous refresh state.
 	personalRendezvousRefreshCancel context.CancelFunc

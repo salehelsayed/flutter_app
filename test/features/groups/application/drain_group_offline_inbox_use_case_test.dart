@@ -9,10 +9,13 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
@@ -23,6 +26,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_history_gap_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -33,6 +37,8 @@ import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+final _fixedDateFixtureRetentionNow = DateTime.utc(2026, 5, 8, 12);
 
 /// Bridge that simulates cursor-based group inbox retrieval.
 ///
@@ -1110,6 +1116,7 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         selfPeerId: 'peer-local',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
 
       final cursorCmd = bridge.sentMessages
@@ -1150,6 +1157,7 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         selfPeerId: 'peer-local',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
 
       expect(await msgRepo.getInboxCursor('group-1'), isNull);
@@ -1205,6 +1213,7 @@ void main() {
         msgRepo: msgRepo,
         groupMessageListener: listener,
         selfPeerId: 'peer-local',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
 
       expect(await msgRepo.getMessage('sync-listener-failure-msg'), isNull);
@@ -1269,6 +1278,7 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         groupMessageListener: listener,
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
 
       await Future<void>.delayed(Duration.zero);
@@ -1303,12 +1313,14 @@ void main() {
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         selfPeerId: 'peer-local',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
       await drainGroupOfflineInbox(
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         selfPeerId: 'peer-local',
+        retentionNowUtc: _fixedDateFixtureRetentionNow,
       );
 
       final receipts = await msgRepo.getReceiptsForMessage(
@@ -4074,6 +4086,833 @@ void main() {
       final repair = pendingRepo.repairs.values.single;
       expect(repair.status, groupPendingKeyRepairStatusRepaired);
       expect(repair.finalizedAt, isNotNull);
+    },
+  );
+
+  test(
+    'GEK002 live decrypt failure plus durable replay repairs one visible message after key arrival',
+    () async {
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      final futureEpochKey = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 2,
+        encryptedKey: 'replay-key-2',
+        createdAt: DateTime.now().toUtc(),
+      );
+      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final repairRequests = <GroupKeyRepairRequest>[];
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final liveMessages = StreamController<Map<String, dynamic>>.broadcast();
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: (request) {
+          repairRequests.add(request);
+        },
+      );
+      listener.start(liveMessages.stream);
+      addTearDown(() async {
+        listener.dispose();
+        await diagnostics.close();
+        await liveMessages.close();
+      });
+
+      final livePlaceholderFuture = listener.groupMessageStream.first.timeout(
+        const Duration(seconds: 1),
+      );
+      diagnostics.add({
+        'event': 'group:decryption_failed',
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'keyEpoch': 2,
+        'localKeyEpoch': 1,
+        'error': 'cipher: message authentication failed',
+      });
+
+      final livePlaceholder = await livePlaceholderFuture;
+      final liveRepairId = liveGroupPendingKeyRepairId(
+        groupId: 'group-1',
+        senderPeerId: 'peer-sender',
+        keyEpoch: 2,
+        localKeyEpoch: 1,
+      );
+      expect(livePlaceholder.id, liveRepairId);
+      expect(livePlaceholder.text, groupPendingKeyRepairPlaceholderText);
+      expect(livePlaceholder.status, groupPendingKeyRepairStatusPendingKey);
+      expect(await msgRepo.getMessage('msg-gek002-replay'), isNull);
+      expect(msgRepo.count, 1);
+      expect(repairRequests, hasLength(1));
+      expect(repairRequests.single.reason, groupKeyRepairReasonLiveDiagnostic);
+
+      final replayEnvelope = await signedReplayEnvelope(
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        keyGeneration: futureEpochKey.keyGeneration,
+        plaintext: jsonEncode({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 2,
+          'text': 'GEK002 repaired from durable replay',
+          'timestamp': '2026-05-01T12:03:00.000Z',
+          'messageId': 'msg-gek002-replay',
+        }),
+        messageId: 'msg-gek002-replay',
+      );
+      bridge.addPage('group-1', '', [
+        {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 2},
+        {'from': 'peer-sender', 'message': replayEnvelope, 'timestamp': 3},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: (request) {
+          repairRequests.add(request);
+        },
+      );
+
+      final durablePlaceholder = await msgRepo.getMessage('msg-gek002-replay');
+      expect(durablePlaceholder, isNotNull);
+      expect(durablePlaceholder!.text, groupPendingKeyRepairPlaceholderText);
+      expect(durablePlaceholder.status, groupPendingKeyRepairStatusPendingKey);
+      expect(durablePlaceholder.keyGeneration, 2);
+      expect(await msgRepo.getMessage(liveRepairId), isNull);
+      final visibleAfterReplay = await msgRepo.getMessagesPage('group-1');
+      expect(visibleAfterReplay, hasLength(1));
+      expect(visibleAfterReplay.single.id, 'msg-gek002-replay');
+      final pendingRepairs = await pendingRepo.getPendingRepairsForGroupEpoch(
+        groupId: 'group-1',
+        keyEpoch: 2,
+      );
+      expect(pendingRepairs, hasLength(1));
+      expect(pendingRepairs.single.messageId, 'msg-gek002-replay');
+      expect(repairRequests, hasLength(2));
+      expect(repairRequests.last.reason, groupKeyRepairReasonOfflineMissingKey);
+      expect(repairRequests.last.messageId, 'msg-gek002-replay');
+
+      await groupRepo.saveKey(futureEpochKey);
+      final runner = GroupPendingKeyRepairRunner(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        pendingKeyRepairRepo: pendingRepo,
+        replayGroupEnvelope: listener.handleReplayEnvelope,
+      );
+
+      final repairedCount = await runner.retryPendingRepairsForKey(
+        groupId: 'group-1',
+        keyEpoch: 2,
+      );
+
+      expect(repairedCount, 1);
+      final repairedMessage = await msgRepo.getMessage('msg-gek002-replay');
+      expect(repairedMessage, isNotNull);
+      expect(repairedMessage!.text, 'GEK002 repaired from durable replay');
+      expect(repairedMessage.senderPeerId, 'peer-sender');
+      expect(repairedMessage.transportPeerId, 'peer-sender');
+      expect(repairedMessage.status, 'delivered');
+      expect(repairedMessage.keyGeneration, 2);
+      expect(await msgRepo.getMessage(liveRepairId), isNull);
+      final visibleAfterRepair = await msgRepo.getMessagesPage('group-1');
+      expect(visibleAfterRepair, hasLength(1));
+      expect(visibleAfterRepair.single.id, 'msg-gek002-replay');
+
+      final secondRetryCount = await runner.retryPendingRepairsForKey(
+        groupId: 'group-1',
+        keyEpoch: 2,
+      );
+      expect(secondRetryCount, 0);
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+        pendingKeyRepairRepo: pendingRepo,
+      );
+      final visibleAfterDuplicateReplay = await msgRepo.getMessagesPage(
+        'group-1',
+      );
+      expect(visibleAfterDuplicateReplay, hasLength(1));
+      expect(visibleAfterDuplicateReplay.single.id, 'msg-gek002-replay');
+    },
+  );
+
+  test(
+    'GEK004 delayed membership config catch-up recovers newly accepted sender durable message exactly once',
+    () async {
+      const groupId = 'group-1';
+      const adminPeerId = 'peer-admin';
+      const newPeerId = 'peer-new-sender';
+      const newDeviceId = 'device-new-sender';
+      const newMessageId = 'msg-gek004-new-sender';
+      const memberAddedMessageId = 'sys-gek004-member-added';
+      final joinedAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 5),
+      );
+      final groupCreatedAt = joinedAt.subtract(const Duration(minutes: 15));
+      final messageAt = joinedAt.add(const Duration(minutes: 1));
+
+      await saveDefaultReplayKey();
+      await groupRepo.updateGroup(
+        testGroup.copyWith(createdAt: groupCreatedAt),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: adminPeerId,
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          joinedAt: joinedAt.subtract(const Duration(minutes: 10)),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: MemberRole.writer,
+          publicKey: 'pk-sender',
+          joinedAt: joinedAt.subtract(const Duration(minutes: 9)),
+        ),
+      );
+
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+      );
+      addTearDown(listener.dispose);
+
+      final newMemberConfig = {
+        'peerId': newPeerId,
+        'username': 'New Sender',
+        'role': 'writer',
+        'publicKey': 'pk-new-sender',
+        'devices': [
+          {
+            'deviceId': newDeviceId,
+            'transportPeerId': newDeviceId,
+            'deviceSigningPublicKey': 'pk-new-sender',
+            'mlKemPublicKey': 'mlkem-new-sender',
+            'keyPackageId': 'key-package-new-sender',
+            'keyPackagePublicMaterial': 'key-package-public-new-sender',
+          },
+        ],
+      };
+      final groupConfig = {
+        'name': 'Test Group',
+        'groupType': 'chat',
+        'members': [
+          {
+            'peerId': adminPeerId,
+            'username': 'Admin',
+            'role': 'admin',
+            'publicKey': 'pk-admin',
+          },
+          {
+            'peerId': 'peer-sender',
+            'username': 'Sender',
+            'role': 'writer',
+            'publicKey': 'pk-sender',
+          },
+          newMemberConfig,
+        ],
+        'createdBy': adminPeerId,
+        'createdAt': groupCreatedAt.toIso8601String(),
+      };
+
+      final durableReplay = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode({
+          'groupId': groupId,
+          'senderId': newPeerId,
+          'senderUsername': 'New Sender',
+          'senderDeviceId': newDeviceId,
+          'transportPeerId': newDeviceId,
+          'keyEpoch': 1,
+          'text': 'GEK004 post-join durable message',
+          'timestamp': messageAt.toIso8601String(),
+          'messageId': newMessageId,
+        }),
+        messageId: newMessageId,
+        senderPeerId: newPeerId,
+        senderPublicKey: 'pk-new-sender',
+        senderPrivateKey: 'sk-new-sender',
+        senderDeviceId: newDeviceId,
+        senderTransportPeerId: newDeviceId,
+        keyInfo: GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: joinedAt,
+        ),
+      );
+      final memberAddedReplay = await buildGroupOfflineReplayEnvelope(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: jsonEncode({
+          'groupId': groupId,
+          'senderId': adminPeerId,
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'member_added',
+            'member': newMemberConfig,
+            'groupConfig': groupConfig,
+          }),
+          'timestamp': joinedAt.toIso8601String(),
+          'messageId': memberAddedMessageId,
+        }),
+        messageId: memberAddedMessageId,
+        senderPeerId: adminPeerId,
+        senderPublicKey: 'pk-admin',
+        senderPrivateKey: 'sk-admin',
+        keyInfo: GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'replay-key-1',
+          createdAt: joinedAt,
+        ),
+      );
+
+      bridge.addPage(groupId, '', [
+        {'from': newDeviceId, 'message': durableReplay, 'timestamp': 1},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      expect(await groupRepo.getMember(groupId, newPeerId), isNull);
+      expect(await msgRepo.getMessage(newMessageId), isNull);
+      expect(await msgRepo.getInboxCursor(groupId), isNull);
+
+      bridge.addPage(groupId, '', [
+        {'from': newDeviceId, 'message': durableReplay, 'timestamp': 1},
+        {'from': adminPeerId, 'message': memberAddedReplay, 'timestamp': 2},
+        {'from': newDeviceId, 'message': durableReplay, 'timestamp': 3},
+      ], '');
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      final caughtUpMember = await groupRepo.getMember(groupId, newPeerId);
+      expect(caughtUpMember, isNotNull);
+      expect(caughtUpMember!.username, 'New Sender');
+      expect(caughtUpMember.findDeviceById(newDeviceId), isNotNull);
+
+      final deliveredMessage = await msgRepo.getMessage(newMessageId);
+      expect(deliveredMessage, isNotNull);
+      expect(deliveredMessage!.groupId, groupId);
+      expect(deliveredMessage.senderPeerId, newPeerId);
+      expect(deliveredMessage.transportPeerId, newDeviceId);
+      expect(deliveredMessage.senderUsername, 'New Sender');
+      expect(deliveredMessage.text, 'GEK004 post-join durable message');
+      expect(deliveredMessage.status, 'delivered');
+      expect(deliveredMessage.keyGeneration, 1);
+      expect(deliveredMessage.timestamp, messageAt);
+      expect(deliveredMessage.isIncoming, isTrue);
+
+      final visibleAfterCatchUp = await msgRepo.getMessagesPage(groupId);
+      expect(
+        visibleAfterCatchUp.where((message) => message.id == newMessageId),
+        hasLength(1),
+      );
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+      );
+
+      final visibleAfterDuplicateReplay = await msgRepo.getMessagesPage(
+        groupId,
+      );
+      expect(
+        visibleAfterDuplicateReplay.where(
+          (message) => message.id == newMessageId,
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'GEK003 partial key-update delivery plus immediate post-rotation send repairs stale recipient after later key arrival',
+    () async {
+      const groupId = 'group-gek003';
+      const alicePeerId = 'peer-alice';
+      const bobPeerId = 'peer-bob';
+      const charliePeerId = 'peer-charlie';
+      const removedPeerId = 'peer-removed';
+      const aliceDeviceId = 'device-alice';
+      const bobDeviceId = 'device-bob';
+      const charlieDeviceId = 'device-charlie';
+      const removedDeviceId = 'device-removed';
+      const bobMessageId = 'msg-gek003-bob';
+      const bobMessageText = 'GEK003 Bob sends on epoch 2';
+      final groupCreatedAt = DateTime.utc(2026, 5, 9, 18);
+      final messageAt = DateTime.utc(2026, 5, 9, 18, 3);
+
+      GroupMemberDeviceIdentity deviceIdentity(String peerId, String deviceId) {
+        return GroupMemberDeviceIdentity(
+          deviceId: deviceId,
+          transportPeerId: deviceId,
+          deviceSigningPublicKey: 'pk-$peerId',
+          mlKemPublicKey: 'mlkem-$deviceId',
+          keyPackageId: 'key-package-$deviceId',
+          keyPackagePublicMaterial: 'key-package-public-$deviceId',
+        );
+      }
+
+      GroupMember member({
+        required String peerId,
+        required String username,
+        required MemberRole role,
+        required String deviceId,
+        required DateTime joinedAt,
+      }) {
+        return GroupMember(
+          groupId: groupId,
+          peerId: peerId,
+          username: username,
+          role: role,
+          publicKey: 'pk-$peerId',
+          mlKemPublicKey: 'mlkem-$peerId',
+          devices: [deviceIdentity(peerId, deviceId)],
+          joinedAt: joinedAt,
+        );
+      }
+
+      final aliceMember = member(
+        peerId: alicePeerId,
+        username: 'Alice',
+        role: MemberRole.admin,
+        deviceId: aliceDeviceId,
+        joinedAt: groupCreatedAt,
+      );
+      final bobMember = member(
+        peerId: bobPeerId,
+        username: 'Bob',
+        role: MemberRole.writer,
+        deviceId: bobDeviceId,
+        joinedAt: groupCreatedAt.add(const Duration(minutes: 1)),
+      );
+      final charlieMember = member(
+        peerId: charliePeerId,
+        username: 'Charlie',
+        role: MemberRole.writer,
+        deviceId: charlieDeviceId,
+        joinedAt: groupCreatedAt.add(const Duration(minutes: 2)),
+      );
+      final removedMember = member(
+        peerId: removedPeerId,
+        username: 'Removed',
+        role: MemberRole.writer,
+        deviceId: removedDeviceId,
+        joinedAt: groupCreatedAt.add(const Duration(minutes: 3)),
+      );
+
+      Future<void> seedGroupContext({
+        required InMemoryGroupRepository repository,
+        required GroupRole myRole,
+      }) async {
+        await repository.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'GEK003 Group',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/$groupId',
+            createdAt: groupCreatedAt,
+            createdBy: alicePeerId,
+            myRole: myRole,
+          ),
+        );
+        for (final activeMember in [aliceMember, bobMember, charlieMember]) {
+          await repository.saveMember(activeMember);
+        }
+        await repository.saveMember(removedMember);
+        await repository.removeMember(groupId, removedPeerId);
+        await repository.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'gek003-key-epoch-1',
+            createdAt: groupCreatedAt,
+          ),
+        );
+      }
+
+      Map<String, dynamic> lastCommandPayload(
+        _CursorInboxBridge sourceBridge,
+        String command,
+      ) {
+        final raw = sourceBridge.sentMessages.lastWhere((message) {
+          final parsed = jsonDecode(message) as Map<String, dynamic>;
+          return parsed['cmd'] == command;
+        });
+        final parsed = jsonDecode(raw) as Map<String, dynamic>;
+        return parsed['payload'] as Map<String, dynamic>;
+      }
+
+      ChatMessage keyUpdateChatMessage({
+        required String content,
+        required String toDeviceId,
+      }) {
+        return ChatMessage(
+          from: aliceDeviceId,
+          to: toDeviceId,
+          content: content,
+          timestamp: groupCreatedAt
+              .add(const Duration(minutes: 4))
+              .toUtc()
+              .toIso8601String(),
+          isIncoming: true,
+        );
+      }
+
+      Future<GroupKeyInfo> waitForLatestKey(
+        InMemoryGroupRepository repository,
+        int generation,
+      ) async {
+        for (var attempt = 0; attempt < 30; attempt++) {
+          final latestKey = await repository.getLatestKey(groupId);
+          if (latestKey?.keyGeneration == generation) {
+            return latestKey!;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        fail('Timed out waiting for $groupId key generation $generation');
+      }
+
+      Future<GroupMessage> waitForMessageStatus(
+        InMemoryGroupMessageRepository repository,
+        String messageId,
+        String status,
+      ) async {
+        for (var attempt = 0; attempt < 30; attempt++) {
+          final message = await repository.getMessage(messageId);
+          if (message?.status == status) {
+            return message!;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        fail('Timed out waiting for $messageId status $status');
+      }
+
+      final aliceRepo = InMemoryGroupRepository();
+      final bobRepo = InMemoryGroupRepository();
+      final charlieRepo = InMemoryGroupRepository();
+      final aliceMsgRepo = InMemoryGroupMessageRepository();
+      final bobMsgRepo = InMemoryGroupMessageRepository();
+      final charlieMsgRepo = InMemoryGroupMessageRepository();
+      final aliceBridge = _CursorInboxBridge();
+      final bobBridge = _CursorInboxBridge();
+      final charlieBridge = _CursorInboxBridge();
+      configureLegacyReplaySigning(aliceBridge);
+      configureLegacyReplaySigning(bobBridge);
+      configureLegacyReplaySigning(charlieBridge);
+
+      await seedGroupContext(repository: aliceRepo, myRole: GroupRole.admin);
+      await seedGroupContext(repository: bobRepo, myRole: GroupRole.member);
+      await seedGroupContext(repository: charlieRepo, myRole: GroupRole.member);
+
+      aliceBridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'gek003-key-epoch-2',
+        'keyEpoch': 2,
+      };
+      aliceBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'sys-gek003-key-rotated',
+        'topicPeers': 2,
+      };
+
+      final capturedKeyUpdatesByDevice = <String, String>{};
+      final rotatedKey = await rotateAndDistributeGroupKey(
+        bridge: aliceBridge,
+        groupRepo: aliceRepo,
+        groupId: groupId,
+        selfPeerId: alicePeerId,
+        senderPublicKey: 'pk-$alicePeerId',
+        senderPrivateKey: 'sk-$alicePeerId',
+        senderUsername: 'Alice',
+        sourceDeviceId: aliceDeviceId,
+        sendP2PMessage: (transportPeerId, message) async {
+          capturedKeyUpdatesByDevice[transportPeerId] = message;
+          return transportPeerId != charlieDeviceId;
+        },
+      );
+
+      expect(rotatedKey, isNotNull);
+      expect(rotatedKey!.keyGeneration, 2);
+      expect(
+        capturedKeyUpdatesByDevice.keys,
+        unorderedEquals([bobDeviceId, charlieDeviceId]),
+      );
+      expect(capturedKeyUpdatesByDevice.keys, isNot(contains(aliceDeviceId)));
+      expect(capturedKeyUpdatesByDevice.keys, isNot(contains(removedDeviceId)));
+      expect((await aliceRepo.getLatestKey(groupId))!.keyGeneration, 2);
+
+      final bobKeyUpdates = StreamController<ChatMessage>.broadcast();
+      final bobKeyUpdateListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: bobKeyUpdates.stream,
+        groupRepo: bobRepo,
+        bridge: bobBridge,
+        getOwnMlKemSecretKey: () async => 'mlkem-secret-$bobDeviceId',
+        getOwnPeerId: () async => bobPeerId,
+        getOwnDeviceId: () async => bobDeviceId,
+      );
+      bobKeyUpdateListener.start();
+      addTearDown(() async {
+        bobKeyUpdateListener.dispose();
+        await bobKeyUpdates.close();
+      });
+      bobKeyUpdates.add(
+        keyUpdateChatMessage(
+          content: capturedKeyUpdatesByDevice[bobDeviceId]!,
+          toDeviceId: bobDeviceId,
+        ),
+      );
+      final bobCommittedKey = await waitForLatestKey(bobRepo, 2);
+      expect(bobCommittedKey.encryptedKey, 'gek003-key-epoch-2');
+      expect((await charlieRepo.getLatestKey(groupId))!.keyGeneration, 1);
+
+      bobBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': bobMessageId,
+        'topicPeers': 2,
+      };
+      final (sendResult, bobMessage) = await sendGroupMessage(
+        bridge: bobBridge,
+        groupRepo: bobRepo,
+        msgRepo: bobMsgRepo,
+        groupId: groupId,
+        text: bobMessageText,
+        senderPeerId: bobPeerId,
+        senderDeviceId: bobDeviceId,
+        senderTransportPeerId: bobDeviceId,
+        senderPublicKey: 'pk-$bobPeerId',
+        senderPrivateKey: 'sk-$bobPeerId',
+        senderUsername: 'Bob',
+        messageId: bobMessageId,
+        timestamp: messageAt,
+      );
+
+      expect(sendResult, SendGroupMessageResult.success);
+      expect(bobMessage, isNotNull);
+      expect(bobMessage!.keyGeneration, 2);
+      final savedBobMessage = await bobMsgRepo.getMessage(bobMessageId);
+      expect(savedBobMessage, isNotNull);
+      expect(savedBobMessage!.keyGeneration, 2);
+      final bobInboxStorePayload = lastCommandPayload(
+        bobBridge,
+        'group:inboxStore',
+      );
+      final replayEnvelope = bobInboxStorePayload['message'] as String;
+      final replayEnvelopeJson =
+          jsonDecode(replayEnvelope) as Map<String, dynamic>;
+      expect(replayEnvelopeJson['keyEpoch'], 2);
+      expect(replayEnvelopeJson['messageId'], bobMessageId);
+      expect(replayEnvelopeJson['senderPeerId'], bobPeerId);
+      expect(replayEnvelopeJson['senderDeviceId'], bobDeviceId);
+      expect(replayEnvelopeJson['senderTransportPeerId'], bobDeviceId);
+      expect(
+        (bobInboxStorePayload['recipientPeerIds'] as List<dynamic>)
+            .cast<String>(),
+        unorderedEquals([alicePeerId, charliePeerId]),
+      );
+
+      aliceBridge.addPage(groupId, '', [
+        {'from': bobDeviceId, 'message': replayEnvelope, 'timestamp': 2},
+      ], '');
+      await drainGroupOfflineInbox(
+        bridge: aliceBridge,
+        groupRepo: aliceRepo,
+        msgRepo: aliceMsgRepo,
+      );
+      final aliceReceived = await aliceMsgRepo.getMessage(bobMessageId);
+      expect(aliceReceived, isNotNull);
+      expect(aliceReceived!.text, bobMessageText);
+      expect(aliceReceived.status, 'delivered');
+      expect(aliceReceived.keyGeneration, 2);
+      expect(aliceReceived.senderPeerId, bobPeerId);
+      expect(aliceReceived.transportPeerId, bobDeviceId);
+      expect(await aliceMsgRepo.getMessagesPage(groupId), hasLength(1));
+
+      final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
+      final repairRequests = <GroupKeyRepairRequest>[];
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      final liveMessages = StreamController<Map<String, dynamic>>.broadcast();
+      final charlieMessageListener = GroupMessageListener(
+        groupRepo: charlieRepo,
+        msgRepo: charlieMsgRepo,
+        bridge: charlieBridge,
+        getSelfPeerId: () async => charliePeerId,
+        groupDiagnosticEvents: diagnostics.stream,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: (request) {
+          repairRequests.add(request);
+        },
+      );
+      charlieMessageListener.start(liveMessages.stream);
+      addTearDown(() async {
+        charlieMessageListener.dispose();
+        await diagnostics.close();
+        await liveMessages.close();
+      });
+
+      final livePlaceholderFuture = charlieMessageListener
+          .groupMessageStream
+          .first
+          .timeout(const Duration(seconds: 1));
+      diagnostics.add({
+        'event': 'group:decryption_failed',
+        'groupId': groupId,
+        'senderId': bobPeerId,
+        'keyEpoch': 2,
+        'localKeyEpoch': 1,
+        'error': 'cipher: message authentication failed',
+      });
+      final livePlaceholder = await livePlaceholderFuture;
+      final liveRepairId = liveGroupPendingKeyRepairId(
+        groupId: groupId,
+        senderPeerId: bobPeerId,
+        keyEpoch: 2,
+        localKeyEpoch: 1,
+      );
+      expect(livePlaceholder.id, liveRepairId);
+      expect(livePlaceholder.text, groupPendingKeyRepairPlaceholderText);
+      expect(livePlaceholder.status, groupPendingKeyRepairStatusPendingKey);
+      expect(await charlieMsgRepo.getMessage(bobMessageId), isNull);
+      expect(repairRequests, hasLength(1));
+      expect(repairRequests.single.reason, groupKeyRepairReasonLiveDiagnostic);
+
+      charlieBridge.addPage(groupId, '', [
+        {'from': bobDeviceId, 'message': replayEnvelope, 'timestamp': 2},
+        {'from': bobDeviceId, 'message': replayEnvelope, 'timestamp': 3},
+      ], '');
+      await drainGroupOfflineInbox(
+        bridge: charlieBridge,
+        groupRepo: charlieRepo,
+        msgRepo: charlieMsgRepo,
+        groupMessageListener: charlieMessageListener,
+        pendingKeyRepairRepo: pendingRepo,
+        requestGroupKeyRepair: (request) {
+          repairRequests.add(request);
+        },
+      );
+
+      final durablePlaceholder = await charlieMsgRepo.getMessage(bobMessageId);
+      expect(durablePlaceholder, isNotNull);
+      expect(durablePlaceholder!.text, groupPendingKeyRepairPlaceholderText);
+      expect(durablePlaceholder.status, groupPendingKeyRepairStatusPendingKey);
+      expect(durablePlaceholder.keyGeneration, 2);
+      expect(durablePlaceholder.senderPeerId, bobPeerId);
+      expect(durablePlaceholder.transportPeerId, bobDeviceId);
+      expect(await charlieMsgRepo.getMessage(liveRepairId), isNull);
+      final visibleAfterReplay = await charlieMsgRepo.getMessagesPage(groupId);
+      expect(visibleAfterReplay, hasLength(1));
+      expect(visibleAfterReplay.single.id, bobMessageId);
+      final pendingRepairs = await pendingRepo.getPendingRepairsForGroupEpoch(
+        groupId: groupId,
+        keyEpoch: 2,
+      );
+      expect(pendingRepairs, hasLength(1));
+      expect(pendingRepairs.single.messageId, bobMessageId);
+      expect(repairRequests, hasLength(2));
+      expect(repairRequests.last.reason, groupKeyRepairReasonOfflineMissingKey);
+      expect(repairRequests.last.messageId, bobMessageId);
+
+      final charlieRepairRunner = GroupPendingKeyRepairRunner(
+        bridge: charlieBridge,
+        groupRepo: charlieRepo,
+        msgRepo: charlieMsgRepo,
+        pendingKeyRepairRepo: pendingRepo,
+        replayGroupEnvelope: charlieMessageListener.handleReplayEnvelope,
+      );
+      final charlieKeyUpdates = StreamController<ChatMessage>.broadcast();
+      final charlieKeyUpdateListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: charlieKeyUpdates.stream,
+        groupRepo: charlieRepo,
+        bridge: charlieBridge,
+        getOwnMlKemSecretKey: () async => 'mlkem-secret-$charlieDeviceId',
+        getOwnPeerId: () async => charliePeerId,
+        getOwnDeviceId: () async => charlieDeviceId,
+        retryPendingGroupKeyRepairs:
+            charlieRepairRunner.retryPendingRepairsForRequest,
+      );
+      charlieKeyUpdateListener.start();
+      addTearDown(() async {
+        charlieKeyUpdateListener.dispose();
+        await charlieKeyUpdates.close();
+      });
+
+      charlieKeyUpdates.add(
+        keyUpdateChatMessage(
+          content: capturedKeyUpdatesByDevice[charlieDeviceId]!,
+          toDeviceId: charlieDeviceId,
+        ),
+      );
+      final charlieCommittedKey = await waitForLatestKey(charlieRepo, 2);
+      expect(charlieCommittedKey.encryptedKey, 'gek003-key-epoch-2');
+      final repairedMessage = await waitForMessageStatus(
+        charlieMsgRepo,
+        bobMessageId,
+        'delivered',
+      );
+      expect(repairedMessage.text, bobMessageText);
+      expect(repairedMessage.id, bobMessageId);
+      expect(repairedMessage.senderPeerId, bobPeerId);
+      expect(repairedMessage.transportPeerId, bobDeviceId);
+      expect(repairedMessage.keyGeneration, 2);
+      expect(await charlieMsgRepo.getMessage(liveRepairId), isNull);
+      final visibleAfterRepair = await charlieMsgRepo.getMessagesPage(groupId);
+      expect(visibleAfterRepair, hasLength(1));
+      expect(visibleAfterRepair.single.id, bobMessageId);
+
+      final secondRetryCount = await charlieRepairRunner
+          .retryPendingRepairsForKey(groupId: groupId, keyEpoch: 2);
+      expect(secondRetryCount, 0);
+      await drainGroupOfflineInbox(
+        bridge: charlieBridge,
+        groupRepo: charlieRepo,
+        msgRepo: charlieMsgRepo,
+        groupMessageListener: charlieMessageListener,
+        pendingKeyRepairRepo: pendingRepo,
+      );
+      final visibleAfterDuplicateReplay = await charlieMsgRepo.getMessagesPage(
+        groupId,
+      );
+      expect(visibleAfterDuplicateReplay, hasLength(1));
+      expect(visibleAfterDuplicateReplay.single.id, bobMessageId);
     },
   );
 

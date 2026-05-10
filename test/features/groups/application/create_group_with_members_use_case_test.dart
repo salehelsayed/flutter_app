@@ -763,6 +763,12 @@ void main() {
           ),
           GroupInviteDeliveryStatus.cannotSend,
         );
+        final noKeyAttempt = await inviteStatusRepo.getAttempt(
+          groupId: 'test-group-id',
+          peerId: 'peer-no-key',
+        );
+        expect(noKeyAttempt, isNotNull);
+        expect(noKeyAttempt!.lastError, 'missing_secure_key');
       },
     );
 

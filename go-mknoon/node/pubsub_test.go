@@ -1055,6 +1055,63 @@ func TestGroupTopicValidator_ValidMessage(t *testing.T) {
 	}
 }
 
+func TestGroupTopicValidator_NilKeyRejectsNoKeyAndDecryptReportsMissingKey(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "gl-006-validator-nil-key"
+
+	config := &GroupConfig{
+		Name:      "GL-006 Validator Nil Key",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "sender-1", Role: GroupRoleAdmin, PublicKey: pubB64},
+		},
+		CreatedBy: "sender-1",
+	}
+
+	envelopeJSON := buildTestEnvelope(t, groupId, "sender-1", privB64, pubB64, groupKey, 1, "hello without local key")
+
+	result := validateGroupEnvelope(envelopeJSON, groupId, config, nil)
+	if result != "reject:no_key" {
+		t.Fatalf("expected reject:no_key, got %s", result)
+	}
+
+	env, err := internal.ParseGroupEnvelope(envelopeJSON)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+	plaintext, err := decryptGroupEnvelopePayload(env, nil, time.Now())
+	if err == nil {
+		t.Fatal("expected decryptGroupEnvelopePayload with nil key info to fail")
+	}
+	if !strings.Contains(err.Error(), "missing group key info") {
+		t.Fatalf("expected missing group key info error, got %q", err.Error())
+	}
+	if plaintext != "" {
+		t.Fatalf("decrypt plaintext = %q, want empty", plaintext)
+	}
+}
+
+func TestGroupTopicValidator_NilConfigRejectsUnknownGroupForGL007(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "gl-007-validator-nil-config"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	envelopeJSON := buildTestEnvelope(t, groupId, "sender-1", privB64, pubB64, groupKey, keyInfo.KeyEpoch, "hello with nil config")
+
+	result := validateGroupEnvelope(envelopeJSON, groupId, nil, keyInfo)
+	if result != "reject:unknown_group" {
+		t.Fatalf("expected reject:unknown_group, got %s", result)
+	}
+}
+
 func TestGroupTopicValidator_TransportPeerIdMatchesEnvelopeSender(t *testing.T) {
 	privB64, pubB64 := generateEd25519KeyPair(t)
 	groupKey, _ := mcrypto.GenerateGroupKey()
@@ -1998,6 +2055,488 @@ func TestStopNode_CancelsAllDiscoveryContexts(t *testing.T) {
 	}
 }
 
+func TestGL017StopClearsGroupRuntimeStateAndRequiresExplicitRejoinAfterRestart(t *testing.T) {
+	hexKey := generateTestKey(t)
+	cfg := NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	}
+
+	n := New(&testEventCollector{})
+	t.Cleanup(func() { _ = n.Stop() })
+
+	if _, err := n.Start(cfg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	initialPeerID := n.PeerId()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupIDs := []string{"gl017-stop-a", "gl017-stop-b", "gl017-stop-c"}
+	config := &GroupConfig{
+		Name:      "GL-017 Stop Runtime Cleanup",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	for _, groupID := range groupIDs {
+		if err := n.JoinGroupTopic(groupID, config, keyInfo); err != nil {
+			t.Fatalf("JoinGroupTopic(%s): %v", groupID, err)
+		}
+	}
+
+	n.mu.RLock()
+	pubsubReadyBeforeStop := n.pubsub != nil
+	dispatcherReadyBeforeStop := n.eventDispatcher != nil
+	for _, groupID := range groupIDs {
+		topic := n.groupTopics[groupID]
+		sub := n.groupSubs[groupID]
+		storedConfig := n.groupConfigs[groupID]
+		storedKey := n.groupKeys[groupID]
+		subCancel := n.groupSubCtx[groupID]
+		discoveryCancel := n.groupDiscoveryCtx[groupID]
+		if topic == nil || sub == nil || storedConfig == nil || storedKey == nil || subCancel == nil || discoveryCancel == nil {
+			n.mu.RUnlock()
+			t.Fatalf(
+				"group %s runtime state incomplete before Stop: topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+				groupID,
+				topic != nil,
+				sub != nil,
+				storedConfig != nil,
+				storedKey != nil,
+				subCancel != nil,
+				discoveryCancel != nil,
+			)
+		}
+	}
+	n.mu.RUnlock()
+	if !pubsubReadyBeforeStop {
+		t.Fatal("pubsub should be initialized before Stop")
+	}
+	if !dispatcherReadyBeforeStop {
+		t.Fatal("eventDispatcher should be initialized before Stop when callback is configured")
+	}
+
+	if err := n.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	n.mu.RLock()
+	if n.isStarted {
+		n.mu.RUnlock()
+		t.Fatal("node should be marked stopped after Stop")
+	}
+	if n.pubsub != nil {
+		n.mu.RUnlock()
+		t.Fatal("pubsub should be nil after Stop")
+	}
+	if n.groupConfigs != nil {
+		n.mu.RUnlock()
+		t.Fatal("groupConfigs should be nil after Stop")
+	}
+	if n.groupKeys != nil {
+		n.mu.RUnlock()
+		t.Fatal("groupKeys should be nil after Stop")
+	}
+	if n.eventDispatcher != nil {
+		n.mu.RUnlock()
+		t.Fatal("eventDispatcher should be nil after Stop")
+	}
+	if len(n.groupTopics) != 0 || len(n.groupSubs) != 0 || len(n.groupSubCtx) != 0 || len(n.groupDiscoveryCtx) != 0 {
+		topicsLen := len(n.groupTopics)
+		subsLen := len(n.groupSubs)
+		subCtxLen := len(n.groupSubCtx)
+		discoveryCtxLen := len(n.groupDiscoveryCtx)
+		n.mu.RUnlock()
+		t.Fatalf(
+			"group runtime maps should be empty after Stop, got topics=%d subs=%d subCtx=%d discoveryCtx=%d",
+			topicsLen,
+			subsLen,
+			subCtxLen,
+			discoveryCtxLen,
+		)
+	}
+	for _, groupID := range groupIDs {
+		_, hasTopic := n.groupTopics[groupID]
+		_, hasSub := n.groupSubs[groupID]
+		_, hasSubCtx := n.groupSubCtx[groupID]
+		_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupID]
+		if hasTopic || hasSub || hasSubCtx || hasDiscoveryCtx {
+			n.mu.RUnlock()
+			t.Fatalf(
+				"group %s retained runtime state after Stop: topic=%t sub=%t subCtx=%t discoveryCtx=%t",
+				groupID,
+				hasTopic,
+				hasSub,
+				hasSubCtx,
+				hasDiscoveryCtx,
+			)
+		}
+	}
+	n.mu.RUnlock()
+
+	if err := n.Stop(); err != nil {
+		t.Fatalf("second Stop should be safe: %v", err)
+	}
+
+	if _, err := n.Start(cfg); err != nil {
+		t.Fatalf("restart Start: %v", err)
+	}
+	if restartedPeerID := n.PeerId(); restartedPeerID != initialPeerID {
+		t.Fatalf("peer id after restart = %q, want stable peer id %q", restartedPeerID, initialPeerID)
+	}
+
+	n.mu.RLock()
+	if n.pubsub == nil ||
+		n.groupTopics == nil ||
+		n.groupSubs == nil ||
+		n.groupConfigs == nil ||
+		n.groupKeys == nil ||
+		n.groupSubCtx == nil ||
+		n.groupDiscoveryCtx == nil ||
+		n.eventDispatcher == nil {
+		pubsubReady := n.pubsub != nil
+		topicsReady := n.groupTopics != nil
+		subsReady := n.groupSubs != nil
+		configsReady := n.groupConfigs != nil
+		keysReady := n.groupKeys != nil
+		subCtxReady := n.groupSubCtx != nil
+		discoveryCtxReady := n.groupDiscoveryCtx != nil
+		dispatcherReady := n.eventDispatcher != nil
+		n.mu.RUnlock()
+		t.Fatalf(
+			"restart should create fresh pubsub runtime: pubsub=%t topics=%t subs=%t configs=%t keys=%t subCtx=%t discoveryCtx=%t dispatcher=%t",
+			pubsubReady,
+			topicsReady,
+			subsReady,
+			configsReady,
+			keysReady,
+			subCtxReady,
+			discoveryCtxReady,
+			dispatcherReady,
+		)
+	}
+	if len(n.groupTopics) != 0 ||
+		len(n.groupSubs) != 0 ||
+		len(n.groupConfigs) != 0 ||
+		len(n.groupKeys) != 0 ||
+		len(n.groupSubCtx) != 0 ||
+		len(n.groupDiscoveryCtx) != 0 {
+		topicsLen := len(n.groupTopics)
+		subsLen := len(n.groupSubs)
+		configsLen := len(n.groupConfigs)
+		keysLen := len(n.groupKeys)
+		subCtxLen := len(n.groupSubCtx)
+		discoveryCtxLen := len(n.groupDiscoveryCtx)
+		n.mu.RUnlock()
+		t.Fatalf(
+			"restart should not auto-restore group state, got topics=%d subs=%d configs=%d keys=%d subCtx=%d discoveryCtx=%d",
+			topicsLen,
+			subsLen,
+			configsLen,
+			keysLen,
+			subCtxLen,
+			discoveryCtxLen,
+		)
+	}
+	n.mu.RUnlock()
+
+	msgID, peerCount, err := n.PublishGroupMessage(
+		groupIDs[0],
+		senderPrivB64,
+		n.PeerId(),
+		senderPubB64,
+		"Admin",
+		"GL-017 publish before explicit rejoin",
+		"",
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected PublishGroupMessage before explicit rejoin to fail")
+	}
+	if !strings.Contains(err.Error(), "group not joined") {
+		t.Fatalf("PublishGroupMessage before explicit rejoin error = %q, want group not joined", err.Error())
+	}
+	if msgID != "" || peerCount != 0 {
+		t.Fatalf("PublishGroupMessage before explicit rejoin returned msgID=%q peerCount=%d, want empty/0", msgID, peerCount)
+	}
+
+	for _, groupID := range groupIDs {
+		if err := n.JoinGroupTopic(groupID, config, keyInfo); err != nil {
+			t.Fatalf("rejoin JoinGroupTopic(%s): %v", groupID, err)
+		}
+	}
+
+	n.mu.RLock()
+	for _, groupID := range groupIDs {
+		topic := n.groupTopics[groupID]
+		sub := n.groupSubs[groupID]
+		storedConfig := n.groupConfigs[groupID]
+		storedKey := n.groupKeys[groupID]
+		subCancel := n.groupSubCtx[groupID]
+		discoveryCancel := n.groupDiscoveryCtx[groupID]
+		if topic == nil || sub == nil || storedConfig == nil || storedKey == nil || subCancel == nil || discoveryCancel == nil {
+			n.mu.RUnlock()
+			t.Fatalf(
+				"group %s runtime state incomplete after explicit rejoin: topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+				groupID,
+				topic != nil,
+				sub != nil,
+				storedConfig != nil,
+				storedKey != nil,
+				subCancel != nil,
+				discoveryCancel != nil,
+			)
+		}
+	}
+	n.mu.RUnlock()
+
+	msgID, peerCount, err = n.PublishGroupMessage(
+		groupIDs[0],
+		senderPrivB64,
+		n.PeerId(),
+		senderPubB64,
+		"Admin",
+		"GL-017 publish after explicit rejoin",
+		"",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage after explicit rejoin: %v", err)
+	}
+	if msgID == "" {
+		t.Fatal("PublishGroupMessage after explicit rejoin returned empty message id")
+	}
+	if peerCount != 0 {
+		t.Fatalf("local-only PublishGroupMessage peerCount = %d, want 0", peerCount)
+	}
+}
+
+func TestGL019ConcurrentJoinLeaveUpdateSameGroupIsRaceFree(t *testing.T) {
+	hexKey := generateTestKey(t)
+	cfg := NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	}
+
+	n := NewNode()
+	t.Cleanup(func() { _ = n.Stop() })
+	if _, err := n.Start(cfg); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	_, senderPubB64 := generateEd25519KeyPair(t)
+	groupID := "gl019-concurrent-join-leave-update"
+	nodePeerID := n.PeerId()
+
+	newConfig := func(label string) *GroupConfig {
+		return &GroupConfig{
+			Name:      "GL-019 " + label,
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: nodePeerID, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+			},
+			CreatedBy: nodePeerID,
+		}
+	}
+	newKeyInfo := func(label string, epoch int) *GroupKeyInfo {
+		groupKey, err := mcrypto.GenerateGroupKey()
+		if err != nil {
+			t.Fatalf("generate %s group key: %v", label, err)
+		}
+		return &GroupKeyInfo{Key: groupKey, KeyEpoch: epoch}
+	}
+
+	initialConfig := newConfig("initial")
+	initialKey := newKeyInfo("initial", 1)
+	if err := n.JoinGroupTopic(groupID, initialConfig, initialKey); err != nil {
+		t.Fatalf("initial JoinGroupTopic: %v", err)
+	}
+
+	const iterations = 64
+	joinConfigs := make([]*GroupConfig, iterations)
+	joinKeys := make([]*GroupKeyInfo, iterations)
+	updateConfigs := make([]*GroupConfig, iterations)
+	updateKeys := make([]*GroupKeyInfo, iterations)
+	for i := 0; i < iterations; i++ {
+		joinConfigs[i] = newConfig(fmt.Sprintf("join-%02d", i))
+		joinKeys[i] = newKeyInfo(fmt.Sprintf("join-%02d", i), 100+i)
+		updateConfigs[i] = newConfig(fmt.Sprintf("update-%02d", i))
+		updateKeys[i] = newKeyInfo(fmt.Sprintf("update-%02d", i), 1000+i)
+	}
+
+	start := make(chan struct{})
+	unexpected := make(chan error, iterations*4)
+	var wg sync.WaitGroup
+	recordUnexpected := func(format string, args ...interface{}) {
+		select {
+		case unexpected <- fmt.Errorf(format, args...):
+		default:
+		}
+	}
+
+	wg.Add(4)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			err := n.JoinGroupTopic(groupID, joinConfigs[i], joinKeys[i])
+			if err == nil {
+				continue
+			}
+			if !strings.Contains(err.Error(), "already joined group topic") {
+				recordUnexpected("JoinGroupTopic iteration %d: %v", i, err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			if err := n.LeaveGroupTopic(groupID); err != nil {
+				recordUnexpected("LeaveGroupTopic iteration %d: %v", i, err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			n.UpdateGroupConfig(groupID, updateConfigs[i])
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := 0; i < iterations; i++ {
+			n.UpdateGroupKey(groupID, updateKeys[i])
+		}
+	}()
+	close(start)
+	wg.Wait()
+	close(unexpected)
+	for err := range unexpected {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assertValidRuntimeState := func(label string) {
+		t.Helper()
+		n.mu.RLock()
+		topic, hasTopic := n.groupTopics[groupID]
+		sub, hasSub := n.groupSubs[groupID]
+		config, hasConfig := n.groupConfigs[groupID]
+		key, hasKey := n.groupKeys[groupID]
+		subCancel, hasSubCtx := n.groupSubCtx[groupID]
+		discoveryCancel, hasDiscoveryCtx := n.groupDiscoveryCtx[groupID]
+		n.mu.RUnlock()
+
+		hasRuntimeState := hasTopic || hasSub || hasSubCtx || hasDiscoveryCtx
+		runtimeComplete := hasTopic && topic != nil &&
+			hasSub && sub != nil &&
+			hasSubCtx && subCancel != nil &&
+			hasDiscoveryCtx && discoveryCancel != nil &&
+			hasConfig && config != nil &&
+			hasKey && key != nil
+		if hasRuntimeState && !runtimeComplete {
+			t.Fatalf(
+				"%s runtime state impossible: topic=%t sub=%t subCtx=%t discoveryCtx=%t config=%t key=%t",
+				label,
+				hasTopic && topic != nil,
+				hasSub && sub != nil,
+				hasSubCtx && subCancel != nil,
+				hasDiscoveryCtx && discoveryCancel != nil,
+				hasConfig && config != nil,
+				hasKey && key != nil,
+			)
+		}
+	}
+
+	assertNoGroupEntries := func(label string) {
+		t.Helper()
+		n.mu.RLock()
+		_, hasTopic := n.groupTopics[groupID]
+		_, hasSub := n.groupSubs[groupID]
+		_, hasSubCtx := n.groupSubCtx[groupID]
+		_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupID]
+		_, hasConfig := n.groupConfigs[groupID]
+		_, hasKey := n.groupKeys[groupID]
+		n.mu.RUnlock()
+		if hasTopic || hasSub || hasSubCtx || hasDiscoveryCtx || hasConfig || hasKey {
+			t.Fatalf(
+				"%s retained group entries: topic=%t sub=%t subCtx=%t discoveryCtx=%t config=%t key=%t",
+				label,
+				hasTopic,
+				hasSub,
+				hasSubCtx,
+				hasDiscoveryCtx,
+				hasConfig,
+				hasKey,
+			)
+		}
+	}
+
+	assertJoinedWith := func(label string, wantConfig *GroupConfig, wantKey *GroupKeyInfo) {
+		t.Helper()
+		n.mu.RLock()
+		topic := n.groupTopics[groupID]
+		sub := n.groupSubs[groupID]
+		config := n.groupConfigs[groupID]
+		key := n.groupKeys[groupID]
+		subCancel := n.groupSubCtx[groupID]
+		discoveryCancel := n.groupDiscoveryCtx[groupID]
+		n.mu.RUnlock()
+
+		if topic == nil || sub == nil || config == nil || key == nil || subCancel == nil || discoveryCancel == nil {
+			t.Fatalf(
+				"%s joined runtime incomplete: topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+				label,
+				topic != nil,
+				sub != nil,
+				config != nil,
+				key != nil,
+				subCancel != nil,
+				discoveryCancel != nil,
+			)
+		}
+		if config.Name != wantConfig.Name || len(config.Members) != len(wantConfig.Members) || config.Members[0].PeerId != wantConfig.Members[0].PeerId {
+			t.Fatalf("%s config = %#v, want %#v", label, config, wantConfig)
+		}
+		if key.Key != wantKey.Key || key.KeyEpoch != wantKey.KeyEpoch {
+			t.Fatalf("%s key = (%q,%d), want (%q,%d)", label, key.Key, key.KeyEpoch, wantKey.Key, wantKey.KeyEpoch)
+		}
+	}
+
+	assertValidRuntimeState("post-stress")
+
+	if err := n.LeaveGroupTopic(groupID); err != nil {
+		t.Fatalf("cleanup LeaveGroupTopic: %v", err)
+	}
+	assertNoGroupEntries("after deterministic cleanup")
+
+	latestConfig := newConfig("latest-rejoin")
+	latestKey := newKeyInfo("latest-rejoin", 10_000)
+	if err := n.JoinGroupTopic(groupID, latestConfig, latestKey); err != nil {
+		t.Fatalf("deterministic rejoin JoinGroupTopic: %v", err)
+	}
+	assertJoinedWith("after deterministic rejoin", latestConfig, latestKey)
+
+	if err := n.LeaveGroupTopic(groupID); err != nil {
+		t.Fatalf("final LeaveGroupTopic: %v", err)
+	}
+	assertNoGroupEntries("after final leave")
+}
+
 // ===========================================================================
 // Phase 1: Verify GroupUpdateConfig handles member addition
 // ===========================================================================
@@ -2128,6 +2667,8 @@ func TestUpdateGroupConfig_ReplacesConfigAtomically(t *testing.T) {
 		CreatedBy: "peer-1",
 	}
 	n.UpdateGroupConfig(groupId, newConfig)
+	newConfig.Name = "Caller Mutated"
+	newConfig.Members[1].PeerId = "caller-mutated-peer"
 
 	// Verify the config was replaced.
 	n.mu.RLock()
@@ -2144,7 +2685,13 @@ func TestUpdateGroupConfig_ReplacesConfigAtomically(t *testing.T) {
 		t.Errorf("expected config Name 'Updated', got %q", storedConfig.Name)
 	}
 	if storedConfig == originalConfig {
-		t.Error("stored config should be the new pointer, not the original")
+		t.Error("stored config should not be the original join snapshot")
+	}
+	if storedConfig == newConfig {
+		t.Error("stored config should snapshot the supplied update config")
+	}
+	if storedConfig.Members[1].PeerId != "peer-2" {
+		t.Errorf("stored config member[1] = %q, want snapshot peer-2", storedConfig.Members[1].PeerId)
 	}
 }
 
@@ -2175,6 +2722,8 @@ func TestUpdateGroupConfig_NonExistentGroup(t *testing.T) {
 
 	// Should not panic.
 	n.UpdateGroupConfig("nonexistent-group", config)
+	config.Name = "Caller Mutated Ghost Group"
+	config.Members[0].PeerId = "caller-mutated-peer"
 
 	// Verify the config was stored.
 	n.mu.RLock()
@@ -2186,6 +2735,12 @@ func TestUpdateGroupConfig_NonExistentGroup(t *testing.T) {
 	}
 	if storedConfig.Name != "Ghost Group" {
 		t.Errorf("expected 'Ghost Group', got %q", storedConfig.Name)
+	}
+	if storedConfig == config {
+		t.Fatal("non-existent group update should store a config snapshot")
+	}
+	if storedConfig.Members[0].PeerId != "peer-1" {
+		t.Errorf("stored member = %q, want snapshot peer-1", storedConfig.Members[0].PeerId)
 	}
 }
 
@@ -2308,15 +2863,214 @@ func TestJoinGroupTopic_ValidatorAcceptsAllListedMembers(t *testing.T) {
 func TestJoinGroupTopic_FailsWithoutPubSub(t *testing.T) {
 	n := NewNode() // NOT started — pubsub is nil.
 
+	groupId := "gl-001-unstarted-group"
 	config := testGroupConfig(GroupTypeChat)
 	keyInfo := &GroupKeyInfo{Key: "dummykey", KeyEpoch: 1}
 
-	err := n.JoinGroupTopic("some-group", config, keyInfo)
+	err := n.JoinGroupTopic(groupId, config, keyInfo)
 	if err == nil {
 		t.Fatal("expected error when pubsub is nil")
 	}
 	if err.Error() != "pubsub not initialized" {
 		t.Errorf("expected 'pubsub not initialized', got %q", err.Error())
+	}
+
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+
+	if n.pubsub != nil {
+		t.Fatal("pubsub should remain nil after GL-001 rejected join")
+	}
+	if _, ok := n.groupTopics[groupId]; ok {
+		t.Fatal("groupTopics should not contain GL-001 rejected group")
+	}
+	if _, ok := n.groupSubs[groupId]; ok {
+		t.Fatal("groupSubs should not contain GL-001 rejected group")
+	}
+	if _, ok := n.groupConfigs[groupId]; ok {
+		t.Fatal("groupConfigs should not contain GL-001 rejected group")
+	}
+	if _, ok := n.groupKeys[groupId]; ok {
+		t.Fatal("groupKeys should not contain GL-001 rejected group")
+	}
+	if _, ok := n.groupSubCtx[groupId]; ok {
+		t.Fatal("groupSubCtx should not contain GL-001 rejected group")
+	}
+	if _, ok := n.groupDiscoveryCtx[groupId]; ok {
+		t.Fatal("groupDiscoveryCtx should not contain GL-001 rejected group")
+	}
+}
+
+func TestJoinGroupTopic_RejectsNilKeyInfoAndLeavesNoGroupState(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupId := "gl-006-nil-key-rejected"
+	config := &GroupConfig{
+		Name:      "GL-006 Nil Key Rejected",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+
+	err = n.JoinGroupTopic(groupId, config, nil)
+	if err == nil {
+		t.Fatal("expected nil keyInfo join to fail")
+	}
+	if !strings.Contains(err.Error(), "missing group key info") {
+		t.Fatalf("expected missing group key info error, got %q", err.Error())
+	}
+
+	n.mu.RLock()
+	_, hasTopic := n.groupTopics[groupId]
+	_, hasSub := n.groupSubs[groupId]
+	_, hasConfig := n.groupConfigs[groupId]
+	_, hasKey := n.groupKeys[groupId]
+	_, hasSubCtx := n.groupSubCtx[groupId]
+	_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	n.mu.RUnlock()
+	if hasTopic || hasSub || hasConfig || hasKey || hasSubCtx || hasDiscoveryCtx {
+		t.Fatalf(
+			"nil key join should not store group state, got topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+			hasTopic,
+			hasSub,
+			hasConfig,
+			hasKey,
+			hasSubCtx,
+			hasDiscoveryCtx,
+		)
+	}
+
+	if keyInfo := n.GetGroupKeyInfo(groupId); keyInfo != nil {
+		t.Fatalf("GetGroupKeyInfo after rejected nil key join = %#v, want nil", keyInfo)
+	}
+
+	var msgID string
+	var peerCount int
+	var publishErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("PublishGroupMessage panicked after rejected nil key join: %v", r)
+			}
+		}()
+		msgID, peerCount, publishErr = n.PublishGroupMessage(
+			groupId,
+			senderPrivB64,
+			n.PeerId(),
+			senderPubB64,
+			"Admin",
+			"GL-006 publish after rejected join",
+			"",
+			nil,
+		)
+	}()
+	if publishErr == nil {
+		t.Fatal("expected PublishGroupMessage after rejected nil key join to fail")
+	}
+	if !strings.Contains(publishErr.Error(), "group not joined") {
+		t.Fatalf("expected group not joined publish error, got %q", publishErr.Error())
+	}
+	if msgID != "" || peerCount != 0 {
+		t.Fatalf("PublishGroupMessage after rejected nil key join returned msgID=%q peerCount=%d, want empty/0", msgID, peerCount)
+	}
+}
+
+func TestJoinGroupTopic_RejectsNilConfigAndLeavesNoGroupState(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "gl-007-nil-config-rejected"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	err = n.JoinGroupTopic(groupId, nil, keyInfo)
+	if err == nil {
+		t.Fatal("expected nil config join to fail")
+	}
+	if !strings.Contains(err.Error(), "missing group config") {
+		t.Fatalf("expected missing group config error, got %q", err.Error())
+	}
+
+	n.mu.RLock()
+	_, hasTopic := n.groupTopics[groupId]
+	_, hasSub := n.groupSubs[groupId]
+	_, hasConfig := n.groupConfigs[groupId]
+	_, hasKey := n.groupKeys[groupId]
+	_, hasSubCtx := n.groupSubCtx[groupId]
+	_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	n.mu.RUnlock()
+	if hasTopic || hasSub || hasConfig || hasKey || hasSubCtx || hasDiscoveryCtx {
+		t.Fatalf(
+			"nil config join should not store group state, got topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+			hasTopic,
+			hasSub,
+			hasConfig,
+			hasKey,
+			hasSubCtx,
+			hasDiscoveryCtx,
+		)
+	}
+
+	if keyInfo := n.GetGroupKeyInfo(groupId); keyInfo != nil {
+		t.Fatalf("GetGroupKeyInfo after rejected nil config join = %#v, want nil", keyInfo)
+	}
+
+	var msgID string
+	var peerCount int
+	var publishErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("PublishGroupMessage panicked after rejected nil config join: %v", r)
+			}
+		}()
+		msgID, peerCount, publishErr = n.PublishGroupMessage(
+			groupId,
+			senderPrivB64,
+			n.PeerId(),
+			senderPubB64,
+			"Admin",
+			"GL-007 publish after rejected join",
+			"",
+			nil,
+		)
+	}()
+	if publishErr == nil {
+		t.Fatal("expected PublishGroupMessage after rejected nil config join to fail")
+	}
+	if !strings.Contains(publishErr.Error(), "group not joined") {
+		t.Fatalf("expected group not joined publish error, got %q", publishErr.Error())
+	}
+	if msgID != "" || peerCount != 0 {
+		t.Fatalf("PublishGroupMessage after rejected nil config join returned msgID=%q peerCount=%d, want empty/0", msgID, peerCount)
 	}
 }
 
@@ -2351,6 +3105,427 @@ func TestJoinGroupTopic_RejectsDoubleJoin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already joined") {
 		t.Errorf("expected 'already joined' error, got %q", err.Error())
+	}
+}
+
+func TestJoinGroupTopic_JoinFailureUnregistersValidatorAndAllowsRetry(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "gl-003-join-failure-retry"
+	config := &GroupConfig{
+		Name:      "GL-003 Join Failure Retry",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	topicName := GroupTopicPrefix + groupId
+
+	staleTopic, err := n.pubsub.Join(topicName)
+	if err != nil {
+		t.Fatalf("create stale topic: %v", err)
+	}
+
+	err = n.JoinGroupTopic(groupId, config, keyInfo)
+	if err == nil {
+		t.Fatal("expected join failure while stale topic exists")
+	}
+	if !strings.Contains(err.Error(), "join topic") || !strings.Contains(err.Error(), "topic already exists") {
+		t.Fatalf("join failure error = %q, want join topic/topic already exists", err.Error())
+	}
+
+	n.mu.RLock()
+	_, hasTopic := n.groupTopics[groupId]
+	_, hasSub := n.groupSubs[groupId]
+	_, hasConfig := n.groupConfigs[groupId]
+	_, hasKey := n.groupKeys[groupId]
+	_, hasSubCtx := n.groupSubCtx[groupId]
+	_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	n.mu.RUnlock()
+	if hasTopic || hasSub || hasConfig || hasKey || hasSubCtx || hasDiscoveryCtx {
+		t.Fatalf(
+			"failed join should not store group state, got topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+			hasTopic,
+			hasSub,
+			hasConfig,
+			hasKey,
+			hasSubCtx,
+			hasDiscoveryCtx,
+		)
+	}
+
+	_ = staleTopic.Close()
+
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("retry JoinGroupTopic: %v", err)
+	}
+
+	msgID, _, err := n.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		n.PeerId(),
+		senderPubB64,
+		"Admin",
+		"GL-003 retry health",
+		"",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage after retry: %v", err)
+	}
+	if msgID == "" {
+		t.Fatal("PublishGroupMessage after retry returned empty message id")
+	}
+}
+
+func TestJoinGroupTopic_SubscribeFailureUnregistersValidatorClosesTopicAndAllowsRetry(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "gl-004-subscribe-failure-retry"
+	config := &GroupConfig{
+		Name:      "GL-004 Subscribe Failure Retry",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	forcedSubscribeErr := fmt.Errorf("gl-004 forced subscribe failure")
+	subscribeAttempts := 0
+	n.joinGroupTopicSubscribeHook = func(topic *pubsub.Topic) (*pubsub.Subscription, error) {
+		subscribeAttempts++
+		if subscribeAttempts == 1 {
+			return nil, forcedSubscribeErr
+		}
+		return topic.Subscribe()
+	}
+
+	err = n.JoinGroupTopic(groupId, config, keyInfo)
+	if err == nil {
+		t.Fatal("expected subscribe failure")
+	}
+	if !strings.Contains(err.Error(), "subscribe to topic") || !strings.Contains(err.Error(), forcedSubscribeErr.Error()) {
+		t.Fatalf("subscribe failure error = %q, want subscribe to topic/%q", err.Error(), forcedSubscribeErr.Error())
+	}
+
+	n.mu.RLock()
+	_, hasTopic := n.groupTopics[groupId]
+	_, hasSub := n.groupSubs[groupId]
+	_, hasConfig := n.groupConfigs[groupId]
+	_, hasKey := n.groupKeys[groupId]
+	_, hasSubCtx := n.groupSubCtx[groupId]
+	_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	n.mu.RUnlock()
+	if hasTopic || hasSub || hasConfig || hasKey || hasSubCtx || hasDiscoveryCtx {
+		t.Fatalf(
+			"failed subscribe should not store group state, got topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+			hasTopic,
+			hasSub,
+			hasConfig,
+			hasKey,
+			hasSubCtx,
+			hasDiscoveryCtx,
+		)
+	}
+
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("retry JoinGroupTopic: %v", err)
+	}
+	if subscribeAttempts != 2 {
+		t.Fatalf("subscribe attempts = %d, want 2", subscribeAttempts)
+	}
+
+	msgID, _, err := n.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		n.PeerId(),
+		senderPubB64,
+		"Admin",
+		"GL-004 retry health",
+		"",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage after retry: %v", err)
+	}
+	if msgID == "" {
+		t.Fatal("PublishGroupMessage after retry returned empty message id")
+	}
+}
+
+func TestJoinGroupTopic_DuplicateJoinPreservesExistingState(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	_, firstPubB64 := generateEd25519KeyPair(t)
+	firstGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate first group key: %v", err)
+	}
+	groupId := "gl-002-double-join"
+	firstConfig := &GroupConfig{
+		Name:      "GL-002 First Join",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: firstPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	firstKeyInfo := &GroupKeyInfo{Key: firstGroupKey, KeyEpoch: 1}
+
+	if err := n.JoinGroupTopic(groupId, firstConfig, firstKeyInfo); err != nil {
+		t.Fatalf("first JoinGroupTopic: %v", err)
+	}
+
+	n.mu.RLock()
+	initialTopic := n.groupTopics[groupId]
+	initialSub := n.groupSubs[groupId]
+	initialConfig := n.groupConfigs[groupId]
+	initialKey := n.groupKeys[groupId]
+	_, initialSubCtxPresent := n.groupSubCtx[groupId]
+	_, initialDiscoveryCtxPresent := n.groupDiscoveryCtx[groupId]
+	initialSubCtxLen := len(n.groupSubCtx)
+	initialDiscoveryCtxLen := len(n.groupDiscoveryCtx)
+	n.mu.RUnlock()
+
+	if initialTopic == nil {
+		t.Fatal("groupTopics should contain the first join topic")
+	}
+	if initialSub == nil {
+		t.Fatal("groupSubs should contain the first join subscription")
+	}
+	if initialConfig == nil {
+		t.Fatal("groupConfigs should contain the first join config")
+	}
+	if initialConfig == firstConfig {
+		t.Fatal("groupConfigs should snapshot the first join config")
+	}
+	if initialConfig.Name != firstConfig.Name || len(initialConfig.Members) != len(firstConfig.Members) || initialConfig.Members[0].PublicKey != firstPubB64 {
+		t.Fatalf("stored first config = %#v, want first join config values", initialConfig)
+	}
+	if initialKey == nil {
+		t.Fatal("groupKeys should contain the first join key")
+	}
+	if initialKey.Key != firstGroupKey || initialKey.KeyEpoch != firstKeyInfo.KeyEpoch {
+		t.Fatalf("stored first key = (%q,%d), want (%q,%d)", initialKey.Key, initialKey.KeyEpoch, firstGroupKey, firstKeyInfo.KeyEpoch)
+	}
+	if !initialSubCtxPresent {
+		t.Fatal("groupSubCtx should contain the first join")
+	}
+	if !initialDiscoveryCtxPresent {
+		t.Fatal("groupDiscoveryCtx should contain the first join")
+	}
+
+	_, secondPubB64 := generateEd25519KeyPair(t)
+	secondGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate second group key: %v", err)
+	}
+	secondConfig := &GroupConfig{
+		Name:      "GL-002 Duplicate Join",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: secondPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	secondKeyInfo := &GroupKeyInfo{Key: secondGroupKey, KeyEpoch: 2}
+
+	err = n.JoinGroupTopic(groupId, secondConfig, secondKeyInfo)
+	if err == nil {
+		t.Fatal("expected error on duplicate join")
+	}
+	if !strings.Contains(err.Error(), "already joined") {
+		t.Fatalf("expected 'already joined' error, got %q", err.Error())
+	}
+
+	n.mu.RLock()
+	currentTopic := n.groupTopics[groupId]
+	currentSub := n.groupSubs[groupId]
+	currentConfig := n.groupConfigs[groupId]
+	currentKey := n.groupKeys[groupId]
+	_, currentSubCtxPresent := n.groupSubCtx[groupId]
+	_, currentDiscoveryCtxPresent := n.groupDiscoveryCtx[groupId]
+	currentSubCtxLen := len(n.groupSubCtx)
+	currentDiscoveryCtxLen := len(n.groupDiscoveryCtx)
+	n.mu.RUnlock()
+
+	if currentTopic != initialTopic {
+		t.Fatal("duplicate join replaced the first topic")
+	}
+	if currentSub != initialSub {
+		t.Fatal("duplicate join replaced the first subscription")
+	}
+	if currentConfig != initialConfig {
+		t.Fatal("duplicate join replaced the first config")
+	}
+	if currentKey != initialKey {
+		t.Fatal("duplicate join replaced the first key info")
+	}
+	if currentKey.Key != firstGroupKey || currentKey.KeyEpoch != firstKeyInfo.KeyEpoch {
+		t.Fatalf("stored key changed to (%q,%d), want (%q,%d)", currentKey.Key, currentKey.KeyEpoch, firstGroupKey, firstKeyInfo.KeyEpoch)
+	}
+	if currentKey.Key == secondKeyInfo.Key || currentKey.KeyEpoch == secondKeyInfo.KeyEpoch {
+		t.Fatal("duplicate join stored the second key inputs")
+	}
+	if !currentSubCtxPresent {
+		t.Fatal("groupSubCtx should still contain the first join")
+	}
+	if !currentDiscoveryCtxPresent {
+		t.Fatal("groupDiscoveryCtx should still contain the first join")
+	}
+	if currentSubCtxLen != initialSubCtxLen {
+		t.Fatalf("groupSubCtx length changed from %d to %d", initialSubCtxLen, currentSubCtxLen)
+	}
+	if currentDiscoveryCtxLen != initialDiscoveryCtxLen {
+		t.Fatalf("groupDiscoveryCtx length changed from %d to %d", initialDiscoveryCtxLen, currentDiscoveryCtxLen)
+	}
+}
+
+func TestJoinGroupTopic_SuccessStoresAtomicStateAndSupportsImmediateKeyInfoAndPublish(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+	groupId := "gl-005-success-atomic-state"
+	config := &GroupConfig{
+		Name:      "GL-005 Success Atomic State",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	n.mu.RLock()
+	storedTopic, hasTopic := n.groupTopics[groupId]
+	storedSub, hasSub := n.groupSubs[groupId]
+	storedConfig, hasConfig := n.groupConfigs[groupId]
+	storedKey, hasKey := n.groupKeys[groupId]
+	storedSubCancel, hasSubCtx := n.groupSubCtx[groupId]
+	storedDiscoveryCancel, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	n.mu.RUnlock()
+
+	if !hasTopic || storedTopic == nil ||
+		!hasSub || storedSub == nil ||
+		!hasConfig || storedConfig == nil ||
+		!hasKey || storedKey == nil ||
+		!hasSubCtx || storedSubCancel == nil ||
+		!hasDiscoveryCtx || storedDiscoveryCancel == nil {
+		t.Fatalf(
+			"successful join state incomplete: topic=%t sub=%t config=%t key=%t subCtx=%t discoveryCtx=%t",
+			hasTopic && storedTopic != nil,
+			hasSub && storedSub != nil,
+			hasConfig && storedConfig != nil,
+			hasKey && storedKey != nil,
+			hasSubCtx && storedSubCancel != nil,
+			hasDiscoveryCtx && storedDiscoveryCancel != nil,
+		)
+	}
+	if storedConfig == config {
+		t.Fatal("groupConfigs should snapshot the supplied config")
+	}
+	if storedConfig.Name != config.Name || len(storedConfig.Members) != len(config.Members) || storedConfig.Members[0].PublicKey != senderPubB64 {
+		t.Fatalf("stored config = %#v, want supplied config values", storedConfig)
+	}
+	if storedKey.Key != groupKey || storedKey.KeyEpoch != keyInfo.KeyEpoch {
+		t.Fatalf("stored key = (%q,%d), want (%q,%d)", storedKey.Key, storedKey.KeyEpoch, groupKey, keyInfo.KeyEpoch)
+	}
+	if storedKey == keyInfo {
+		t.Fatal("groupKeys should snapshot the supplied key info")
+	}
+
+	retrieved := n.GetGroupKeyInfo(groupId)
+	if retrieved == nil {
+		t.Fatal("GetGroupKeyInfo returned nil immediately after join")
+	}
+	if retrieved.Key != groupKey || retrieved.KeyEpoch != keyInfo.KeyEpoch {
+		t.Fatalf("GetGroupKeyInfo = (%q,%d), want (%q,%d)", retrieved.Key, retrieved.KeyEpoch, groupKey, keyInfo.KeyEpoch)
+	}
+	if retrieved == storedKey {
+		t.Fatal("GetGroupKeyInfo should return a clone, not the internal stored key pointer")
+	}
+
+	msgID, _, err := n.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		n.PeerId(),
+		senderPubB64,
+		"Admin",
+		"GL-005 immediate publish health",
+		"",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage immediately after join: %v", err)
+	}
+	if msgID == "" {
+		t.Fatal("PublishGroupMessage immediately after join returned empty message id")
 	}
 }
 
@@ -2696,6 +3871,468 @@ func TestUpdateGroupConfig_PreservesDiscoveryLoop(t *testing.T) {
 	n.mu.RUnlock()
 	if !hasCtxAfter {
 		t.Error("groupDiscoveryCtx should still exist after UpdateGroupConfig")
+	}
+}
+
+func assertGL012NoPanic(t *testing.T, label string, run func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("%s panicked: %v", label, r)
+		}
+	}()
+	run()
+}
+
+func TestGL012UpdateGroupConfigNilDisablesJoinedGroupWithoutPanic(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "gl012-nil-config-disables-joined-group"
+	senderPeerId := n.PeerId()
+	senderPID, err := peer.Decode(senderPeerId)
+	if err != nil {
+		t.Fatalf("decode sender peer id: %v", err)
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	validConfig := &GroupConfig{
+		Name:      "GL012 Valid Config",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: senderPeerId,
+	}
+	if err := n.JoinGroupTopic(groupId, validConfig, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	validEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"GL012 valid envelope",
+	)
+	validator := n.groupTopicValidator(groupId)
+	msg := &pubsub.Message{Message: &pb.Message{Data: []byte(validEnvelope)}}
+	if result := validator(context.Background(), senderPID, msg); result != pubsub.ValidationAccept {
+		t.Fatalf("validator before nil update = %v, want ValidationAccept", result)
+	}
+
+	n.UpdateGroupConfig(groupId, nil)
+
+	wantDisabledErr := fmt.Sprintf("group not joined: %s", groupId)
+	assertGL012NoPanic(t, "PublishGroupMessage after nil config update", func() {
+		msgID, peerCount, publishErr := n.PublishGroupMessage(
+			groupId,
+			senderPrivB64,
+			senderPeerId,
+			senderPubB64,
+			"Admin",
+			"GL012 publish after nil config",
+			"",
+			nil,
+		)
+		if publishErr == nil {
+			t.Fatal("expected PublishGroupMessage after nil config update to fail")
+		}
+		if publishErr.Error() != wantDisabledErr {
+			t.Fatalf("PublishGroupMessage error = %q, want %q", publishErr.Error(), wantDisabledErr)
+		}
+		if msgID != "" || peerCount != 0 {
+			t.Fatalf("PublishGroupMessage returned msgID=%q peerCount=%d, want empty/0", msgID, peerCount)
+		}
+	})
+
+	assertGL012NoPanic(t, "PublishGroupReaction after nil config update", func() {
+		reactionErr := n.PublishGroupReaction(
+			groupId,
+			senderPrivB64,
+			senderPeerId,
+			senderPubB64,
+			`{"messageId":"gl012-message","emoji":"ok","action":"add"}`,
+		)
+		if reactionErr == nil {
+			t.Fatal("expected PublishGroupReaction after nil config update to fail")
+		}
+		if reactionErr.Error() != wantDisabledErr {
+			t.Fatalf("PublishGroupReaction error = %q, want %q", reactionErr.Error(), wantDisabledErr)
+		}
+	})
+
+	assertGL012NoPanic(t, "real validator after nil config update", func() {
+		if result := validator(context.Background(), senderPID, msg); result != pubsub.ValidationReject {
+			t.Fatalf("validator after nil config update = %v, want ValidationReject", result)
+		}
+	})
+	assertGL012NoPanic(t, "dialKnownGroupMembers after nil config update", func() {
+		n.dialKnownGroupMembers(groupId, true)
+	})
+	assertGL012NoPanic(t, "dialKnownGroupMembersDirectOnly after nil config update", func() {
+		n.dialKnownGroupMembersDirectOnly(groupId)
+	})
+	assertGL012NoPanic(t, "countConnectedGroupMembers after nil config update", func() {
+		if count := n.countConnectedGroupMembers(groupId); count != 0 {
+			t.Fatalf("countConnectedGroupMembers after nil config update = %d, want 0", count)
+		}
+	})
+	assertGL012NoPanic(t, "expectedConnectedGroupMembers after nil config update", func() {
+		if expected := n.expectedConnectedGroupMembers(groupId); expected != 0 {
+			t.Fatalf("expectedConnectedGroupMembers after nil config update = %d, want 0", expected)
+		}
+	})
+
+	n.mu.RLock()
+	_, hasConfig := n.groupConfigs[groupId]
+	_, hasTopic := n.groupTopics[groupId]
+	_, hasSub := n.groupSubs[groupId]
+	storedKey := n.groupKeys[groupId]
+	_, hasDiscoveryCtx := n.groupDiscoveryCtx[groupId]
+	n.mu.RUnlock()
+	if hasConfig {
+		t.Fatal("groupConfigs should delete the group config after UpdateGroupConfig(groupId, nil)")
+	}
+	if !hasTopic || !hasSub || storedKey == nil || !hasDiscoveryCtx {
+		t.Fatalf(
+			"nil config update should preserve repairable joined state, got topic=%t sub=%t key=%t discoveryCtx=%t",
+			hasTopic,
+			hasSub,
+			storedKey != nil,
+			hasDiscoveryCtx,
+		)
+	}
+
+	n.UpdateGroupConfig(groupId, validConfig)
+	msgID, _, err := n.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		senderPeerId,
+		senderPubB64,
+		"Admin",
+		"GL012 publish after config repair",
+		"gl012-repaired-message",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage after valid config repair: %v", err)
+	}
+	if msgID != "gl012-repaired-message" {
+		t.Fatalf("PublishGroupMessage after repair returned msgID=%q, want gl012-repaired-message", msgID)
+	}
+	if result := validator(context.Background(), senderPID, msg); result != pubsub.ValidationAccept {
+		t.Fatalf("validator after valid config repair = %v, want ValidationAccept", result)
+	}
+}
+
+func TestGL012UpdateGroupConfigNilConcurrentReadersAreRaceFree(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "gl012-nil-config-reader-race"
+	senderPeerId := n.PeerId()
+	senderPID, err := peer.Decode(senderPeerId)
+	if err != nil {
+		t.Fatalf("decode sender peer id: %v", err)
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	n.UpdateGroupKey(groupId, keyInfo)
+
+	newValidConfig := func(iteration int) *GroupConfig {
+		return &GroupConfig{
+			Name:      fmt.Sprintf("GL012 Race Config %d", iteration),
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: senderPeerId, Role: GroupRoleAdmin, PublicKey: senderPubB64},
+			},
+			CreatedBy: senderPeerId,
+		}
+	}
+	n.UpdateGroupConfig(groupId, newValidConfig(-1))
+
+	envelopeJSON := buildTestEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"GL012 race validator",
+	)
+	validator := n.groupTopicValidator(groupId)
+	msg := &pubsub.Message{Message: &pb.Message{Data: []byte(envelopeJSON)}}
+
+	const readerCount = 8
+	const updateCount = 500
+	start := make(chan struct{})
+	stop := make(chan struct{})
+	unexpected := make(chan pubsub.ValidationResult, 1)
+	var wg sync.WaitGroup
+	for i := 0; i < readerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				result := validator(context.Background(), senderPID, msg)
+				if result != pubsub.ValidationAccept && result != pubsub.ValidationReject {
+					select {
+					case unexpected <- result:
+					default:
+					}
+					return
+				}
+				_ = n.countConnectedGroupMembers(groupId)
+				_ = n.expectedConnectedGroupMembers(groupId)
+				n.dialKnownGroupMembers(groupId, true)
+				n.dialKnownGroupMembersDirectOnly(groupId)
+			}
+		}()
+	}
+
+	close(start)
+	for i := 0; i < updateCount; i++ {
+		n.UpdateGroupConfig(groupId, nil)
+		n.UpdateGroupConfig(groupId, newValidConfig(i))
+	}
+	close(stop)
+	wg.Wait()
+
+	select {
+	case result := <-unexpected:
+		t.Fatalf("validator returned unexpected result %v", result)
+	default:
+	}
+}
+
+func TestGL011UpdateGroupConfigSnapshotsMembershipForValidatorReads(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	_, mutatedPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "gl011-validator-snapshot"
+	senderPeerId := generatePeerIDStr(t)
+	senderPID, err := peer.Decode(senderPeerId)
+	if err != nil {
+		t.Fatalf("decode sender peer id: %v", err)
+	}
+	deviceId := "gl011-sender-phone"
+
+	n := NewNode()
+	n.groupConfigs = map[string]*GroupConfig{
+		groupId: {
+			Name:      "GL011 Initial",
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: "initial-admin", Role: GroupRoleAdmin, PublicKey: "initialPubKey"},
+			},
+			CreatedBy: "initial-admin",
+		},
+	}
+	n.groupKeys = map[string]*GroupKeyInfo{
+		groupId: {Key: groupKey, KeyEpoch: 1},
+	}
+
+	updatedConfig := &GroupConfig{
+		Name:      "GL011 Updated",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{
+				PeerId:    senderPeerId,
+				Role:      GroupRoleWriter,
+				PublicKey: senderPubB64,
+				Devices: []GroupMemberDevice{
+					{
+						DeviceId:               deviceId,
+						TransportPeerId:        senderPeerId,
+						DeviceSigningPublicKey: senderPubB64,
+						Status:                 "active",
+					},
+				},
+			},
+		},
+		CreatedBy: senderPeerId,
+	}
+
+	n.UpdateGroupConfig(groupId, updatedConfig)
+	updatedConfig.Members[0].PeerId = generatePeerIDStr(t)
+	updatedConfig.Members[0].PublicKey = mutatedPubB64
+	updatedConfig.Members[0].Devices[0].DeviceSigningPublicKey = mutatedPubB64
+	updatedConfig.Members[0].Devices[0].Status = "revoked"
+
+	envelopeJSON := buildTestDeviceEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		deviceId,
+		senderPeerId,
+		senderPubB64,
+		"",
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		1,
+		"GL011 validator snapshot",
+	)
+	validator := n.groupTopicValidator(groupId)
+	msg := &pubsub.Message{Message: &pb.Message{Data: []byte(envelopeJSON)}}
+	if result := validator(context.Background(), senderPID, msg); result != pubsub.ValidationAccept {
+		t.Fatalf("validator result after caller mutation = %v, want ValidationAccept from stored snapshot", result)
+	}
+}
+
+func TestGL011UpdateGroupConfigConcurrentValidatorReadsAreRaceFree(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	_, mutatedPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	groupId := "gl011-validator-update-race"
+	senderPeerId := generatePeerIDStr(t)
+	senderPID, err := peer.Decode(senderPeerId)
+	if err != nil {
+		t.Fatalf("decode sender peer id: %v", err)
+	}
+	deviceId := "gl011-race-device"
+
+	n := NewNode()
+	n.groupConfigs = map[string]*GroupConfig{}
+	n.groupKeys = map[string]*GroupKeyInfo{
+		groupId: {Key: groupKey, KeyEpoch: 1},
+	}
+
+	newMutableConfig := func(iteration int) *GroupConfig {
+		return &GroupConfig{
+			Name:      fmt.Sprintf("GL011 Race Config %d", iteration),
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{
+					PeerId:    senderPeerId,
+					Role:      GroupRoleWriter,
+					PublicKey: senderPubB64,
+					Devices: []GroupMemberDevice{
+						{
+							DeviceId:               deviceId,
+							TransportPeerId:        senderPeerId,
+							DeviceSigningPublicKey: senderPubB64,
+							Status:                 "active",
+						},
+					},
+				},
+			},
+			CreatedBy: senderPeerId,
+		}
+	}
+	n.UpdateGroupConfig(groupId, newMutableConfig(-1))
+
+	envelopeJSON := buildTestDeviceEnvelope(
+		t,
+		groupId,
+		senderPeerId,
+		deviceId,
+		senderPeerId,
+		senderPubB64,
+		"",
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		1,
+		"GL011 race validator",
+	)
+	validator := n.groupTopicValidator(groupId)
+	msg := &pubsub.Message{Message: &pb.Message{Data: []byte(envelopeJSON)}}
+
+	const validatorCount = 8
+	const updateCount = 500
+	start := make(chan struct{})
+	stop := make(chan struct{})
+	unexpected := make(chan pubsub.ValidationResult, 1)
+	var wg sync.WaitGroup
+	for i := 0; i < validatorCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				result := validator(context.Background(), senderPID, msg)
+				if result != pubsub.ValidationAccept && result != pubsub.ValidationReject {
+					select {
+					case unexpected <- result:
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	close(start)
+	for i := 0; i < updateCount; i++ {
+		config := newMutableConfig(i)
+		n.UpdateGroupConfig(groupId, config)
+		config.Members[0].PeerId = generatePeerIDStr(t)
+		config.Members[0].PublicKey = mutatedPubB64
+		config.Members[0].Devices[0].DeviceSigningPublicKey = mutatedPubB64
+		config.Members[0].Devices[0].Status = "revoked"
+	}
+	close(stop)
+	wg.Wait()
+
+	select {
+	case result := <-unexpected:
+		t.Fatalf("validator returned unexpected result %v", result)
+	default:
 	}
 }
 

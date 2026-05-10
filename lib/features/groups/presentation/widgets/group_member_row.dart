@@ -6,6 +6,7 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member_identity_safety.dart';
+import 'package:flutter_app/features/groups/presentation/group_invite_status_presentation.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 
 /// Shows a member's name, role badge, and optional action buttons.
@@ -13,6 +14,7 @@ class GroupMemberRow extends StatelessWidget {
   final GroupMember member;
   final GroupMemberIdentitySafety? identitySafety;
   final GroupInviteDeliveryStatus inviteStatus;
+  final GroupInviteDeliveryAttempt? inviteAttempt;
   final bool isAdmin;
   final bool isSelf;
   final bool isResendingInvite;
@@ -25,6 +27,7 @@ class GroupMemberRow extends StatelessWidget {
     required this.member,
     this.identitySafety,
     this.inviteStatus = GroupInviteDeliveryStatus.unknown,
+    this.inviteAttempt,
     this.isAdmin = false,
     this.isSelf = false,
     this.isResendingInvite = false,
@@ -68,6 +71,7 @@ class GroupMemberRow extends StatelessWidget {
                   _InviteStatusBadge(
                     peerId: member.peerId,
                     status: inviteStatus,
+                    lastError: inviteAttempt?.lastError,
                   ),
                 ],
                 if (identitySafety?.identityChanged == true) ...[
@@ -94,7 +98,7 @@ class GroupMemberRow extends StatelessWidget {
                       'group-member-resend-invite-${member.peerId}',
                     ),
                     onPressed: isResendingInvite ? null : onResendInvite,
-                    child: Text(isResendingInvite ? 'Sending' : 'Send again'),
+                    child: Text(isResendingInvite ? 'Sending...' : 'Resend'),
                   ),
                 if (onToggleAdminRole != null)
                   PopupMenuButton<_GroupMemberAction>(
@@ -149,51 +153,64 @@ enum _GroupMemberAction { toggleAdminRole }
 class _InviteStatusBadge extends StatelessWidget {
   final String peerId;
   final GroupInviteDeliveryStatus status;
+  final String? lastError;
 
-  const _InviteStatusBadge({required this.peerId, required this.status});
+  const _InviteStatusBadge({
+    required this.peerId,
+    required this.status,
+    this.lastError,
+  });
 
   @override
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final color = _color(readableColors);
-
-    return Container(
-      key: ValueKey('group-member-invite-status-$peerId'),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withOpacity(readableColors.isLightSurface ? 0.08 : 0.14),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: color.withOpacity(readableColors.isLightSurface ? 0.22 : 0.26),
-          width: 0.5,
-        ),
-      ),
-      child: Text(
-        _label,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
+    final detail = groupInviteStatusDetail(
+      status: status,
+      lastError: lastError,
     );
-  }
 
-  String get _label {
-    switch (status) {
-      case GroupInviteDeliveryStatus.sent:
-        return 'Invite sent';
-      case GroupInviteDeliveryStatus.queued:
-        return 'Invite queued';
-      case GroupInviteDeliveryStatus.needsResend:
-        return 'Needs resend';
-      case GroupInviteDeliveryStatus.cannotSend:
-        return 'Cannot send';
-      case GroupInviteDeliveryStatus.joined:
-        return 'Joined';
-      case GroupInviteDeliveryStatus.unknown:
-        return 'Invite unknown';
-    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          key: ValueKey('group-member-invite-status-$peerId'),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withOpacity(
+              readableColors.isLightSurface ? 0.08 : 0.14,
+            ),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: color.withOpacity(
+                readableColors.isLightSurface ? 0.22 : 0.26,
+              ),
+              width: 0.5,
+            ),
+          ),
+          child: Text(
+            groupInviteStatusLabel(status),
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        if (detail != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            detail,
+            key: ValueKey('group-member-invite-status-detail-$peerId'),
+            style: TextStyle(
+              color: readableColors.textSecondary,
+              fontSize: 12,
+              height: 1.25,
+            ),
+          ),
+        ],
+      ],
+    );
   }
 
   Color _color(BackgroundReadableColors readableColors) {

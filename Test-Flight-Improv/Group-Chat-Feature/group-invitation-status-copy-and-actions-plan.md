@@ -57,12 +57,16 @@ Primary production files:
 - `lib/features/groups/domain/models/group_invite_delivery_attempt.dart`
 - `lib/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart`
 - `lib/features/groups/application/record_group_invite_delivery_attempts.dart`
+- `lib/features/groups/application/send_group_invite_use_case.dart`
+- `lib/features/groups/application/create_group_with_members_use_case.dart`
 - `lib/features/groups/application/resend_group_invite_use_case.dart`
 
 Primary tests and simulator artifacts:
 
 - `test/features/groups/presentation/group_info_screen_test.dart`
 - `test/features/groups/presentation/group_info_wired_test.dart`
+- `test/features/groups/application/send_group_invite_use_case_test.dart`
+- `test/features/groups/application/create_group_with_members_use_case_test.dart`
 - `test/features/groups/application/resend_group_invite_use_case_test.dart`
 - `integration_test/group_invite_status_matrix_harness.dart`
 - `integration_test/scripts/run_group_invite_status_matrix_sim.dart`
@@ -106,6 +110,10 @@ Inspect these before coding:
   - `lastError` availability.
 - `lib/features/groups/application/record_group_invite_delivery_attempts.dart`
   - Source of persisted failure codes.
+- `lib/features/groups/application/send_group_invite_use_case.dart`
+  - Source of the direct-send versus inbox-fallback result semantics.
+- `lib/features/groups/application/create_group_with_members_use_case.dart`
+  - Source of create-flow invite status persistence for partial success and cannot-send rows.
 - `lib/features/groups/application/resend_group_invite_use_case.dart`
   - Source of resend result statuses and `group_key_missing`.
 - `test/features/groups/presentation/group_info_screen_test.dart`
@@ -126,6 +134,8 @@ Already covered:
 - `group_info_screen_test.dart` proves `Needs resend` currently shows a resend action only for the retry-needed status.
 - `group_info_wired_test.dart` proves invite statuses load into Members rows.
 - `group_info_wired_test.dart` includes a full status matrix for `Invite sent`, `Invite queued`, `Needs resend`, `Cannot send`, `Joined`, and `Invite unknown`.
+- `send_group_invite_use_case_test.dart` proves `queued` means direct send failed but the relay/offline inbox accepted the invite.
+- `create_group_with_members_use_case_test.dart` proves create-flow partial invite delivery persists `cannotSend` when a selected member is missing secure invite data.
 - `resend_group_invite_use_case_test.dart` proves resend records `sent` and `needsResend` outcomes.
 - `integration_test/scripts/run_group_invite_status_matrix_sim.dart` already provides four-simulator seeded creator-side display proof for the current labels.
 
@@ -171,6 +181,10 @@ Add or update these before production edits:
    - Update creator assertions to the new labels.
    - Add assertion for cannot-send reason text.
    - Keep `relayLifecycleProof: false`; this is a display proof, not a real relay proof.
+
+4. Application semantic guard tests.
+   - Keep or add direct coverage in `send_group_invite_use_case_test.dart` proving `SendGroupInviteResult.queued` is produced only when inbox fallback storage succeeds after direct send fails.
+   - Keep or add direct coverage in `create_group_with_members_use_case_test.dart` proving create-flow cannot-send rows are persisted from missing secure invite data and carry a failure reason usable by presentation.
 
 ## Step-By-Step Implementation Plan
 
@@ -282,6 +296,9 @@ Direct host tests:
 ```bash
 flutter test test/features/groups/presentation/group_info_screen_test.dart
 flutter test test/features/groups/presentation/group_info_wired_test.dart
+flutter test test/features/groups/application/send_group_invite_use_case_test.dart \
+  --plain-name "stores invite in inbox when direct send fails"
+flutter test test/features/groups/application/create_group_with_members_use_case_test.dart
 flutter test test/features/groups/application/resend_group_invite_use_case_test.dart
 ```
 
@@ -289,6 +306,12 @@ Named group gate:
 
 ```bash
 ./scripts/run_test_gates.sh groups
+```
+
+Baseline gate:
+
+```bash
+./scripts/run_test_gates.sh baseline
 ```
 
 Four-simulator proof:
@@ -304,15 +327,11 @@ Final hygiene:
 git diff --check
 ```
 
-If Flutter production code changes and the execution contract requires broader release confidence, also run:
-
-```bash
-./scripts/run_test_gates.sh baseline
-```
-
 ## Known-Failure Interpretation
 
 - A failure in `group_info_screen_test.dart` or `group_info_wired_test.dart` after this change is session-caused unless proven otherwise.
+- A failure in the direct `send_group_invite_use_case_test.dart` inbox-fallback test means the new `In their inbox` wording no longer has a valid delivery-semantics basis and must block acceptance.
+- A failure in `create_group_with_members_use_case_test.dart` means cannot-send persistence or failure-reason evidence is no longer trustworthy and must block acceptance.
 - A failure in `resend_group_invite_use_case_test.dart` should be treated as a status/result mapping regression until triaged.
 - A four-simulator failure before app launch or device attach is environment/build related unless logs show a UI assertion mismatch.
 - A four-simulator creator assertion failure is product UI evidence and must be fixed before acceptance.
@@ -330,7 +349,10 @@ This session is done only when:
 - `Cannot send` includes a clear user-readable reason for known and fallback error cases.
 - Resend snackbar copy matches the new language.
 - Host tests pass.
+- The direct inbox-fallback semantic test proves `queued` still means the invite is in the recipient inbox.
+- The create-flow application suite proves cannot-send persistence and failure-reason evidence remain intact.
 - `./scripts/run_test_gates.sh groups` passes.
+- `./scripts/run_test_gates.sh baseline` passes.
 - The four-simulator runner passes with the new expected labels.
 - `git diff --check` passes.
 
@@ -387,3 +409,17 @@ Accepted differences intentionally left unchanged:
 
 - Simulator proof is seeded display proof, not organic relay/testpeer lifecycle proof.
 
+## Execution Progress
+
+- 2026-05-09 13:41 CEST | Contract extracted | Files inspected: this plan, `Test-Flight-Improv/test-gate-definitions.md`, `Test-Flight-Improv/_current-test-map.md`, `Test-Flight-Improv/Group-Chat-Feature/group-invitation-status-regression-coverage-plan.md`, `git status --short`. Command running: none. Decision: execute exactly the plan's narrow Group Info invite-status copy/action scope with regression-first tests, required direct host tests, `groups`, `baseline`, four-simulator display proof, and `git diff --check`; existing dirty plan edits are part of the contract and must be preserved. Next action: spawn isolated Executor agent.
+- 2026-05-09 13:41 CEST | Executor spawned/running | Files inspected: same contract set. Command running: spawned Executor worker. Decision: Executor owns regression-first implementation and required evidence capture for the plan scope. Next action: wait for Executor result, then spawn QA Reviewer.
+- 2026-05-09 13:42 CEST | Executor context started | Files inspected: this plan diff, `Test-Flight-Improv/test-gate-definitions.md`, `git status --short`. Command running: none. Decision: preserve existing dirty plan edits and implement only Group Info Members invite-status copy/action/reason display plus required tests. Next action: inspect primary production/test entry files before editing.
+- 2026-05-09 13:46 CEST | Primary files inspected | Files inspected: `group_member_row.dart`, `group_info_screen.dart`, `group_info_wired.dart`, invite attempt model/repository, invite attempt recorder, send/create/resend invite use cases, presentation tests, application tests, four-simulator harness. Command running: none. Decision: add a narrow presentation attempt map so persisted `lastError` reaches `GroupMemberRow`; do not alter status enums, persistence, delivery mapping, retry behavior, or simulator runner shape. Next action: update regressions and production seam in one pass.
+- 2026-05-09 13:49 CEST | Executor closed after bounded wait | Files inspected/touched by Executor so far: plan file, `group_info_screen.dart`, `group_info_wired.dart`, `group_member_row.dart`, `group_info_screen_test.dart`, new `group_invite_status_presentation.dart`. Command running: none. Decision: first Executor produced partial code/test edits but no trustworthy final handoff or exact test evidence, so it was closed as a no-progress child result under the bounded-wait rule; repo evidence exists, so use one fresh continuation Executor pass rather than waiting or relaunching blindly. Next action: spawn fresh Executor continuation to complete seam, tests, docs, and required evidence.
+- 2026-05-09 13:49 CEST | Continuation Executor spawned/running | Files inspected: partial diff and stale label search across `lib`, `test`, `integration_test`, and `Test-Flight-Improv`. Command running: spawned Executor worker. Decision: partial landing still needs wired-test updates, simulator harness expectations, stale test-map/gate-doc copy updates, formatting, and exact required test/gate evidence. Next action: wait for continuation Executor result, then spawn QA Reviewer.
+- 2026-05-09 14:01 CEST | Continuation Executor closed after bounded wait | Files inspected/touched by continuation so far: plan file plus `group_info_wired_test.dart` in addition to the first partial landing. Command running: none. Decision: second Executor also failed to return a trustworthy final handoff or test evidence after the allowed bounded waits; current repo state must be inspected from files before deciding whether QA can review a coherent landing or the run is blocked by child-agent no-progress. Next action: inspect diffs, stale labels, and missing required evidence.
+- 2026-05-09 14:03 CEST | Controller verification recovery started | Files inspected/touched: full current diffs, `integration_test/group_invite_status_matrix_harness.dart`, `Test-Flight-Improv/test-gate-definitions.md`, `Test-Flight-Improv/Group-Chat-Feature/test-inventory.md`, stale-label search. Command running: none. Decision: file-backed landing now includes production seam, screen/wired tests, simulator harness, gate-doc update, and create-flow lastError guard; only a stale inventory phrase was updated locally. Next action: format changed Dart files and run required direct validations before QA.
+- 2026-05-09 14:04 CEST | Direct host tests finished | Files inspected/touched: changed Dart files after `dart format`. Commands finished: `flutter test test/features/groups/presentation/group_info_screen_test.dart` passed (`+20`); `flutter test test/features/groups/presentation/group_info_wired_test.dart` passed (`+40`); `flutter test test/features/groups/application/send_group_invite_use_case_test.dart --plain-name "stores invite in inbox when direct send fails"` passed (`+1`); `flutter test test/features/groups/application/create_group_with_members_use_case_test.dart` passed (`+18`); `flutter test test/features/groups/application/resend_group_invite_use_case_test.dart` passed (`+3`). Decision: direct host evidence is green, including queued inbox semantics and cannot-send failure reason persistence. Next action: run required named gates.
+- 2026-05-09 14:12 CEST | Required gates and simulator proof finished | Files inspected/touched: command evidence, simulator verdicts, changed docs/tests. Commands finished: `./scripts/run_test_gates.sh groups` passed (`+103`); first `./scripts/run_test_gates.sh baseline` attempt failed after host tests passed because Flutter reported multiple connected devices and required a device choice; classified as environment/tooling device-selection failure, not session-caused; `FLUTTER_DEVICE_ID=macos ./scripts/run_test_gates.sh baseline` then passed; `dart run integration_test/scripts/run_group_invite_status_matrix_sim.dart -d 38FECA55-03C1-4907-BD9D-8E64BF8E3469,347FB118-10D0-40C8-A05B-B0C3BD6B8CCD,5BA69F1C-B112-47BE-B1FF-8C1003728C8F,1B098DFF-6294-407A-A209-BBF360893485` passed with creator labels `Invite sent`, `In their inbox`, `Resend needed`, `Cannot send`, `Joined`, `Invite unknown` and `relayLifecycleProof: false`; `git diff --check` passed. Decision: all required evidence is present after device-qualified baseline retry. Next action: spawn isolated QA Reviewer.
+- 2026-05-09 14:13 CEST | QA Reviewer spawned/running | Files inspected/touched: final diff surface and `git status --short`; generated `info.plist` timestamp removed from diff; `git diff --check` reran clean. Command running: spawned QA Reviewer. Decision: QA should review scope adherence, tests/gates, and done criteria from the file-backed landing and command evidence. Next action: wait for QA result.
+- 2026-05-09 14:16 CEST | QA Reviewer completed and final verdict written | Files inspected/touched: QA result and this plan file. Command running: none. Decision: QA found no blocking issues and no non-blocking follow-ups; production seam, copy, reason mapping, tests, gates, simulator proof, and diff hygiene are sufficient. Final verdict: `accepted`. Next action: final response.

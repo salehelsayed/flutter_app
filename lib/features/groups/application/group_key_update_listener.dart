@@ -32,6 +32,7 @@ class GroupKeyUpdateListener {
   final Map<String, String> _acceptedSignedTransitionAuditHashesBySourceId = {};
 
   StreamSubscription<ChatMessage>? _subscription;
+  Future<void> _messageProcessing = Future<void>.value();
 
   GroupKeyUpdateListener({
     required Stream<ChatMessage> groupKeyUpdateStream,
@@ -61,7 +62,7 @@ class GroupKeyUpdateListener {
     );
 
     _subscription = _stream.listen(
-      _handleMessage,
+      _enqueueMessage,
       onError: (error) {
         emitFlowEvent(
           layer: 'FL',
@@ -69,6 +70,12 @@ class GroupKeyUpdateListener {
           details: {'error': error.toString()},
         );
       },
+    );
+  }
+
+  void _enqueueMessage(ChatMessage message) {
+    _messageProcessing = _messageProcessing.then(
+      (_) => _handleMessage(message),
     );
   }
 
@@ -327,6 +334,20 @@ class GroupKeyUpdateListener {
         return;
       }
 
+      final transitionSubject = buildGroupKeyUpdateTransitionSubject(
+        groupId: groupId,
+        sourcePeerId: sourcePeerId,
+        sourceDeviceId: sourceDeviceId,
+        sourceTransportPeerId: sourceTransportPeerId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDeviceId,
+        recipientTransportPeerId: recipientTransportPeerId,
+        recipientKeyPackageId: recipientKeyPackageId,
+        keyGeneration: keyGeneration,
+        encryptedKey: encryptedKey,
+      );
+      SignedGroupTransitionAuditVerification? verifiedAudit;
+
       if (keyData.containsKey(signedGroupTransitionAuditField)) {
         final signedAuditHash = signedGroupTransitionAuditHashFromPayload(
           keyData,
@@ -360,18 +381,7 @@ class GroupKeyUpdateListener {
           actorSigningPublicKey: verifiedSenderPublicKey,
           actorDeviceId: sourceDeviceId,
           actorTransportPeerId: sourceTransportPeerId,
-          expectedTransitionSubject: buildGroupKeyUpdateTransitionSubject(
-            groupId: groupId,
-            sourcePeerId: sourcePeerId,
-            sourceDeviceId: sourceDeviceId,
-            sourceTransportPeerId: sourceTransportPeerId,
-            recipientPeerId: recipientPeerId,
-            recipientDeviceId: recipientDeviceId,
-            recipientTransportPeerId: recipientTransportPeerId,
-            recipientKeyPackageId: recipientKeyPackageId,
-            keyGeneration: keyGeneration,
-            encryptedKey: encryptedKey,
-          ),
+          expectedTransitionSubject: transitionSubject,
         );
         if (!auditCheck.isValid) {
           emitFlowEvent(
@@ -384,51 +394,87 @@ class GroupKeyUpdateListener {
           );
           return;
         }
-        final verifiedAudit = auditCheck.verification!;
+        verifiedAudit = auditCheck.verification!;
+      }
 
-        final append = _appendGroupEventLogEntry;
-        if (append != null) {
-          final transitionSubject = buildGroupKeyUpdateTransitionSubject(
-            groupId: groupId,
-            sourcePeerId: sourcePeerId,
-            sourceDeviceId: sourceDeviceId,
-            sourceTransportPeerId: sourceTransportPeerId,
-            recipientPeerId: recipientPeerId,
-            recipientDeviceId: recipientDeviceId,
-            recipientTransportPeerId: recipientTransportPeerId,
-            recipientKeyPackageId: recipientKeyPackageId,
-            keyGeneration: keyGeneration,
-            encryptedKey: encryptedKey,
-          );
-          await append(
-            groupId: groupId,
-            eventType: 'group_key_update',
-            sourcePeerId: sourcePeerId,
-            sourceEventId: resolvedSourceEventId,
-            sourceTimestamp: resolvedEventAt.toIso8601String(),
-            payload: {
-              'groupId': groupId,
-              'sourcePeerId': sourcePeerId,
-              'sourceDeviceId': sourceDevice.deviceId,
-              'sourceTransportPeerId': sourceDevice.transportPeerId,
-              if (recipientPeerId != null) 'recipientPeerId': recipientPeerId,
-              if (recipientDeviceId != null)
-                'recipientDeviceId': recipientDeviceId,
+      final keyInfo = GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: keyGeneration,
+        encryptedKey: encryptedKey,
+        createdAt: DateTime.now().toUtc(),
+      );
+      final sameGenerationKey = await _groupRepo.getKeyByGeneration(
+        groupId,
+        keyGeneration,
+      );
+      if (sameGenerationKey != null) {
+        if (sameGenerationKey.encryptedKey == encryptedKey) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_KEY_UPDATE_LISTENER_DUPLICATE_GENERATION',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
               'keyGeneration': keyGeneration,
-              'transitionSubject': transitionSubject,
-              'encryptedKeyHash': transitionSubject['encryptedKeyHash'],
-              'keyUpdateSignatureAlgorithm': signatureAlgorithm,
-              'keyUpdateSignedPayloadHash': _hashText(verifiedSignedPayload),
-              'keyUpdateSignatureHash': _hashText(verifiedSignature),
-              'signedTransitionAuditHash': verifiedAudit.auditHash,
-              'signedTransitionAuditSourceEventId': verifiedAudit.sourceEventId,
-              'signedTransitionAuditEventAt': verifiedAudit.eventAt
-                  .toIso8601String(),
             },
           );
-          _acceptedSignedTransitionAuditHashesBySourceId[resolvedSourceEventId] =
-              verifiedAudit.auditHash;
+          return;
         }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_UPDATE_LISTENER_SAME_EPOCH_CONFLICT',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGeneration,
+          },
+        );
+        return;
+      }
+
+      final latestKey = await _groupRepo.getLatestKey(groupId);
+      if (latestKey != null && keyGeneration < latestKey.keyGeneration) {
+        await _groupRepo.saveKey(keyInfo);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_UPDATE_LISTENER_HISTORICAL_KEY_SAVED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGeneration,
+            'latestGeneration': latestKey.keyGeneration,
+          },
+        );
+        return;
+      }
+
+      final append = _appendGroupEventLogEntry;
+      if (append != null && verifiedAudit != null) {
+        await append(
+          groupId: groupId,
+          eventType: 'group_key_update',
+          sourcePeerId: sourcePeerId,
+          sourceEventId: resolvedSourceEventId,
+          sourceTimestamp: resolvedEventAt.toIso8601String(),
+          payload: {
+            'groupId': groupId,
+            'sourcePeerId': sourcePeerId,
+            'sourceDeviceId': sourceDevice.deviceId,
+            'sourceTransportPeerId': sourceDevice.transportPeerId,
+            if (recipientPeerId != null) 'recipientPeerId': recipientPeerId,
+            if (recipientDeviceId != null)
+              'recipientDeviceId': recipientDeviceId,
+            'keyGeneration': keyGeneration,
+            'transitionSubject': transitionSubject,
+            'encryptedKeyHash': transitionSubject['encryptedKeyHash'],
+            'keyUpdateSignatureAlgorithm': signatureAlgorithm,
+            'keyUpdateSignedPayloadHash': _hashText(verifiedSignedPayload),
+            'keyUpdateSignatureHash': _hashText(verifiedSignature),
+            'signedTransitionAuditHash': verifiedAudit.auditHash,
+            'signedTransitionAuditSourceEventId': verifiedAudit.sourceEventId,
+            'signedTransitionAuditEventAt': verifiedAudit.eventAt
+                .toIso8601String(),
+          },
+        );
+        _acceptedSignedTransitionAuditHashesBySourceId[resolvedSourceEventId] =
+            verifiedAudit.auditHash;
       }
 
       try {
@@ -451,12 +497,6 @@ class GroupKeyUpdateListener {
         return;
       }
 
-      final keyInfo = GroupKeyInfo(
-        groupId: groupId,
-        keyGeneration: keyGeneration,
-        encryptedKey: encryptedKey,
-        createdAt: DateTime.now().toUtc(),
-      );
       await _groupRepo.saveKey(keyInfo);
 
       emitFlowEvent(

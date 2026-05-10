@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +17,17 @@ import (
 
 func startLocalNodeForMultiRelayTestWithCollector(t *testing.T, collector *testEventCollector) *Node {
 	t.Helper()
-	n := startLocalNodeForMultiRelayTest(t)
-	n.eventCallback = collector
+	hexKey := generateTestKey(t)
+	n := New(collector)
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { n.Stop() })
 	return n
 }
 
@@ -280,6 +290,327 @@ func TestPublishGroupMessage_ReturnsPeerCountPositive_WhenPeersConnected(t *test
 	}
 }
 
+func TestJoinGroupTopic_DuplicateJoinPreservesDelivery(t *testing.T) {
+	privB64, pubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "gl-002-duplicate-join-delivery"
+	messageId := "gl-002-after-duplicate-join"
+	config := &GroupConfig{
+		Name:      "GL-002 Delivery Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: pubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "peerBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+
+	if err := nodeA.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	var nodeBAddrStrs []string
+	for _, addr := range nodeB.Host().Addrs() {
+		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
+	}
+	if err := nodeA.DialPeer(nodeB.PeerId(), nodeBAddrStrs); err != nil {
+		t.Fatalf("DialPeer A->B: %v", err)
+	}
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 2*time.Second)
+
+	_, duplicatePubB64 := generateEd25519KeyPair(t)
+	duplicateGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate duplicate group key: %v", err)
+	}
+	duplicateConfig := &GroupConfig{
+		Name:      "GL-002 Rejected Delivery Group",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: duplicatePubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	duplicateKeyInfo := &GroupKeyInfo{Key: duplicateGroupKey, KeyEpoch: 2}
+
+	err = nodeA.JoinGroupTopic(groupId, duplicateConfig, duplicateKeyInfo)
+	if err == nil {
+		t.Fatal("expected error on duplicate join")
+	}
+	if !strings.Contains(err.Error(), "already joined") {
+		t.Fatalf("expected 'already joined' error, got %q", err.Error())
+	}
+
+	msgId, peerCount, err := nodeA.PublishGroupMessage(
+		groupId,
+		privB64,
+		nodeA.PeerId(),
+		pubB64,
+		"Alice",
+		"delivery still works after duplicate join",
+		messageId,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("PublishGroupMessage failed after duplicate join: %v", err)
+	}
+	if msgId != messageId {
+		t.Fatalf("messageId = %q, want %q", msgId, messageId)
+	}
+	if peerCount < 1 {
+		t.Fatalf("expected topicPeers >= 1 after duplicate join, got %d", peerCount)
+	}
+
+	events := waitForCollectedEventCount(t, nodeBCapture, "group_message:received", 1, 5*time.Second)
+	event := events[0]
+	if got, _ := event["messageId"].(string); got != messageId {
+		t.Fatalf("messageId event = %q, want %q", got, messageId)
+	}
+	if got, _ := event["text"].(string); got != "delivery still works after duplicate join" {
+		t.Fatalf("text event = %q, want delivery still works after duplicate join", got)
+	}
+	if got := int(event["keyEpoch"].(float64)); got != keyInfo.KeyEpoch {
+		t.Fatalf("keyEpoch event = %d, want %d", got, keyInfo.KeyEpoch)
+	}
+}
+
+func TestGL009LeaveGroupTopicUnregistersValidatorAndRejoinUsesLatestConfigKey(t *testing.T) {
+	oldPrivB64, oldPubB64 := generateEd25519KeyPair(t)
+	latestPrivB64, latestPubB64 := generateEd25519KeyPair(t)
+	oldGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate old group key: %v", err)
+	}
+	latestGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate latest group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "gl009-leave-rejoin-validator-latest-key"
+	oldKeyInfo := &GroupKeyInfo{Key: oldGroupKey, KeyEpoch: 1}
+	latestKeyInfo := &GroupKeyInfo{Key: latestGroupKey, KeyEpoch: 2}
+	oldConfig := &GroupConfig{
+		Name:      "GL009 Old Config",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: oldPubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "peerBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	latestConfig := &GroupConfig{
+		Name:      "GL009 Latest Config",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: latestPubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "peerBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+
+	if err := nodeB.JoinGroupTopic(groupId, oldConfig, oldKeyInfo); err != nil {
+		t.Fatalf("nodeB old JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.LeaveGroupTopic(groupId); err != nil {
+		t.Fatalf("nodeB LeaveGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, latestConfig, latestKeyInfo); err != nil {
+		t.Fatalf("nodeB rejoin JoinGroupTopic after leave: %v", err)
+	}
+
+	if err := nodeA.JoinGroupTopic(groupId, latestConfig, latestKeyInfo); err != nil {
+		t.Fatalf("nodeA latest JoinGroupTopic: %v", err)
+	}
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 3*time.Second)
+
+	latestMarker := "gl009-latest-valid-marker"
+	latestEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		nodeA.PeerId(),
+		latestPrivB64,
+		latestPubB64,
+		latestGroupKey,
+		latestKeyInfo.KeyEpoch,
+		latestMarker,
+	)
+	publishRawGroupEnvelope(t, nodeA, groupId, latestEnvelope)
+	waitForCollectedEventContaining(t, nodeBCapture, latestMarker, 5*time.Second)
+
+	rejectBaseline := len(nodeBCapture.snapshot())
+	staleMarker := "gl009-stale-old-key-marker"
+	staleEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		nodeA.PeerId(),
+		oldPrivB64,
+		oldPubB64,
+		oldGroupKey,
+		oldKeyInfo.KeyEpoch,
+		staleMarker,
+	)
+	// The publisher's own latest validator would reject this envelope before
+	// fanout. Disable only nodeA's local validator so nodeB's post-rejoin
+	// latest validator is the one under test for the raw stale publish.
+	if err := nodeA.pubsub.UnregisterTopicValidator(GroupTopicPrefix + groupId); err != nil {
+		t.Fatalf("nodeA unregister local validator before stale raw publish: %v", err)
+	}
+	publishRawGroupEnvelope(t, nodeA, groupId, staleEnvelope)
+	waitForCollectedValidationReject(t, nodeBCapture, rejectBaseline, "bad_signature_or_epoch", oldKeyInfo.KeyEpoch, 5*time.Second)
+	assertNoCollectedEventContainingAfter(t, nodeBCapture, rejectBaseline, staleMarker, 500*time.Millisecond)
+
+	senderPID, err := peer.Decode(nodeA.PeerId())
+	if err != nil {
+		t.Fatalf("decode nodeA peer id: %v", err)
+	}
+	staleSignerLatestKeyEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		nodeA.PeerId(),
+		oldPrivB64,
+		oldPubB64,
+		latestGroupKey,
+		latestKeyInfo.KeyEpoch,
+		"gl009-latest-key-old-signer-marker",
+	)
+	validator := nodeB.groupTopicValidator(groupId)
+	msg := &pubsub.Message{Message: &pb.Message{Data: []byte(staleSignerLatestKeyEnvelope)}}
+	if result := validator(context.Background(), senderPID, msg); result != pubsub.ValidationReject {
+		t.Fatalf("validator result = %v, want ValidationReject for latest-key envelope signed by old key", result)
+	}
+}
+
+func TestGL011UpdateGroupConfigReplacesMembershipDuringActiveSubscription(t *testing.T) {
+	_, pubA := generateEd25519KeyPair(t)
+	privC, pubC := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+	nodeC := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "gl011-active-subscription-config-update"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	configWithC := &GroupConfig{
+		Name:      "GL011 Active Subscription",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: pubA},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "nodeBPubKey"},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: pubC},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+
+	if err := nodeA.JoinGroupTopic(groupId, configWithC, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, configWithC, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+	if err := nodeC.JoinGroupTopic(groupId, configWithC, keyInfo); err != nil {
+		t.Fatalf("nodeC JoinGroupTopic: %v", err)
+	}
+
+	connectLocalGroupNodes(t, nodeC, nodeB)
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	waitForGroupTopicPeerCount(t, nodeC, groupId, 1, 3*time.Second)
+	waitForGroupTopicPeerCount(t, nodeB, groupId, 1, 3*time.Second)
+
+	beforeMarker := "gl011-before-remove-member-c"
+	msgID, peerCount, err := nodeC.PublishGroupMessage(
+		groupId,
+		privC,
+		nodeC.PeerId(),
+		pubC,
+		"Member C",
+		beforeMarker,
+		"gl011-before-remove-message",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("nodeC PublishGroupMessage before removal: %v", err)
+	}
+	if msgID == "" || peerCount < 1 {
+		t.Fatalf("before removal publish returned msgID=%q peerCount=%d, want non-empty/>=1", msgID, peerCount)
+	}
+	waitForCollectedEventContaining(t, nodeBCapture, beforeMarker, 5*time.Second)
+
+	removedBaseline := len(nodeBCapture.snapshot())
+	configWithoutC := &GroupConfig{
+		Name:      "GL011 Active Subscription",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: pubA},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "nodeBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	nodeB.UpdateGroupConfig(groupId, configWithoutC)
+
+	removedMarker := "gl011-after-remove-member-c"
+	msgID, peerCount, err = nodeC.PublishGroupMessage(
+		groupId,
+		privC,
+		nodeC.PeerId(),
+		pubC,
+		"Member C",
+		removedMarker,
+		"gl011-after-remove-message",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("nodeC PublishGroupMessage after removal: %v", err)
+	}
+	if msgID == "" || peerCount < 1 {
+		t.Fatalf("after removal publish returned msgID=%q peerCount=%d, want non-empty/>=1", msgID, peerCount)
+	}
+	waitForCollectedValidationReject(t, nodeBCapture, removedBaseline, "non_member", keyInfo.KeyEpoch, 5*time.Second)
+	assertNoCollectedEventContainingAfter(t, nodeBCapture, removedBaseline, removedMarker, 500*time.Millisecond)
+
+	nodeB.UpdateGroupConfig(groupId, configWithC)
+
+	afterMarker := "gl011-after-readd-member-c"
+	msgID, peerCount, err = nodeC.PublishGroupMessage(
+		groupId,
+		privC,
+		nodeC.PeerId(),
+		pubC,
+		"Member C",
+		afterMarker,
+		"gl011-after-readd-message",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("nodeC PublishGroupMessage after re-add: %v", err)
+	}
+	if msgID == "" || peerCount < 1 {
+		t.Fatalf("after re-add publish returned msgID=%q peerCount=%d, want non-empty/>=1", msgID, peerCount)
+	}
+	waitForCollectedEventContaining(t, nodeBCapture, afterMarker, 5*time.Second)
+}
+
 func TestPublishGroupMessage_RefreshesMissingKnownTopicPeersBeforePublish(t *testing.T) {
 	privB64, pubB64 := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()
@@ -421,6 +752,54 @@ func waitForCollectedEventCount(t *testing.T, collector *testEventCollector, eve
 	events := collector.collectEvents(eventName)
 	t.Fatalf("timed out waiting for %d %q events; got %d", want, eventName, len(events))
 	return nil
+}
+
+func waitForCollectedValidationReject(t *testing.T, collector *testEventCollector, baseline int, reason string, keyEpoch int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		events := collector.snapshot()
+		for _, raw := range events[baseline:] {
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				continue
+			}
+			if payload["event"] != "group:validation_rejected" {
+				continue
+			}
+			data, _ := payload["data"].(map[string]interface{})
+			gotEpoch, _ := data["keyEpoch"].(float64)
+			if data["reason"] == reason && int(gotEpoch) == keyEpoch {
+				return
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	events := collector.snapshot()
+	t.Fatalf(
+		"timed out waiting for validation reject reason=%q keyEpoch=%d after baseline %d; events=%s",
+		reason,
+		keyEpoch,
+		baseline,
+		strings.Join(events[baseline:], "\n"),
+	)
+}
+
+func assertNoCollectedEventContainingAfter(t *testing.T, collector *testEventCollector, baseline int, needle string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		events := collector.snapshot()
+		for _, raw := range events[baseline:] {
+			if strings.Contains(raw, needle) {
+				t.Fatalf("collected unexpected event containing %q after baseline %d: %s", needle, baseline, raw)
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 func TestPublishGroupMessage_DuplicateProvidedMessageIdRemainsVisibleAfterDecrypt(t *testing.T) {

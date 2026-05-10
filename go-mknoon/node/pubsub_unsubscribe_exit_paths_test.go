@@ -2,9 +2,12 @@ package node
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	mcrypto "github.com/mknoon/go-mknoon/crypto"
 	"github.com/mknoon/go-mknoon/internal"
@@ -21,9 +24,9 @@ func TestLP003LeaveGroupTopicStopsLiveDeliveryAfterExit(t *testing.T) {
 
 	nodeA := startLocalNodeForMultiRelayTest(t)
 	nodeBCapture := &testEventCollector{}
-	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+	nodeB := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeBCapture)
 	nodeCCapture := &testEventCollector{}
-	nodeC := startLocalNodeForMultiRelayTestWithCollector(t, nodeCCapture)
+	nodeC := startLocalNodeForUnsubscribeExitPathWithCollector(t, nodeCCapture)
 
 	groupId := "lp003-leave-stops-live-delivery"
 	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
@@ -159,6 +162,179 @@ func TestLP003LeaveGroupTopicStopsLiveDeliveryAfterExit(t *testing.T) {
 	}
 }
 
+func TestGL008LeaveGroupTopicStopsDiscoveryAndInboundAfterLeave(t *testing.T) {
+	senderPrivB64, senderPubB64 := generateEd25519KeyPair(t)
+	leaverPrivB64, leaverPubB64 := generateEd25519KeyPair(t)
+	_, remainingPubB64 := generateEd25519KeyPair(t)
+	_, missingPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeA := startLocalNodeForMultiRelayTest(t)
+	leaverEvents := &testEventCollector{}
+	nodeB := startLocalNodeForUnsubscribeExitPathWithCollector(t, leaverEvents)
+	nodeC := startLocalNodeForMultiRelayTest(t)
+	missingMember := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "gl008-leave-stops-discovery-inbound"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "GL008 Leave Stops Discovery",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: leaverPubB64},
+			{PeerId: nodeC.PeerId(), Role: GroupRoleWriter, PublicKey: remainingPubB64},
+			{PeerId: missingMember.PeerId(), Role: GroupRoleWriter, PublicKey: missingPubB64},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+
+	nodeB.waitForCircuitAddressHook = func(timeout time.Duration) bool { return true }
+	nodeB.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error { return nil }
+	nodeB.rendezvousDiscoverHook = func(namespace string, serverAddresses []string) ([]peer.AddrInfo, error) {
+		return nil, nil
+	}
+	nodeB.relayReadyOnce.Do(func() { close(nodeB.relayReady) })
+
+	for _, n := range []*Node{nodeA, nodeB, nodeC} {
+		if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("%s JoinGroupTopic: %v", n.PeerId(), err)
+		}
+	}
+
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	connectLocalGroupNodes(t, nodeA, nodeC)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 3*time.Second)
+	waitForGL008DiscoveryStep(t, leaverEvents, groupId, "discover_result", 6*time.Second)
+
+	preLeaveMessageId := "gl008-pre-leave-live-message"
+	if msgID, peerCount, err := nodeA.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		nodeA.PeerId(),
+		senderPubB64,
+		"Alice",
+		"GL008 pre-leave live message",
+		preLeaveMessageId,
+		nil,
+	); err != nil {
+		t.Fatalf("pre-leave PublishGroupMessage: %v", err)
+	} else if msgID != preLeaveMessageId || peerCount < 2 {
+		t.Fatalf("pre-leave publish result msgID=%q peerCount=%d, want msgID=%q peerCount>=2", msgID, peerCount, preLeaveMessageId)
+	}
+	waitForCollectedEventContaining(t, leaverEvents, preLeaveMessageId, 5*time.Second)
+
+	if err := nodeB.LeaveGroupTopic(groupId); err != nil {
+		t.Fatalf("nodeB LeaveGroupTopic: %v", err)
+	}
+	assertLP003GroupPubSubStateRemoved(t, nodeB, groupId)
+
+	time.Sleep(150 * time.Millisecond)
+	postLeaveBaseline := len(leaverEvents.snapshot())
+
+	if _, _, err := nodeB.PublishGroupMessage(
+		groupId,
+		leaverPrivB64,
+		nodeB.PeerId(),
+		leaverPubB64,
+		"Bob",
+		"GL008 leaver should not publish",
+		"",
+		nil,
+	); err == nil || !strings.Contains(err.Error(), "group not joined") {
+		t.Fatalf("leaver PublishGroupMessage error = %v, want group not joined", err)
+	}
+	if err := nodeB.PublishGroupReaction(
+		groupId,
+		leaverPrivB64,
+		nodeB.PeerId(),
+		leaverPubB64,
+		`{"messageId":"gl008-post-leave-live-message","action":"add","emoji":"+1"}`,
+	); err == nil || !strings.Contains(err.Error(), "group not joined") {
+		t.Fatalf("leaver PublishGroupReaction error = %v, want group not joined", err)
+	}
+
+	postLeaveMessageId := "gl008-post-leave-live-message"
+	if msgID, _, err := nodeA.PublishGroupMessage(
+		groupId,
+		senderPrivB64,
+		nodeA.PeerId(),
+		senderPubB64,
+		"Alice",
+		"GL008 post-leave live message",
+		postLeaveMessageId,
+		nil,
+	); err != nil {
+		t.Fatalf("post-leave PublishGroupMessage: %v", err)
+	} else if msgID != postLeaveMessageId {
+		t.Fatalf("post-leave message ID = %q, want %q", msgID, postLeaveMessageId)
+	}
+	if err := nodeA.PublishGroupReaction(
+		groupId,
+		senderPrivB64,
+		nodeA.PeerId(),
+		senderPubB64,
+		`{"messageId":"gl008-post-leave-live-message","action":"add","emoji":"+1","sentinel":"gl008-post-leave-reaction"}`,
+	); err != nil {
+		t.Fatalf("post-leave PublishGroupReaction: %v", err)
+	}
+
+	parseFailureEnvelope := buildTestEnvelopeWithPlaintext(
+		t,
+		groupId,
+		"group_message",
+		nodeA.PeerId(),
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"not-json",
+	)
+	publishRawGroupEnvelope(t, nodeA, groupId, parseFailureEnvelope)
+
+	validEnvelope := buildTestEnvelope(
+		t,
+		groupId,
+		nodeA.PeerId(),
+		senderPrivB64,
+		senderPubB64,
+		groupKey,
+		keyInfo.KeyEpoch,
+		"GL008 decrypt failure seed",
+	)
+	decryptFailureEnvelope := mutateAndResignGroupEnvelope(t, validEnvelope, senderPrivB64, func(env *internal.GroupEnvelope) {
+		ciphertextBytes, err := base64.StdEncoding.DecodeString(env.Encrypted.Ciphertext)
+		if err != nil {
+			t.Fatalf("decode ciphertext: %v", err)
+		}
+		ciphertextBytes[0] ^= 0xFF
+		env.Encrypted.Ciphertext = base64.StdEncoding.EncodeToString(ciphertextBytes)
+	})
+	publishRawGroupEnvelope(t, nodeA, groupId, decryptFailureEnvelope)
+
+	assertGL008NoPostLeaveGroupActivity(t, leaverEvents, postLeaveBaseline, groupId, 4*time.Second)
+}
+
+func startLocalNodeForUnsubscribeExitPathWithCollector(t *testing.T, collector *testEventCollector) *Node {
+	t.Helper()
+
+	hexKey := generateTestKey(t)
+	n := New(collector)
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { n.Stop() })
+	return n
+}
+
 func assertLP003GroupPubSubStateRemoved(t *testing.T, n *Node, groupId string) {
 	t.Helper()
 
@@ -182,6 +358,77 @@ func assertLP003GroupPubSubStateRemoved(t *testing.T, n *Node, groupId string) {
 			hasKey,
 		)
 	}
+}
+
+func waitForGL008DiscoveryStep(t *testing.T, collector *testEventCollector, groupId, step string, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, event := range collector.collectEvents("group:discovery") {
+			if event["groupId"] == groupId && event["step"] == step {
+				return
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for GL-008 discovery step %q for group %s; events=%v", step, groupId, collector.snapshot())
+}
+
+func assertGL008NoPostLeaveGroupActivity(t *testing.T, collector *testEventCollector, baseline int, groupId string, timeout time.Duration) {
+	t.Helper()
+
+	disallowedInboundEvents := map[string]struct{}{
+		"group_message:received":     {},
+		"group_reaction:received":    {},
+		"group:payload_parse_failed": {},
+		"group:decryption_failed":    {},
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		events := collector.snapshot()
+		for _, raw := range events[baseline:] {
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				continue
+			}
+			data, _ := payload["data"].(map[string]interface{})
+			if data["groupId"] != groupId {
+				continue
+			}
+			eventName, _ := payload["event"].(string)
+			if _, disallowed := disallowedInboundEvents[eventName]; disallowed {
+				t.Fatalf("leaver received disallowed post-leave inbound event %q after baseline %d: %s", eventName, baseline, raw)
+			}
+			if eventName == "group:discovery" {
+				step, _ := data["step"].(string)
+				if gl008DiscoveryStepRepresentsWork(step) {
+					t.Fatalf("leaver emitted disallowed post-leave discovery step %q after baseline %d: %s", step, baseline, raw)
+				}
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func gl008DiscoveryStepRepresentsWork(step string) bool {
+	switch step {
+	case "registered",
+		"register_failed",
+		"discover_failed",
+		"discover_result",
+		"direct_dial",
+		"pre_relay_direct_dial",
+		"initial_jitter",
+		"backoff",
+		"publish_peer_refresh_begin",
+		"publish_peer_refresh_done":
+		return true
+	}
+	return strings.HasPrefix(step, "known_member_") ||
+		strings.HasPrefix(step, "dial_") ||
+		strings.HasPrefix(step, "direct_dial_")
 }
 
 func assertLP003NoExitedGroupEventsAfter(t *testing.T, collector *testEventCollector, baseline int, timeout time.Duration) {
