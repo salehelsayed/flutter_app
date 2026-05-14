@@ -18,10 +18,11 @@ func TestGroupProtocolIDs_AreVersionedCurrentContracts(t *testing.T) {
 	versionedProtocol := regexp.MustCompile(`^/[a-z0-9-]+/[a-z0-9-]+/\d+\.\d+\.\d+$`)
 
 	protocols := map[string]protocol.ID{
-		"chat":       ChatProtocol,
-		"inbox":      InboxProtocol,
-		"rendezvous": RendezvousProtocol,
-		"media":      MediaProtocol,
+		"chat":                      ChatProtocol,
+		"inbox":                     InboxProtocol,
+		"rendezvous":                RendezvousProtocol,
+		"media":                     MediaProtocol,
+		"group-validation-feedback": GroupValidationFeedbackProtocol,
 	}
 
 	for name, id := range protocols {
@@ -41,6 +42,9 @@ func TestGroupProtocolIDs_AreVersionedCurrentContracts(t *testing.T) {
 	}
 	if MediaProtocol != "/mknoon/media/1.0.0" {
 		t.Fatalf("MediaProtocol = %q, want /mknoon/media/1.0.0", MediaProtocol)
+	}
+	if GroupValidationFeedbackProtocol != "/mknoon/group-validation-feedback/1.0.0" {
+		t.Fatalf("GroupValidationFeedbackProtocol = %q, want /mknoon/group-validation-feedback/1.0.0", GroupValidationFeedbackProtocol)
 	}
 }
 

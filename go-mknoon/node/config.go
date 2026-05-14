@@ -18,10 +18,11 @@ const (
 	RendezvousPrefix = "mknoon:chat:"
 
 	// Protocol IDs matching the relay server.
-	RendezvousProtocol = "/canvas/rendezvous/1.0.0"
-	InboxProtocol      = "/mknoon/inbox/1.0.0"
-	ChatProtocol       = "/mknoon/chat/1.0.0"
-	MediaProtocol      = "/mknoon/media/1.0.0"
+	RendezvousProtocol              = "/canvas/rendezvous/1.0.0"
+	InboxProtocol                   = "/mknoon/inbox/1.0.0"
+	ChatProtocol                    = "/mknoon/chat/1.0.0"
+	MediaProtocol                   = "/mknoon/media/1.0.0"
+	GroupValidationFeedbackProtocol = "/mknoon/group-validation-feedback/1.0.0"
 
 	// Timeouts.
 	DialTimeout                         = 15 * time.Second // Relay server connection

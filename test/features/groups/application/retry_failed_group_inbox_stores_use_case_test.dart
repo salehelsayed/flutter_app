@@ -14,7 +14,7 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 
 /// Bridge that fails on the first N group:inboxStore calls and succeeds after.
 class _FailFirstNInboxBridge extends FakeBridge {
-  int _failCount;
+  final int _failCount;
   int _callIndex = 0;
   _FailFirstNInboxBridge({int failCount = 1}) : _failCount = failCount;
 
@@ -302,6 +302,38 @@ void main() {
     expect(saved!.status, 'sent');
     expect(saved.inboxStored, isTrue);
     expect(saved.inboxRetryPayload, isNull);
+  });
+
+  test('GO-002 retry promotes pending inbox store failure to sent', () async {
+    final msg = _makeRetryEligible('go002-pending', status: 'pending');
+    await msgRepo.saveMessage(msg);
+
+    late int retried;
+    final events = await captureFlowEvents(() async {
+      retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+      );
+    });
+
+    expect(retried, 1);
+    final saved = await msgRepo.getMessage('go002-pending');
+    expect(saved, isNotNull);
+    expect(saved!.status, 'sent');
+    expect(saved.inboxStored, isTrue);
+    expect(saved.inboxRetryPayload, isNull);
+    expect(_inboxStoreMessageIds(bridge), <String>['go002-pending']);
+
+    final ok = events.firstWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORE_OK',
+    );
+    expect(ok['details']['messageId'], 'go002-pe');
+    final timing = events.lastWhere(
+      (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORES_TIMING',
+    );
+    expect(timing['details']['outcome'], 'complete');
+    expect(timing['details']['total'], 1);
+    expect(timing['details']['retried'], 1);
   });
 
   test('skips messages that are already inbox_stored', () async {

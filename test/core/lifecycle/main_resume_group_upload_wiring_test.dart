@@ -80,6 +80,10 @@ void main() {
           'acknowledgeGroupRecoveryFn: () => callGroupAcknowledgeRecovery(bridge),',
         ),
       );
+      expect(
+        retrierBlock,
+        contains('rejoinResult.canAcknowledgeGroupRecovery'),
+      );
       expect(retrierBlock, contains('drainGroupOfflineInboxFn: () async {'));
       expect(
         retrierBlock,

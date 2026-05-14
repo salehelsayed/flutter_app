@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -72,6 +74,9 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 	if config == nil {
 		return fmt.Errorf("missing group config for group %s", groupId)
 	}
+	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+		return fmt.Errorf("invalid group config for group %s: %w", groupId, err)
+	}
 
 	topicName := GroupTopicPrefix + groupId
 
@@ -113,7 +118,7 @@ func (n *Node) JoinGroupTopic(groupId string, config *GroupConfig, keyInfo *Grou
 	// Start group peer discovery in background (register + periodic discover).
 	discoveryCtx, discoveryCancel := context.WithCancel(n.ctx)
 	n.groupDiscoveryCtx[groupId] = discoveryCancel
-	go n.groupPeerDiscoveryLoop(discoveryCtx, groupId)
+	go n.groupPeerDiscoveryLoop(discoveryCtx, groupId, n.relayReady)
 
 	log.Printf("[PUBSUB] Joined group topic: %s", groupId)
 	return nil
@@ -174,6 +179,9 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 
 	if !topicOk || !configOk || config == nil || !keyOk || keyInfo == nil {
 		return "", 0, fmt.Errorf("group not joined: %s", groupId)
+	}
+	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+		return "", 0, fmt.Errorf("invalid group config for group %s: %w", groupId, err)
 	}
 
 	// Check write permission.
@@ -237,6 +245,7 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 		Version:               "3",
 		Type:                  "group_message",
 		GroupId:               groupId,
+		MessageId:             msgId,
 		SenderId:              senderPeerId,
 		SenderDeviceId:        senderDeviceId,
 		SenderTransportPeerId: senderTransportPeerId,
@@ -296,6 +305,9 @@ func (n *Node) PublishGroupReaction(groupId, privateKeyB64, senderPeerId, sender
 
 	if !topicOk || !configOk || config == nil || !keyOk || keyInfo == nil {
 		return fmt.Errorf("group not joined: %s", groupId)
+	}
+	if _, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+		return fmt.Errorf("invalid group config for group %s: %w", groupId, err)
 	}
 
 	// Check membership (any member can react, regardless of group type).
@@ -429,16 +441,244 @@ func cloneGroupConfig(config *GroupConfig) *GroupConfig {
 
 	cloned := *config
 	if config.Members != nil {
-		cloned.Members = make([]GroupMember, len(config.Members))
-		copy(cloned.Members, config.Members)
-		for i := range config.Members {
-			if config.Members[i].Devices != nil {
-				cloned.Members[i].Devices = make([]GroupMemberDevice, len(config.Members[i].Devices))
-				copy(cloned.Members[i].Devices, config.Members[i].Devices)
+		cloned.Members = normalizeGroupConfigMembers(config.Members)
+	}
+	return &cloned
+}
+
+func normalizeGroupConfigMembers(members []GroupMember) []GroupMember {
+	normalized := make([]GroupMember, 0, len(members))
+	indexByPeerId := make(map[string]int, len(members))
+	for _, member := range members {
+		peerId := strings.TrimSpace(member.PeerId)
+		if peerId == "" {
+			continue
+		}
+		candidate := cloneGroupMember(member)
+		candidate.PeerId = peerId
+		existingIndex, exists := indexByPeerId[peerId]
+		if !exists {
+			indexByPeerId[peerId] = len(normalized)
+			normalized = append(normalized, candidate)
+			continue
+		}
+		if preferGroupMemberCandidate(candidate, normalized[existingIndex]) {
+			normalized[existingIndex] = candidate
+		}
+	}
+	return normalized
+}
+
+func cloneGroupMember(member GroupMember) GroupMember {
+	cloned := member
+	if member.Devices != nil {
+		cloned.Devices = normalizeGroupMemberDevices(member.Devices)
+	}
+	return cloned
+}
+
+func normalizeGroupMemberDevices(devices []GroupMemberDevice) []GroupMemberDevice {
+	normalized := make([]GroupMemberDevice, 0, len(devices))
+	indexByKey := make(map[string]int, len(devices))
+	for _, device := range devices {
+		key := groupMemberDeviceDedupKey(device)
+		if key == "" {
+			continue
+		}
+		candidate := device
+		existingIndex, exists := indexByKey[key]
+		if !exists {
+			indexByKey[key] = len(normalized)
+			normalized = append(normalized, candidate)
+			continue
+		}
+		if preferGroupMemberDeviceCandidate(candidate, normalized[existingIndex]) {
+			normalized[existingIndex] = candidate
+		}
+	}
+	return normalized
+}
+
+func preferGroupMemberCandidate(candidate GroupMember, current GroupMember) bool {
+	candidateScore := groupMemberFreshnessScore(candidate)
+	currentScore := groupMemberFreshnessScore(current)
+	if candidateScore != currentScore {
+		return candidateScore > currentScore
+	}
+	return true
+}
+
+func groupMemberFreshnessScore(member GroupMember) int {
+	score := 0
+	for _, device := range member.Devices {
+		if groupMemberDeviceIsActive(device) {
+			score += 100
+			if groupMemberDeviceHasKeyPackage(device) {
+				score += 10
 			}
 		}
 	}
-	return &cloned
+	if strings.TrimSpace(member.PublicKey) != "" {
+		score += 2
+	}
+	if strings.TrimSpace(member.MlKemPublicKey) != "" {
+		score++
+	}
+	return score
+}
+
+func preferGroupMemberDeviceCandidate(candidate GroupMemberDevice, current GroupMemberDevice) bool {
+	candidateScore := groupMemberDeviceFreshnessScore(candidate)
+	currentScore := groupMemberDeviceFreshnessScore(current)
+	if candidateScore != currentScore {
+		return candidateScore > currentScore
+	}
+	return true
+}
+
+func groupMemberDeviceFreshnessScore(device GroupMemberDevice) int {
+	score := 0
+	if groupMemberDeviceIsActive(device) {
+		score += 100
+	}
+	if groupMemberDeviceHasKeyPackage(device) {
+		score += 10
+	}
+	if strings.TrimSpace(device.DeviceSigningPublicKey) != "" {
+		score += 2
+	}
+	if strings.TrimSpace(device.MlKemPublicKey) != "" {
+		score++
+	}
+	return score
+}
+
+func groupMemberDeviceIsActive(device GroupMemberDevice) bool {
+	status := strings.TrimSpace(device.Status)
+	return (status == "" || status == "active") && strings.TrimSpace(device.RevokedAt) == ""
+}
+
+func groupMemberDeviceHasKeyPackage(device GroupMemberDevice) bool {
+	return strings.TrimSpace(device.KeyPackageId) != "" ||
+		strings.TrimSpace(device.KeyPackagePublicMaterial) != ""
+}
+
+func groupMemberDeviceDedupKey(device GroupMemberDevice) string {
+	if deviceId := strings.TrimSpace(device.DeviceId); deviceId != "" {
+		return "device:" + deviceId
+	}
+	if transportPeerId := strings.TrimSpace(device.TransportPeerId); transportPeerId != "" {
+		return "transport:" + transportPeerId
+	}
+	return ""
+}
+
+func validateGroupConfigIdentityUniqueness(config *GroupConfig) (string, error) {
+	if err := validateGroupConfigSigningKeyUniqueness(config); err != nil {
+		return "ambiguous_signing_key", err
+	}
+	if err := validateGroupConfigTransportPeerUniqueness(config); err != nil {
+		return "ambiguous_transport_peer", err
+	}
+	return "", nil
+}
+
+func validateGroupConfigSigningKeyUniqueness(config *GroupConfig) error {
+	if config == nil {
+		return nil
+	}
+
+	ownerBySigningKey := make(map[string]string)
+	for _, member := range config.Members {
+		memberPeerId := strings.TrimSpace(member.PeerId)
+		if memberPeerId == "" {
+			continue
+		}
+		for _, signingKey := range groupMemberActiveSigningKeys(member) {
+			existingOwner, exists := ownerBySigningKey[signingKey]
+			if exists && existingOwner != memberPeerId {
+				return fmt.Errorf("ambiguous signing key reused by members %s and %s", existingOwner, memberPeerId)
+			}
+			ownerBySigningKey[signingKey] = memberPeerId
+		}
+	}
+	return nil
+}
+
+func validateGroupConfigTransportPeerUniqueness(config *GroupConfig) error {
+	if config == nil {
+		return nil
+	}
+
+	ownerByTransportPeer := make(map[string]string)
+	for _, member := range config.Members {
+		memberPeerId := strings.TrimSpace(member.PeerId)
+		if memberPeerId == "" {
+			continue
+		}
+		for _, transportPeerId := range groupMemberActiveTransportPeerIds(member) {
+			existingOwner, exists := ownerByTransportPeer[transportPeerId]
+			if exists && existingOwner != memberPeerId {
+				return fmt.Errorf("ambiguous transport peer reused by members %s and %s", existingOwner, memberPeerId)
+			}
+			ownerByTransportPeer[transportPeerId] = memberPeerId
+		}
+	}
+	return nil
+}
+
+func groupMemberActiveSigningKeys(member GroupMember) []string {
+	seen := make(map[string]struct{})
+	add := func(signingKey string) {
+		signingKey = strings.TrimSpace(signingKey)
+		if signingKey == "" {
+			return
+		}
+		seen[signingKey] = struct{}{}
+	}
+
+	if len(member.Devices) == 0 {
+		add(member.PublicKey)
+	} else {
+		for _, device := range member.Devices {
+			if groupMemberDeviceIsActive(device) {
+				add(device.DeviceSigningPublicKey)
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func groupMemberActiveTransportPeerIds(member GroupMember) []string {
+	seen := make(map[string]struct{})
+	add := func(transportPeerId string) {
+		transportPeerId = strings.TrimSpace(transportPeerId)
+		if transportPeerId == "" {
+			return
+		}
+		seen[transportPeerId] = struct{}{}
+	}
+
+	if len(member.Devices) == 0 {
+		add(member.PeerId)
+	} else {
+		for _, device := range member.Devices {
+			if groupMemberDeviceIsActive(device) {
+				add(device.TransportPeerId)
+			}
+		}
+	}
+
+	transportPeerIds := make([]string, 0, len(seen))
+	for transportPeerId := range seen {
+		transportPeerIds = append(transportPeerIds, transportPeerId)
+	}
+	return transportPeerIds
 }
 
 func joinedGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
@@ -454,7 +694,6 @@ func joinedGroupKeyInfo(keyInfo *GroupKeyInfo) *GroupKeyInfo {
 func hasKeyRotationGrace(keyInfo *GroupKeyInfo, now time.Time) bool {
 	return keyInfo != nil &&
 		keyInfo.PrevKey != "" &&
-		keyInfo.PrevKeyEpoch > 0 &&
 		!keyInfo.GraceDeadline.IsZero() &&
 		now.Before(keyInfo.GraceDeadline)
 }
@@ -494,6 +733,12 @@ func decryptGroupEnvelopePayload(env *internal.GroupEnvelope, keyInfo *GroupKeyI
 	}
 }
 
+func groupEnvelopeHasEncryptedFields(env *internal.GroupEnvelope) bool {
+	return env != nil &&
+		strings.TrimSpace(env.Encrypted.Ciphertext) != "" &&
+		strings.TrimSpace(env.Encrypted.Nonce) != ""
+}
+
 func groupEnvelopeMatchesTransportPeer(env *internal.GroupEnvelope, transportPeerId string) bool {
 	if env == nil || transportPeerId == "" {
 		return true
@@ -503,6 +748,16 @@ func groupEnvelopeMatchesTransportPeer(env *internal.GroupEnvelope, transportPee
 		expectedTransportPeerId = env.SenderId
 	}
 	return expectedTransportPeerId == transportPeerId
+}
+
+func groupEnvelopeOriginatesFromLocalTransport(env *internal.GroupEnvelope, selfPeerId string) bool {
+	if env == nil || selfPeerId == "" {
+		return false
+	}
+	if env.SenderTransportPeerId != "" {
+		return env.SenderTransportPeerId == selfPeerId
+	}
+	return env.SenderId == selfPeerId
 }
 
 func activeMemberDeviceForEnvelope(member *GroupMember, env *internal.GroupEnvelope, transportPeerId string) *GroupMemberDevice {
@@ -639,6 +894,7 @@ func (n *Node) logPubSubValidationReject(reason, groupId string, pid peer.ID, en
 			"envelopeType":      envelopeType,
 			"keyEpoch":          keyEpoch,
 		})
+		n.sendGroupValidationRejectFeedback(groupId, reason, pid, env, keyEpoch)
 	}
 }
 
@@ -666,6 +922,14 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 			n.logPubSubValidationReject("invalid_envelope", groupId, pid, nil)
 			return pubsub.ValidationReject
 		}
+		if strings.TrimSpace(env.SenderId) == "" {
+			n.logPubSubValidationReject("invalid_envelope", groupId, pid, env)
+			return pubsub.ValidationReject
+		}
+		if !groupEnvelopeHasEncryptedFields(env) {
+			n.logPubSubValidationReject("invalid_envelope", groupId, pid, env)
+			return pubsub.ValidationReject
+		}
 
 		// 3. Verify groupId matches.
 		if env.GroupId != groupId {
@@ -685,6 +949,10 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 		n.mu.RUnlock()
 		if !ok || config == nil {
 			n.logPubSubValidationReject("unknown_group", groupId, pid, env)
+			return pubsub.ValidationReject
+		}
+		if reason, err := validateGroupConfigIdentityUniqueness(config); err != nil {
+			n.logPubSubValidationReject(reason, groupId, pid, env)
 			return pubsub.ValidationReject
 		}
 
@@ -726,12 +994,12 @@ func (n *Node) groupTopicValidator(groupId string) func(context.Context, peer.ID
 }
 
 // handleGroupSubscription reads messages from the subscription and emits them
-// as events to Flutter. Messages from self are skipped.
+// as events to Flutter. Local transport echoes are skipped.
 func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub *pubsub.Subscription) {
 	for {
 		msg, err := sub.Next(ctx)
 		if err != nil {
-			if ctx.Err() != nil {
+			if !shouldLogGroupSubscriptionError(ctx, err) {
 				// Context cancelled — normal shutdown.
 				return
 			}
@@ -739,7 +1007,8 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 			return
 		}
 
-		// Skip messages from self.
+		// Skip local transport echoes while preserving sibling-device delivery
+		// when the logical sender is the same account on another transport.
 		n.mu.RLock()
 		selfPeerId := n.peerId
 		keyInfo, keyOk := n.groupKeys[groupId]
@@ -754,7 +1023,7 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 			continue
 		}
 
-		if env.SenderId == selfPeerId {
+		if groupEnvelopeOriginatesFromLocalTransport(env, selfPeerId) {
 			continue
 		}
 
@@ -777,6 +1046,11 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		// Route by envelope type BEFORE parsing inner payload — reactions
 		// have a different inner schema and must not go through ParseGroupPayload.
 		if env.Type == "group_reaction" {
+			if !isValidGroupReactionPayload(plaintext) {
+				log.Printf("[PUBSUB] Failed to parse reaction payload in group %s", groupId)
+				n.emitGroupPayloadParseFailed(groupId, env)
+				continue
+			}
 			transportPeerId := env.SenderTransportPeerId
 			if transportPeerId == "" {
 				transportPeerId = env.SenderId
@@ -796,11 +1070,7 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		payload, err := internal.ParseGroupPayload(plaintext)
 		if err != nil {
 			log.Printf("[PUBSUB] Failed to parse payload in group %s: %v", groupId, err)
-			n.emitEvent("group:payload_parse_failed", map[string]interface{}{
-				"groupId":      groupId,
-				"senderId":     env.SenderId,
-				"envelopeType": env.Type,
-			})
+			n.emitGroupPayloadParseFailed(groupId, env)
 			continue
 		}
 
@@ -816,6 +1086,47 @@ func (n *Node) handleGroupSubscription(ctx context.Context, groupId string, sub 
 		}
 		n.emitEvent("group_message:received", receivedEvent)
 	}
+}
+
+func shouldLogGroupSubscriptionError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+func isValidGroupReactionPayload(plaintext string) bool {
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(plaintext), &payload); err != nil {
+		return false
+	}
+
+	messageId, ok := payload["messageId"].(string)
+	if !ok || strings.TrimSpace(messageId) == "" {
+		return false
+	}
+	emoji, ok := payload["emoji"].(string)
+	if !ok || strings.TrimSpace(emoji) == "" {
+		return false
+	}
+	action, ok := payload["action"].(string)
+	if !ok {
+		return false
+	}
+
+	action = strings.TrimSpace(action)
+	return action == "add" || action == "remove"
+}
+
+func (n *Node) emitGroupPayloadParseFailed(groupId string, env *internal.GroupEnvelope) {
+	n.emitEvent("group:payload_parse_failed", map[string]interface{}{
+		"groupId":      groupId,
+		"senderId":     env.SenderId,
+		"envelopeType": env.Type,
+	})
 }
 
 func (n *Node) emitGroupDecryptionFailed(groupId string, env *internal.GroupEnvelope, keyInfo *GroupKeyInfo, decryptErr error, decryptMs int64) {
@@ -880,16 +1191,31 @@ func buildGroupMessageReceivedEvent(groupId string, env *internal.GroupEnvelope,
 	if payload.Extra == nil {
 		return event
 	}
-	if media, ok := payload.Extra["media"]; ok {
-		event["media"] = media
-	}
-	if msgId, ok := payload.Extra["messageId"]; ok {
-		event["messageId"] = msgId
-	}
-	if quotedMessageId, ok := payload.Extra["quotedMessageId"]; ok {
-		event["quotedMessageId"] = quotedMessageId
+	for key, value := range payload.Extra {
+		if isProtectedGroupMessageEventField(key) {
+			continue
+		}
+		event[key] = value
 	}
 	return event
+}
+
+func isProtectedGroupMessageEventField(key string) bool {
+	switch key {
+	case "groupId",
+		"senderId",
+		"senderDeviceId",
+		"transportPeerId",
+		"senderUsername",
+		"keyEpoch",
+		"text",
+		"timestamp",
+		"decryptMs",
+		"deliveryMs":
+		return true
+	default:
+		return false
+	}
 }
 
 // isAllowedWriter checks whether a peer is allowed to publish messages
@@ -933,7 +1259,7 @@ func filterDiscoveredPeers(discovered []peer.AddrInfo, selfId peer.ID, connected
 }
 
 func filterDiscoveredGroupMembers(discovered []peer.AddrInfo, allowedMembers map[peer.ID]struct{}) ([]peer.AddrInfo, int) {
-	if len(allowedMembers) == 0 {
+	if allowedMembers == nil {
 		return discovered, 0
 	}
 
@@ -1054,6 +1380,121 @@ func (n *Node) connectGroupPeerPreferDirect(
 	}
 }
 
+type groupMemberDialTarget struct {
+	PeerId   string
+	Username string
+}
+
+type groupMemberDialTargetSummary struct {
+	targets                  []groupMemberDialTarget
+	ignoredInvalidConfigPeer int
+}
+
+func activeGroupMemberDialTargets(config *GroupConfig, selfId string) []groupMemberDialTarget {
+	return activeGroupMemberDialTargetSummary(config, selfId).targets
+}
+
+func activeGroupMemberDialTargetSummary(config *GroupConfig, selfId string) groupMemberDialTargetSummary {
+	if config == nil {
+		return groupMemberDialTargetSummary{}
+	}
+
+	normalizedMembers := normalizeGroupConfigMembers(config.Members)
+	targets := make([]groupMemberDialTarget, 0, len(normalizedMembers))
+	seen := make(map[string]struct{}, len(normalizedMembers))
+	ignoredInvalidConfigPeer := 0
+	for _, member := range normalizedMembers {
+		if len(member.Devices) > 0 {
+			for _, device := range member.Devices {
+				if !groupMemberDeviceIsActive(device) {
+					continue
+				}
+				peerId := strings.TrimSpace(device.TransportPeerId)
+				if peerId == selfId {
+					continue
+				}
+				if peerId == "" {
+					ignoredInvalidConfigPeer++
+					continue
+				}
+				if !isValidGroupDialPeerId(peerId) {
+					ignoredInvalidConfigPeer++
+					continue
+				}
+				if _, exists := seen[peerId]; exists {
+					continue
+				}
+				seen[peerId] = struct{}{}
+				targets = append(targets, groupMemberDialTarget{
+					PeerId:   peerId,
+					Username: member.Username,
+				})
+			}
+			continue
+		}
+
+		peerId := strings.TrimSpace(member.PeerId)
+		if peerId == selfId {
+			continue
+		}
+		if peerId == "" {
+			ignoredInvalidConfigPeer++
+			continue
+		}
+		if !isValidGroupDialPeerId(peerId) {
+			ignoredInvalidConfigPeer++
+			continue
+		}
+		if _, exists := seen[peerId]; exists {
+			continue
+		}
+		seen[peerId] = struct{}{}
+		targets = append(targets, groupMemberDialTarget{
+			PeerId:   peerId,
+			Username: member.Username,
+		})
+	}
+	return groupMemberDialTargetSummary{
+		targets:                  targets,
+		ignoredInvalidConfigPeer: ignoredInvalidConfigPeer,
+	}
+}
+
+func isValidGroupDialPeerId(peerId string) bool {
+	_, err := peer.Decode(peerId)
+	return err == nil
+}
+
+func activeGroupMemberDialTargetSet(config *GroupConfig, selfId string) map[string]struct{} {
+	targets := activeGroupMemberDialTargets(config, selfId)
+	set := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		set[target.PeerId] = struct{}{}
+	}
+	return set
+}
+
+func (n *Node) isCurrentActiveGroupDialTarget(groupId, peerId string) bool {
+	if n == nil || strings.TrimSpace(peerId) == "" {
+		return false
+	}
+
+	n.mu.RLock()
+	config := n.groupConfigs[groupId]
+	h := n.host
+	selfId := ""
+	if h != nil {
+		selfId = h.ID().String()
+	}
+	n.mu.RUnlock()
+
+	if config == nil {
+		return false
+	}
+	_, ok := activeGroupMemberDialTargetSet(config, selfId)[peerId]
+	return ok
+}
+
 // discoverAndConnectGroupPeers discovers peers on the group rendezvous namespace
 // and dials any that are not already connected. For each new peer, it first adds
 // the discovered addresses to the peerstore (so h.Connect has more options), then
@@ -1095,46 +1536,34 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 
 	newPeers := filterDiscoveredPeers(peers, selfId, connectedSet)
 	alreadyConnected := len(peers) - len(newPeers)
-	allowedMembers := make(map[peer.ID]struct{})
+	var allowedMembers map[peer.ID]struct{}
+	targetSummary := groupMemberDialTargetSummary{}
 	if config != nil {
-		for _, member := range config.Members {
-			if len(member.Devices) == 0 {
-				if member.PeerId == "" || member.PeerId == selfId.String() {
-					continue
-				}
-				memberID, err := peer.Decode(member.PeerId)
-				if err != nil {
-					continue
-				}
-				allowedMembers[memberID] = struct{}{}
+		allowedMembers = make(map[peer.ID]struct{})
+		targetSummary = activeGroupMemberDialTargetSummary(config, selfId.String())
+		for _, target := range targetSummary.targets {
+			memberID, err := peer.Decode(target.PeerId)
+			if err != nil {
 				continue
 			}
-			for _, device := range member.Devices {
-				if device.Status != "" && device.Status != "active" {
-					continue
-				}
-				if device.RevokedAt != "" ||
-					device.TransportPeerId == "" ||
-					device.TransportPeerId == selfId.String() {
-					continue
-				}
-				deviceID, err := peer.Decode(device.TransportPeerId)
-				if err != nil {
-					continue
-				}
-				allowedMembers[deviceID] = struct{}{}
-			}
+			allowedMembers[memberID] = struct{}{}
 		}
 	}
 	newPeers, ignoredNonMembers := filterDiscoveredGroupMembers(newPeers, allowedMembers)
+	topicPeers, expectedPeers, missingPeers := n.groupDiscoveryPeerSnapshot(groupId)
 
 	n.emitEvent("group:discovery", map[string]interface{}{
-		"groupId":           groupId,
-		"step":              "discover_result",
-		"totalFound":        len(peers),
-		"newPeers":          len(newPeers),
-		"alreadyConnected":  alreadyConnected,
-		"ignoredNonMembers": ignoredNonMembers,
+		"groupId":                   groupId,
+		"step":                      "discover_result",
+		"totalFound":                len(peers),
+		"newPeers":                  len(newPeers),
+		"alreadyConnected":          alreadyConnected,
+		"ignoredNonMembers":         ignoredNonMembers,
+		"ignoredInvalidConfigPeers": targetSummary.ignoredInvalidConfigPeer,
+		"topicPeers":                topicPeers,
+		"expectedPeers":             expectedPeers,
+		"missingPeers":              missingPeers,
+		"backingOff":                false,
 	})
 
 	if len(newPeers) == 0 {
@@ -1148,6 +1577,10 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 		pidShort := pidStr
 		if len(pidShort) > 16 {
 			pidShort = pidShort[:16]
+		}
+
+		if !n.isCurrentActiveGroupDialTarget(groupId, pidStr) {
+			continue
 		}
 
 		// Add discovered addresses to peerstore so h.Connect can use them.
@@ -1182,6 +1615,10 @@ func (n *Node) discoverAndConnectGroupPeers(groupId string) {
 			continue
 		}
 
+		if !n.isCurrentActiveGroupDialTarget(groupId, pidStr) {
+			n.finishGroupPeerDial(pidStr, false, time.Now())
+			continue
+		}
 		connectResult, err := n.connectGroupPeerPreferDirect(pidStr, p.Addrs, true)
 		if err != nil {
 			n.finishGroupPeerDial(pidStr, false, time.Now())
@@ -1271,22 +1708,24 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 	directConnected := 0
 	relayFallbackConnected := 0
 	relayOnlyConnected := 0
-	for _, member := range config.Members {
-		if member.PeerId == selfId {
+	targetSummary := activeGroupMemberDialTargetSummary(config, selfId)
+	targets := targetSummary.targets
+	for _, target := range targets {
+		if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
 			continue
 		}
-		if _, alreadyConnected := connectedSet[member.PeerId]; alreadyConnected {
+		if _, alreadyConnected := connectedSet[target.PeerId]; alreadyConnected {
 			connected++
-			n.finishGroupPeerDial(member.PeerId, true, time.Now())
+			n.finishGroupPeerDial(target.PeerId, true, time.Now())
 			continue
 		}
 
-		pidShort := member.PeerId
+		pidShort := target.PeerId
 		if len(pidShort) > 16 {
 			pidShort = pidShort[:16]
 		}
 
-		if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDialWithMode(member.PeerId, time.Now(), ignoreCooldown); !allowed {
+		if allowed, retryIn, blockedByInFlight := n.beginGroupPeerDialWithMode(target.PeerId, time.Now(), ignoreCooldown); !allowed {
 			if blockedByInFlight {
 				log.Printf("[PUBSUB] Group %s: skipping direct dial to %s while another group dial is in flight",
 					groupId, pidShort)
@@ -1314,11 +1753,15 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 		}
 
 		dialed++
-		connectResult, err := n.connectGroupPeerPreferDirect(member.PeerId, nil, true)
+		if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
+			n.finishGroupPeerDial(target.PeerId, false, time.Now())
+			continue
+		}
+		connectResult, err := n.connectGroupPeerPreferDirect(target.PeerId, nil, true)
 		if err != nil {
-			n.finishGroupPeerDial(member.PeerId, false, time.Now())
+			n.finishGroupPeerDial(target.PeerId, false, time.Now())
 			log.Printf("[PUBSUB] Group %s: dial %s (%s) failed (attemptedDirect=%t, directAddrs=%d): %v",
-				groupId, member.Username, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
+				groupId, target.Username, pidShort, connectResult.AttemptedDirect, connectResult.DirectAddrCount, err)
 			n.emitEvent("group:discovery", map[string]interface{}{
 				"groupId":           groupId,
 				"step":              "known_member_dial_failed",
@@ -1329,22 +1772,22 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 				"error":             err.Error(),
 			})
 		} else {
-			livePeerReady := n.waitForLiveGroupTopicPeer(groupId, member.PeerId, GroupPublishPartialPeerSettleWait)
+			livePeerReady := n.waitForLiveGroupTopicPeer(groupId, target.PeerId, GroupPublishPartialPeerSettleWait)
 			if !livePeerReady && connectResult.Path == "direct" {
-				if relayErr := n.DialPeerViaRelay(member.PeerId); relayErr != nil {
+				if relayErr := n.DialPeerViaRelay(target.PeerId); relayErr != nil {
 					connectResult.RelayError = relayErr.Error()
 				} else {
 					connectResult.Path = "relay_fallback"
 					connectResult.UsedRelayFallback = true
-					livePeerReady = n.waitForLiveGroupTopicPeer(groupId, member.PeerId, GroupPublishPartialPeerSettleWait)
+					livePeerReady = n.waitForLiveGroupTopicPeer(groupId, target.PeerId, GroupPublishPartialPeerSettleWait)
 				}
 			}
 			if !livePeerReady {
-				n.finishGroupPeerDial(member.PeerId, false, time.Now())
+				n.finishGroupPeerDial(target.PeerId, false, time.Now())
 				log.Printf(
 					"[PUBSUB] Group %s: dial %s (%s) connected via %s but did not become a live topic peer",
 					groupId,
-					member.Username,
+					target.Username,
 					pidShort,
 					connectResult.Path,
 				)
@@ -1361,7 +1804,7 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 				continue
 			}
 
-			n.finishGroupPeerDial(member.PeerId, true, time.Now())
+			n.finishGroupPeerDial(target.PeerId, true, time.Now())
 			connected++
 			switch connectResult.Path {
 			case "direct":
@@ -1372,7 +1815,7 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 				relayOnlyConnected++
 			}
 			log.Printf("[PUBSUB] Group %s: connected to %s (%s) via %s",
-				groupId, member.Username, pidShort, connectResult.Path)
+				groupId, target.Username, pidShort, connectResult.Path)
 			n.emitEvent("group:discovery", map[string]interface{}{
 				"groupId":           groupId,
 				"step":              "known_member_dial_success",
@@ -1386,15 +1829,16 @@ func (n *Node) dialKnownGroupMembers(groupId string, ignoreCooldown bool) {
 	}
 
 	n.emitEvent("group:discovery", map[string]interface{}{
-		"groupId":                groupId,
-		"step":                   "direct_dial",
-		"membersDialed":          dialed,
-		"membersConnected":       connected,
-		"cooldownSkipped":        cooldownSkipped,
-		"directConnected":        directConnected,
-		"relayFallbackConnected": relayFallbackConnected,
-		"relayOnlyConnected":     relayOnlyConnected,
-		"totalMembers":           len(config.Members),
+		"groupId":                   groupId,
+		"step":                      "direct_dial",
+		"membersDialed":             dialed,
+		"membersConnected":          connected,
+		"cooldownSkipped":           cooldownSkipped,
+		"directConnected":           directConnected,
+		"relayFallbackConnected":    relayFallbackConnected,
+		"relayOnlyConnected":        relayOnlyConnected,
+		"totalMembers":              len(targets),
+		"ignoredInvalidConfigPeers": targetSummary.ignoredInvalidConfigPeer,
 	})
 }
 
@@ -1423,30 +1867,35 @@ func (n *Node) dialKnownGroupMembersDirectOnly(groupId string) {
 	dialed := 0
 	connected := 0
 	noDirectAddr := 0
-	for _, member := range config.Members {
-		if member.PeerId == selfId {
+	targetSummary := activeGroupMemberDialTargetSummary(config, selfId)
+	targets := targetSummary.targets
+	for _, target := range targets {
+		if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
 			continue
 		}
-		if _, alreadyConnected := connectedSet[member.PeerId]; alreadyConnected {
+		if _, alreadyConnected := connectedSet[target.PeerId]; alreadyConnected {
 			connected++
 			continue
 		}
 
-		connectResult, err := n.connectGroupPeerPreferDirect(member.PeerId, nil, false)
+		if !n.isCurrentActiveGroupDialTarget(groupId, target.PeerId) {
+			continue
+		}
+		connectResult, err := n.connectGroupPeerPreferDirect(target.PeerId, nil, false)
 		if !connectResult.AttemptedDirect {
 			noDirectAddr++
 			continue
 		}
 
 		dialed++
-		pidShort := member.PeerId
+		pidShort := target.PeerId
 		if len(pidShort) > 16 {
 			pidShort = pidShort[:16]
 		}
 
 		if err != nil {
 			log.Printf("[PUBSUB] Group %s: pre-relay direct dial %s (%s) failed (directAddrs=%d): %v",
-				groupId, member.Username, pidShort, connectResult.DirectAddrCount, err)
+				groupId, target.Username, pidShort, connectResult.DirectAddrCount, err)
 			n.emitEvent("group:discovery", map[string]interface{}{
 				"groupId":         groupId,
 				"step":            "known_member_pre_relay_direct_failed",
@@ -1459,7 +1908,7 @@ func (n *Node) dialKnownGroupMembersDirectOnly(groupId string) {
 
 		connected++
 		log.Printf("[PUBSUB] Group %s: pre-relay direct connected to %s (%s)",
-			groupId, member.Username, pidShort)
+			groupId, target.Username, pidShort)
 		n.emitEvent("group:discovery", map[string]interface{}{
 			"groupId":         groupId,
 			"step":            "known_member_pre_relay_direct_success",
@@ -1470,12 +1919,13 @@ func (n *Node) dialKnownGroupMembersDirectOnly(groupId string) {
 	}
 
 	n.emitEvent("group:discovery", map[string]interface{}{
-		"groupId":          groupId,
-		"step":             "pre_relay_direct_dial",
-		"membersDialed":    dialed,
-		"membersConnected": connected,
-		"noDirectAddr":     noDirectAddr,
-		"totalMembers":     len(config.Members),
+		"groupId":                   groupId,
+		"step":                      "pre_relay_direct_dial",
+		"membersDialed":             dialed,
+		"membersConnected":          connected,
+		"noDirectAddr":              noDirectAddr,
+		"totalMembers":              len(targets),
+		"ignoredInvalidConfigPeers": targetSummary.ignoredInvalidConfigPeer,
 	})
 }
 
@@ -1485,6 +1935,11 @@ func (n *Node) dialKnownGroupMembersDirectOnly(groupId string) {
 func (n *Node) countConnectedGroupMembers(groupId string) int {
 	n.mu.RLock()
 	config, ok := n.groupConfigs[groupId]
+	h := n.host
+	selfId := ""
+	if h != nil {
+		selfId = h.ID().String()
+	}
 	n.mu.RUnlock()
 
 	if !ok || config == nil {
@@ -1492,9 +1947,10 @@ func (n *Node) countConnectedGroupMembers(groupId string) int {
 	}
 
 	liveTopicPeers := n.liveGroupTopicPeerSet(groupId)
+	memberPeerSet := activeGroupMemberDialTargetSet(config, selfId)
 	count := 0
 	for pidStr := range liveTopicPeers {
-		if findMember(config, pidStr) != nil {
+		if _, ok := memberPeerSet[pidStr]; ok {
 			count++
 		}
 	}
@@ -1569,29 +2025,52 @@ func (n *Node) expectedConnectedGroupMembers(groupId string) int {
 		return 0
 	}
 
-	expected := 0
-	for _, member := range config.Members {
-		if member.PeerId == selfId {
-			continue
-		}
-		expected++
-	}
-	return expected
+	return len(activeGroupMemberDialTargets(config, selfId))
 }
 
 func countRemoteGroupMembers(config *GroupConfig, selfId string) int {
-	if config == nil {
+	return len(activeGroupMemberDialTargets(config, selfId))
+}
+
+func missingGroupPeerCount(topicPeers, expectedPeers int) int {
+	if expectedPeers <= topicPeers {
 		return 0
 	}
+	return expectedPeers - topicPeers
+}
 
-	count := 0
-	for _, member := range config.Members {
-		if member.PeerId == "" || member.PeerId == selfId {
-			continue
-		}
-		count++
-	}
-	return count
+func (n *Node) groupDiscoveryPeerSnapshot(groupId string) (topicPeers, expectedPeers, missingPeers int) {
+	topicPeers = n.countConnectedGroupMembers(groupId)
+	expectedPeers = n.expectedConnectedGroupMembers(groupId)
+	missingPeers = missingGroupPeerCount(topicPeers, expectedPeers)
+	return topicPeers, expectedPeers, missingPeers
+}
+
+func (n *Node) emitGroupDiscoveryBackoff(
+	groupId string,
+	connectedMembers int,
+	expectedMembers int,
+	consecutiveFailures int,
+	nextInterval time.Duration,
+	warmRetriesRemaining int,
+) {
+	topicPeers := connectedMembers
+	expectedPeers := expectedMembers
+	missingPeers := missingGroupPeerCount(topicPeers, expectedPeers)
+	n.emitEvent("group:discovery", map[string]interface{}{
+		"groupId":              groupId,
+		"step":                 "backoff",
+		"connectedMembers":     connectedMembers,
+		"expectedMembers":      expectedMembers,
+		"topicPeers":           topicPeers,
+		"expectedPeers":        expectedPeers,
+		"missingPeers":         missingPeers,
+		"backingOff":           true,
+		"consecutiveFailures":  consecutiveFailures,
+		"nextInterval":         nextInterval.String(),
+		"nextIntervalMs":       nextInterval.Milliseconds(),
+		"warmRetriesRemaining": warmRetriesRemaining,
+	})
 }
 
 type groupPeerDialState struct {
@@ -1741,6 +2220,8 @@ func (n *Node) ensureGroupTopicPeersBeforePublish(
 		"step":          "publish_peer_refresh_begin",
 		"topicPeers":    initialPeers,
 		"expectedPeers": expectedPeers,
+		"missingPeers":  missingGroupPeerCount(initialPeers, expectedPeers),
+		"backingOff":    false,
 	})
 
 	settleWait := GroupPublishPartialPeerSettleWait
@@ -1764,6 +2245,8 @@ func (n *Node) ensureGroupTopicPeersBeforePublish(
 		"step":          "publish_peer_refresh_done",
 		"topicPeers":    peerCount,
 		"expectedPeers": expectedPeers,
+		"missingPeers":  missingGroupPeerCount(peerCount, expectedPeers),
+		"backingOff":    false,
 		"promoted":      peerCount > initialPeers,
 		"settleWaitMs":  settleWait.Milliseconds(),
 	})
@@ -1859,10 +2342,9 @@ func (n *Node) runGroupDiscoveryCycle(
 // The loop uses exponential backoff with jitter when all dials fail
 // consecutively, capping at MaxGroupDiscoveryBackoff. The interval resets
 // to GroupDiscoveryInterval when any peer is connected or progress is made.
-func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
+func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string, relayReady <-chan struct{}) {
 	ns := groupRendezvousNamespace(groupId)
 	registered := false
-	warmRetriesRemaining := GroupDiscoveryWarmRetries
 
 	// Try direct recovery immediately using already-known non-relay addresses.
 	// Foreground peers on the same network should not wait for relay warm-up
@@ -1871,7 +2353,7 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 
 	// Wait for relay to be ready before relay-assisted dialing/registering.
 	select {
-	case <-n.relayReady:
+	case <-relayReady:
 	case <-ctx.Done():
 		return
 	}
@@ -1908,13 +2390,12 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 	}
 	registered = registeredNow
 
-	interval := GroupDiscoveryInterval
-	consecutiveFailures := 0
 	afterInitialConnected := n.countConnectedGroupMembers(groupId)
 	expectedInitialConnected := n.expectedConnectedGroupMembers(groupId)
-	if expectedInitialConnected > 0 && afterInitialConnected < expectedInitialConnected {
-		interval = GroupDiscoveryWarmInterval
-	}
+	interval, consecutiveFailures, warmRetriesRemaining := initialGroupDiscoveryCadence(
+		afterInitialConnected,
+		expectedInitialConnected,
+	)
 
 	for {
 		wait := interval
@@ -1949,52 +2430,73 @@ func (n *Node) groupPeerDiscoveryLoop(ctx context.Context, groupId string) {
 		afterConnected := n.countConnectedGroupMembers(groupId)
 		expectedConnected := n.expectedConnectedGroupMembers(groupId)
 
-		if expectedConnected == 0 || afterConnected >= expectedConnected {
-			// All currently-known members are connected — return to the slower
-			// maintenance cadence and reset the fast foreground catch-up window.
-			consecutiveFailures = 0
-			warmRetriesRemaining = GroupDiscoveryWarmRetries
-			interval = GroupDiscoveryInterval
+		var backingOff bool
+		interval, consecutiveFailures, warmRetriesRemaining, backingOff = nextGroupDiscoveryCadence(
+			interval,
+			consecutiveFailures,
+			warmRetriesRemaining,
+			beforeConnected,
+			afterConnected,
+			expectedConnected,
+		)
+		if !backingOff {
 			continue
 		}
 
-		if afterConnected > beforeConnected {
-			// We made partial progress but still have missing members. Keep a
-			// short retry cadence so a late foreground peer can join promptly.
-			consecutiveFailures = 0
-			warmRetriesRemaining = GroupDiscoveryWarmRetries
-			interval = GroupDiscoveryWarmInterval
-			continue
-		}
-
-		if warmRetriesRemaining > 0 {
-			warmRetriesRemaining--
-			interval = GroupDiscoveryWarmInterval
-			continue
-		}
-
-		// Missing peers are still not reachable after the warm retry window.
-		// Back off, but start from the short warm interval rather than jumping
-		// straight to the full 30 s cadence after the first failure.
-		if interval < GroupDiscoveryWarmInterval {
-			interval = GroupDiscoveryWarmInterval
-		}
-		consecutiveFailures++
-		interval = interval * 2
-		if interval > MaxGroupDiscoveryBackoff {
-			interval = MaxGroupDiscoveryBackoff
-		}
 		log.Printf("[PUBSUB] Group %s: discovery still missing peers (connected=%d/%d, streak=%d), backing off to %v",
 			groupId, afterConnected, expectedConnected, consecutiveFailures, interval)
-		n.emitEvent("group:discovery", map[string]interface{}{
-			"groupId":             groupId,
-			"step":                "backoff",
-			"connectedMembers":    afterConnected,
-			"expectedMembers":     expectedConnected,
-			"consecutiveFailures": consecutiveFailures,
-			"nextInterval":        interval.String(),
-		})
+		n.emitGroupDiscoveryBackoff(
+			groupId,
+			afterConnected,
+			expectedConnected,
+			consecutiveFailures,
+			interval,
+			warmRetriesRemaining,
+		)
 	}
+}
+
+func initialGroupDiscoveryCadence(afterConnected, expectedConnected int) (time.Duration, int, int) {
+	interval := GroupDiscoveryInterval
+	if expectedConnected > 0 && afterConnected < expectedConnected {
+		interval = GroupDiscoveryWarmInterval
+	}
+	return interval, 0, GroupDiscoveryWarmRetries
+}
+
+func nextGroupDiscoveryCadence(
+	interval time.Duration,
+	consecutiveFailures int,
+	warmRetriesRemaining int,
+	beforeConnected int,
+	afterConnected int,
+	expectedConnected int,
+) (time.Duration, int, int, bool) {
+	if expectedConnected == 0 || afterConnected >= expectedConnected {
+		// All currently-known members are connected: return to maintenance cadence.
+		return GroupDiscoveryInterval, 0, GroupDiscoveryWarmRetries, false
+	}
+
+	if afterConnected > beforeConnected {
+		// Partial progress should keep active foreground groups on the short retry cadence.
+		return GroupDiscoveryWarmInterval, 0, GroupDiscoveryWarmRetries, false
+	}
+
+	if warmRetriesRemaining > 0 {
+		return GroupDiscoveryWarmInterval, consecutiveFailures, warmRetriesRemaining - 1, false
+	}
+
+	// Missing peers are still not reachable after the warm retry window. Back off,
+	// but start from the short warm interval rather than jumping to 30 seconds.
+	if interval < GroupDiscoveryWarmInterval {
+		interval = GroupDiscoveryWarmInterval
+	}
+	consecutiveFailures++
+	interval *= 2
+	if interval > MaxGroupDiscoveryBackoff {
+		interval = MaxGroupDiscoveryBackoff
+	}
+	return interval, consecutiveFailures, warmRetriesRemaining, true
 }
 
 // findMember returns the GroupMember with the given peerId, or nil if not found.
@@ -2003,10 +2505,19 @@ func findMember(config *GroupConfig, peerId string) *GroupMember {
 		return nil
 	}
 
+	normalizedPeerId := strings.TrimSpace(peerId)
+	if normalizedPeerId == "" {
+		return nil
+	}
+	var selected *GroupMember
 	for i := range config.Members {
-		if config.Members[i].PeerId == peerId {
-			return &config.Members[i]
+		if strings.TrimSpace(config.Members[i].PeerId) != normalizedPeerId {
+			continue
+		}
+		if selected == nil ||
+			preferGroupMemberCandidate(config.Members[i], *selected) {
+			selected = &config.Members[i]
 		}
 	}
-	return nil
+	return selected
 }

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
+import 'package:flutter_app/core/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -1679,7 +1680,7 @@ void main() {
     );
 
     test(
-      'same message is not duplicated if both pubsub and group inbox deliver it',
+      'GP-026 same message is not duplicated if both pubsub and group inbox deliver it',
       () async {
         final bob = GroupTestUser.create(
           peerId: 'bob-peer',
@@ -3978,6 +3979,192 @@ void main() {
       });
 
       test(
+        'GP-007 zero-peer send delegates to inbox without visible delay',
+        () async {
+          const groupId = 'group-gp007-zero-peer';
+          const messageId = 'gp007-zero-peer-integration';
+          const messageText = 'GP-007 zero-peer bounded integration';
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gp007-zero-peer',
+            username: 'Alice',
+            network: network,
+            bridge: ZeroPeerPublishBridge(),
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-gp007-zero-peer',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final bobBridge = bob.bridge as _CursorInboxBridge;
+          addTearDown(() {
+            admin.dispose();
+            bob.dispose();
+          });
+
+          await admin.createGroup(groupId: groupId, name: 'GP-007 Group');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'gp007-key');
+          await _saveKey(bob, groupId, 1, 'gp007-key');
+          network.unsubscribe(groupId, bob.peerId);
+
+          admin.start();
+          bob.start();
+
+          final stopwatch = Stopwatch()..start();
+          final (result, sent) = await admin.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: messageText,
+            messageId: messageId,
+          );
+          stopwatch.stop();
+
+          expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
+          expect(result, SendGroupMessageResult.successNoPeers);
+          expect(sent, isNotNull);
+          expect(sent!.id, messageId);
+          expect(sent.status, 'sent');
+          expect(sent.inboxStored, isTrue);
+          expect(sent.inboxRetryPayload, isNull);
+          expect(admin.bridge.commandLog, contains('group:publish'));
+          expect(admin.bridge.commandLog, contains('group:inboxStore'));
+
+          final senderRow = await admin.msgRepo.getMessage(messageId);
+          expect(senderRow, isNotNull);
+          expect(senderRow!.status, 'sent');
+          expect(senderRow.inboxStored, isTrue);
+          expect(senderRow.inboxRetryPayload, isNull);
+
+          _injectInboxMessageFromLatestStore(
+            senderBridge: admin.bridge,
+            receiverBridge: bobBridge,
+            receiverPeerId: bob.peerId,
+            groupId: groupId,
+          );
+
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+          );
+
+          final bobMessages = await bob.loadGroupMessages(groupId);
+          final incoming = bobMessages.where(
+            (message) =>
+                message.isIncoming &&
+                message.id == messageId &&
+                message.text == messageText,
+          );
+          expect(incoming, hasLength(1));
+        },
+      );
+
+      test(
+        'GI-020 zero-peer publish is repaired by later inbox replay exactly once',
+        () async {
+          const groupId = 'group-gi020-zero-peer-repair';
+          const messageId = 'gi020-zero-peer-replay';
+          const messageText = 'GI-020 zero-peer repaired by inbox replay';
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gi020-zero-peer',
+            username: 'Alice',
+            network: network,
+            bridge: ZeroPeerPublishBridge(),
+          );
+          final bob = GroupTestUser.create(
+            peerId: 'reader-gi020-zero-peer',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final bobBridge = bob.bridge as _CursorInboxBridge;
+          addTearDown(() {
+            admin.dispose();
+            bob.dispose();
+          });
+
+          await admin.createGroup(groupId: groupId, name: 'GI-020 Group');
+          await admin.addMember(groupId: groupId, invitee: bob);
+          await _saveKey(admin, groupId, 1, 'gi020-key');
+          await _saveKey(bob, groupId, 1, 'gi020-key');
+          network.unsubscribe(groupId, bob.peerId);
+
+          admin.start();
+          bob.start();
+
+          final (result, sent) = await admin.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: messageText,
+            messageId: messageId,
+          );
+
+          expect(result, SendGroupMessageResult.successNoPeers);
+          expect(sent, isNotNull);
+          expect(sent!.id, messageId);
+          expect(sent.status, 'sent');
+          expect(sent.inboxStored, isTrue);
+          expect(sent.inboxRetryPayload, isNull);
+          expect(admin.bridge.commandLog, contains('group:publish'));
+          expect(admin.bridge.commandLog, contains('group:inboxStore'));
+
+          final senderRow = await admin.msgRepo.getMessage(messageId);
+          expect(senderRow, isNotNull);
+          expect(senderRow!.status, 'sent');
+          expect(senderRow.inboxStored, isTrue);
+          expect(senderRow.inboxRetryPayload, isNull);
+
+          var bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where((message) => message.id == messageId),
+            isEmpty,
+          );
+
+          _injectInboxMessageFromLatestStore(
+            senderBridge: admin.bridge,
+            receiverBridge: bobBridge,
+            receiverPeerId: bob.peerId,
+            groupId: groupId,
+          );
+
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+          );
+
+          bobMessages = await bob.loadGroupMessages(groupId);
+          final incoming = bobMessages.where(
+            (message) =>
+                message.isIncoming &&
+                message.id == messageId &&
+                message.text == messageText,
+          );
+          expect(incoming, hasLength(1));
+
+          await drainGroupOfflineInbox(
+            bridge: bob.bridge,
+            groupRepo: bob.groupRepo,
+            msgRepo: bob.msgRepo,
+          );
+          bobMessages = await bob.loadGroupMessages(groupId);
+          expect(
+            bobMessages.where(
+              (message) =>
+                  message.isIncoming &&
+                  message.id == messageId &&
+                  message.text == messageText,
+            ),
+            hasLength(1),
+          );
+
+          final finalSenderRow = await admin.msgRepo.getMessage(messageId);
+          expect(finalSenderRow, isNotNull);
+          expect(finalSenderRow!.status, 'sent');
+          expect(finalSenderRow.inboxStored, isTrue);
+        },
+      );
+
+      test(
         "inbox store failure doesn't block publish but leaves sender state pending",
         () async {
           final admin = GroupTestUser.create(
@@ -4289,6 +4476,208 @@ void main() {
           expect(
             inboxRecoveredMessages.where(
               (message) => message.id == initialMessage.id,
+            ),
+            hasLength(1),
+          );
+
+          admin.dispose();
+          liveReader.dispose();
+          inboxReader.dispose();
+        },
+      );
+
+      test(
+        'GR-017 recovery preserves failed direct and pending inbox retry state',
+        () async {
+          final adminBridge = _Section10MirroringBridge(
+            network: network,
+            msgRepo: InMemoryGroupMessageRepository(),
+            groupRepo: InMemoryGroupRepository(),
+            publishFailuresRemaining: 1,
+            inboxStoreFailuresRemaining: 1,
+          );
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gr017-peer',
+            username: 'Alice',
+            network: network,
+            bridge: adminBridge,
+          );
+          final liveReader = GroupTestUser.create(
+            peerId: 'reader-gr017-live-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final inboxReader = GroupTestUser.create(
+            peerId: 'reader-gr017-inbox-peer',
+            username: 'Carol',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final inboxBridge = inboxReader.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-gr017-retry-preserve';
+          const directRetryId = 'gr017-direct-retry';
+          const inboxRetryId = 'gr017-inbox-retry';
+          const directRetryText = 'GR017 direct retry survives recovery';
+          const inboxRetryText = 'GR017 inbox retry survives recovery';
+
+          await admin.createGroup(groupId: groupId, name: 'GR017 Retry');
+          await admin.addMember(groupId: groupId, invitee: liveReader);
+          await admin.addMember(groupId: groupId, invitee: inboxReader);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(liveReader, groupId, 1, 'k1');
+          await _saveKey(inboxReader, groupId, 1, 'k1');
+          network.unsubscribe(groupId, inboxReader.peerId);
+
+          admin.start();
+          liveReader.start();
+          inboxReader.start();
+
+          final (directResult, directMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: directRetryText,
+                messageId: directRetryId,
+              );
+          expect(directResult, SendGroupMessageResult.error);
+          expect(directMessage, isNotNull);
+          expect(directMessage!.status, 'failed');
+          expect(directMessage.inboxStored, isFalse);
+          expect(directMessage.inboxRetryPayload, isNotNull);
+
+          adminBridge.inboxStoreFailuresRemaining = 1;
+          final (inboxResult, inboxMessage) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: inboxRetryText,
+                messageId: inboxRetryId,
+              );
+          expect(inboxResult, SendGroupMessageResult.success);
+          expect(inboxMessage, isNotNull);
+          expect(inboxMessage!.status, 'pending');
+          expect(inboxMessage.inboxStored, isFalse);
+          expect(inboxMessage.inboxRetryPayload, isNotNull);
+
+          await pumpUntilAsync(() async {
+            final liveMessages = await liveReader.loadGroupMessages(groupId);
+            return liveMessages.any((message) => message.id == inboxRetryId);
+          }, maxPumps: 120);
+
+          final retryOrder = <String>[];
+          await handleAppResumed(
+            bridge: admin.bridge,
+            p2pService: FakeP2PService(recoveryMethod: 'watchdog_restart'),
+            groupRepo: admin.groupRepo,
+            groupMsgRepo: admin.msgRepo,
+            retryFailedGroupMessagesFn: () async {
+              retryOrder.add('retryFailedGroupMessages');
+              return retryFailedGroupMessages(
+                groupMsgRepo: admin.msgRepo,
+                groupRepo: admin.groupRepo,
+                identityRepo: _Section10IdentityRepository(
+                  _identityForUser(admin),
+                ),
+                bridge: admin.bridge,
+                mediaAttachmentRepo: admin.mediaAttachmentRepo,
+              );
+            },
+            retryFailedGroupInboxStoresFn: () async {
+              retryOrder.add('retryFailedGroupInboxStores');
+              return retryFailedGroupInboxStores(
+                bridge: admin.bridge,
+                msgRepo: admin.msgRepo,
+              );
+            },
+          );
+
+          expect(retryOrder, [
+            'retryFailedGroupMessages',
+            'retryFailedGroupInboxStores',
+          ]);
+
+          final directAfterRecovery = await admin.msgRepo.getMessage(
+            directRetryId,
+          );
+          final inboxAfterRecovery = await admin.msgRepo.getMessage(
+            inboxRetryId,
+          );
+          expect(directAfterRecovery, isNotNull);
+          expect(directAfterRecovery!.status, 'sent');
+          expect(directAfterRecovery.inboxStored, isTrue);
+          expect(directAfterRecovery.inboxRetryPayload, isNull);
+          expect(inboxAfterRecovery, isNotNull);
+          expect(inboxAfterRecovery!.status, 'sent');
+          expect(inboxAfterRecovery.inboxStored, isTrue);
+          expect(inboxAfterRecovery.inboxRetryPayload, isNull);
+
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:publish'),
+            hasLength(3),
+          );
+          expect(
+            adminBridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+            hasLength(4),
+          );
+
+          final storeByMessageId = <String, Map<String, dynamic>>{};
+          for (final payload in bridgePayloads(
+            admin.bridge,
+            'group:inboxStore',
+          )) {
+            final recipients =
+                (payload['recipientPeerIds'] as List<dynamic>? ?? const [])
+                    .cast<String>();
+            if (!recipients.contains(inboxReader.peerId)) continue;
+
+            final storedMessage = payload['message'] as String;
+            final decoded = _decodedGroupReplayPayload(storedMessage);
+            final messageId = decoded['messageId'] as String?;
+            if (messageId == directRetryId || messageId == inboxRetryId) {
+              storeByMessageId[messageId!] = payload;
+            }
+          }
+          expect(storeByMessageId.keys.toSet(), {directRetryId, inboxRetryId});
+
+          inboxBridge.addPage(groupId, '', [
+            for (final messageId in [directRetryId, inboxRetryId])
+              {
+                'from': admin.peerId,
+                'message': storeByMessageId[messageId]!['message'] as String,
+                'timestamp': DateTime.now().millisecondsSinceEpoch,
+              },
+          ], '');
+          await drainGroupOfflineInbox(
+            bridge: inboxReader.bridge,
+            groupRepo: inboxReader.groupRepo,
+            msgRepo: inboxReader.msgRepo,
+          );
+
+          final liveMessages = await liveReader.loadGroupMessages(groupId);
+          expect(
+            liveMessages.where((message) => message.id == directRetryId),
+            hasLength(1),
+          );
+          expect(
+            liveMessages.where((message) => message.id == inboxRetryId),
+            hasLength(1),
+          );
+
+          final inboxMessages = await inboxReader.loadGroupMessages(groupId);
+          expect(
+            inboxMessages.where(
+              (message) =>
+                  message.isIncoming &&
+                  message.id == directRetryId &&
+                  message.text == directRetryText,
+            ),
+            hasLength(1),
+          );
+          expect(
+            inboxMessages.where(
+              (message) =>
+                  message.isIncoming &&
+                  message.id == inboxRetryId &&
+                  message.text == inboxRetryText,
             ),
             hasLength(1),
           );
@@ -4702,6 +5091,411 @@ void main() {
           admin.dispose();
           onlineReader.dispose();
           partitionedReader.dispose();
+        },
+      );
+
+      test(
+        'GR-015 relay reconnect replays outage messages and resumes live delivery without restart',
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gr015-peer',
+            username: 'Alice',
+            network: network,
+          );
+          final onlineReader = GroupTestUser.create(
+            peerId: 'reader-gr015-online-peer',
+            username: 'Bob',
+            network: network,
+          );
+          final reconnectingReader = GroupTestUser.create(
+            peerId: 'reader-gr015-reconnect-peer',
+            username: 'Carol',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final reconnectBridge =
+              reconnectingReader.bridge as _CursorInboxBridge;
+
+          const groupId = 'group-gr015-relay-reconnect';
+          await admin.createGroup(groupId: groupId, name: 'GR015 Relay');
+          await admin.addMember(groupId: groupId, invitee: onlineReader);
+          await admin.addMember(groupId: groupId, invitee: reconnectingReader);
+          await _saveKey(admin, groupId, 1, 'k1');
+          await _saveKey(onlineReader, groupId, 1, 'k1');
+          await _saveKey(reconnectingReader, groupId, 1, 'k1');
+
+          admin.start();
+          onlineReader.start();
+          reconnectingReader.start();
+
+          Future<List<String>> incomingTexts(GroupTestUser user) async {
+            return (await user.loadGroupMessages(groupId))
+                .where((message) => message.isIncoming)
+                .map((message) => message.text)
+                .toList(growable: false);
+          }
+
+          await admin.sendGroupMessage(
+            groupId: groupId,
+            text: 'Before relay drop',
+          );
+          await pumpUntilAsync(() async {
+            return (await incomingTexts(reconnectingReader)).length == 1;
+          }, maxPumps: 120);
+          expect(await incomingTexts(onlineReader), ['Before relay drop']);
+          expect(await incomingTexts(reconnectingReader), [
+            'Before relay drop',
+          ]);
+
+          network.unsubscribe(groupId, reconnectingReader.peerId);
+          expect(
+            network.isSubscribed(groupId, reconnectingReader.peerId),
+            isFalse,
+          );
+
+          final (firstResult, firstSent) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'During relay drop 1',
+              );
+          final (secondResult, secondSent) = await admin
+              .sendGroupMessageViaBridge(
+                groupId: groupId,
+                text: 'During relay drop 2',
+              );
+          expect(firstResult, SendGroupMessageResult.success);
+          expect(firstSent, isNotNull);
+          expect(firstSent!.inboxStored, isTrue);
+          expect(secondResult, SendGroupMessageResult.success);
+          expect(secondSent, isNotNull);
+          expect(secondSent!.inboxStored, isTrue);
+
+          await pumpUntilAsync(() async {
+            return (await incomingTexts(onlineReader)).length == 3;
+          }, maxPumps: 120);
+          expect(await incomingTexts(onlineReader), [
+            'Before relay drop',
+            'During relay drop 1',
+            'During relay drop 2',
+          ]);
+          expect(await incomingTexts(reconnectingReader), [
+            'Before relay drop',
+          ]);
+
+          final inboxStores = bridgePayloads(admin.bridge, 'group:inboxStore');
+          expect(inboxStores, hasLength(2));
+          for (final payload in inboxStores) {
+            expect(
+              (payload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+              contains(reconnectingReader.peerId),
+            );
+          }
+
+          _addRelayStoredMessagePage(
+            receiverBridge: reconnectBridge,
+            groupId: groupId,
+            fromPeerId: admin.peerId,
+            storedMessage: inboxStores[0]['message'] as String,
+            nextCursor: 'cursor-gr015-reconnect-2',
+          );
+          _addRelayStoredMessagePage(
+            receiverBridge: reconnectBridge,
+            groupId: groupId,
+            fromPeerId: admin.peerId,
+            storedMessage: inboxStores[1]['message'] as String,
+            cursor: 'cursor-gr015-reconnect-2',
+          );
+
+          network.subscribe(groupId, reconnectingReader.peerId);
+          expect(
+            network.isSubscribed(groupId, reconnectingReader.peerId),
+            isTrue,
+          );
+          await drainGroupOfflineInbox(
+            bridge: reconnectingReader.bridge,
+            groupRepo: reconnectingReader.groupRepo,
+            msgRepo: reconnectingReader.msgRepo,
+          );
+
+          expect(await incomingTexts(reconnectingReader), [
+            'Before relay drop',
+            'During relay drop 1',
+            'During relay drop 2',
+          ]);
+
+          await admin.sendGroupMessage(
+            groupId: groupId,
+            text: 'After relay reconnect',
+          );
+          await pumpUntilAsync(() async {
+            return (await incomingTexts(reconnectingReader)).length == 4;
+          }, maxPumps: 120);
+
+          expect(await incomingTexts(onlineReader), [
+            'Before relay drop',
+            'During relay drop 1',
+            'During relay drop 2',
+            'After relay reconnect',
+          ]);
+          expect(await incomingTexts(reconnectingReader), [
+            'Before relay drop',
+            'During relay drop 1',
+            'During relay drop 2',
+            'After relay reconnect',
+          ]);
+
+          final cursorCmds = reconnectBridge.sentMessages
+              .map((message) => jsonDecode(message) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:inboxRetrieveCursor')
+              .toList(growable: false);
+          expect(cursorCmds, hasLength(2));
+          expect(cursorCmds[0]['payload']['cursor'], '');
+          expect(
+            cursorCmds[1]['payload']['cursor'],
+            'cursor-gr015-reconnect-2',
+          );
+
+          admin.dispose();
+          onlineReader.dispose();
+          reconnectingReader.dispose();
+        },
+      );
+
+      test(
+        'GR-016 watchdog restart rejoins every private group and resumes delivery',
+        () async {
+          final admin = GroupTestUser.create(
+            peerId: 'admin-gr016-peer',
+            username: 'Alice',
+            network: network,
+          );
+          final onlineReader = GroupTestUser.create(
+            peerId: 'reader-gr016-online-peer',
+            username: 'Carol',
+            network: network,
+          );
+          final recoveringReader = GroupTestUser.create(
+            peerId: 'reader-gr016-recover-peer',
+            username: 'Bob',
+            network: network,
+            bridge: _CursorInboxBridge(),
+          );
+          final recoverBridge = recoveringReader.bridge as _CursorInboxBridge;
+
+          const groupIds = ['group-gr016-alpha', 'group-gr016-beta'];
+          const labelsByGroup = {
+            'group-gr016-alpha': 'Alpha',
+            'group-gr016-beta': 'Beta',
+          };
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            await admin.createGroup(groupId: groupId, name: 'GR016 $label');
+            await admin.addMember(groupId: groupId, invitee: onlineReader);
+            await admin.addMember(groupId: groupId, invitee: recoveringReader);
+            await _saveKey(admin, groupId, 1, 'key-$label');
+            await _saveKey(onlineReader, groupId, 1, 'key-$label');
+            await _saveKey(recoveringReader, groupId, 1, 'key-$label');
+          }
+
+          admin.start();
+          onlineReader.start();
+          recoveringReader.start();
+
+          Future<List<String>> incomingTexts(
+            GroupTestUser user,
+            String groupId,
+          ) async {
+            return (await user.loadGroupMessages(groupId))
+                .where((message) => message.isIncoming)
+                .map((message) => message.text)
+                .toList(growable: false);
+          }
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            await admin.sendGroupMessage(
+              groupId: groupId,
+              text: 'Before watchdog $label',
+            );
+          }
+          await pumpUntilAsync(() async {
+            for (final groupId in groupIds) {
+              if ((await incomingTexts(recoveringReader, groupId)).length !=
+                  1) {
+                return false;
+              }
+            }
+            return true;
+          }, maxPumps: 120);
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            expect(await incomingTexts(onlineReader, groupId), [
+              'Before watchdog $label',
+            ]);
+            expect(await incomingTexts(recoveringReader, groupId), [
+              'Before watchdog $label',
+            ]);
+          }
+
+          for (final groupId in groupIds) {
+            network.unsubscribe(groupId, recoveringReader.peerId);
+            expect(
+              network.isSubscribed(groupId, recoveringReader.peerId),
+              isFalse,
+              reason: 'Watchdog restart drops runtime topic state for $groupId',
+            );
+          }
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            final (result, sent) = await admin.sendGroupMessageViaBridge(
+              groupId: groupId,
+              text: 'During watchdog $label',
+              messageId: 'gr016-during-${label.toLowerCase()}',
+            );
+            expect(result, SendGroupMessageResult.success);
+            expect(sent, isNotNull);
+            expect(sent!.inboxStored, isTrue);
+          }
+
+          await pumpUntilAsync(() async {
+            for (final groupId in groupIds) {
+              if ((await incomingTexts(onlineReader, groupId)).length != 2) {
+                return false;
+              }
+            }
+            return true;
+          }, maxPumps: 120);
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            expect(await incomingTexts(onlineReader, groupId), [
+              'Before watchdog $label',
+              'During watchdog $label',
+            ]);
+            expect(await incomingTexts(recoveringReader, groupId), [
+              'Before watchdog $label',
+            ]);
+          }
+
+          final inboxStores = bridgePayloads(admin.bridge, 'group:inboxStore');
+          expect(inboxStores, hasLength(groupIds.length));
+          for (final groupId in groupIds) {
+            final matchingStores = inboxStores
+                .where((payload) => payload['groupId'] == groupId)
+                .toList(growable: false);
+            expect(matchingStores, hasLength(1));
+            expect(
+              (matchingStores.single['recipientPeerIds'] as List<dynamic>)
+                  .cast<String>(),
+              contains(recoveringReader.peerId),
+            );
+            _addRelayStoredMessagePage(
+              receiverBridge: recoverBridge,
+              groupId: groupId,
+              fromPeerId: admin.peerId,
+              storedMessage: matchingStores.single['message'] as String,
+            );
+          }
+
+          final rejoinResult = await rejoinGroupTopics(
+            bridge: recoveringReader.bridge,
+            groupRepo: recoveringReader.groupRepo,
+            reason: RejoinReason.watchdogRestart,
+          );
+          expect(rejoinResult.joinedGroupCount, groupIds.length);
+          expect(rejoinResult.skippedNoKeyCount, 0);
+          expect(rejoinResult.errorCount, 0);
+          expect(rejoinResult.canAcknowledgeGroupRecovery, isTrue);
+
+          final joinCmds = recoverBridge.sentMessages
+              .map((message) => jsonDecode(message) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:join')
+              .toList(growable: false);
+          expect(joinCmds, hasLength(groupIds.length));
+          final joinedGroupIds = joinCmds
+              .map((message) => message['payload']['groupId'] as String)
+              .toSet();
+          expect(joinedGroupIds, groupIds.toSet());
+
+          for (final command in joinCmds) {
+            final payload = command['payload'] as Map<String, dynamic>;
+            final groupId = payload['groupId'] as String;
+            final label = labelsByGroup[groupId]!;
+            expect(payload['groupKey'], 'key-$label');
+            expect(payload['keyEpoch'], 1);
+          }
+
+          for (final groupId in groupIds) {
+            network.subscribe(groupId, recoveringReader.peerId);
+            expect(
+              network.isSubscribed(groupId, recoveringReader.peerId),
+              isTrue,
+            );
+          }
+          await drainGroupOfflineInbox(
+            bridge: recoveringReader.bridge,
+            groupRepo: recoveringReader.groupRepo,
+            msgRepo: recoveringReader.msgRepo,
+          );
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            expect(await incomingTexts(recoveringReader, groupId), [
+              'Before watchdog $label',
+              'During watchdog $label',
+            ]);
+          }
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            await admin.sendGroupMessage(
+              groupId: groupId,
+              text: 'After watchdog $label',
+            );
+          }
+          await pumpUntilAsync(() async {
+            for (final groupId in groupIds) {
+              if ((await incomingTexts(recoveringReader, groupId)).length !=
+                  3) {
+                return false;
+              }
+            }
+            return true;
+          }, maxPumps: 120);
+
+          for (final groupId in groupIds) {
+            final label = labelsByGroup[groupId]!;
+            final expected = [
+              'Before watchdog $label',
+              'During watchdog $label',
+              'After watchdog $label',
+            ];
+            expect(await incomingTexts(onlineReader, groupId), expected);
+            expect(await incomingTexts(recoveringReader, groupId), expected);
+          }
+
+          final cursorCmds = recoverBridge.sentMessages
+              .map((message) => jsonDecode(message) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:inboxRetrieveCursor')
+              .toList(growable: false);
+          expect(cursorCmds, hasLength(groupIds.length));
+          expect(
+            cursorCmds
+                .map((message) => message['payload']['groupId'] as String)
+                .toSet(),
+            groupIds.toSet(),
+          );
+          expect(
+            cursorCmds.map((message) => message['payload']['cursor'] as String),
+            everyElement(''),
+          );
+
+          admin.dispose();
+          onlineReader.dispose();
+          recoveringReader.dispose();
         },
       );
 

@@ -49,7 +49,9 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupMembers(
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MEMBERS_DB_LOAD_ALL_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {
@@ -198,6 +200,95 @@ Future<void> dbDeleteGroupMember(
   }
 }
 
+/// Persists the last known member/device identity for a removed group member.
+Future<void> dbInsertRemovedGroupMemberSnapshot(
+  Database db,
+  Map<String, Object?> row,
+  String removedAt,
+) async {
+  final groupId = row['group_id'] as String? ?? '';
+  final peerId = row['peer_id'] as String? ?? '';
+  final snapshotRow = Map<String, Object?>.from(row)
+    ..['removed_at'] = removedAt;
+
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'REMOVED_GROUP_MEMBER_SNAPSHOT_DB_INSERT_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'peerId': peerId.length > 8 ? peerId.substring(0, 8) : peerId,
+    },
+  );
+
+  try {
+    await db.insert(
+      'removed_group_member_snapshots',
+      snapshotRow,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'REMOVED_GROUP_MEMBER_SNAPSHOT_DB_INSERT_SUCCESS',
+      details: {},
+    );
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'REMOVED_GROUP_MEMBER_SNAPSHOT_DB_INSERT_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Loads the last known identity snapshot for a removed group member.
+Future<Map<String, Object?>?> dbLoadRemovedGroupMemberSnapshot(
+  Database db,
+  String groupId,
+  String peerId,
+) async {
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'REMOVED_GROUP_MEMBER_SNAPSHOT_DB_LOAD_START',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'peerId': peerId.length > 8 ? peerId.substring(0, 8) : peerId,
+    },
+  );
+
+  try {
+    final results = await db.query(
+      'removed_group_member_snapshots',
+      where: 'group_id = ? AND peer_id = ?',
+      whereArgs: [groupId, peerId],
+      orderBy: 'removed_at DESC',
+      limit: 1,
+    );
+    if (results.isEmpty) {
+      emitFlowEvent(
+        layer: 'DB',
+        event: 'REMOVED_GROUP_MEMBER_SNAPSHOT_DB_LOAD_NOT_FOUND',
+        details: {},
+      );
+      return null;
+    }
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'REMOVED_GROUP_MEMBER_SNAPSHOT_DB_LOAD_FOUND',
+      details: {},
+    );
+    return results.first;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'REMOVED_GROUP_MEMBER_SNAPSHOT_DB_LOAD_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
 /// Returns the count of members in a group.
 Future<int> dbCountGroupMembers(Database db, String groupId) async {
   try {
@@ -216,7 +307,9 @@ Future<void> dbDeleteAllGroupMembers(Database db, String groupId) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'GROUP_MEMBERS_DB_DELETE_ALL_START',
-    details: {'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId},
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+    },
   );
 
   try {

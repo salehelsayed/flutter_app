@@ -64,3 +64,14 @@ abstract class GroupRepository {
   /// Removes all keys for a group.
   Future<void> removeAllKeys(String groupId);
 }
+
+/// Optional repository capability for retaining removed-member verification
+/// material so historical replay can still validate old signed envelopes.
+abstract class RemovedGroupMemberSnapshotRepository {
+  Future<void> saveRemovedMemberSnapshot(
+    GroupMember member, {
+    required DateTime removedAt,
+  });
+
+  Future<GroupMember?> getRemovedMemberSnapshot(String groupId, String peerId);
+}

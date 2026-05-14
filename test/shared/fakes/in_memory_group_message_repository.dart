@@ -14,6 +14,10 @@ class InMemoryGroupMessageRepository
   final Set<String> failSaveMessageIds = {};
   bool failInboxPageTransaction = false;
 
+  Iterable<GroupMessage> get _visibleMessages => _messages.values.where(
+    (message) => !isGroupRemovalCutoffMessageId(message.id),
+  );
+
   @override
   Future<void> saveMessage(GroupMessage message) async {
     if (failSaveMessageIds.contains(message.id)) {
@@ -28,7 +32,7 @@ class InMemoryGroupMessageRepository
     int limit = 50,
     int offset = 0,
   }) async {
-    var messages = _messages.values.where((m) => m.groupId == groupId).toList();
+    var messages = _visibleMessages.where((m) => m.groupId == groupId).toList();
     messages.sort(compareGroupMessagesDescending);
     // Apply offset and limit, then reverse to ASC order
     final page = messages.skip(offset).take(limit).toList();
@@ -42,7 +46,7 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<GroupMessage?> getLatestMessage(String groupId) async {
-    final messages = _messages.values
+    final messages = _visibleMessages
         .where((m) => m.groupId == groupId)
         .toList();
     if (messages.isEmpty) return null;
@@ -56,11 +60,14 @@ class InMemoryGroupMessageRepository
     String senderPeerId,
   ) async {
     final removalPrefix = 'sys-member_removed:$groupId:$senderPeerId:';
+    final cutoffPrefix =
+        '$groupRemovalCutoffMessageIdPrefix:$groupId:$senderPeerId:';
     final messages = _messages.values
         .where(
           (message) =>
               message.groupId == groupId &&
-              message.id.startsWith(removalPrefix),
+              (message.id.startsWith(removalPrefix) ||
+                  message.id.startsWith(cutoffPrefix)),
         )
         .toList();
     if (messages.isEmpty) return null;
@@ -96,19 +103,19 @@ class InMemoryGroupMessageRepository
 
   @override
   Future<int> getMessageCount(String groupId) async {
-    return _messages.values.where((m) => m.groupId == groupId).length;
+    return _visibleMessages.where((m) => m.groupId == groupId).length;
   }
 
   @override
   Future<int> getUnreadCount(String groupId) async {
-    return _messages.values
+    return _visibleMessages
         .where((m) => m.groupId == groupId && m.isIncoming && m.readAt == null)
         .length;
   }
 
   @override
   Future<int> getTotalUnreadCount() async {
-    return _messages.values
+    return _visibleMessages
         .where((m) => m.isIncoming && m.readAt == null)
         .length;
   }
@@ -136,7 +143,7 @@ class InMemoryGroupMessageRepository
     String text,
     DateTime timestamp,
   ) async {
-    return _messages.values.any(
+    return _visibleMessages.any(
       (m) =>
           m.groupId == groupId &&
           m.senderPeerId == senderPeerId &&
@@ -202,7 +209,7 @@ class InMemoryGroupMessageRepository
   @override
   Future<GroupThreadSummary> getGroupThreadSummary(String groupId) async {
     final messages =
-        _messages.values.where((message) => message.groupId == groupId).toList()
+        _visibleMessages.where((message) => message.groupId == groupId).toList()
           ..sort(compareGroupMessagesDescending);
     return GroupThreadSummary(
       groupId: groupId,
@@ -220,7 +227,7 @@ class InMemoryGroupMessageRepository
     final summaries = <String, GroupThreadSummary>{};
     for (final groupId in groupIds.toSet()) {
       final messages =
-          _messages.values
+          _visibleMessages
               .where((message) => message.groupId == groupId)
               .toList()
             ..sort(compareGroupMessagesDescending);
@@ -346,7 +353,7 @@ class InMemoryGroupMessageRepository
     }
   }
 
-  int get count => _messages.length;
+  int get count => _visibleMessages.length;
 
   String _receiptKey(GroupMessageReceipt receipt) =>
       '${receipt.groupId}:${receipt.messageId}:${receipt.receiptType}:${receipt.memberPeerId}';

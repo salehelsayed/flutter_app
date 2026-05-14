@@ -18,6 +18,7 @@ import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart'
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
@@ -90,11 +91,13 @@ import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
@@ -408,8 +411,10 @@ class GroupMultiDeviceTestStack {
   final ContactRepositoryImpl contactRepo;
   final GroupRepositoryImpl groupRepo;
   final GroupMessageRepositoryImpl groupMsgRepo;
+  final MediaAttachmentRepositoryImpl mediaAttachmentRepo;
   final IncomingMessageRouter messageRouter;
   final GroupKeyUpdateListener groupKeyUpdateListener;
+  final GroupMembershipUpdateListener groupMembershipUpdateListener;
   final GroupMessageListener groupListener;
   final StreamController<Map<String, dynamic>> groupStreamController;
   final FakeNotificationService notificationService;
@@ -425,8 +430,10 @@ class GroupMultiDeviceTestStack {
     required this.contactRepo,
     required this.groupRepo,
     required this.groupMsgRepo,
+    required this.mediaAttachmentRepo,
     required this.messageRouter,
     required this.groupKeyUpdateListener,
+    required this.groupMembershipUpdateListener,
     required this.groupListener,
     required this.groupStreamController,
     required this.notificationService,
@@ -436,6 +443,7 @@ class GroupMultiDeviceTestStack {
 
   Future<void> teardown() async {
     groupKeyUpdateListener.dispose();
+    groupMembershipUpdateListener.dispose();
     messageRouter.dispose();
     groupListener.dispose();
     await groupStreamController.close();
@@ -447,11 +455,28 @@ class GroupMultiDeviceTestStack {
   }
 }
 
+class RecordingGoBridgeClient extends GoBridgeClient {
+  final List<String> sentMessages = <String>[];
+  final List<Map<String, String>> bridgeExchanges = <Map<String, String>>[];
+
+  @override
+  Future<String> send(String message) async {
+    sentMessages.add(message);
+    final response = await super.send(message);
+    bridgeExchanges.add(<String, String>{
+      'request': message,
+      'response': response,
+    });
+    return response;
+  }
+}
+
 Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   required String dbName,
   required String username,
   required Map<String, dynamic>? cliPeerFixture,
   String? restoreMnemonic,
+  bool useFreshTransportIdentityForRestoredAccount = false,
 }) async {
   final secureKeyStore = _FakeSecureKeyStore();
   await deleteTestDatabase(dbName);
@@ -513,6 +538,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     dbLoadGroupMessage: (id) => dbLoadGroupMessage(db, id),
     dbLoadLatestGroupMessage: (groupId) =>
         dbLoadLatestGroupMessage(db, groupId),
+    dbLoadLatestRemovalTimestampForSenderFn: (groupId, senderPeerId) =>
+        dbLoadLatestGroupRemovalTimestampForSender(db, groupId, senderPeerId),
     dbUpdateGroupMessageStatus: (id, status) =>
         dbUpdateGroupMessageStatus(db, id, status),
     dbCountGroupMessages: (groupId) => dbCountGroupMessages(db, groupId),
@@ -547,8 +574,28 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
         dbUpdateGroupMessageWireEnvelope(db, id, envelope),
   );
+  final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
+    dbInsertMediaAttachment: (row) => dbInsertMediaAttachment(db, row),
+    dbLoadMediaForMessage: (messageId) => dbLoadMediaForMessage(db, messageId),
+    dbLoadMediaForMessages: (messageIds) =>
+        dbLoadMediaForMessages(db, messageIds),
+    dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
+        dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
+    dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
+        dbUpdateMediaDownloadStatus(db, id, downloadStatus),
+    dbDeleteMediaForMessage: (messageId) =>
+        dbDeleteMediaForMessage(db, messageId),
+    dbDeleteMediaForContact: (contactPeerId) =>
+        dbDeleteMediaForContact(db, contactPeerId),
+    dbMarkUploadPendingAttachmentsFailedForMessage: (messageId) =>
+        dbMarkUploadPendingAttachmentsFailedForMessage(db, messageId),
+    dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+    dbLoadUploadPendingAttachments: ({int limit = 50}) =>
+        dbLoadUploadPendingAttachments(db, limit: limit),
+    secureKeyStore: secureKeyStore,
+  );
 
-  final bridge = GoBridgeClient();
+  final bridge = RecordingGoBridgeClient();
   await bridge.initialize();
 
   final identityResult = restoreMnemonic == null
@@ -587,6 +634,27 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   );
   await identityRepo.saveIdentity(updatedIdentity);
 
+  var transportPrivateKey = updatedIdentity.privateKey;
+  var transportPeerId = updatedIdentity.peerId;
+  if (restoreMnemonic != null && useFreshTransportIdentityForRestoredAccount) {
+    final transportResponse = await callIdentityGenerate(bridge);
+    if (transportResponse['ok'] != true) {
+      throw StateError(
+        'Transport identity setup failed: ${transportResponse['errorMessage']}',
+      );
+    }
+    final transportIdentity =
+        transportResponse['identity'] as Map<String, dynamic>?;
+    if (transportIdentity == null) {
+      throw StateError('Transport identity setup returned no identity');
+    }
+    transportPrivateKey = transportIdentity['privateKey'] as String;
+    transportPeerId = transportIdentity['peerId'] as String;
+    if (transportPeerId == updatedIdentity.peerId) {
+      throw StateError('Transport identity must differ from logical identity');
+    }
+  }
+
   ContactModel? cliContact;
   if (cliPeerFixture != null) {
     cliContact = ContactModel(
@@ -606,8 +674,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     inboxStagingRepository: InMemoryInboxStagingRepository(),
   );
   final started = await p2pService.startNode(
-    updatedIdentity.privateKey,
-    updatedIdentity.peerId,
+    transportPrivateKey,
+    transportPeerId,
   );
   if (!started) {
     throw StateError('P2P node failed to start');
@@ -635,13 +703,22 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     msgRepo: groupMsgRepo,
     bridge: bridge,
     getSelfPeerId: () async => updatedIdentity.peerId,
+    mediaAttachmentRepo: mediaAttachmentRepo,
     notificationService: notificationService,
     groupConversationTracker: ActiveConversationTracker(),
     getAppLifecycleState: () => AppLifecycleState.paused,
+    groupDiagnosticEvents: groupDiagnosticEventStream,
+  );
+  final groupMembershipUpdateListener = GroupMembershipUpdateListener(
+    groupMembershipUpdateStream: messageRouter.groupMembershipUpdateStream,
+    groupRepo: groupRepo,
+    bridge: bridge,
+    groupMessageListener: groupListener,
   );
   messageRouter.start();
   groupKeyUpdateListener.start();
   groupListener.start(groupStreamController.stream);
+  groupMembershipUpdateListener.start();
 
   return GroupMultiDeviceTestStack(
     db: db,
@@ -652,8 +729,10 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     contactRepo: contactRepo,
     groupRepo: groupRepo,
     groupMsgRepo: groupMsgRepo,
+    mediaAttachmentRepo: mediaAttachmentRepo,
     messageRouter: messageRouter,
     groupKeyUpdateListener: groupKeyUpdateListener,
+    groupMembershipUpdateListener: groupMembershipUpdateListener,
     groupListener: groupListener,
     groupStreamController: groupStreamController,
     notificationService: notificationService,
@@ -741,7 +820,7 @@ String _dbNameForRole() {
 
 Map<String, dynamic> _primaryIdentityFixture(IdentityModel identity) {
   final mnemonic = identity.mnemonic12;
-  if (mnemonic == null || mnemonic.trim().isEmpty) {
+  if (mnemonic.trim().isEmpty) {
     throw StateError(
       'Primary identity mnemonic is required for sibling restore',
     );

@@ -2,6 +2,8 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 
+const _groupRemovalCutoffMessageIdLike = 'sys-member_removed_cutoff:%';
+
 /// Inserts a group message into the database.
 Future<void> dbInsertGroupMessage(
   DatabaseExecutor db,
@@ -60,8 +62,8 @@ Future<List<Map<String, Object?>>> dbLoadGroupMessagesPage(
     // Get the most recent messages (DESC), then reverse to ASC.
     final results = await db.query(
       'group_messages',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
+      where: 'group_id = ? AND id NOT LIKE ?',
+      whereArgs: [groupId, _groupRemovalCutoffMessageIdLike],
       orderBy: 'timestamp DESC, id DESC',
       limit: limit,
       offset: offset,
@@ -100,8 +102,8 @@ Future<List<Map<String, Object?>>> dbLoadAllGroupMessages(
   try {
     final results = await db.query(
       'group_messages',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
+      where: 'group_id = ? AND id NOT LIKE ?',
+      whereArgs: [groupId, _groupRemovalCutoffMessageIdLike],
       orderBy: 'timestamp ASC, id ASC',
     );
 
@@ -132,8 +134,12 @@ Future<String?> dbLoadLatestGroupRemovalTimestampForSender(
   final rows = await db.query(
     'group_messages',
     columns: ['timestamp'],
-    where: 'group_id = ? AND id LIKE ?',
-    whereArgs: [groupId, 'sys-member_removed:$groupId:$senderPeerId:%'],
+    where: 'group_id = ? AND (id LIKE ? OR id LIKE ?)',
+    whereArgs: [
+      groupId,
+      'sys-member_removed:$groupId:$senderPeerId:%',
+      'sys-member_removed_cutoff:$groupId:$senderPeerId:%',
+    ],
     orderBy: 'timestamp DESC, id DESC',
     limit: 1,
   );
@@ -157,8 +163,8 @@ Future<Map<String, Object?>?> dbLoadLatestGroupMessage(
   try {
     final results = await db.query(
       'group_messages',
-      where: 'group_id = ?',
-      whereArgs: [groupId],
+      where: 'group_id = ? AND id NOT LIKE ?',
+      whereArgs: [groupId, _groupRemovalCutoffMessageIdLike],
       orderBy: 'timestamp DESC, id DESC',
       limit: 1,
     );
@@ -227,6 +233,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
         ) AS unread_count
       FROM group_messages
       WHERE group_id IN ($placeholders)
+        AND id NOT LIKE '$_groupRemovalCutoffMessageIdLike'
       GROUP BY group_id
     ) summary
     LEFT JOIN group_messages latest
@@ -234,6 +241,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
         SELECT inner_latest.id
         FROM group_messages inner_latest
         WHERE inner_latest.group_id = summary.group_id
+          AND inner_latest.id NOT LIKE '$_groupRemovalCutoffMessageIdLike'
         ORDER BY inner_latest.timestamp DESC,
                  inner_latest.id DESC
         LIMIT 1
@@ -299,8 +307,8 @@ Future<void> dbUpdateGroupMessageStatus(
 Future<int> dbCountGroupMessages(DatabaseExecutor db, String groupId) async {
   try {
     final result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM group_messages WHERE group_id = ?',
-      [groupId],
+      'SELECT COUNT(*) as count FROM group_messages WHERE group_id = ? AND id NOT LIKE ?',
+      [groupId, _groupRemovalCutoffMessageIdLike],
     );
     return Sqflite.firstIntValue(result) ?? 0;
   } catch (e) {
@@ -323,8 +331,8 @@ Future<int> dbCountUnreadGroupMessages(
 
   try {
     final result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM group_messages WHERE group_id = ? AND is_incoming = 1 AND read_at IS NULL',
-      [groupId],
+      'SELECT COUNT(*) as count FROM group_messages WHERE group_id = ? AND is_incoming = 1 AND read_at IS NULL AND id NOT LIKE ?',
+      [groupId, _groupRemovalCutoffMessageIdLike],
     );
     final count = Sqflite.firstIntValue(result) ?? 0;
 
@@ -355,7 +363,8 @@ Future<int> dbCountTotalUnreadGroupMessages(DatabaseExecutor db) async {
 
   try {
     final result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM group_messages WHERE is_incoming = 1 AND read_at IS NULL',
+      'SELECT COUNT(*) as count FROM group_messages WHERE is_incoming = 1 AND read_at IS NULL AND id NOT LIKE ?',
+      [_groupRemovalCutoffMessageIdLike],
     );
     final count = Sqflite.firstIntValue(result) ?? 0;
 
@@ -392,8 +401,8 @@ Future<int> dbMarkGroupMessagesAsRead(
   try {
     final now = DateTime.now().toUtc().toIso8601String();
     final count = await db.rawUpdate(
-      'UPDATE group_messages SET read_at = ? WHERE group_id = ? AND is_incoming = 1 AND read_at IS NULL',
-      [now, groupId],
+      'UPDATE group_messages SET read_at = ? WHERE group_id = ? AND is_incoming = 1 AND read_at IS NULL AND id NOT LIKE ?',
+      [now, groupId, _groupRemovalCutoffMessageIdLike],
     );
 
     emitFlowEvent(
@@ -423,8 +432,15 @@ Future<bool> dbExistsGroupMessageByContent(
 ) async {
   final result = await db.query(
     'group_messages',
-    where: 'group_id = ? AND sender_peer_id = ? AND text = ? AND timestamp = ?',
-    whereArgs: [groupId, senderPeerId, text, timestamp],
+    where:
+        'group_id = ? AND sender_peer_id = ? AND text = ? AND timestamp = ? AND id NOT LIKE ?',
+    whereArgs: [
+      groupId,
+      senderPeerId,
+      text,
+      timestamp,
+      _groupRemovalCutoffMessageIdLike,
+    ],
     limit: 1,
   );
   return result.isNotEmpty;

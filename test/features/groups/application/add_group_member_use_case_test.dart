@@ -72,6 +72,7 @@ void main() {
       peerId: 'peer-new',
       username: 'NewUser',
       role: MemberRole.writer,
+      publicKey: 'pk-peer-new',
       joinedAt: DateTime.now().toUtc(),
     );
 
@@ -99,6 +100,7 @@ void main() {
       peerId: 'peer-50',
       username: 'Member Fifty',
       role: MemberRole.writer,
+      publicKey: 'pk-peer-50',
       joinedAt: DateTime.now().toUtc(),
     );
 
@@ -218,6 +220,293 @@ void main() {
     expect(dianaDevices.single['deviceId'], 'peer-d-device');
     expect(dianaDevices.single['transportPeerId'], 'peer-d-device');
     expect(dianaDevices.single['deviceSigningPublicKey'], 'pk-peer-d');
+  });
+
+  test(
+    'GM-022 buildGroupConfigPayload emits one active Charlie after repeated re-add shadows',
+    () {
+      final baseAt = DateTime.utc(2026, 5, 11, 8);
+
+      GroupMemberDeviceIdentity device({
+        required String keyPackageId,
+        GroupMemberDeviceStatus status = GroupMemberDeviceStatus.active,
+        DateTime? revokedAt,
+      }) {
+        return GroupMemberDeviceIdentity(
+          deviceId: 'charlie-device',
+          transportPeerId: 'charlie-device',
+          deviceSigningPublicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie-device',
+          keyPackageId: keyPackageId,
+          keyPackagePublicMaterial: 'public-$keyPackageId',
+          status: status,
+          revokedAt: revokedAt,
+        );
+      }
+
+      GroupMember charlie({
+        required String keyPackageId,
+        required DateTime joinedAt,
+        GroupMemberDeviceStatus status = GroupMemberDeviceStatus.active,
+        DateTime? revokedAt,
+      }) {
+        return GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie',
+          devices: <GroupMemberDeviceIdentity>[
+            device(
+              keyPackageId: keyPackageId,
+              status: status,
+              revokedAt: revokedAt,
+            ),
+          ],
+          joinedAt: joinedAt,
+        );
+      }
+
+      final payload = buildGroupConfigPayload(adminGroup, [
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          joinedAt: baseAt,
+        ),
+        charlie(
+          keyPackageId: 'kp-charlie-stale',
+          joinedAt: baseAt,
+          status: GroupMemberDeviceStatus.revoked,
+          revokedAt: baseAt.add(const Duration(minutes: 1)),
+        ),
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          joinedAt: baseAt,
+        ),
+        charlie(
+          keyPackageId: 'kp-charlie-active',
+          joinedAt: baseAt.add(const Duration(minutes: 20)),
+        ),
+      ]);
+
+      final members = (payload['members'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final memberPeerIds = members.map((member) => member['peerId']).toList();
+      expect(memberPeerIds.where((peerId) => peerId == 'peer-charlie'), [
+        'peer-charlie',
+      ]);
+      expect(memberPeerIds.toSet(), {'peer-admin', 'peer-bob', 'peer-charlie'});
+
+      final charlieConfig = members.singleWhere(
+        (member) => member['peerId'] == 'peer-charlie',
+      );
+      final devices = (charlieConfig['devices'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      expect(devices, hasLength(1));
+      expect(devices.single['keyPackageId'], 'kp-charlie-active');
+      expect(jsonEncode(payload), isNot(contains('kp-charlie-stale')));
+      expect(
+        isGroupConfigStateHashValid(groupId: 'group-1', groupConfig: payload),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'GM-023 buildGroupConfigPayload selects active Charlie after inactive shadow',
+    () {
+      final baseAt = DateTime.utc(2026, 5, 11, 9);
+
+      GroupMemberDeviceIdentity device({
+        required String keyPackageId,
+        required GroupMemberDeviceStatus status,
+        DateTime? revokedAt,
+      }) {
+        return GroupMemberDeviceIdentity(
+          deviceId: 'charlie-device',
+          transportPeerId: 'charlie-device',
+          deviceSigningPublicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie-device',
+          keyPackageId: keyPackageId,
+          keyPackagePublicMaterial: 'public-$keyPackageId',
+          status: status,
+          revokedAt: revokedAt,
+        );
+      }
+
+      GroupMember charlie({
+        required String keyPackageId,
+        required DateTime joinedAt,
+        required GroupMemberDeviceStatus status,
+        DateTime? revokedAt,
+      }) {
+        return GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie',
+          devices: <GroupMemberDeviceIdentity>[
+            device(
+              keyPackageId: keyPackageId,
+              status: status,
+              revokedAt: revokedAt,
+            ),
+          ],
+          joinedAt: joinedAt,
+        );
+      }
+
+      final inactiveShadow = charlie(
+        keyPackageId: 'kp-charlie-inactive',
+        joinedAt: baseAt,
+        status: GroupMemberDeviceStatus.revoked,
+        revokedAt: baseAt.add(const Duration(minutes: 1)),
+      );
+      final activeCharlie = charlie(
+        keyPackageId: 'kp-charlie-active',
+        joinedAt: baseAt.add(const Duration(minutes: 10)),
+        status: GroupMemberDeviceStatus.active,
+      );
+      final payload = buildGroupConfigPayload(adminGroup, [
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          joinedAt: baseAt,
+        ),
+        inactiveShadow,
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          joinedAt: baseAt,
+        ),
+        activeCharlie,
+      ]);
+
+      final members = (payload['members'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      expect(
+        members
+            .map((member) => member['peerId'])
+            .where((peerId) => peerId == 'peer-charlie'),
+        ['peer-charlie'],
+      );
+      final charlieConfig = members.singleWhere(
+        (member) => member['peerId'] == 'peer-charlie',
+      );
+      final devices = (charlieConfig['devices'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      expect(devices, hasLength(1));
+      expect(devices.single['status'], 'active');
+      expect(devices.single['keyPackageId'], 'kp-charlie-active');
+      expect(jsonEncode(payload), isNot(contains('kp-charlie-inactive')));
+      expect(
+        isGroupConfigStateHashValid(groupId: 'group-1', groupConfig: payload),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'GM-027 rejects unknown member without deliverable peer/device identity before save or config sync',
+    () async {
+      final invalidMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-gm027-unknown',
+        username: 'Unknown',
+        role: MemberRole.writer,
+        joinedAt: DateTime.utc(2026, 5, 11, 10),
+      );
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: invalidMember,
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('delivery identity'),
+          ),
+        ),
+      );
+
+      expect(
+        await groupRepo.getMember('group-1', 'peer-gm027-unknown'),
+        isNull,
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        isEmpty,
+      );
+    },
+  );
+
+  test('GM-028 rejects empty PeerId before save or config sync', () async {
+    final invalidMember = GroupMember(
+      groupId: 'group-1',
+      peerId: '   ',
+      username: 'Blank Peer',
+      role: MemberRole.writer,
+      publicKey: 'pk-gm028-blank',
+      mlKemPublicKey: 'mlkem-gm028-blank',
+      devices: const <GroupMemberDeviceIdentity>[
+        GroupMemberDeviceIdentity(
+          deviceId: 'gm028-blank-device',
+          transportPeerId: 'gm028-blank-device',
+          deviceSigningPublicKey: 'pk-gm028-blank-device',
+          mlKemPublicKey: 'mlkem-gm028-blank-device',
+          keyPackageId: 'kp-gm028-blank-device',
+          keyPackagePublicMaterial: 'public-kp-gm028-blank-device',
+        ),
+      ],
+      joinedAt: DateTime.utc(2026, 5, 11, 10, 30),
+    );
+
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: invalidMember,
+        selfPeerId: 'peer-admin',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('delivery identity'),
+        ),
+      ),
+    );
+
+    final members = await groupRepo.getMembers('group-1');
+    expect(members.where((member) => member.peerId.trim().isEmpty), isEmpty);
+    expect(await groupRepo.getMember('group-1', ''), isNull);
+    expect(await groupRepo.getMember('group-1', '   '), isNull);
+    expect(
+      bridge.commandLog.where((command) => command == 'group:updateConfig'),
+      isEmpty,
+    );
   });
 
   test('rejects when caller is not admin', () async {
@@ -465,6 +754,7 @@ void main() {
         peerId: 'peer-duplicate',
         username: 'FirstAdd',
         role: MemberRole.writer,
+        publicKey: 'pk-peer-duplicate',
         joinedAt: DateTime.now().toUtc(),
       );
 
@@ -483,6 +773,7 @@ void main() {
         peerId: 'peer-duplicate',
         username: 'SecondAdd',
         role: MemberRole.reader,
+        publicKey: 'pk-peer-duplicate-second',
         joinedAt: DateTime.now().toUtc(),
       );
 
@@ -526,6 +817,7 @@ void main() {
       peerId: 'peer-over-limit',
       username: 'Overflow',
       role: MemberRole.writer,
+      publicKey: 'pk-peer-over-limit',
       joinedAt: DateTime.now().toUtc(),
     );
 
@@ -563,6 +855,7 @@ void main() {
       peerId: 'peer-saved',
       username: 'SavedUser',
       role: MemberRole.reader,
+      publicKey: 'pk-peer-saved',
       joinedAt: DateTime.now().toUtc(),
     );
 
@@ -592,6 +885,7 @@ void main() {
       peerId: 'peer-rollback',
       username: 'RollbackUser',
       role: MemberRole.writer,
+      publicKey: 'pk-peer-rollback',
       joinedAt: DateTime.now().toUtc(),
     );
 
@@ -616,6 +910,7 @@ void main() {
       peerId: 'peer-no-sync',
       username: 'NoSyncUser',
       role: MemberRole.writer,
+      publicKey: 'pk-peer-no-sync',
       joinedAt: DateTime.now().toUtc(),
     );
 

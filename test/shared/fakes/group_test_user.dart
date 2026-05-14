@@ -13,6 +13,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart'
     as group_react;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart'
     as group_leave;
@@ -184,6 +185,7 @@ class GroupTestUser {
       groupId: groupId,
       user: this,
       role: MemberRole.admin,
+      permissions: GroupMemberPermissions.empty,
       joinedAt: now,
     );
 
@@ -200,6 +202,8 @@ class GroupTestUser {
     required String groupId,
     required GroupTestUser invitee,
     DateTime? joinedAt,
+    MemberRole role = MemberRole.writer,
+    GroupMemberPermissions permissions = GroupMemberPermissions.empty,
   }) async {
     final now = (joinedAt ?? DateTime.now()).toUtc();
 
@@ -208,15 +212,18 @@ class GroupTestUser {
       repo: groupRepo,
       groupId: groupId,
       user: invitee,
-      role: MemberRole.writer,
+      role: role,
+      permissions: permissions,
       joinedAt: now,
     );
 
     // Save group + members to invitee's repos (simulates invite acceptance)
     final group = await groupRepo.getGroup(groupId);
     if (group != null) {
+      final updatedGroup = group.copyWith(lastMembershipEventAt: now);
+      await groupRepo.updateGroup(updatedGroup);
       await invitee.groupRepo.saveGroup(
-        group.copyWith(myRole: GroupRole.member),
+        updatedGroup.copyWith(myRole: GroupRole.member),
       );
 
       final members = await groupRepo.getMembers(groupId);
@@ -227,7 +234,8 @@ class GroupTestUser {
         repo: invitee.groupRepo,
         groupId: groupId,
         user: invitee,
-        role: MemberRole.writer,
+        role: role,
+        permissions: permissions,
         joinedAt: now,
       );
     }
@@ -328,7 +336,7 @@ class GroupTestUser {
           .where((member) => member.peerId != peerId)
           .toList();
       final groupConfig = {
-        'name': group!.name,
+        'name': group.name,
         'groupType': group.type.toValue(),
         if (group.description != null) 'description': group.description,
         'members': remainingMembers
@@ -411,7 +419,9 @@ class GroupTestUser {
       'text': text,
       'timestamp': now.toIso8601String(),
       'messageId': resolvedMessageId,
-      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+      ...?quotedMessageId == null
+          ? null
+          : <String, dynamic>{'quotedMessageId': quotedMessageId},
     };
     await _network.publish(groupId, peerId, envelope, senderDeviceId: deviceId);
 
@@ -643,29 +653,19 @@ class GroupTestUser {
       groupId: groupId,
       memberPeerId: memberPeerId,
       eventAt: effectiveRemovedAt,
-    );
-    await msgRepo.saveMessage(
-      buildMemberRemovedTimelineMessage(
-        groupId: groupId,
-        removedPeerId: memberPeerId,
-        removedUsername: memberUsername,
-        senderId: peerId,
-        senderUsername: username,
-        eventAt: effectiveRemovedAt,
-      ),
+      selfPeerId: peerId,
+      actorUsername: username,
+      msgRepo: msgRepo,
     );
 
     final group = await groupRepo.getGroup(groupId);
     final remainingMembers = await groupRepo.getMembers(groupId);
 
-    final groupConfig = {
-      'name': group!.name,
-      'groupType': group.type.toValue(),
-      if (group.description != null) 'description': group.description,
-      'members': remainingMembers.map((m) => m.toConfigJson()).toList(),
-      'createdBy': group.createdBy,
-      'createdAt': group.createdAt.toUtc().toIso8601String(),
-    };
+    final groupConfig = buildGroupConfigPayload(
+      group!,
+      remainingMembers,
+      configVersionOverride: effectiveRemovedAt,
+    );
 
     final sysText = jsonEncode({
       '__sys': 'member_removed',
@@ -691,29 +691,31 @@ class GroupTestUser {
   Future<void> broadcastMemberAdded({
     required String groupId,
     required GroupTestUser newMember,
+    DateTime? eventAt,
   }) async {
+    final effectiveEventAt = eventAt?.toUtc() ?? DateTime.now().toUtc();
     final group = await groupRepo.getGroup(groupId);
     final allMembers = await groupRepo.getMembers(groupId);
+    final currentMember = await groupRepo.getMember(groupId, newMember.peerId);
 
-    final groupConfig = {
-      'name': group!.name,
-      'groupType': group.type.toValue(),
-      if (group.description != null) 'description': group.description,
-      'members': allMembers.map((m) => m.toConfigJson()).toList(),
-      'createdBy': group.createdBy,
-      'createdAt': group.createdAt.toUtc().toIso8601String(),
-    };
+    final groupConfig = buildGroupConfigPayload(
+      group!,
+      allMembers,
+      configVersionOverride: effectiveEventAt,
+    );
 
     final sysText = jsonEncode({
       '__sys': 'member_added',
-      'member': {
-        'peerId': newMember.peerId,
-        'username': newMember.username,
-        'role': 'writer',
-        'publicKey': newMember.publicKey,
-        'mlKemPublicKey': 'mlkem-${newMember.peerId}',
-        'devices': [newMember.deviceIdentity.toJson()],
-      },
+      'member':
+          currentMember?.toConfigJson() ??
+          {
+            'peerId': newMember.peerId,
+            'username': newMember.username,
+            'role': 'writer',
+            'publicKey': newMember.publicKey,
+            'mlKemPublicKey': 'mlkem-${newMember.peerId}',
+            'devices': [newMember.deviceIdentity.toJson()],
+          },
       'groupConfig': groupConfig,
     });
 
@@ -723,7 +725,7 @@ class GroupTestUser {
       'senderUsername': username,
       'keyEpoch': 0,
       'text': sysText,
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'timestamp': effectiveEventAt.toIso8601String(),
     };
     await _network.publish(groupId, peerId, envelope, senderDeviceId: deviceId);
   }
@@ -731,6 +733,54 @@ class GroupTestUser {
   /// Loads all messages for a group from the local repo.
   Future<List<GroupMessage>> loadGroupMessages(String groupId) async {
     return msgRepo.getMessagesPage(groupId);
+  }
+
+  /// Recreates the runtime listener/bridge while keeping repository-backed
+  /// state, matching how these in-memory repos stand in for persisted storage.
+  GroupTestUser restartWithPersistedState({FakeBridge? bridge}) {
+    final network = _network;
+    final persistedGroupRepo = groupRepo;
+    final persistedMsgRepo = msgRepo;
+    final persistedMediaRepo = mediaAttachmentRepo;
+    final persistedReactionReplayOutboxRepo = reactionReplayOutboxRepo;
+    final sequence = _messageSequence;
+
+    dispose();
+
+    final effectiveBridge = bridge ?? FakeBridge();
+    final controller = network.registerPeer(peerId, deviceId: deviceId);
+    final reactionController = network.registerReactionPeer(
+      peerId,
+      deviceId: deviceId,
+    );
+    final listener = GroupMessageListener(
+      groupRepo: persistedGroupRepo,
+      msgRepo: persistedMsgRepo,
+      bridge: effectiveBridge,
+      getSelfPeerId: () async => peerId,
+      mediaAttachmentRepo: persistedMediaRepo,
+      reactionRepo: reactionRepo,
+    );
+
+    final restarted = GroupTestUser._(
+      peerId: peerId,
+      deviceId: deviceId,
+      username: username,
+      publicKey: publicKey,
+      privateKey: privateKey,
+      bridge: effectiveBridge,
+      groupRepo: persistedGroupRepo,
+      msgRepo: persistedMsgRepo,
+      mediaAttachmentRepo: persistedMediaRepo,
+      groupMessageListener: listener,
+      reactionRepo: reactionRepo,
+      reactionReplayOutboxRepo: persistedReactionReplayOutboxRepo,
+      network: network,
+      incomingController: controller,
+      incomingReactionController: reactionController,
+    );
+    restarted._messageSequence = sequence;
+    return restarted;
   }
 
   void dispose() {
@@ -748,6 +798,7 @@ class GroupTestUser {
     required String groupId,
     required GroupTestUser user,
     required MemberRole role,
+    required GroupMemberPermissions permissions,
     required DateTime joinedAt,
   }) async {
     final existing = await repo.getMember(groupId, user.peerId);
@@ -770,7 +821,7 @@ class GroupTestUser {
         peerId: user.peerId,
         username: user.username,
         role: existing?.role ?? role,
-        permissions: existing?.permissions ?? GroupMemberPermissions.empty,
+        permissions: existing?.permissions ?? permissions,
         publicKey: user.publicKey,
         mlKemPublicKey: existing?.mlKemPublicKey ?? 'mlkem-${user.peerId}',
         devices: devicesById.values.toList(growable: false),

@@ -32,6 +32,9 @@ class RejoinGroupTopicsResult {
     required this.errorCount,
     required this.skipped,
   });
+
+  bool get canAcknowledgeGroupRecovery =>
+      !skipped && skippedNoKeyCount == 0 && errorCount == 0;
 }
 
 /// Rejoins all group pubsub topics on startup or after watchdog restart.

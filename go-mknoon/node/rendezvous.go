@@ -191,6 +191,10 @@ func (n *Node) RendezvousDiscover(namespace string, serverAddresses []string) ([
 // RendezvousUnregister removes this node from a namespace.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) RendezvousUnregister(namespace string, serverAddresses []string) error {
+	if n.rendezvousUnregisterHook != nil {
+		return n.rendezvousUnregisterHook(namespace, serverAddresses)
+	}
+
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()

@@ -9,6 +9,7 @@ import 'package:flutter_app/features/groups/application/create_group_use_case.da
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -223,7 +224,7 @@ Future<void> pumpFrames(WidgetTester tester, {int count = 10}) async {
   }
 }
 
-Future<void> waitForInviteStatus({
+Future<void> _waitForInviteStatus({
   required _TrackingInviteDeliveryAttemptRepository repo,
   required String groupId,
   required String peerId,
@@ -503,6 +504,106 @@ void main() {
       );
     });
 
+    testWidgets('GM-036 mixed invite statuses remain visible after reload', (
+      tester,
+    ) async {
+      final groupRepo = InMemoryGroupRepository();
+      final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+      final group = makeAdminGroup();
+      await groupRepo.saveGroup(group);
+      await _saveGroupReplayKey(groupRepo);
+      await groupRepo.saveMember(
+        makeMember(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        makeMember(peerId: 'peer-charlie', username: 'Charlie'),
+      );
+      await groupRepo.saveMember(
+        makeMember(peerId: 'peer-dave', username: 'Dave'),
+      );
+      await inviteStatusRepo.saveAttempt(
+        GroupInviteDeliveryAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          status: GroupInviteDeliveryStatus.sent,
+          attemptedAt: DateTime.utc(2026, 5, 12, 8),
+          updatedAt: DateTime.utc(2026, 5, 12, 8),
+        ),
+      );
+      await inviteStatusRepo.saveAttempt(
+        GroupInviteDeliveryAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-dave',
+          username: 'Dave',
+          status: GroupInviteDeliveryStatus.needsResend,
+          attemptedAt: DateTime.utc(2026, 5, 12, 8),
+          updatedAt: DateTime.utc(2026, 5, 12, 8),
+          lastError: 'send_failed',
+        ),
+      );
+
+      Future<void> pumpGroupInfo() async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+      }
+
+      Future<void> expectMixedStatusesVisible() async {
+        expect(find.text('Charlie'), findsOneWidget);
+        expect(find.text('Dave'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-member-invite-status-peer-charlie')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-member-invite-status-peer-dave')),
+          findsOneWidget,
+        );
+        expect(find.text('Invite sent'), findsOneWidget);
+        expect(find.text('Resend needed'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('group-member-resend-invite-peer-charlie')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('group-member-resend-invite-peer-dave')),
+          findsOneWidget,
+        );
+      }
+
+      await pumpGroupInfo();
+      await expectMixedStatusesVisible();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await pumpGroupInfo();
+      await expectMixedStatusesVisible();
+
+      final daveAttempt = await inviteStatusRepo.getAttempt(
+        groupId: 'group-1',
+        peerId: 'peer-dave',
+      );
+      expect(daveAttempt, isNotNull);
+      expect(daveAttempt!.status, GroupInviteDeliveryStatus.needsResend);
+      expect(daveAttempt.lastError, 'send_failed');
+    });
+
     testWidgets(
       'overlays durable member_joined timeline state onto invite statuses',
       (tester) async {
@@ -722,13 +823,13 @@ void main() {
             ).toIso8601String(),
           });
         }
-        await waitForInviteStatus(
+        await _waitForInviteStatus(
           repo: inviteStatusRepo,
           groupId: 'group-1',
           peerId: 'peer-alice',
           status: GroupInviteDeliveryStatus.joined,
         );
-        await waitForInviteStatus(
+        await _waitForInviteStatus(
           repo: inviteStatusRepo,
           groupId: 'group-1',
           peerId: 'peer-bob',
@@ -3084,13 +3185,26 @@ void main() {
         await pumpFrames(tester);
         await confirmRemoveMemberDialog(tester);
 
-        // Only Bob should receive the key update (not Alice, not self)
-        expect(p2pService.sentMessageLog.length, 1);
-        expect(p2pService.sentMessageLog.first.peerId, 'peer-bob');
+        final keyUpdateMessages = p2pService.sentMessageLog.where((entry) {
+          final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+          return envelope['type'] == 'group_key_update';
+        }).toList();
+        final membershipUpdateMessages = p2pService.sentMessageLog.where((
+          entry,
+        ) {
+          final envelope = jsonDecode(entry.content) as Map<String, dynamic>;
+          return envelope['type'] == groupMembershipUpdateMessageType;
+        }).toList();
 
-        // Verify it's a group_key_update v2 envelope
+        // Alice receives the direct removal notice; only Bob receives the key.
+        expect(membershipUpdateMessages.length, 1);
+        expect(membershipUpdateMessages.single.peerId, 'peer-alice');
+        expect(keyUpdateMessages.length, 1);
+        expect(keyUpdateMessages.single.peerId, 'peer-bob');
+
+        // Verify Bob's message is a group_key_update v2 envelope.
         final envelope =
-            jsonDecode(p2pService.sentMessageLog.first.content)
+            jsonDecode(keyUpdateMessages.single.content)
                 as Map<String, dynamic>;
         expect(envelope['type'], 'group_key_update');
         expect(envelope['version'], '2');

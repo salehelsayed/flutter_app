@@ -174,7 +174,7 @@ Future<bool?> handleAppResumed({
           'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
         );
 
-        if (needsGroupRecovery && rejoinResult.errorCount == 0) {
+        if (needsGroupRecovery && rejoinResult.canAcknowledgeGroupRecovery) {
           final ackStart = DateTime.now();
           debugPrint(
             '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() starting...',
@@ -236,7 +236,7 @@ Future<bool?> handleAppResumed({
         'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
       );
 
-      if (needsGroupRecovery && rejoinResult.errorCount == 0) {
+      if (needsGroupRecovery && rejoinResult.canAcknowledgeGroupRecovery) {
         final ackStart = DateTime.now();
         debugPrint(
           '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() starting...',

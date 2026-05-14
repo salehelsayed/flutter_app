@@ -89,6 +89,7 @@ import 'package:flutter_app/core/database/migrations/064_group_welcome_key_packa
 import 'package:flutter_app/core/database/migrations/065_group_history_gap_repairs.dart';
 import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dart';
 import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
+import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -152,6 +153,7 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -303,7 +305,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 67,
+    version: 68,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -372,6 +374,7 @@ void main() async {
       await runGroupHistoryGapRepairsMigration(db);
       await runGroupSyncReceiptsMigration(db);
       await runGroupInviteDeliveryAttemptsMigration(db);
+      await runRemovedGroupMemberSnapshotsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -569,6 +572,9 @@ void main() async {
       }
       if (oldVersion < 67) {
         await runGroupInviteDeliveryAttemptsMigration(db);
+      }
+      if (oldVersion < 68) {
+        await runRemovedGroupMemberSnapshotsMigration(db);
       }
     },
   );
@@ -913,6 +919,10 @@ void main() async {
     dbDeleteGroupMember: (groupId, peerId) =>
         dbDeleteGroupMember(db, groupId, peerId),
     dbDeleteAllGroupMembers: (groupId) => dbDeleteAllGroupMembers(db, groupId),
+    dbInsertRemovedGroupMemberSnapshot: (row, removedAt) =>
+        dbInsertRemovedGroupMemberSnapshot(db, row, removedAt),
+    dbLoadRemovedGroupMemberSnapshot: (groupId, peerId) =>
+        dbLoadRemovedGroupMemberSnapshot(db, groupId, peerId),
     dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
     dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
     dbLoadGroupKeyByGeneration: (groupId, generation) =>
@@ -1727,6 +1737,13 @@ void main() async {
         ),
   );
 
+  final groupMembershipUpdateListener = GroupMembershipUpdateListener(
+    groupMembershipUpdateStream: messageRouter.groupMembershipUpdateStream,
+    groupRepo: groupRepository,
+    bridge: bridge,
+    groupMessageListener: groupMessageListener,
+  );
+
   // Create introduction listener
   introductionListener = IntroductionListener(
     introductionStream: messageRouter.introductionStream,
@@ -1769,7 +1786,7 @@ void main() async {
       );
 
       return reason == RejoinReason.nodeRequestedRecovery &&
-          rejoinResult.errorCount == 0;
+          rejoinResult.canAcknowledgeGroupRecovery;
     },
     acknowledgeGroupRecoveryFn: () => callGroupAcknowledgeRecovery(bridge),
     drainGroupOfflineInboxFn: () async {
@@ -1888,6 +1905,7 @@ void main() async {
     );
     groupInviteListener.start();
     groupKeyUpdateListener.start();
+    groupMembershipUpdateListener.start();
     introductionListener.start();
 
     // NOTE: rejoinGroupTopics and drainGroupOfflineInbox are called in
@@ -1974,6 +1992,7 @@ void main() async {
       groupMessageListener: groupMessageListener,
       groupInviteListener: groupInviteListener,
       groupKeyUpdateListener: groupKeyUpdateListener,
+      groupMembershipUpdateListener: groupMembershipUpdateListener,
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
       introductionListener: introductionListener,
@@ -2124,6 +2143,7 @@ class MyApp extends StatefulWidget {
   final GroupMessageListener groupMessageListener;
   final GroupInviteListener groupInviteListener;
   final GroupKeyUpdateListener groupKeyUpdateListener;
+  final GroupMembershipUpdateListener groupMembershipUpdateListener;
   final ActiveConversationTracker groupConversationTracker;
   final IntroductionRepositoryImpl introductionRepository;
   final IntroductionListener introductionListener;
@@ -2183,6 +2203,7 @@ class MyApp extends StatefulWidget {
     required this.groupMessageListener,
     required this.groupInviteListener,
     required this.groupKeyUpdateListener,
+    required this.groupMembershipUpdateListener,
     required this.groupConversationTracker,
     required this.introductionRepository,
     required this.introductionListener,
@@ -2733,6 +2754,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     widget.pendingPostMediaUploadRetrier.dispose();
     widget.pendingMessageRetrier.dispose();
     widget.introductionListener.dispose();
+    widget.groupMembershipUpdateListener.dispose();
     widget.groupKeyUpdateListener.dispose();
     widget.groupInviteListener.dispose();
     widget.groupMessageListener.dispose();

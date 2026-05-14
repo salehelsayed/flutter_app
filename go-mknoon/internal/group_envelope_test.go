@@ -2,6 +2,7 @@ package internal
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -75,10 +76,85 @@ func TestParseGroupEnvelope_MissingFields(t *testing.T) {
 	}
 }
 
+func TestGK010ParseGroupEnvelopeRejectsMissingGroupID(t *testing.T) {
+	data := `{"version":"3","type":"group_message","senderId":"peer1","senderPublicKey":"abc","signature":"sig","keyEpoch":1,"encrypted":{"ciphertext":"ct","nonce":"n"}}`
+
+	env, err := ParseGroupEnvelope(data)
+	if env != nil {
+		t.Fatalf("ParseGroupEnvelope with missing groupId returned envelope %#v, want nil", env)
+	}
+	if err == nil {
+		t.Fatal("ParseGroupEnvelope with missing groupId returned nil error, want rejection")
+	}
+
+	errText := err.Error()
+	if !strings.Contains(errText, "parse group envelope") {
+		t.Fatalf("ParseGroupEnvelope error = %q, want parser context", errText)
+	}
+	if !strings.Contains(errText, "missing groupId") {
+		t.Fatalf("ParseGroupEnvelope error = %q, want missing groupId detail", errText)
+	}
+}
+
 func TestIsGroupEnvelope_V3GroupMessage(t *testing.T) {
 	data := `{"version":"3","type":"group_message","groupId":"g1","senderId":"s1","senderPublicKey":"pk","signature":"sig","keyEpoch":0,"encrypted":{"ciphertext":"ct","nonce":"n"}}`
 	if !IsGroupEnvelope(data) {
 		t.Error("IsGroupEnvelope should return true for valid v3 group_message")
+	}
+}
+
+func TestGK014IsGroupEnvelopeAcceptsOnlyV3GroupMessageAndReaction(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{
+			name: "v3 group message",
+			data: `{"version":"3","type":"group_message","groupId":"g1","senderId":"s1","senderPublicKey":"pk","signature":"sig","keyEpoch":0,"encrypted":{"ciphertext":"ct","nonce":"n"}}`,
+			want: true,
+		},
+		{
+			name: "v3 group reaction",
+			data: `{"version":"3","type":"group_reaction","groupId":"g1","senderId":"s1","senderPublicKey":"pk","signature":"sig","keyEpoch":0,"encrypted":{"ciphertext":"ct","nonce":"n"}}`,
+			want: true,
+		},
+		{
+			name: "v2 group message",
+			data: `{"version":"2","type":"group_message","groupId":"g1"}`,
+		},
+		{
+			name: "v4 group message",
+			data: `{"version":"4","type":"group_message","groupId":"g1"}`,
+		},
+		{
+			name: "v3 unsupported type",
+			data: `{"version":"3","type":"group_membership","groupId":"g1"}`,
+		},
+		{
+			name: "missing version",
+			data: `{"type":"group_message","groupId":"g1"}`,
+		},
+		{
+			name: "missing type",
+			data: `{"version":"3","groupId":"g1"}`,
+		},
+		{
+			name: "numeric version",
+			data: `{"version":3,"type":"group_message","groupId":"g1"}`,
+		},
+		{
+			name: "malformed json",
+			data: `{"version":"3","type":"group_message"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsGroupEnvelope(tc.data); got != tc.want {
+				t.Fatalf("IsGroupEnvelope() = %t, want %t for %s", got, tc.want, tc.data)
+			}
+		})
 	}
 }
 
@@ -127,6 +203,54 @@ func TestMarshalParseGroupPayload_RoundTrip(t *testing.T) {
 	}
 	if parsed.Username != original.Username {
 		t.Errorf("Username = %q, want %q", parsed.Username, original.Username)
+	}
+}
+
+func TestGK029ParseGroupPayloadRejectsWrongSchema(t *testing.T) {
+	cases := []struct {
+		name      string
+		payload   string
+		wantError string
+	}{
+		{name: "non json", payload: "not-json", wantError: "parse group payload"},
+		{name: "non object", payload: `["not","an","object"]`, wantError: "parse group payload"},
+		{name: "missing text", payload: `{"timestamp":"2026-05-12T20:30:00Z"}`, wantError: "missing text"},
+		{name: "null text", payload: `{"text":null,"timestamp":"2026-05-12T20:30:00Z"}`, wantError: "invalid text"},
+		{name: "numeric text", payload: `{"text":123,"timestamp":"2026-05-12T20:30:00Z"}`, wantError: "invalid text"},
+		{name: "missing timestamp", payload: `{"text":"hello"}`, wantError: "missing timestamp"},
+		{name: "blank timestamp", payload: `{"text":"hello","timestamp":"   "}`, wantError: "missing timestamp"},
+		{name: "numeric timestamp", payload: `{"text":"hello","timestamp":123}`, wantError: "invalid timestamp"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := ParseGroupPayload(tc.payload)
+			if err == nil {
+				t.Fatalf("ParseGroupPayload() err = nil, parsed=%#v, want %q", parsed, tc.wantError)
+			}
+			if !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("ParseGroupPayload() err = %q, want containing %q", err.Error(), tc.wantError)
+			}
+		})
+	}
+}
+
+func TestGK029ParseGroupPayloadAcceptsPresentEmptyTextWithTimestamp(t *testing.T) {
+	parsed, err := ParseGroupPayload(`{"text":"","timestamp":"2026-05-12T20:30:00Z","extra":{"media":[]}}`)
+	if err != nil {
+		t.Fatalf("ParseGroupPayload() error: %v", err)
+	}
+	if parsed.Text != "" {
+		t.Fatalf("Text = %q, want empty", parsed.Text)
+	}
+	if parsed.Timestamp != "2026-05-12T20:30:00Z" {
+		t.Fatalf("Timestamp = %q, want fixture timestamp", parsed.Timestamp)
+	}
+	if parsed.Extra == nil {
+		t.Fatal("Extra is nil after parsing valid empty-text payload")
+	}
+	if _, ok := parsed.Extra["media"]; !ok {
+		t.Fatal("Extra missing media key after parsing valid empty-text payload")
 	}
 }
 

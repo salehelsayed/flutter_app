@@ -4,9 +4,11 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 /// In-memory [GroupRepository] for integration tests.
-class InMemoryGroupRepository implements GroupRepository {
+class InMemoryGroupRepository
+    implements GroupRepository, RemovedGroupMemberSnapshotRepository {
   final Map<String, GroupModel> _groups = {};
   final Map<String, Map<String, GroupMember>> _members = {};
+  final Map<String, Map<String, GroupMember>> _removedMemberSnapshots = {};
   final Map<String, List<GroupKeyInfo>> _keys = {};
 
   // --- Groups ---
@@ -101,6 +103,23 @@ class InMemoryGroupRepository implements GroupRepository {
   @override
   Future<void> removeMember(String groupId, String peerId) async {
     _members[groupId]?.remove(peerId);
+  }
+
+  @override
+  Future<void> saveRemovedMemberSnapshot(
+    GroupMember member, {
+    required DateTime removedAt,
+  }) async {
+    _removedMemberSnapshots.putIfAbsent(member.groupId, () => {});
+    _removedMemberSnapshots[member.groupId]![member.peerId] = member;
+  }
+
+  @override
+  Future<GroupMember?> getRemovedMemberSnapshot(
+    String groupId,
+    String peerId,
+  ) async {
+    return _removedMemberSnapshots[groupId]?[peerId];
   }
 
   @override

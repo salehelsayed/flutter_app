@@ -321,6 +321,58 @@ Future<GroupMessage?> queueLiveGroupDecryptionFailureRepair({
   return placeholder;
 }
 
+Future<GroupMessage?> markOutboundGroupMessageRejectedByValidator({
+  required GroupMessageRepository msgRepo,
+  required Map<String, dynamic> diagnostic,
+}) async {
+  if (diagnostic['event'] != 'group:publish_validation_rejected') {
+    return null;
+  }
+  final groupId = (diagnostic['groupId'] as String?)?.trim();
+  final messageId = (diagnostic['messageId'] as String?)?.trim();
+  if (groupId == null ||
+      groupId.isEmpty ||
+      messageId == null ||
+      messageId.isEmpty) {
+    return null;
+  }
+
+  final message = await msgRepo.getMessage(messageId);
+  if (message == null || message.isIncoming || message.groupId != groupId) {
+    return null;
+  }
+
+  final retryWireEnvelope =
+      message.wireEnvelope ??
+      jsonEncode({
+        'groupId': message.groupId,
+        'messageId': message.id,
+        'senderPeerId': message.senderPeerId,
+        if (message.senderUsername != null)
+          'senderUsername': message.senderUsername,
+        'text': message.text,
+        if (message.quotedMessageId != null)
+          'quotedMessageId': message.quotedMessageId,
+      });
+  final updated = message.copyWith(
+    status: 'failed',
+    wireEnvelope: retryWireEnvelope,
+  );
+  await msgRepo.saveMessage(updated);
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_OUTBOUND_VALIDATION_REJECTED',
+    details: {
+      'groupId': _safeId(groupId),
+      'messageId': _safeId(messageId),
+      'reason': diagnostic['reason']?.toString() ?? 'unknown',
+      if (diagnostic['keyEpoch'] != null) 'keyEpoch': diagnostic['keyEpoch'],
+    },
+  );
+  return updated;
+}
+
 class GroupPendingKeyRepairRunner {
   final Bridge bridge;
   final GroupRepository groupRepo;

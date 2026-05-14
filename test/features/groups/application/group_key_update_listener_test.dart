@@ -1248,6 +1248,60 @@ void main() {
   );
 
   test(
+    'GM-014 delayed key arrival retries Charlie post-readd pending replay exactly once after save',
+    () async {
+      await _saveActiveGroup('group-gm014-readd-key');
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      var pendingReplayRetryObserved = false;
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          expect(request.groupId, 'group-gm014-readd-key');
+          expect(request.keyEpoch, 2);
+          expect(
+            await groupRepo.getKeyByGeneration(
+              request.groupId,
+              request.keyEpoch,
+            ),
+            isNotNull,
+          );
+          repairCalls.add(request);
+          pendingReplayRetryObserved = true;
+        },
+      );
+      listener.start();
+
+      final update = _makeMessage(
+        _validEnvelope(
+          groupId: 'group-gm014-readd-key',
+          keyGeneration: 2,
+          encryptedKey: 'gm014-readd-key-material',
+        ),
+      );
+      controller.add(update);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repairCalls, hasLength(1));
+      expect(pendingReplayRetryObserved, isTrue);
+      final saved = await groupRepo.getKeyByGeneration(
+        'group-gm014-readd-key',
+        2,
+      );
+      expect(saved, isNotNull);
+      expect(saved!.encryptedKey, 'gm014-readd-key-material');
+
+      controller.add(update);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repairCalls, hasLength(1));
+    },
+  );
+
+  test(
     'PREREQ-FUTURE-EPOCH-KEY-REPAIR rejected key updates do not trigger pending repair',
     () async {
       await _saveActiveGroup('group-prereq-reject-key');

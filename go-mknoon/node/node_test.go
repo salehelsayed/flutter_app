@@ -13,6 +13,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -983,6 +984,460 @@ func waitForPersonalRegisterIdle(t *testing.T, n *Node, timeout time.Duration) {
 	t.Fatalf("timed out waiting for personal registration guard to clear within %v", timeout)
 }
 
+func assertNoPersonalRegisterCall(t *testing.T, registers <-chan string, timeout time.Duration) {
+	t.Helper()
+
+	select {
+	case namespace := <-registers:
+		t.Fatalf("unexpected personal registration for namespace %q", namespace)
+	case <-time.After(timeout):
+	}
+}
+
+func TestGR001RefreshRelaySessionNotStartedReturnsStructuredFailure(t *testing.T) {
+	n := NewNode()
+
+	assertNotStarted := func(result *RecoveryResult) {
+		t.Helper()
+		if result == nil {
+			t.Fatal("RefreshRelaySession returned nil result")
+		}
+		if result.Success {
+			t.Fatalf("RefreshRelaySession success = true, want false: %+v", result)
+		}
+		if result.RecoveryMode != "in_place" {
+			t.Fatalf("RecoveryMode = %q, want in_place: %+v", result.RecoveryMode, result)
+		}
+		if result.ErrorCode != "NOT_STARTED" {
+			t.Fatalf("ErrorCode = %q, want NOT_STARTED: %+v", result.ErrorCode, result)
+		}
+		if result.Reason != "node not started" {
+			t.Fatalf("Reason = %q, want node not started: %+v", result.Reason, result)
+		}
+		if !result.ReusedHost {
+			t.Fatalf("ReusedHost = false, want true: %+v", result)
+		}
+	}
+
+	assertNotStarted(n.RefreshRelaySession())
+
+	n.mu.RLock()
+	hostAfterFirstRefresh := n.host
+	startedAfterFirstRefresh := n.isStarted
+	n.mu.RUnlock()
+	if hostAfterFirstRefresh != nil {
+		t.Fatal("RefreshRelaySession created a host before Start")
+	}
+	if startedAfterFirstRefresh {
+		t.Fatal("RefreshRelaySession marked an unstarted node as started")
+	}
+
+	n.relaySessionMgr.mu.RLock()
+	recoveringAfterFirstRefresh := n.relaySessionMgr.recovering
+	n.relaySessionMgr.mu.RUnlock()
+	if recoveringAfterFirstRefresh {
+		t.Fatal("RefreshRelaySession left the shared recovery gate active after NOT_STARTED")
+	}
+
+	assertNotStarted(n.RefreshRelaySession())
+}
+
+func TestGR002ConcurrentRefreshRelaySessionCallsCoalesce(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	refreshStarted := make(chan struct{})
+	releaseRefresh := make(chan struct{})
+	var refreshCalls atomic.Int32
+
+	n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		return true
+	}
+	n.refreshRelaySessionHook = func() *RecoveryResult {
+		if refreshCalls.Add(1) == 1 {
+			close(refreshStarted)
+			select {
+			case <-releaseRefresh:
+			case <-n.ctx.Done():
+			}
+		}
+		return &RecoveryResult{
+			RecoveryMode:      "in_place",
+			Success:           true,
+			RelayState:        string(AggregateRelayOnline),
+			HealthyRelayCount: 1,
+		}
+	}
+
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex: hexKey,
+		RelayAddresses: []string{
+			generateFakeRelayAddr(t, 19030),
+		},
+		PersonalRendezvousRefreshInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	const callers = 4
+	type refreshOutcome struct {
+		result *RecoveryResult
+	}
+	outcomes := make(chan refreshOutcome, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			defer wg.Done()
+			outcomes <- refreshOutcome{result: n.RefreshRelaySession()}
+		}()
+	}
+
+	select {
+	case <-refreshStarted:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected one RefreshRelaySession caller to begin the blocked refresh hook")
+	}
+
+	deadline := time.After(500 * time.Millisecond)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		n.relaySessionMgr.mu.RLock()
+		waiters := 0
+		if n.relaySessionMgr.recovery != nil {
+			waiters = n.relaySessionMgr.recovery.coalescedWaiters
+		}
+		n.relaySessionMgr.mu.RUnlock()
+		if waiters == callers-1 {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline:
+			t.Fatalf("expected %d coalesced RefreshRelaySession waiters before release, got %d", callers-1, waiters)
+		}
+	}
+
+	close(releaseRefresh)
+	wg.Wait()
+	close(outcomes)
+
+	var first *RecoveryResult
+	for i := 0; i < callers; i++ {
+		outcome := <-outcomes
+		if outcome.result == nil {
+			t.Fatalf("RefreshRelaySession caller %d returned nil result", i+1)
+		}
+		if first == nil {
+			first = outcome.result
+		} else if outcome.result != first {
+			t.Fatalf("RefreshRelaySession caller %d did not receive the shared recovery result", i+1)
+		}
+		if !outcome.result.Success || outcome.result.RecoveryMode != "in_place" {
+			t.Fatalf("RefreshRelaySession caller %d got %+v, want successful in_place recovery", i+1, outcome.result)
+		}
+		if !outcome.result.ReusedHost {
+			t.Fatalf("RefreshRelaySession caller %d reusedHost=false, want true", i+1)
+		}
+		if got := outcome.result.CoalescedRecoveryRequests; got != callers-1 {
+			t.Fatalf("RefreshRelaySession caller %d coalescedRecoveryRequests=%d, want %d", i+1, got, callers-1)
+		}
+	}
+
+	if got := refreshCalls.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 refresh hook invocation across concurrent callers, got %d", got)
+	}
+	if n.relaySessionMgr.IsRecovering() {
+		t.Fatal("RefreshRelaySession left the shared recovery gate active after completion")
+	}
+}
+
+func TestGR007AcknowledgeGroupRecoveryStoppedNodeFailsWithoutMutatingState(t *testing.T) {
+	n := NewNode()
+	collector := &testEventCollector{}
+	n.eventCallback = collector
+
+	n.relaySessionMgr.RecordWatchdogRestart()
+	if got := n.relaySessionMgr.WatchdogRestartCount(); got != 1 {
+		t.Fatalf("watchdog restart count before ack = %d, want 1", got)
+	}
+	if !n.relaySessionMgr.NeedsGroupRecovery() {
+		t.Fatal("needsGroupRecovery should be true before stopped-node acknowledgement")
+	}
+
+	if err := n.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	err := n.AcknowledgeGroupRecovery()
+	if err == nil {
+		t.Fatal("AcknowledgeGroupRecovery on stopped node returned nil error")
+	}
+	if err.Error() != "node not started" {
+		t.Fatalf("AcknowledgeGroupRecovery error = %q, want node not started", err.Error())
+	}
+
+	if !n.relaySessionMgr.NeedsGroupRecovery() {
+		t.Fatal("stopped-node acknowledgement cleared needsGroupRecovery")
+	}
+	if got := n.relaySessionMgr.WatchdogRestartCount(); got != 1 {
+		t.Fatalf("watchdog restart count after failed ack = %d, want 1", got)
+	}
+	if events := collector.snapshot(); len(events) != 0 {
+		t.Fatalf("stopped-node acknowledgement emitted events: %v", events)
+	}
+}
+
+func TestGR011RelayConnectednessUpdatesOnlyConfiguredRelayPeers(t *testing.T) {
+	n := NewNode()
+	collector := &testEventCollector{}
+	n.eventCallback = collector
+
+	relayPeer := fakePeerID("relay-gr011")
+	nonRelayPeer := fakePeerID("non-relay-gr011")
+
+	n.mu.Lock()
+	n.relayPeerOrder = []peer.ID{relayPeer}
+	n.mu.Unlock()
+	n.relaySessionMgr.InitRelayPeer(relayPeer)
+
+	n.mu.Lock()
+	n.connections[nonRelayPeer.String()] = connectionInfo{PeerId: nonRelayPeer.String()}
+	n.mu.Unlock()
+	n.handleRelayConnectednessChanged(nonRelayPeer, network.Connected)
+
+	if s := n.relaySessionMgr.GetSession(nonRelayPeer); s != nil {
+		t.Fatalf("non-relay connectedness created relay session: %+v", s)
+	}
+	relaySession := n.relaySessionMgr.GetSession(relayPeer)
+	if relaySession == nil {
+		t.Fatal("expected configured relay session to remain tracked")
+	}
+	if relaySession.State != RelayStateDisconnected {
+		t.Fatalf("configured relay state changed after non-relay connectedness = %s, want disconnected", relaySession.State)
+	}
+	if events := collector.snapshot(); len(events) != 0 {
+		t.Fatalf("non-relay connectedness emitted relay state events: %v", events)
+	}
+
+	n.mu.Lock()
+	n.connections[relayPeer.String()] = connectionInfo{PeerId: relayPeer.String()}
+	n.mu.Unlock()
+	n.handleRelayConnectednessChanged(relayPeer, network.Connected)
+
+	relaySession = n.relaySessionMgr.GetSession(relayPeer)
+	if relaySession == nil || relaySession.State != RelayStateConnected {
+		t.Fatalf("configured relay connectedness state = %+v, want connected", relaySession)
+	}
+	fields := n.relaySessionMgr.StatusFields()
+	relayStates, ok := fields["relayStates"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("status relayStates has type %T, want []map[string]interface{}", fields["relayStates"])
+	}
+	if len(relayStates) != 1 {
+		t.Fatalf("status relayStates length = %d, want 1", len(relayStates))
+	}
+	if relayStates[0]["peerId"] != relayPeer.String() {
+		t.Fatalf("status relay peer = %v, want %s", relayStates[0]["peerId"], relayPeer.String())
+	}
+	if relayStates[0]["state"] != string(RelayStateConnected) {
+		t.Fatalf("status relay state = %v, want connected", relayStates[0]["state"])
+	}
+
+	n.mu.Lock()
+	delete(n.connections, nonRelayPeer.String())
+	n.mu.Unlock()
+	n.handleRelayConnectednessChanged(nonRelayPeer, network.NotConnected)
+
+	relaySession = n.relaySessionMgr.GetSession(relayPeer)
+	if relaySession == nil || relaySession.State != RelayStateConnected {
+		t.Fatalf("non-relay disconnect mutated configured relay state = %+v, want connected", relaySession)
+	}
+	if s := n.relaySessionMgr.GetSession(nonRelayPeer); s != nil {
+		t.Fatalf("non-relay disconnect created relay session: %+v", s)
+	}
+
+	n.mu.Lock()
+	delete(n.connections, relayPeer.String())
+	n.mu.Unlock()
+	n.handleRelayConnectednessChanged(relayPeer, network.NotConnected)
+
+	relaySession = n.relaySessionMgr.GetSession(relayPeer)
+	if relaySession == nil || relaySession.State != RelayStateDegraded {
+		t.Fatalf("configured relay disconnect state = %+v, want degraded", relaySession)
+	}
+	if got := n.relaySessionMgr.HealthyRelayCount(); got != 0 {
+		t.Fatalf("healthy relay count after configured relay disconnect = %d, want 0", got)
+	}
+}
+
+func TestGR018RecoveryEventsAreDiagnosticAndPrivacySafe(t *testing.T) {
+	const (
+		privateGroupBody = "gr018-private-group-body-never-leak"
+		privateGroupKey  = "gr018-super-secret-group-key-never-leak"
+	)
+
+	collector := &testEventCollector{}
+	n := New(collector)
+	relayPeer := fakePeerID("relay-gr018")
+
+	n.groupConfigs = map[string]*GroupConfig{
+		"gr018-private-group": {
+			Name:        "gr018-private-group",
+			Description: privateGroupBody,
+		},
+	}
+	n.groupKeys = map[string]*GroupKeyInfo{
+		"gr018-private-group": {
+			Key:      privateGroupKey,
+			KeyEpoch: 7,
+		},
+	}
+
+	n.mu.Lock()
+	n.relayPeerOrder = []peer.ID{relayPeer}
+	n.connections[relayPeer.String()] = connectionInfo{PeerId: relayPeer.String()}
+	n.mu.Unlock()
+	n.relaySessionMgr.InitRelayPeer(relayPeer)
+
+	circuitAddr := fmt.Sprintf("/ip4/127.0.0.1/tcp/19036/p2p/%s/p2p-circuit/p2p/%s", relayPeer, "self-gr018")
+	n.syncRelaySessionFromRuntime("refresh_relay_session", []string{circuitAddr})
+
+	for i := 0; i < WatchdogMaxConsecutiveFailures; i++ {
+		n.relaySessionMgr.OnRefreshFailed(relayPeer, fmt.Errorf("gr018 relay probe failed %d", i+1))
+	}
+	n.emitRelayStateEvent("watchdog_restart")
+
+	events := collector.collectEvents("relay:state")
+	if len(events) != 2 {
+		t.Fatalf("relay:state event count = %d, want 2: %v", len(events), events)
+	}
+
+	success := findGR018RelayStateEvent(t, events, "refresh_relay_session")
+	if success["relayState"] != string(AggregateRelayOnline) {
+		t.Fatalf("success relayState = %v, want online: %v", success["relayState"], success)
+	}
+	if success["healthyRelayCount"] != float64(1) {
+		t.Fatalf("success healthyRelayCount = %v, want 1: %v", success["healthyRelayCount"], success)
+	}
+	if success["needsGroupRecovery"] != false {
+		t.Fatalf("success needsGroupRecovery = %v, want false: %v", success["needsGroupRecovery"], success)
+	}
+	successRelay := findGR018RelayPeerState(t, success, relayPeer)
+	if successRelay["state"] != string(RelayStateReserved) {
+		t.Fatalf("success relay peer state = %v, want reserved: %v", successRelay["state"], successRelay)
+	}
+	if successRelay["lastReservedAt"] == "" {
+		t.Fatalf("success event missing lastReservedAt diagnostic: %v", successRelay)
+	}
+
+	failure := findGR018RelayStateEvent(t, events, "watchdog_restart")
+	if failure["relayState"] != string(AggregateRelayWatchdogRestart) {
+		t.Fatalf("failure relayState = %v, want watchdog_restart: %v", failure["relayState"], failure)
+	}
+	if failure["needsGroupRecovery"] != true {
+		t.Fatalf("failure needsGroupRecovery = %v, want true: %v", failure["needsGroupRecovery"], failure)
+	}
+	if failure["watchdogRestartCount"] != float64(0) {
+		t.Fatalf("failure watchdogRestartCount = %v, want 0 before full restart: %v", failure["watchdogRestartCount"], failure)
+	}
+	failureRelay := findGR018RelayPeerState(t, failure, relayPeer)
+	if failureRelay["lastError"] == "" {
+		t.Fatalf("failure event missing lastError diagnostic: %v", failureRelay)
+	}
+
+	for _, event := range events {
+		assertGR018RecoveryEventPrivacy(t, event, privateGroupBody, privateGroupKey)
+	}
+}
+
+func findGR018RelayStateEvent(t *testing.T, events []map[string]interface{}, reason string) map[string]interface{} {
+	t.Helper()
+
+	for _, event := range events {
+		if got, _ := event["reason"].(string); got == reason {
+			return event
+		}
+	}
+	t.Fatalf("missing relay:state event with reason %q in %v", reason, events)
+	return nil
+}
+
+func findGR018RelayPeerState(t *testing.T, event map[string]interface{}, relayPeer peer.ID) map[string]interface{} {
+	t.Helper()
+
+	relayStates, ok := event["relayStates"].([]interface{})
+	if !ok {
+		t.Fatalf("relayStates has type %T, want []interface{}: %v", event["relayStates"], event)
+	}
+	for _, raw := range relayStates {
+		entry, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("relayStates entry has type %T, want map[string]interface{}: %v", raw, relayStates)
+		}
+		if entry["peerId"] == relayPeer.String() {
+			return entry
+		}
+	}
+	t.Fatalf("missing relay peer %s in event %v", relayPeer, event)
+	return nil
+}
+
+func assertGR018RecoveryEventPrivacy(t *testing.T, event map[string]interface{}, forbiddenValues ...string) {
+	t.Helper()
+
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal recovery event: %v", err)
+	}
+	lowerRaw := strings.ToLower(string(raw))
+	for _, value := range forbiddenValues {
+		if strings.Contains(lowerRaw, strings.ToLower(value)) {
+			t.Fatalf("relay recovery event leaked forbidden value %q: %s", value, raw)
+		}
+	}
+
+	forbiddenKeys := map[string]struct{}{
+		"content":      {},
+		"plaintext":    {},
+		"ciphertext":   {},
+		"nonce":        {},
+		"signature":    {},
+		"key":          {},
+		"groupkey":     {},
+		"privatekey":   {},
+		"prevkey":      {},
+		"keymaterial":  {},
+		"message":      {},
+		"payload":      {},
+		"encryptedkey": {},
+	}
+	var walk func(string, interface{})
+	walk = func(path string, value interface{}) {
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			for key, nested := range typed {
+				normalizedKey := strings.ToLower(strings.ReplaceAll(key, "_", ""))
+				if _, ok := forbiddenKeys[normalizedKey]; ok {
+					t.Fatalf("relay recovery event exposed forbidden field %s.%s in %v", path, key, event)
+				}
+				walk(path+"."+key, nested)
+			}
+		case []interface{}:
+			for i, nested := range typed {
+				walk(fmt.Sprintf("%s[%d]", path, i), nested)
+			}
+		}
+	}
+	walk("data", event)
+}
+
 func TestRefreshRelaySession_ReRegistersPersonalNamespaceOnSuccess(t *testing.T) {
 	hexKey := generateTestKey(t)
 	const expectedNamespace = "mknoon:chat:phase2-in-place"
@@ -1133,6 +1588,128 @@ func TestReconnectRelays_WatchdogRestart_ReRegistersPersonalNamespace(t *testing
 	}
 	if cfg == nil || !cfg.AutoRegister {
 		t.Fatalf("watchdog recovery should restore AutoRegister in lastConfig, got %+v", cfg)
+	}
+}
+
+func TestGR020ReconnectRelaysPreservesOriginalAutoRegisterSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		autoRegister bool
+		namespace    string
+		relayPort    int
+		wantCalls    int32
+	}{
+		{
+			name:         "enabled restores true and re-registers personal namespace",
+			autoRegister: true,
+			namespace:    "mknoon:chat:gr020-enabled",
+			relayPort:    19038,
+			wantCalls:    2,
+		},
+		{
+			name:         "disabled restores false and does not register personal namespace",
+			autoRegister: false,
+			namespace:    "mknoon:chat:gr020-disabled",
+			relayPort:    19039,
+			wantCalls:    0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hexKey := generateTestKey(t)
+			n := NewNode()
+			registers := make(chan string, 4)
+			var refreshCalls atomic.Int32
+			var registerCalls atomic.Int32
+
+			n.warmRelayConnectionHook = func(info peer.AddrInfo) error {
+				return nil
+			}
+			n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+				return true
+			}
+			n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+				registerCalls.Add(1)
+				registers <- namespace
+				return nil
+			}
+			n.refreshRelaySessionHook = func() *RecoveryResult {
+				refreshCalls.Add(1)
+				return &RecoveryResult{
+					RecoveryMode: "in_place",
+					Success:      false,
+					ErrorCode:    "REFRESH_FAILED",
+					Reason:       "forced refresh failure",
+				}
+			}
+
+			_, err := n.Start(NodeConfig{
+				PrivateKeyHex: hexKey,
+				RelayAddresses: []string{
+					generateFakeRelayAddr(t, tc.relayPort),
+				},
+				AutoRegister:                      tc.autoRegister,
+				Namespace:                         tc.namespace,
+				PersonalRendezvousRefreshInterval: time.Hour,
+			})
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			defer n.Stop()
+
+			if tc.autoRegister {
+				if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != tc.namespace {
+					t.Fatalf("initial personal register used namespace %q, want %q", namespace, tc.namespace)
+				}
+				waitForPersonalRegisterIdle(t, n, 200*time.Millisecond)
+			} else {
+				assertNoPersonalRegisterCall(t, registers, 80*time.Millisecond)
+			}
+
+			result, err := n.ReconnectRelays()
+			if err != nil {
+				t.Fatalf("ReconnectRelays(): %v", err)
+			}
+			if !result.Success {
+				t.Fatalf("watchdog restart should succeed, got %+v", result)
+			}
+			if result.RecoveryMode != "watchdog_restart" {
+				t.Fatalf("expected watchdog_restart, got %+v", result)
+			}
+			if got := refreshCalls.Load(); got != 1 {
+				t.Fatalf("expected exactly 1 failed in-place refresh before restart, got %d", got)
+			}
+
+			if tc.autoRegister {
+				if namespace := waitForPersonalRegisterCall(t, registers, 200*time.Millisecond); namespace != tc.namespace {
+					t.Fatalf("watchdog recovery personal register used namespace %q, want %q", namespace, tc.namespace)
+				}
+			} else {
+				assertNoPersonalRegisterCall(t, registers, 120*time.Millisecond)
+			}
+			if got := registerCalls.Load(); got != tc.wantCalls {
+				t.Fatalf("personal register call count = %d, want %d", got, tc.wantCalls)
+			}
+
+			n.mu.RLock()
+			cfg := n.lastConfig
+			cancel := n.personalRendezvousRefreshCancel
+			n.mu.RUnlock()
+			if cfg == nil {
+				t.Fatal("lastConfig should be restored after watchdog restart")
+			}
+			if cfg.AutoRegister != tc.autoRegister {
+				t.Fatalf("lastConfig.AutoRegister = %v, want original %v", cfg.AutoRegister, tc.autoRegister)
+			}
+			if cfg.Namespace != tc.namespace {
+				t.Fatalf("lastConfig.Namespace = %q, want %q", cfg.Namespace, tc.namespace)
+			}
+			if tc.autoRegister && cancel == nil {
+				t.Fatal("watchdog restart should restore personal refresh loop when AutoRegister=true")
+			}
+			if !tc.autoRegister && cancel != nil {
+				t.Fatal("watchdog restart should not start personal refresh loop when AutoRegister=false")
+			}
+		})
 	}
 }
 
@@ -1394,6 +1971,78 @@ func TestRefreshRelaySession_UsesForegroundCadenceAndDialTimeout(t *testing.T) {
 			waitTimeouts,
 			ForegroundCircuitAddressWaitTimeout,
 		)
+	}
+}
+
+func TestGR013ForegroundRelayRecoveryCompletesWithinConfiguredBudget(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	configureRefreshRelayAddresses(t, n, []string{generateFakeRelayAddr(t, 19035)})
+
+	var warmTimeout time.Duration
+	var waitTimeouts []time.Duration
+	n.warmRelayConnectionWithTimeoutHook = func(info peer.AddrInfo, timeout time.Duration) error {
+		warmTimeout = timeout
+		return nil
+	}
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool {
+		waitTimeouts = append(waitTimeouts, timeout)
+		return true
+	}
+
+	result := n.RefreshRelaySession()
+	if result == nil {
+		t.Fatal("RefreshRelaySession returned nil result")
+	}
+	if !result.Success {
+		t.Fatalf("RefreshRelaySession should succeed on foreground path, got %+v", result)
+	}
+	if result.RecoveryMode != "in_place" {
+		t.Fatalf("RecoveryMode = %q, want in_place", result.RecoveryMode)
+	}
+	if !result.ReusedHost {
+		t.Fatalf("ReusedHost = false, want true: %+v", result)
+	}
+	if result.ForegroundRecoveryPath != "foreground_success" {
+		t.Fatalf("foregroundRecoveryPath = %q, want foreground_success", result.ForegroundRecoveryPath)
+	}
+	if warmTimeout != ForegroundRelayDialTimeout {
+		t.Fatalf("warm timeout = %v, want %v", warmTimeout, ForegroundRelayDialTimeout)
+	}
+	if len(waitTimeouts) != 1 || waitTimeouts[0] != ForegroundCircuitAddressWaitTimeout {
+		t.Fatalf("waitForCircuitAddress timeouts = %v, want [%v]", waitTimeouts, ForegroundCircuitAddressWaitTimeout)
+	}
+	if result.ForegroundRelayDialTimeoutMs != ForegroundRelayDialTimeout.Milliseconds() {
+		t.Fatalf("foregroundRelayDialTimeoutMs = %d, want %d", result.ForegroundRelayDialTimeoutMs, ForegroundRelayDialTimeout.Milliseconds())
+	}
+	if result.AutorelayRetryCadenceMs != ForegroundAutoRelayRetryCadence.Milliseconds() {
+		t.Fatalf("autorelayRetryCadenceMs = %d, want %d", result.AutorelayRetryCadenceMs, ForegroundAutoRelayRetryCadence.Milliseconds())
+	}
+	if result.RelayWarmMs < 0 {
+		t.Fatalf("relayWarmMs should be non-negative, got %+v", result)
+	}
+	if result.RelayWarmMs > ForegroundRelayDialTimeout.Milliseconds() {
+		t.Fatalf("relayWarmMs = %d exceeded foreground dial budget %d", result.RelayWarmMs, ForegroundRelayDialTimeout.Milliseconds())
+	}
+	if result.CircuitAddressWaitMs < 0 {
+		t.Fatalf("circuitAddressWaitMs should be non-negative, got %+v", result)
+	}
+	if result.CircuitAddressWaitMs > ForegroundCircuitAddressWaitTimeout.Milliseconds() {
+		t.Fatalf("circuitAddressWaitMs = %d exceeded foreground wait budget %d", result.CircuitAddressWaitMs, ForegroundCircuitAddressWaitTimeout.Milliseconds())
+	}
+	if result.RelayRefreshMs < 0 {
+		t.Fatalf("relayRefreshMs should be non-negative, got %+v", result)
 	}
 }
 

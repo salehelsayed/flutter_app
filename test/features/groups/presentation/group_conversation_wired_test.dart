@@ -2308,6 +2308,59 @@ void main() {
       },
     );
 
+    testWidgets(
+      'GP-027 out-of-order live messages keep deterministic order after restart',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester);
+
+        final later = makeMessage(
+          id: 'gp027-b-later',
+          senderPeerId: 'peer-bob',
+          senderUsername: 'Bob',
+          text: 'Bob arrives first but happened second',
+          timestamp: DateTime.utc(2026, 5, 14, 12, 0, 2),
+        );
+        await msgRepo.saveMessage(later);
+        messageStreamController.add(later);
+        await pumpFrames(tester, count: 20);
+
+        final earlier = makeMessage(
+          id: 'gp027-a-earlier',
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          text: 'Alice arrives second but happened first',
+          timestamp: DateTime.utc(2026, 5, 14, 12, 0, 1),
+        );
+        await msgRepo.saveMessage(earlier);
+        messageStreamController.add(earlier);
+        await pumpFrames(tester, count: 20);
+
+        GroupConversationScreen screen() =>
+            tester.widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            );
+
+        expect(screen().messages.map((message) => message.id), [
+          'gp027-a-earlier',
+          'gp027-b-later',
+        ]);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await pumpFrames(tester);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        expect(screen().messages.map((message) => message.id), [
+          'gp027-a-earlier',
+          'gp027-b-later',
+        ]);
+      },
+    );
+
     testWidgets('MS004 live stream upsert keeps quoted parent before reply', (
       tester,
     ) async {

@@ -526,7 +526,7 @@ void main() {
   });
 
   test(
-    'PREREQ-FUTURE-EPOCH-KEY-REPAIR live decryption failure creates repair placeholder and trigger without normal delivery',
+    'GO-004 live decryption failure creates repair placeholder and trigger without plaintext delivery',
     () async {
       final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
       final pendingRepo = _InMemoryGroupPendingKeyRepairRepository();
@@ -555,18 +555,32 @@ void main() {
         'keyEpoch': 3,
         'localKeyEpoch': 2,
         'error': 'cipher: message authentication failed',
+        'plaintext': 'GO-004 plaintext must not render',
+        'groupKey': 'GO-004 group key must not persist',
+        'ciphertext': 'GO-004 ciphertext must not persist',
+        'nonce': 'GO-004 nonce must not persist',
       });
 
       final placeholder = await emittedMessage;
       expect(placeholder.groupId, 'group-1');
       expect(placeholder.senderPeerId, 'peer-sender');
       expect(placeholder.text, groupPendingKeyRepairPlaceholderText);
+      expect(placeholder.text, isNot(contains('GO-004 plaintext')));
+      expect(placeholder.text, isNot(contains('GO-004 group key')));
+      expect(placeholder.text, isNot(contains('GO-004 ciphertext')));
       expect(placeholder.status, groupPendingKeyRepairStatusPendingKey);
       expect(placeholder.keyGeneration, 3);
       expect(await msgRepo.getMessage(placeholder.id), isNotNull);
       expect(msgRepo.count, 1);
       expect(pendingRepo.repairs.values, hasLength(1));
-      expect(pendingRepo.repairs.values.single.replayEnvelopeJson, isNull);
+      final repair = pendingRepo.repairs.values.single;
+      expect(repair.senderPeerId, 'peer-sender');
+      expect(repair.keyEpoch, 3);
+      expect(repair.lastError, 'cipher: message authentication failed');
+      expect(repair.lastError, isNot(contains('GO-004 plaintext')));
+      expect(repair.lastError, isNot(contains('GO-004 group key')));
+      expect(repair.lastError, isNot(contains('GO-004 ciphertext')));
+      expect(repair.replayEnvelopeJson, isNull);
       expect(repairRequests, hasLength(1));
       expect(repairRequests.single.groupId, 'group-1');
       expect(repairRequests.single.keyEpoch, 3);
@@ -588,6 +602,201 @@ void main() {
         isNotNull,
       );
       expect(msgRepo.count, 2);
+    },
+  );
+
+  test(
+    'GO-003 sender-visible validation feedback marks outgoing row failed and retryable',
+    () async {
+      final diagnostics = StreamController<Map<String, dynamic>>.broadcast();
+      listener.dispose();
+      listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        groupDiagnosticEvents: diagnostics.stream,
+      );
+      listener.start(sourceController.stream);
+      addTearDown(diagnostics.close);
+
+      final now = DateTime.now().toUtc();
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'go003-msg',
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          transportPeerId: 'peer-sender-device',
+          senderUsername: 'Sender',
+          text: 'Stale sender state',
+          timestamp: now,
+          keyGeneration: 1,
+          status: 'sent',
+          isIncoming: false,
+          createdAt: now,
+          inboxStored: true,
+        ),
+      );
+
+      final emittedMessage = listener.groupMessageStream.first.timeout(
+        const Duration(seconds: 1),
+      );
+      diagnostics.add({
+        'event': 'group:publish_validation_rejected',
+        'groupId': 'group-1',
+        'messageId': 'go003-msg',
+        'reason': 'non_member',
+        'envelopeType': 'group_message',
+        'keyEpoch': 1,
+      });
+
+      final updated = await emittedMessage;
+      expect(updated.id, 'go003-msg');
+      expect(updated.status, 'failed');
+      expect(updated.isIncoming, isFalse);
+      expect(updated.wireEnvelope, isNotNull);
+
+      final stored = await msgRepo.getMessage('go003-msg');
+      expect(stored, isNotNull);
+      expect(stored!.status, 'failed');
+      expect(stored.inboxStored, isTrue);
+      expect(stored.wireEnvelope, contains('"messageId":"go003-msg"'));
+      expect(stored.wireEnvelope, contains('"text":"Stale sender state"'));
+    },
+  );
+
+  test(
+    'GM-014 member_added event time becomes Charlie re-add joinedAt and removed-window sender traffic stays rejected',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      final removedAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 3),
+      );
+      final removedWindowAt = removedAt.add(const Duration(seconds: 5));
+      final readdAt = removedAt.add(const Duration(seconds: 10));
+      final readdEnvelopeAt = readdAt.add(const Duration(milliseconds: 12));
+      final adminMember = (await groupRepo.getMember('group-1', 'peer-admin'))!;
+      final senderMember = (await groupRepo.getMember(
+        'group-1',
+        'peer-sender',
+      ))!;
+      final oldCharlie = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-charlie',
+        username: 'Charlie',
+        role: MemberRole.writer,
+        publicKey: 'pk-charlie-old',
+        joinedAt: initialMemberJoinedAt,
+      );
+      await groupRepo.saveMember(oldCharlie);
+
+      listener.start(sourceController.stream);
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 1,
+        'text': jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+          'removedAt': removedAt.toIso8601String(),
+          'groupConfig': buildGroupConfigPayload(testGroup, [
+            adminMember,
+            senderMember,
+          ]),
+        }),
+        'timestamp': removedAt.toIso8601String(),
+        'messageId': 'gm014-member-removed',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+      expect(
+        await msgRepo.getLatestRemovalTimestampForSender(
+          'group-1',
+          'peer-charlie',
+        ),
+        removedAt,
+      );
+
+      final readdedCharlie = oldCharlie.copyWith(
+        publicKey: 'pk-charlie-readd',
+        joinedAt: readdAt,
+      );
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-admin',
+        'senderUsername': 'Admin',
+        'keyEpoch': 2,
+        'text': jsonEncode({
+          '__sys': 'member_added',
+          'eventAt': readdAt.toIso8601String(),
+          'member': readdedCharlie.toConfigJson(),
+          'groupConfig': buildGroupConfigPayload(testGroup, [
+            adminMember,
+            senderMember,
+            readdedCharlie,
+          ]),
+        }),
+        'timestamp': readdEnvelopeAt.toIso8601String(),
+        'messageId': 'gm014-member-added',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      final charlieAfterReadd = await groupRepo.getMember(
+        'group-1',
+        'peer-charlie',
+      );
+      expect(charlieAfterReadd, isNotNull);
+      expect(charlieAfterReadd!.joinedAt, readdAt);
+      expect(charlieAfterReadd.publicKey, 'pk-charlie-readd');
+      expect(
+        (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+        readdAt,
+      );
+
+      final updateConfigPayloads = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:updateConfig')
+          .map(
+            (message) => Map<String, dynamic>.from(
+              (message['payload'] as Map<String, dynamic>)['groupConfig']
+                  as Map,
+            ),
+          )
+          .toList(growable: false);
+      expect(updateConfigPayloads, hasLength(2));
+      final finalMemberPeerIds =
+          (updateConfigPayloads.last['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'] as String)
+              .toList(growable: false);
+      expect(finalMemberPeerIds.where((peerId) => peerId == 'peer-charlie'), [
+        'peer-charlie',
+      ]);
+
+      sourceController.add({
+        'groupId': 'group-1',
+        'senderId': 'peer-charlie',
+        'senderUsername': 'Charlie',
+        'keyEpoch': 2,
+        'text': 'GM-014 removed-window Charlie send',
+        'timestamp': removedWindowAt.toIso8601String(),
+        'messageId': 'gm014-charlie-removed-window',
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await msgRepo.getMessage('gm014-charlie-removed-window'), isNull);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_HANDLE_INCOMING_MSG_REMOVED_WINDOW_AFTER_REJOIN',
+        ),
+        isTrue,
+      );
     },
   );
 
@@ -2147,6 +2356,522 @@ void main() {
     );
 
     test(
+      'GM-027 ignores invalid member_added and members_added payloads without creating a ghost',
+      () async {
+        listener.start(sourceController.stream);
+
+        final emittedMessages = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(
+          emittedMessages.add,
+        );
+        final eventAt = DateTime.utc(2026, 5, 11, 10, 15);
+        final invalidMember = {
+          'peerId': 'peer-gm027-ghost',
+          'username': 'Ghost',
+          'role': 'writer',
+        };
+        final validConfigMember = {
+          'peerId': 'peer-sender',
+          'username': 'Sender',
+          'role': 'writer',
+          'publicKey': 'pk-sender',
+          'mlKemPublicKey': 'mlkem-sender',
+        };
+        final baseConfig = {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {
+              'peerId': 'peer-admin',
+              'username': 'Admin',
+              'role': 'admin',
+              'publicKey': 'pk-admin',
+              'mlKemPublicKey': 'mlkem-admin',
+            },
+            validConfigMember,
+            invalidMember,
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': initialGroupCreatedAt.toIso8601String(),
+        };
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_added',
+            'eventAt': eventAt.toIso8601String(),
+            'member': invalidMember,
+            'groupConfig': baseConfig,
+          }),
+          'timestamp': eventAt.toIso8601String(),
+          'messageId': 'gm027-invalid-member-added',
+        });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'members_added',
+            'eventAt': eventAt
+                .add(const Duration(seconds: 1))
+                .toIso8601String(),
+            'members': [invalidMember],
+            'groupConfig': baseConfig,
+          }),
+          'timestamp': eventAt
+              .add(const Duration(seconds: 1))
+              .toIso8601String(),
+          'messageId': 'gm027-invalid-members-added',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          await groupRepo.getMember('group-1', 'peer-gm027-ghost'),
+          isNull,
+        );
+        expect(emittedMessages, isEmpty);
+        expect(msgRepo.count, 0);
+
+        final updateConfigMessages = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:updateConfig')
+            .toList(growable: false);
+        expect(updateConfigMessages, hasLength(2));
+        for (final updateConfigMessage in updateConfigMessages) {
+          final groupConfig =
+              updateConfigMessage['payload']['groupConfig']
+                  as Map<String, dynamic>;
+          final configMembers = (groupConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>();
+          expect(
+            configMembers.map((member) => member['peerId']),
+            isNot(contains('peer-gm027-ghost')),
+          );
+          expect(configMembers.map((member) => member['peerId']).toSet(), {
+            'peer-admin',
+            'peer-sender',
+          });
+        }
+
+        await subscription.cancel();
+      },
+    );
+
+    test(
+      'GM-028 ignores empty PeerId member_added and members_added before config install',
+      () async {
+        listener.start(sourceController.stream);
+
+        final emittedMessages = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(
+          emittedMessages.add,
+        );
+        final eventAt = DateTime.utc(2026, 5, 11, 10, 45);
+        final blankMember = {
+          'peerId': '   ',
+          'username': 'Blank Peer',
+          'role': 'writer',
+          'publicKey': 'pk-gm028-blank',
+          'mlKemPublicKey': 'mlkem-gm028-blank',
+          'devices': [
+            {
+              'deviceId': 'gm028-blank-device',
+              'transportPeerId': 'gm028-blank-device',
+              'deviceSigningPublicKey': 'pk-gm028-blank-device',
+              'mlKemPublicKey': 'mlkem-gm028-blank-device',
+              'keyPackageId': 'kp-gm028-blank-device',
+              'keyPackagePublicMaterial': 'public-kp-gm028-blank-device',
+              'status': 'active',
+            },
+          ],
+        };
+        final validConfigMember = {
+          'peerId': 'peer-sender',
+          'username': 'Sender',
+          'role': 'writer',
+          'publicKey': 'pk-sender',
+          'mlKemPublicKey': 'mlkem-sender',
+        };
+        final baseConfig = {
+          'name': 'Test Group',
+          'groupType': 'chat',
+          'members': [
+            {
+              'peerId': 'peer-admin',
+              'username': 'Admin',
+              'role': 'admin',
+              'publicKey': 'pk-admin',
+              'mlKemPublicKey': 'mlkem-admin',
+            },
+            blankMember,
+            validConfigMember,
+          ],
+          'createdBy': 'peer-admin',
+          'createdAt': initialGroupCreatedAt.toIso8601String(),
+          groupConfigStateHashField: 'stale-gm028-hash',
+        };
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_added',
+            'eventAt': eventAt.toIso8601String(),
+            'member': blankMember,
+            'groupConfig': baseConfig,
+          }),
+          'timestamp': eventAt.toIso8601String(),
+          'messageId': 'gm028-empty-peer-member-added',
+        });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'members_added',
+            'eventAt': eventAt
+                .add(const Duration(seconds: 1))
+                .toIso8601String(),
+            'members': [blankMember],
+            'groupConfig': baseConfig,
+          }),
+          'timestamp': eventAt
+              .add(const Duration(seconds: 1))
+              .toIso8601String(),
+          'messageId': 'gm028-empty-peer-members-added',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final members = await groupRepo.getMembers('group-1');
+        expect(
+          members.where((member) => member.peerId.trim().isEmpty),
+          isEmpty,
+        );
+        expect(await groupRepo.getMember('group-1', ''), isNull);
+        expect(await groupRepo.getMember('group-1', '   '), isNull);
+        expect(emittedMessages, isEmpty);
+        expect(msgRepo.count, 0);
+
+        final updateConfigMessages = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:updateConfig')
+            .toList(growable: false);
+        expect(updateConfigMessages, hasLength(2));
+        for (final updateConfigMessage in updateConfigMessages) {
+          final groupConfig =
+              updateConfigMessage['payload']['groupConfig']
+                  as Map<String, dynamic>;
+          expect(
+            isGroupConfigStateHashValid(
+              groupId: 'group-1',
+              groupConfig: groupConfig,
+            ),
+            isTrue,
+          );
+          final configMembers = (groupConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>();
+          expect(
+            configMembers.map((member) => member['peerId']),
+            isNot(contains('   ')),
+          );
+          expect(
+            configMembers.where(
+              (member) => (member['peerId'] as String?)?.trim().isEmpty ?? true,
+            ),
+            isEmpty,
+          );
+          expect(configMembers.map((member) => member['peerId']).toSet(), {
+            'peer-admin',
+            'peer-sender',
+          });
+        }
+
+        await subscription.cancel();
+      },
+    );
+
+    test(
+      'GM-022 member_added syncs one active Charlie config entry from duplicate snapshot',
+      () async {
+        listener.start(sourceController.stream);
+        final eventAt = DateTime.utc(2026, 5, 11, 8, 30);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'eventAt': eventAt.toIso8601String(),
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'writer',
+            'publicKey': 'pk-charlie',
+            'mlKemPublicKey': 'mlkem-charlie',
+            'devices': [
+              {
+                'deviceId': 'charlie-device',
+                'transportPeerId': 'charlie-device',
+                'deviceSigningPublicKey': 'pk-charlie',
+                'mlKemPublicKey': 'mlkem-charlie-device',
+                'keyPackageId': 'kp-charlie-active',
+                'keyPackagePublicMaterial': 'public-kp-charlie-active',
+                'status': 'active',
+              },
+            ],
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'username': 'Charlie',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+                'mlKemPublicKey': 'mlkem-charlie',
+                'devices': [
+                  {
+                    'deviceId': 'charlie-device',
+                    'transportPeerId': 'charlie-device',
+                    'deviceSigningPublicKey': 'pk-charlie',
+                    'mlKemPublicKey': 'mlkem-charlie-device',
+                    'keyPackageId': 'kp-charlie-stale',
+                    'keyPackagePublicMaterial': 'public-kp-charlie-stale',
+                    'status': 'revoked',
+                    'revokedAt': eventAt
+                        .subtract(const Duration(minutes: 1))
+                        .toIso8601String(),
+                  },
+                ],
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'username': 'Charlie',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+                'mlKemPublicKey': 'mlkem-charlie',
+                'devices': [
+                  {
+                    'deviceId': 'charlie-device',
+                    'transportPeerId': 'charlie-device',
+                    'deviceSigningPublicKey': 'pk-charlie',
+                    'mlKemPublicKey': 'mlkem-charlie-device',
+                    'keyPackageId': 'kp-charlie-active',
+                    'keyPackagePublicMaterial': 'public-kp-charlie-active',
+                    'status': 'active',
+                  },
+                ],
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': eventAt.toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updateConfigMessages = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:updateConfig')
+            .toList(growable: false);
+        expect(updateConfigMessages, hasLength(1));
+        final groupConfig =
+            updateConfigMessages.single['payload']['groupConfig']
+                as Map<String, dynamic>;
+        final configMembers = (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        final configPeerIds = configMembers
+            .map((member) => member['peerId'] as String?)
+            .whereType<String>()
+            .toList();
+        expect(configPeerIds.where((peerId) => peerId == 'peer-charlie'), [
+          'peer-charlie',
+        ]);
+        final charlieConfig = configMembers.singleWhere(
+          (member) => member['peerId'] == 'peer-charlie',
+        );
+        final configDevices = (charlieConfig['devices'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(configDevices, hasLength(1));
+        expect(configDevices.single['keyPackageId'], 'kp-charlie-active');
+        expect(jsonEncode(groupConfig), isNot(contains('kp-charlie-stale')));
+
+        final members = await groupRepo.getMembers('group-1');
+        final charlieRows = members
+            .where((member) => member.peerId == 'peer-charlie')
+            .toList(growable: false);
+        expect(charlieRows, hasLength(1));
+        expect(charlieRows.single.activeDevices, hasLength(1));
+        expect(
+          charlieRows.single.activeDevices.single.keyPackageId,
+          'kp-charlie-active',
+        );
+      },
+    );
+
+    test(
+      'GM-023 member_added sync selects active Charlie after inactive shadow',
+      () async {
+        listener.start(sourceController.stream);
+        final eventAt = DateTime.utc(2026, 5, 11, 9, 15);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_added',
+          'eventAt': eventAt.toIso8601String(),
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'writer',
+            'publicKey': 'pk-charlie',
+            'mlKemPublicKey': 'mlkem-charlie',
+            'devices': [
+              {
+                'deviceId': 'charlie-device',
+                'transportPeerId': 'charlie-device',
+                'deviceSigningPublicKey': 'pk-charlie',
+                'mlKemPublicKey': 'mlkem-charlie-device',
+                'keyPackageId': 'kp-charlie-active',
+                'keyPackagePublicMaterial': 'public-kp-charlie-active',
+                'status': 'active',
+              },
+            ],
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'username': 'Charlie',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+                'mlKemPublicKey': 'mlkem-charlie',
+                'devices': [
+                  {
+                    'deviceId': 'charlie-device',
+                    'transportPeerId': 'charlie-device',
+                    'deviceSigningPublicKey': 'pk-charlie',
+                    'mlKemPublicKey': 'mlkem-charlie-device',
+                    'keyPackageId': 'kp-charlie-inactive',
+                    'keyPackagePublicMaterial': 'public-kp-charlie-inactive',
+                    'status': 'revoked',
+                    'revokedAt': eventAt
+                        .subtract(const Duration(minutes: 1))
+                        .toIso8601String(),
+                  },
+                ],
+              },
+              {
+                'peerId': 'peer-sender',
+                'role': 'writer',
+                'publicKey': 'pk-sender',
+              },
+              {
+                'peerId': 'peer-charlie',
+                'username': 'Charlie',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+                'mlKemPublicKey': 'mlkem-charlie',
+                'devices': [
+                  {
+                    'deviceId': 'charlie-device',
+                    'transportPeerId': 'charlie-device',
+                    'deviceSigningPublicKey': 'pk-charlie',
+                    'mlKemPublicKey': 'mlkem-charlie-device',
+                    'keyPackageId': 'kp-charlie-active',
+                    'keyPackagePublicMaterial': 'public-kp-charlie-active',
+                    'status': 'active',
+                  },
+                ],
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': eventAt.toIso8601String(),
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final updateConfigMessages = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'group:updateConfig')
+            .toList(growable: false);
+        expect(updateConfigMessages, hasLength(1));
+        final groupConfig =
+            updateConfigMessages.single['payload']['groupConfig']
+                as Map<String, dynamic>;
+        final configMembers = (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(
+          configMembers
+              .map((member) => member['peerId'])
+              .where((peerId) => peerId == 'peer-charlie'),
+          ['peer-charlie'],
+        );
+        final charlieConfig = configMembers.singleWhere(
+          (member) => member['peerId'] == 'peer-charlie',
+        );
+        final configDevices = (charlieConfig['devices'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(configDevices, hasLength(1));
+        expect(configDevices.single['status'], 'active');
+        expect(configDevices.single['keyPackageId'], 'kp-charlie-active');
+        expect(jsonEncode(groupConfig), isNot(contains('kp-charlie-inactive')));
+
+        final members = await groupRepo.getMembers('group-1');
+        final charlieRows = members
+            .where((member) => member.peerId == 'peer-charlie')
+            .toList(growable: false);
+        expect(charlieRows, hasLength(1));
+        expect(charlieRows.single.activeDevices, hasLength(1));
+        expect(
+          charlieRows.single.activeDevices.single.keyPackageId,
+          'kp-charlie-active',
+        );
+      },
+    );
+
+    test(
       'older member_removed cannot roll back a newer added admin state after restart',
       () async {
         final newerListener = GroupMessageListener(
@@ -2875,6 +3600,7 @@ void main() {
             'peerId': 'peer-charlie',
             'username': 'Charlie',
             'role': 'writer',
+            'publicKey': 'pk-charlie',
           },
           'groupConfig': {
             'name': 'Test Group',
@@ -2999,6 +3725,195 @@ void main() {
 
         // Bridge should have received group:updateConfig
         expect(bridge.commandLog, contains('group:updateConfig'));
+      },
+    );
+
+    test(
+      'GM-032 all-members-removed snapshot dissolves, leaves, and preserves history',
+      () async {
+        final historicalAt = DateTime.utc(2026, 4, 5, 11, 58, 0);
+        await msgRepo.saveMessage(
+          GroupMessage(
+            id: 'gm032-history',
+            groupId: 'group-1',
+            senderPeerId: 'peer-sender',
+            senderUsername: 'Sender',
+            text: 'GM-032 historical message',
+            timestamp: historicalAt,
+            status: 'sent',
+            isIncoming: true,
+            createdAt: historicalAt,
+          ),
+        );
+
+        final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+        listener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+            'removedAt': removedAt.toIso8601String(),
+            'groupConfig': {
+              'name': 'Test Group',
+              'groupType': 'chat',
+              'members': <Map<String, dynamic>>[],
+              'createdBy': 'peer-admin',
+              'createdAt': initialGroupCreatedAt.toIso8601String(),
+            },
+          }),
+          'timestamp': removedAt.toIso8601String(),
+          'messageId': 'gm032-all-members-removed',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final group = await groupRepo.getGroup('group-1');
+        expect(group, isNotNull);
+        expect(group!.isDissolved, isTrue);
+        expect(group.dissolvedAt, removedAt);
+        expect(group.dissolvedBy, 'peer-admin');
+        expect(await groupRepo.getMembers('group-1'), isEmpty);
+        expect(bridge.commandLog, contains('group:updateConfig'));
+        expect(bridge.commandLog, contains('group:leave'));
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': 'GM-032 after empty membership',
+          'timestamp': removedAt.toIso8601String(),
+          'messageId': 'gm032-after-empty-membership',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final messages = await msgRepo.getMessagesPage('group-1');
+        expect(
+          messages.map((message) => message.text),
+          contains('GM-032 historical message'),
+        );
+        expect(
+          messages.map((message) => message.text),
+          contains('Admin removed Sender'),
+        );
+        expect(
+          messages.map((message) => message.text),
+          isNot(contains('GM-032 after empty membership')),
+        );
+      },
+    );
+
+    test(
+      'GM-013 listener preserves member_removed cutoff and emits after-cutoff rejection',
+      () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        final emitted = <GroupMessage>[];
+        final subscription = listener.groupMessageStream.listen(emitted.add);
+        addTearDown(subscription.cancel);
+
+        final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+        final beforeSentAt = removedAt.subtract(
+          const Duration(milliseconds: 1),
+        );
+        listener.start(sourceController.stream);
+
+        final sysText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-sender', 'username': 'Sender'},
+          'removedAt': removedAt.toIso8601String(),
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'username': 'Admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+          },
+        });
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': sysText,
+          'timestamp': removedAt.toIso8601String(),
+          'messageId': 'gm013-member-removed',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+        expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
+        expect(
+          await msgRepo.getLatestRemovalTimestampForSender(
+            'group-1',
+            'peer-sender',
+          ),
+          removedAt,
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'GM-013 before cutoff',
+          'timestamp': beforeSentAt.toIso8601String(),
+          'messageId': 'gm013-listener-before-cutoff',
+        });
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'text': 'GM-013 at cutoff',
+          'timestamp': removedAt.toIso8601String(),
+          'messageId': 'gm013-listener-at-cutoff',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          (await msgRepo.getMessagesPage(
+            'group-1',
+          )).where((message) => message.text == 'GM-013 before cutoff'),
+          hasLength(1),
+        );
+        expect(await msgRepo.getMessage('gm013-listener-at-cutoff'), isNull);
+        expect(
+          emitted.where((message) => message.text == 'GM-013 before cutoff'),
+          hasLength(1),
+        );
+        expect(
+          emitted.where((message) => message.text == 'GM-013 at cutoff'),
+          isEmpty,
+        );
+
+        final rejectionEvents = flowEvents
+            .where(
+              (event) =>
+                  event['event'] ==
+                  'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
+            )
+            .toList(growable: false);
+        expect(rejectionEvents, hasLength(1));
+        final details =
+            rejectionEvents.single['details'] as Map<String, dynamic>;
+        expect(details['cutoffAt'], removedAt.toIso8601String());
       },
     );
 
@@ -3316,6 +4231,106 @@ void main() {
     );
 
     test(
+      'GM-016 self-removal ignores stale post-leave envelopes without rejoining',
+      () async {
+        final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
+        final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 1);
+        final staleSentAt = removedAt.add(const Duration(seconds: 5));
+        final selfListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+        );
+
+        await groupRepo.updateGroup(
+          testGroup.copyWith(myRole: GroupRole.member),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-self',
+            username: 'Me',
+            role: MemberRole.writer,
+            joinedAt: selfJoinedAt,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'gm016-key',
+            createdAt: selfJoinedAt,
+          ),
+        );
+
+        final removedGroups = <String>[];
+        final emittedMessages = <GroupMessage>[];
+        final removedSub = selfListener.groupRemovedStream.listen(
+          removedGroups.add,
+        );
+        final messageSub = selfListener.groupMessageStream.listen(
+          emittedMessages.add,
+        );
+        selfListener.start(sourceController.stream);
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': jsonEncode({
+            '__sys': 'member_removed',
+            'member': {'peerId': 'peer-self', 'username': 'Me'},
+            'removedAt': removedAt.toIso8601String(),
+            'groupConfig': {
+              'name': 'Test Group',
+              'groupType': 'chat',
+              'members': [
+                {'peerId': 'peer-admin', 'role': 'admin'},
+              ],
+              'createdBy': 'peer-admin',
+              'createdAt': initialGroupCreatedAt.toIso8601String(),
+            },
+          }),
+          'timestamp': removedAt.toIso8601String(),
+          'messageId': 'gm016-member-removed',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 1,
+          'text': 'GM-016 stale post-leave message',
+          'timestamp': staleSentAt.toIso8601String(),
+          'messageId': 'gm016-stale-post-leave',
+        });
+
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(bridge.commandLog, isNot(contains('group:joinWithConfig')));
+        expect(await groupRepo.getGroup('group-1'), isNull);
+        expect(await groupRepo.getMembers('group-1'), isEmpty);
+        expect(await groupRepo.getLatestKey('group-1'), isNull);
+        expect(await msgRepo.getMessage('gm016-stale-post-leave'), isNull);
+        expect(removedGroups, <String>['group-1']);
+        expect(emittedMessages, isEmpty);
+
+        await removedSub.cancel();
+        await messageSub.cancel();
+        selfListener.dispose();
+      },
+    );
+
+    test(
       'duplicate self-removal emits one removal signal and leaves once',
       () async {
         final selfJoinedAt = DateTime.utc(2026, 4, 5, 12);
@@ -3546,6 +4561,566 @@ void main() {
         expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
         expect(
           bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+
+        restartedListener.dispose();
+      },
+    );
+
+    test(
+      'GM-029 older versioned config snapshots are ignored after newer version and same-version replay is idempotent',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.reader,
+            publicKey: 'pk-charlie',
+            joinedAt: initialMemberJoinedAt,
+          ),
+        );
+
+        Map<String, dynamic> memberEntry({
+          required String peerId,
+          required String username,
+          required String role,
+          String? publicKey,
+          Map<String, dynamic>? permissions,
+        }) {
+          return {
+            'peerId': peerId,
+            'username': username,
+            'role': role,
+            'publicKey': publicKey ?? 'pk-$peerId',
+            if (permissions != null) 'permissions': permissions,
+          };
+        }
+
+        Map<String, dynamic> versionedConfig({
+          required DateTime version,
+          required List<Map<String, dynamic>> members,
+        }) {
+          final payload = <String, dynamic>{
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': members,
+            'createdBy': 'peer-admin',
+            'createdAt': initialGroupCreatedAt.toIso8601String(),
+            groupConfigVersionField: version.toUtc().toIso8601String(),
+          };
+          return {
+            ...payload,
+            groupConfigStateHashField: buildGroupConfigStateHash(
+              groupId: 'group-1',
+              groupConfig: payload,
+            ),
+          };
+        }
+
+        final version2 = DateTime.utc(2026, 4, 5, 12, 0, 2);
+        final version4 = DateTime.utc(2026, 4, 5, 12, 0, 4);
+        final admin = memberEntry(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: 'admin',
+          publicKey: 'pk-admin',
+        );
+        final sender = memberEntry(
+          peerId: 'peer-sender',
+          username: 'Sender',
+          role: 'writer',
+          publicKey: 'pk-sender',
+        );
+        final charlieWriter = memberEntry(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: 'writer',
+          publicKey: 'pk-charlie',
+          permissions: {'deleteMessages': true},
+        );
+        final latestConfig = versionedConfig(
+          version: version4,
+          members: [admin, sender, charlieWriter],
+        );
+        final staleRemovedConfig = versionedConfig(
+          version: version2,
+          members: [admin, sender],
+        );
+        final latestRoleUpdate = {
+          '__sys': 'member_role_updated',
+          'member': charlieWriter,
+          'groupConfig': latestConfig,
+        };
+        final staleRemoval = {
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+          'removedAt': version2.toIso8601String(),
+          'groupConfig': staleRemovedConfig,
+        };
+
+        listener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode(latestRoleUpdate),
+          'timestamp': version4
+              .add(const Duration(minutes: 1))
+              .toIso8601String(),
+          'messageId': 'gm029-latest-role',
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final afterLatest = await groupRepo.getMember(
+          'group-1',
+          'peer-charlie',
+        );
+        expect(afterLatest, isNotNull);
+        expect(afterLatest!.role, MemberRole.writer);
+        expect(afterLatest.permissions.deleteMessages, isTrue);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode(latestRoleUpdate),
+          'timestamp': version4
+              .add(const Duration(minutes: 1))
+              .toIso8601String(),
+          'messageId': 'gm029-latest-role-duplicate',
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': jsonEncode(staleRemoval),
+          'timestamp': version4
+              .add(const Duration(minutes: 2))
+              .toIso8601String(),
+          'messageId': 'gm029-stale-remove',
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final persisted = await groupRepo.getMember('group-1', 'peer-charlie');
+        expect(persisted, isNotNull);
+        expect(persisted!.role, MemberRole.writer);
+        expect(persisted.permissions.deleteMessages, isTrue);
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          version4,
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'GM-011 stale member_added delivered after newer remove keeps Charlie removed',
+      () async {
+        await groupRepo.removeMember('group-1', 'peer-sender');
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            joinedAt: DateTime.parse('2026-04-05T12:00:00.000Z'),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            joinedAt: DateTime.parse('2026-04-05T12:00:01.000Z'),
+          ),
+        );
+
+        final addV2At = DateTime.parse('2026-04-05T12:00:02.000Z');
+        final removeV3At = DateTime.parse('2026-04-05T12:00:03.000Z');
+        final staleAddText = jsonEncode({
+          '__sys': 'member_added',
+          'member': {
+            'peerId': 'peer-charlie',
+            'username': 'Charlie',
+            'role': 'writer',
+            'publicKey': 'pk-charlie',
+          },
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {'peerId': 'peer-bob', 'role': 'writer', 'publicKey': 'pk-bob'},
+              {
+                'peerId': 'peer-charlie',
+                'role': 'writer',
+                'publicKey': 'pk-charlie',
+              },
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        final newerRemoveText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+          'removedAt': removeV3At.toUtc().toIso8601String(),
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [
+              {
+                'peerId': 'peer-admin',
+                'role': 'admin',
+                'publicKey': 'pk-admin',
+              },
+              {'peerId': 'peer-bob', 'role': 'writer', 'publicKey': 'pk-bob'},
+            ],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        final newerListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        newerListener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': newerRemoveText,
+          'timestamp': removeV3At.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+        newerListener.dispose();
+
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          removeV3At.toUtc(),
+        );
+
+        final updateAfterRemove =
+            jsonDecode(
+                  bridge.sentMessages.where((message) {
+                    final parsed = jsonDecode(message) as Map<String, dynamic>;
+                    return parsed['cmd'] == 'group:updateConfig';
+                  }).single,
+                )
+                as Map<String, dynamic>;
+        final removeConfig =
+            updateAfterRemove['payload']['groupConfig'] as Map<String, dynamic>;
+        expect(
+          (removeConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId']),
+          isNot(contains('peer-charlie')),
+        );
+
+        final restartedListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        restartedListener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': staleAddText,
+          'timestamp': addV2At.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          removeV3At.toUtc(),
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+        expect(
+          (await msgRepo.getMessagesPage(
+            'group-1',
+          )).map((message) => message.text),
+          isNot(contains('Admin added Charlie')),
+        );
+
+        restartedListener.dispose();
+      },
+    );
+
+    test(
+      'GM-012 stale member_removed delivered after newer re-add keeps Charlie current after restart',
+      () async {
+        await groupRepo.removeMember('group-1', 'peer-sender');
+
+        Map<String, dynamic> memberConfig({
+          required String peerId,
+          required String username,
+          required String role,
+          required String publicKey,
+          List<Map<String, dynamic>> devices = const <Map<String, dynamic>>[],
+        }) {
+          return {
+            'peerId': peerId,
+            'username': username,
+            'role': role,
+            'publicKey': publicKey,
+            if (devices.isNotEmpty) 'devices': devices,
+          };
+        }
+
+        Map<String, dynamic> deviceConfig(String deviceId) {
+          return {
+            'deviceId': deviceId,
+            'transportPeerId': deviceId,
+            'deviceSigningPublicKey': 'pk-$deviceId',
+            'mlKemPublicKey': 'mlkem-$deviceId',
+            'keyPackageId': 'key-package-$deviceId',
+            'keyPackagePublicMaterial': 'key-package-public-$deviceId',
+          };
+        }
+
+        List<Map<String, dynamic>> updateConfigPayloads() {
+          return bridge.sentMessages
+              .map((message) => jsonDecode(message) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:updateConfig')
+              .map(
+                (message) => Map<String, dynamic>.from(
+                  (message['payload'] as Map<String, dynamic>)['groupConfig']
+                      as Map,
+                ),
+              )
+              .toList(growable: false);
+        }
+
+        final bobMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-bob',
+          joinedAt: DateTime.parse('2026-04-05T12:00:00.000Z'),
+        );
+        final initialCharlieMember = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie-v1',
+          devices: [
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-charlie-v1',
+              transportPeerId: 'device-charlie-v1',
+              deviceSigningPublicKey: 'pk-device-charlie-v1',
+              mlKemPublicKey: 'mlkem-device-charlie-v1',
+              keyPackageId: 'key-package-device-charlie-v1',
+              keyPackagePublicMaterial: 'key-package-public-device-charlie-v1',
+            ),
+          ],
+          joinedAt: DateTime.parse('2026-04-05T12:00:01.000Z'),
+        );
+        await groupRepo.saveMember(bobMember);
+        await groupRepo.saveMember(initialCharlieMember);
+
+        final removeV2At = DateTime.parse('2026-04-05T12:00:02.000Z');
+        final readdV3At = DateTime.parse('2026-04-05T12:00:03.000Z');
+        final adminConfig = memberConfig(
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: 'admin',
+          publicKey: 'pk-admin',
+        );
+        final bobConfig = memberConfig(
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: 'writer',
+          publicKey: 'pk-bob',
+        );
+        final charlieV3Config = memberConfig(
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: 'writer',
+          publicKey: 'pk-charlie-v3',
+          devices: [deviceConfig('device-charlie-v3')],
+        );
+        final staleRemoveText = jsonEncode({
+          '__sys': 'member_removed',
+          'member': {'peerId': 'peer-charlie', 'username': 'Charlie'},
+          'removedAt': removeV2At.toUtc().toIso8601String(),
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [adminConfig, bobConfig],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+        final readdText = jsonEncode({
+          '__sys': 'member_added',
+          'member': charlieV3Config,
+          'groupConfig': {
+            'name': 'Test Group',
+            'groupType': 'chat',
+            'members': [adminConfig, bobConfig, charlieV3Config],
+            'createdBy': 'peer-admin',
+            'createdAt': '2026-04-05T11:59:00.000Z',
+          },
+        });
+
+        final removeListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        removeListener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': staleRemoveText,
+          'timestamp': removeV2At.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+        removeListener.dispose();
+
+        expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNull);
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          removeV2At.toUtc(),
+        );
+        expect(updateConfigPayloads(), hasLength(1));
+        expect(
+          (updateConfigPayloads().single['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId']),
+          isNot(contains('peer-charlie')),
+        );
+
+        final readdListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        readdListener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': readdText,
+          'timestamp': readdV3At.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+        readdListener.dispose();
+
+        final charlieAfterReadd = await groupRepo.getMember(
+          'group-1',
+          'peer-charlie',
+        );
+        expect(charlieAfterReadd, isNotNull);
+        expect(charlieAfterReadd!.publicKey, 'pk-charlie-v3');
+        expect(charlieAfterReadd.joinedAt, readdV3At.toUtc());
+        expect(charlieAfterReadd.activeDevices, hasLength(1));
+        expect(
+          charlieAfterReadd.activeDevices.single.deviceId,
+          'device-charlie-v3',
+        );
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          readdV3At.toUtc(),
+        );
+        expect(updateConfigPayloads(), hasLength(2));
+        expect(
+          (updateConfigPayloads().last['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId']),
+          contains('peer-charlie'),
+        );
+
+        final updateConfigCountAfterReadd = bridge.commandLog
+            .where((command) => command == 'group:updateConfig')
+            .length;
+        final restartedListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+        );
+        restartedListener.start(sourceController.stream);
+        sourceController.add({
+          'groupId': 'group-1',
+          'senderId': 'peer-admin',
+          'senderUsername': 'Admin',
+          'keyEpoch': 0,
+          'text': staleRemoveText,
+          'timestamp': removeV2At.toUtc().toIso8601String(),
+        });
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        final charlieAfterStaleRemove = await groupRepo.getMember(
+          'group-1',
+          'peer-charlie',
+        );
+        expect(charlieAfterStaleRemove, isNotNull);
+        expect(charlieAfterStaleRemove!.publicKey, 'pk-charlie-v3');
+        expect(charlieAfterStaleRemove.joinedAt, readdV3At.toUtc());
+        expect(charlieAfterStaleRemove.activeDevices, hasLength(1));
+        expect(
+          charlieAfterStaleRemove.activeDevices.single.deviceId,
+          'device-charlie-v3',
+        );
+        expect(
+          (await groupRepo.getGroup('group-1'))!.lastMembershipEventAt,
+          readdV3At.toUtc(),
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(updateConfigCountAfterReadd),
+        );
+        final timelineTexts = (await msgRepo.getMessagesPage(
+          'group-1',
+        )).map((message) => message.text).toList();
+        expect(
+          timelineTexts.where((text) => text == 'Admin removed Charlie'),
+          hasLength(1),
+        );
+        expect(
+          timelineTexts.where((text) => text == 'Admin added Charlie'),
           hasLength(1),
         );
 
@@ -4928,7 +6503,7 @@ void main() {
     );
 
     test(
-      'LP013 duplicate PubSub delivery preserves first row and notification state',
+      'GP-025 LP013 duplicate PubSub delivery preserves first row and notification state',
       () async {
         final notifService = FakeNotificationService();
         final tracker = ActiveConversationTracker();

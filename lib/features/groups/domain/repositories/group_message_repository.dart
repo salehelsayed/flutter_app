@@ -1,6 +1,20 @@
 import '../models/group_message.dart';
 import '../models/group_message_receipt.dart';
 
+const groupRemovalCutoffMessageIdPrefix = 'sys-member_removed_cutoff';
+
+bool isGroupRemovalCutoffMessageId(String id) =>
+    id.startsWith('$groupRemovalCutoffMessageIdPrefix:');
+
+String buildGroupRemovalCutoffMessageId({
+  required String groupId,
+  required String senderPeerId,
+  required DateTime removedAt,
+}) {
+  return '$groupRemovalCutoffMessageIdPrefix:'
+      '$groupId:$senderPeerId:${removedAt.toUtc().microsecondsSinceEpoch}';
+}
+
 /// Repository interface for managing group messages.
 abstract class GroupMessageRepository {
   /// Saves a message to the database. Replaces if ID already exists.

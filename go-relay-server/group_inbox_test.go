@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -43,6 +45,79 @@ func TestGroupInboxStore_PreservesOpaqueReplayEnvelopeAcrossInstances(t *testing
 	}
 	if msgs[1].Message != envelope2 {
 		t.Fatalf("second message = %q, want exact envelope %q", msgs[1].Message, envelope2)
+	}
+}
+
+func TestGI035GroupInboxStorePersistsEncryptedEnvelopeWithoutPlaintext(t *testing.T) {
+	backend := newMemoryGroupInboxBackend(500, 7*24*time.Hour)
+	store := NewGroupInboxStoreWithBackend(backend)
+
+	message := `{"kind":"group_offline_replay","version":1,"payloadType":"group_message","keyEpoch":4,"messageId":"gi035-private","senderPeerId":"peer-a","recipientSetHash":"hash-gi035","ciphertext":"opaque-ciphertext-gi035","nonce":"opaque-nonce-gi035","signatureAlgorithm":"ed25519","signedPayload":"signed-gi035","signature":"sig-gi035"}`
+	sensitiveFragments := []string{
+		"GI-035 private body alpha",
+		"gi035-media-key-secret-beta",
+		"gi035-media-url-secret-gamma",
+		"gi035-delivery-secret-delta",
+		"pushTitle",
+		"pushBody",
+	}
+
+	if err := store.StoreWithPushRecipients(
+		"group-gi-035",
+		"peer-a",
+		message,
+		[]string{"peer-b"},
+	); err != nil {
+		t.Fatalf("StoreWithPushRecipients: %v", err)
+	}
+
+	messages, nextCursor, historyGaps := store.RetrieveWithCursorAuthorized(
+		"group-gi-035",
+		"",
+		50,
+		"peer-b",
+	)
+	if nextCursor != "" {
+		t.Fatalf("nextCursor = %q, want empty", nextCursor)
+	}
+	if len(historyGaps) != 0 {
+		t.Fatalf("historyGaps = %#v, want none", historyGaps)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %#v, want one stored envelope", messages)
+	}
+	if messages[0].Message != message {
+		t.Fatalf("stored message = %q, want exact encrypted envelope %q", messages[0].Message, message)
+	}
+	if messages[0].From != "peer-a" {
+		t.Fatalf("from = %q, want peer-a", messages[0].From)
+	}
+
+	rawStored, err := json.Marshal(messages[0])
+	if err != nil {
+		t.Fatalf("marshal stored message: %v", err)
+	}
+	raw := string(rawStored)
+	for _, fragment := range sensitiveFragments {
+		if strings.Contains(raw, fragment) {
+			t.Fatalf("stored relay message leaked plaintext fragment %q in %s", fragment, raw)
+		}
+	}
+
+	var storedEnvelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(messages[0].Message), &storedEnvelope); err != nil {
+		t.Fatalf("unmarshal stored envelope: %v", err)
+	}
+	for _, forbiddenKey := range []string{"text", "media", "mediaKey", "mediaUrl", "deliveryId"} {
+		if _, ok := storedEnvelope[forbiddenKey]; ok {
+			t.Fatalf("stored envelope contains plaintext key %q: %s", forbiddenKey, messages[0].Message)
+		}
+	}
+	if _, ok := storedEnvelope["ciphertext"]; !ok {
+		t.Fatalf("stored envelope missing ciphertext: %s", messages[0].Message)
+	}
+	if _, ok := storedEnvelope["nonce"]; !ok {
+		t.Fatalf("stored envelope missing nonce: %s", messages[0].Message)
 	}
 }
 
@@ -226,6 +301,82 @@ func TestGroupInboxStore_CursorPaginationExactOnceAcrossPages(t *testing.T) {
 		if m.ID != allMessages[i].ID {
 			t.Fatalf("second pass message %d: ID mismatch %q vs %q", i, m.ID, allMessages[i].ID)
 		}
+	}
+}
+
+func TestGI017GroupInboxStoreAuthorizedCursorPaginationReturns120MessagesExactlyOnce(t *testing.T) {
+	backend := newMemoryGroupInboxBackend(200, 7*24*time.Hour)
+	store := NewGroupInboxStoreWithBackend(backend)
+
+	for i := 0; i < 120; i++ {
+		message := fmt.Sprintf("gi017-msg-%03d", i)
+		if err := store.StoreWithPushRecipients(
+			"group-gi-017",
+			"peer-a",
+			message,
+			[]string{"peer-b"},
+		); err != nil {
+			t.Fatalf("StoreWithPushRecipients(%d): %v", i, err)
+		}
+	}
+
+	var allMessages []groupInboxMessage
+	cursor := ""
+	pageCount := 0
+	for {
+		messages, nextCursor, _ := store.RetrieveWithCursorAuthorized(
+			"group-gi-017",
+			cursor,
+			50,
+			"peer-b",
+		)
+		if len(messages) == 0 {
+			break
+		}
+		if len(messages) > 50 {
+			t.Fatalf("page %d returned %d messages, want <= 50", pageCount+1, len(messages))
+		}
+		allMessages = append(allMessages, messages...)
+		pageCount++
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
+	}
+
+	if pageCount != 3 {
+		t.Fatalf("page count = %d, want 3", pageCount)
+	}
+	if len(allMessages) != 120 {
+		t.Fatalf("message count = %d, want 120", len(allMessages))
+	}
+
+	seenIDs := map[string]bool{}
+	for i, message := range allMessages {
+		wantMessage := fmt.Sprintf("gi017-msg-%03d", i)
+		if message.Message != wantMessage {
+			t.Fatalf("message[%d] = %q, want %q", i, message.Message, wantMessage)
+		}
+		if message.From != "peer-a" {
+			t.Fatalf("message[%d].From = %q, want peer-a", i, message.From)
+		}
+		if !groupInboxMessageAuthorizedForPeer(message, "peer-b") {
+			t.Fatalf("message[%d] is not authorized for peer-b: %#v", i, message)
+		}
+		if seenIDs[message.ID] {
+			t.Fatalf("duplicate message ID at index %d: %q", i, message.ID)
+		}
+		seenIDs[message.ID] = true
+	}
+
+	unauthorized, nextCursor, _ := store.RetrieveWithCursorAuthorized(
+		"group-gi-017",
+		"",
+		50,
+		"peer-c",
+	)
+	if len(unauthorized) != 0 || nextCursor != "" {
+		t.Fatalf("unauthorized retrieve = (%d, %q), want empty", len(unauthorized), nextCursor)
 	}
 }
 

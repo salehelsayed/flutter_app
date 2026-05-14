@@ -281,7 +281,7 @@ void main() {
         buildTestWidget(
           messages: testMessages,
           onQuoteReply: (_) {},
-          onReactionSelected: (_, __) {},
+          onReactionSelected: (_, _) {},
         ),
       );
       await tester.pump(const Duration(milliseconds: 300));
@@ -1246,7 +1246,7 @@ void main() {
         buildTestWidget(
           messages: [message],
           initialLoadDone: true,
-          onMediaTap: (_, __) => opened = true,
+          onMediaTap: (_, _) => opened = true,
           onRetryUnavailableMedia: (messageId, attachmentId) {
             retriedMessageId = messageId;
             retriedAttachmentId = attachmentId;
@@ -1471,6 +1471,55 @@ void main() {
 
     expect(find.text('Message unavailable'), findsOneWidget);
   });
+
+  testWidgets(
+    'GE-024 renders available and unavailable quote parents without crashing',
+    (tester) async {
+      final now = DateTime.now().toUtc();
+      final messages = [
+        GroupMessage(
+          id: 'ge024-entitled-parent',
+          groupId: 'group-1',
+          senderPeerId: 'peer-2',
+          senderUsername: 'Alice',
+          text: 'GE-024 entitled parent',
+          timestamp: now,
+          createdAt: now,
+          isIncoming: true,
+        ),
+        GroupMessage(
+          id: 'ge024-available-reply',
+          groupId: 'group-1',
+          senderPeerId: 'peer-3',
+          senderUsername: 'Bob',
+          text: 'GE-024 reply with available quote',
+          quotedMessageId: 'ge024-entitled-parent',
+          timestamp: now.add(const Duration(seconds: 1)),
+          createdAt: now.add(const Duration(seconds: 1)),
+          isIncoming: true,
+        ),
+        GroupMessage(
+          id: 'ge024-unavailable-reply',
+          groupId: 'group-1',
+          senderPeerId: 'peer-3',
+          senderUsername: 'Bob',
+          text: 'GE-024 reply with unavailable quote',
+          quotedMessageId: 'ge024-missing-removed-window-parent',
+          timestamp: now.add(const Duration(seconds: 2)),
+          createdAt: now.add(const Duration(seconds: 2)),
+          isIncoming: true,
+        ),
+      ];
+
+      await tester.pumpWidget(buildTestWidget(messages: messages));
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('GE-024 entitled parent'), findsWidgets);
+      expect(find.text('GE-024 reply with available quote'), findsOneWidget);
+      expect(find.text('GE-024 reply with unavailable quote'), findsOneWidget);
+      expect(find.text('Message unavailable'), findsOneWidget);
+    },
+  );
 
   testWidgets('resolves quoted media-only parent from mediaMap', (
     tester,

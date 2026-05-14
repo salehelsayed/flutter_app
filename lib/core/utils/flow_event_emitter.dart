@@ -9,6 +9,27 @@ typedef FlowEventSink = void Function(Map<String, dynamic> payload);
 
 FlowEventSink? _flowEventTestSink;
 const _redacted = '[redacted]';
+const _sensitiveDiagnosticKeys = [
+  'privateKeyHex',
+  'privateKey',
+  'secretKey',
+  'mlKemSecretKey',
+  'mnemonic',
+  'mnemonic12',
+  'ciphertext',
+  'plaintext',
+  'signature',
+  'nonce',
+  'groupKey',
+  'keyMaterial',
+  'publicKey',
+  'senderPublicKey',
+  'senderDevicePublicKey',
+  'encryptionKeyBase64',
+  'mediaKey',
+  'inviteToken',
+  'text',
+];
 
 @visibleForTesting
 void debugSetFlowEventSink(FlowEventSink? sink) {
@@ -61,6 +82,9 @@ bool _isSensitiveKey(String key) {
     'nonce',
     'groupkey',
     'keymaterial',
+    'encryptionkey',
+    'mediakey',
+    'invitetoken',
     'publickey',
     'multiaddr',
     'relayaddresses',
@@ -85,10 +109,10 @@ String _redactSensitiveText(String value) {
   );
   return withoutMultiaddrs.replaceAllMapped(
     RegExp(
-      r'\b(privateKeyHex|privateKey|secretKey|mlKemSecretKey|mnemonic12?|ciphertext|plaintext|signature|nonce|groupKey|keyMaterial)\b\s*[:=]\s*([^,\s}\]]+)',
+      "([\"']?\\b(?:${_sensitiveDiagnosticKeys.join('|')})\\b[\"']?\\s*[:=]\\s*)([\"']?)([^\"',\\s}\\]]+)([\"']?)",
       caseSensitive: false,
     ),
-    (match) => '${match.group(1)}=$_redacted',
+    (match) => '${match.group(1)}${match.group(2)}$_redacted${match.group(4)}',
   );
 }
 

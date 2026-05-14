@@ -5,11 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/contact_picker_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -53,6 +55,16 @@ final contactCharlie = ContactModel(
   signature: 'sig-charlie',
   scannedAt: DateTime.now().toUtc().toIso8601String(),
   mlKemPublicKey: 'mlkem-pk-charlie',
+);
+
+final contactDave = ContactModel(
+  peerId: 'peer-dave',
+  publicKey: 'pk-dave',
+  rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+  username: 'Dave',
+  signature: 'sig-dave',
+  scannedAt: DateTime.now().toUtc().toIso8601String(),
+  mlKemPublicKey: 'mlkem-pk-dave',
 );
 
 final contactSelf = ContactModel(
@@ -123,6 +135,139 @@ class FakeIdentityRepository implements IdentityRepository {
   }
 }
 
+class _TrackingInviteDeliveryAttemptRepository
+    implements GroupInviteDeliveryAttemptRepository {
+  final Map<String, GroupInviteDeliveryAttempt> attempts = {};
+
+  String _key(String groupId, String peerId) => '$groupId::$peerId';
+
+  @override
+  Future<void> saveAttempt(GroupInviteDeliveryAttempt attempt) async {
+    attempts[_key(attempt.groupId, attempt.peerId)] = attempt;
+  }
+
+  @override
+  Future<GroupInviteDeliveryAttempt?> getAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => attempts[_key(groupId, peerId)];
+
+  @override
+  Future<List<GroupInviteDeliveryAttempt>> getAttemptsForGroup(
+    String groupId,
+  ) async => attempts.values
+      .where((attempt) => attempt.groupId == groupId)
+      .toList(growable: false);
+
+  @override
+  Future<GroupInviteDeliveryStatus> getStatusForMember({
+    required String groupId,
+    required String peerId,
+  }) async =>
+      attempts[_key(groupId, peerId)]?.status ??
+      GroupInviteDeliveryStatus.unknown;
+
+  @override
+  Future<Map<String, GroupInviteDeliveryStatus>> getStatusesForGroupMembers(
+    String groupId,
+  ) async => {
+    for (final attempt in attempts.values.where((a) => a.groupId == groupId))
+      attempt.peerId: attempt.status,
+  };
+
+  @override
+  Future<void> updateStatus({
+    required String groupId,
+    required String peerId,
+    required GroupInviteDeliveryStatus status,
+    DateTime? updatedAt,
+  }) async {
+    final now = (updatedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            status: status,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            status: status,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<void> markJoined({
+    required String groupId,
+    required String peerId,
+    String? username,
+    DateTime? joinedAt,
+  }) async {
+    final now = (joinedAt ?? DateTime.now()).toUtc();
+    final key = _key(groupId, peerId);
+    final existing = attempts[key];
+    attempts[key] = existing == null
+        ? GroupInviteDeliveryAttempt(
+            groupId: groupId,
+            peerId: peerId,
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            attemptedAt: now,
+            updatedAt: now,
+          )
+        : existing.copyWith(
+            username: username,
+            status: GroupInviteDeliveryStatus.joined,
+            updatedAt: now,
+            clearLastError: true,
+          );
+  }
+
+  @override
+  Future<int> deleteAttempt({
+    required String groupId,
+    required String peerId,
+  }) async => attempts.remove(_key(groupId, peerId)) == null ? 0 : 1;
+
+  @override
+  Future<int> deleteAttemptsForGroup(String groupId) async {
+    final keys = attempts.keys
+        .where((key) => key.startsWith('$groupId::'))
+        .toList(growable: false);
+    for (final key in keys) {
+      attempts.remove(key);
+    }
+    return keys.length;
+  }
+}
+
+class _PeerSelectiveFailureP2PService extends FakeP2PService {
+  final Set<String> failedPeerIds;
+
+  _PeerSelectiveFailureP2PService({required this.failedPeerIds})
+    : super(initialState: const NodeState(isStarted: true));
+
+  @override
+  Future<bool> sendMessage(String peerId, String message) async {
+    await super.sendMessage(peerId, message);
+    return !failedPeerIds.contains(peerId);
+  }
+
+  @override
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    await super.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return !failedPeerIds.contains(toPeerId);
+  }
+}
+
 // --- Test helpers ---
 
 /// Pump enough frames for async operations to complete.
@@ -159,6 +304,7 @@ Widget buildDirectWiredTestWidget({
   FakeIdentityRepository? identityRepo,
   FakeP2PService? p2pService,
   InMemoryGroupMessageRepository? msgRepo,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
   String groupId = 'group-1',
 }) {
   return MaterialApp(
@@ -175,6 +321,7 @@ Widget buildDirectWiredTestWidget({
             identityRepo ?? FakeIdentityRepository(identity: testIdentity),
         p2pService: p2pService ?? FakeP2PService(),
         msgRepo: msgRepo,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
       ),
     ),
   );
@@ -885,6 +1032,149 @@ void main() {
       expect(popResult!.membersAdded, equals(2));
       expect(popResult!.hasWarnings, isFalse);
     });
+
+    testWidgets(
+      'GM-036 batch invite reports mixed delivery after local re-add',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository();
+        contactRepo.addTestContact(contactCharlie);
+        contactRepo.addTestContact(contactDave);
+
+        final groupRepo = InMemoryGroupRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(memberAdmin);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-1',
+            keyGeneration: 1,
+            encryptedKey: 'test-group-key-base64',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        Future<void> seedRemovedMember(ContactModel contact) async {
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: 'group-1',
+              peerId: contact.peerId,
+              username: contact.username,
+              role: MemberRole.writer,
+              publicKey: contact.publicKey,
+              mlKemPublicKey: contact.mlKemPublicKey,
+              joinedAt: DateTime.utc(2026, 5, 11, 8),
+            ),
+          );
+          await groupRepo.removeMember('group-1', contact.peerId);
+        }
+
+        await seedRemovedMember(contactCharlie);
+        await seedRemovedMember(contactDave);
+
+        final bridge = PassthroughCryptoBridge();
+        final p2pService = _PeerSelectiveFailureP2PService(
+          failedPeerIds: {'peer-dave'},
+        );
+        ContactPickerInviteResult? popResult;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () async {
+                    final result = await Navigator.of(context)
+                        .push<ContactPickerInviteResult>(
+                          MaterialPageRoute(
+                            builder: (_) => ContactPickerWired(
+                              groupId: 'group-1',
+                              groupRepo: groupRepo,
+                              contactRepo: contactRepo,
+                              bridge: bridge,
+                              identityRepo: FakeIdentityRepository(
+                                identity: testIdentity,
+                              ),
+                              p2pService: p2pService,
+                              inviteDeliveryAttemptRepo: inviteStatusRepo,
+                            ),
+                          ),
+                        );
+                    popResult = result;
+                  },
+                  child: const Text('Open Picker'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Picker'));
+        await pumpFrames(tester, count: 20);
+        await tester.tap(find.text('Charlie'));
+        await tester.pump();
+        await tester.tap(find.text('Dave'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 20);
+
+        final memberPeerIds = (await groupRepo.getMembers(
+          'group-1',
+        )).map((member) => member.peerId).toSet();
+        expect(
+          memberPeerIds,
+          containsAll(<String>['peer-charlie', 'peer-dave']),
+        );
+
+        expect(popResult, isNotNull);
+        expect(popResult!.membersAdded, 2);
+        expect(popResult!.invitesSent, 1);
+        expect(popResult!.hasWarnings, isTrue);
+        final inviteBatch = popResult!.inviteBatchResult;
+        expect(inviteBatch, isNotNull);
+        expect(
+          inviteBatch!.attempts
+              .singleWhere((attempt) => attempt.peerId == 'peer-charlie')
+              .wasDelivered,
+          isTrue,
+        );
+        final daveAttempt = inviteBatch.attempts.singleWhere(
+          (attempt) => attempt.peerId == 'peer-dave',
+        );
+        expect(daveAttempt.wasDelivered, isFalse);
+        expect(daveAttempt.failureLabel, 'delivery failed');
+
+        final completion = popResult!.buildCompletionMessage();
+        expect(completion, contains('2 members added'));
+        expect(completion, contains('Dave (delivery failed)'));
+        expect(completion, isNot(contains('2 members invited')));
+        expect(completion, isNot(contains('Charlie (delivery failed)')));
+
+        final charlieDelivery = await inviteStatusRepo.getAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+        );
+        final daveDelivery = await inviteStatusRepo.getAttempt(
+          groupId: 'group-1',
+          peerId: 'peer-dave',
+        );
+        expect(charlieDelivery, isNotNull);
+        expect(charlieDelivery!.status, GroupInviteDeliveryStatus.sent);
+        expect(charlieDelivery.lastError, isNull);
+        expect(daveDelivery, isNotNull);
+        expect(daveDelivery!.status, GroupInviteDeliveryStatus.needsResend);
+        expect(daveDelivery.lastError, 'send_failed');
+
+        expect(p2pService.sentMessageLog.map((entry) => entry.peerId).toSet(), {
+          'peer-charlie',
+          'peer-dave',
+        });
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.lastStoreInInboxPeerId, 'peer-dave');
+      },
+    );
 
     testWidgets('back button pops with 0', (tester) async {
       final contactRepo = InMemoryContactRepository();

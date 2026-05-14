@@ -218,8 +218,27 @@ func buildGroupInboxStoreRequest(
 		GroupId:          groupId,
 		From:             from,
 		Message:          message,
-		RecipientPeerIds: recipientPeerIds,
+		RecipientPeerIds: normalizeGroupInboxRecipientPeerIds(recipientPeerIds),
 	}
+}
+
+func normalizeGroupInboxRecipientPeerIds(recipientPeerIds []string) []string {
+	if len(recipientPeerIds) == 0 {
+		return nil
+	}
+
+	normalized := make([]string, 0, len(recipientPeerIds))
+	for _, recipientPeerId := range recipientPeerIds {
+		trimmed := strings.TrimSpace(recipientPeerId)
+		if trimmed == "" {
+			continue
+		}
+		normalized = append(normalized, trimmed)
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 // GroupInboxRetrieve retrieves missed group messages from the relay's group inbox
