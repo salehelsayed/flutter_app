@@ -3,9 +3,12 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 const lastAdminRemovalBlockedMessage =
@@ -27,7 +30,9 @@ Future<void> removeGroupMember({
   required String groupId,
   required String memberPeerId,
   String? selfPeerId,
+  String? actorUsername,
   DateTime? eventAt,
+  GroupMessageRepository? msgRepo,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -77,6 +82,24 @@ Future<void> removeGroupMember({
 
   final removedMember = await groupRepo.getMember(groupId, memberPeerId);
   if (removedMember == null) {
+    final normalizedEventAt = eventAt?.toUtc();
+    final appliedMembershipEventAt = group.lastMembershipEventAt?.toUtc();
+    if (normalizedEventAt != null &&
+        appliedMembershipEventAt != null &&
+        normalizedEventAt.isAtSameMomentAs(appliedMembershipEventAt)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_REMOVE_MEMBER_USE_CASE_DUPLICATE_IGNORED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'peerId': memberPeerId.length > 8
+              ? memberPeerId.substring(0, 8)
+              : memberPeerId,
+        },
+      );
+      return;
+    }
+
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_REMOVE_MEMBER_USE_CASE_MEMBER_NOT_FOUND',
@@ -110,12 +133,30 @@ Future<void> removeGroupMember({
     }
   }
 
+  final normalizedEventAt = eventAt?.toUtc() ?? DateTime.now().toUtc();
+  GroupMessage? removalCutoffMessage;
+  if (msgRepo != null) {
+    removalCutoffMessage = buildMemberRemovedTimelineMessage(
+      groupId: groupId,
+      removedPeerId: memberPeerId,
+      removedUsername: removedMember.username,
+      senderId: selfPeerId ?? group.createdBy,
+      senderUsername: actorUsername ?? '',
+      eventAt: normalizedEventAt,
+    );
+    await msgRepo.saveMessage(removalCutoffMessage);
+  }
+
   // 2. Remove member from local DB
   await groupRepo.removeMember(groupId, memberPeerId);
 
   // 3. Build updated GroupConfig from remaining members and update Go config
   final remainingMembers = await groupRepo.getMembers(groupId);
-  final groupConfig = buildGroupConfigPayload(group, remainingMembers);
+  final groupConfig = buildGroupConfigPayload(
+    group.copyWith(lastMembershipEventAt: normalizedEventAt),
+    remainingMembers,
+    configVersionOverride: normalizedEventAt,
+  );
 
   try {
     await callGroupUpdateConfig(
@@ -126,11 +167,12 @@ Future<void> removeGroupMember({
     await recordGroupMembershipEventWatermark(
       groupRepo: groupRepo,
       groupId: groupId,
-      eventAt: eventAt,
+      eventAt: normalizedEventAt,
     );
   } catch (e) {
-    if (removedMember != null) {
-      await groupRepo.saveMember(removedMember);
+    await groupRepo.saveMember(removedMember);
+    if (removalCutoffMessage != null) {
+      await msgRepo?.deleteMessage(removalCutoffMessage.id);
     }
     emitFlowEvent(
       layer: 'FL',

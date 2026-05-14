@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
+    as group_send;
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -119,6 +121,61 @@ void main() {
           jsonDecode(replayEnvelope['ciphertext'] as String)
               as Map<String, dynamic>;
       expect(replayEnvelope['messageId'], replayPlaintext['messageId']);
+    },
+  );
+
+  test(
+    'GM-032 dissolved group disables publish and inbox while preserving history',
+    () async {
+      final dissolvedAt = now.add(const Duration(minutes: 5));
+      final (result, group) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        dissolvedAt: dissolvedAt,
+      );
+
+      expect(result, DissolveGroupResult.success);
+      expect(group, isNotNull);
+      expect(group!.isDissolved, isTrue);
+
+      final historyBefore = await msgRepo.getMessagesPage('group-1');
+      expect(historyBefore, hasLength(1));
+      expect(historyBefore.single.text, 'Admin dissolved the group');
+
+      bridge.commandLog.clear();
+      bridge.sentMessages.clear();
+
+      final (sendResult, sendMessage) = await group_send.sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        text: 'GM-032 should not publish',
+        senderPeerId: 'peer-admin',
+        senderPublicKey: 'pk-admin',
+        senderPrivateKey: 'sk-admin',
+        senderUsername: 'Admin',
+        messageId: 'gm032-after-dissolve',
+      );
+
+      expect(sendResult, group_send.SendGroupMessageResult.groupDissolved);
+      expect(sendMessage, isNull);
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+
+      final historyAfter = await msgRepo.getMessagesPage('group-1');
+      expect(historyAfter, hasLength(1));
+      expect(historyAfter.single.id, historyBefore.single.id);
+      final stored = await groupRepo.getGroup('group-1');
+      expect(stored, isNotNull);
+      expect(stored!.isDissolved, isTrue);
+      expect(stored.dissolvedAt, dissolvedAt);
     },
   );
 

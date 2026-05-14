@@ -157,6 +157,72 @@ func TestRelaySession_IgnoresStaleCircuitAddressesWithoutReservation(t *testing.
 	}
 }
 
+func TestGR012StaleCircuitAddressesDoNotReportHealthyWithoutReservation(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-gr012")
+	circuitAddrs := []string{
+		fmt.Sprintf("/ip4/1.2.3.4/tcp/1234/p2p/%s/p2p-circuit/p2p/self", pid),
+	}
+
+	m.InitRelayPeer(pid)
+
+	if !m.CircuitAddressesAreStale(circuitAddrs) {
+		t.Fatal("host-reported circuit address without reservation should be stale")
+	}
+	if m.ReportsHealthyWithReservation(circuitAddrs) {
+		t.Fatal("stale circuit address without reservation reported healthy")
+	}
+	if trusted := m.IgnoresStaleCircuitAddresses(circuitAddrs); len(trusted) != 0 {
+		t.Fatalf("stale circuit addresses were trusted without reservation: %v", trusted)
+	}
+	fields := m.StatusFields()
+	if fields["relayState"] == string(AggregateRelayOnline) {
+		t.Fatalf("status relayState = %v without reservation, want not online", fields["relayState"])
+	}
+	if fields["healthyRelayCount"] != 0 {
+		t.Fatalf("status healthyRelayCount = %v without reservation, want 0", fields["healthyRelayCount"])
+	}
+	if _, ok := fields["lastReservationAt"]; ok {
+		t.Fatalf("status exposed lastReservationAt without reservation: %v", fields["lastReservationAt"])
+	}
+
+	m.OnReservationOpened(pid)
+	if m.CircuitAddressesAreStale(circuitAddrs) {
+		t.Fatal("circuit address should not be stale once reservation is active")
+	}
+	if !m.ReportsHealthyWithReservation(circuitAddrs) {
+		t.Fatal("active reservation with circuit address should report healthy")
+	}
+	if trusted := m.IgnoresStaleCircuitAddresses(circuitAddrs); len(trusted) != 1 || trusted[0] != circuitAddrs[0] {
+		t.Fatalf("trusted circuit addresses with active reservation = %v, want %v", trusted, circuitAddrs)
+	}
+	fields = m.StatusFields()
+	if fields["relayState"] != string(AggregateRelayOnline) {
+		t.Fatalf("status relayState with reservation = %v, want online", fields["relayState"])
+	}
+	if fields["healthyRelayCount"] != 1 {
+		t.Fatalf("status healthyRelayCount with reservation = %v, want 1", fields["healthyRelayCount"])
+	}
+
+	m.OnReservationEnded(pid)
+	if !m.CircuitAddressesAreStale(circuitAddrs) {
+		t.Fatal("circuit address should become stale after reservation ends")
+	}
+	if m.ReportsHealthyWithReservation(circuitAddrs) {
+		t.Fatal("ended reservation with circuit address reported healthy")
+	}
+	if trusted := m.IgnoresStaleCircuitAddresses(circuitAddrs); len(trusted) != 0 {
+		t.Fatalf("stale circuit addresses were trusted after reservation ended: %v", trusted)
+	}
+	fields = m.StatusFields()
+	if fields["relayState"] == string(AggregateRelayOnline) {
+		t.Fatalf("status relayState after reservation ended = %v, want not online", fields["relayState"])
+	}
+	if fields["healthyRelayCount"] != 0 {
+		t.Fatalf("status healthyRelayCount after reservation ended = %v, want 0", fields["healthyRelayCount"])
+	}
+}
+
 func TestRelaySession_CoalescesConcurrentRecoveryRequests(t *testing.T) {
 	m := NewRelaySessionManager()
 
@@ -361,6 +427,52 @@ func TestRelaySession_Reset(t *testing.T) {
 	}
 }
 
+func TestGR008RecordWatchdogRestartPreservesRecoverySignalAcrossReset(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-1")
+
+	m.OnReservationOpened(pid)
+	m.RecordWatchdogRestart()
+
+	if got := m.WatchdogRestartCount(); got != 1 {
+		t.Fatalf("watchdog restart count before reset = %d, want 1", got)
+	}
+	if !m.NeedsGroupRecovery() {
+		t.Fatal("needsGroupRecovery should be true immediately after watchdog restart")
+	}
+
+	m.Reset()
+
+	if got := m.WatchdogRestartCount(); got != 1 {
+		t.Fatalf("watchdog restart count after reset = %d, want 1", got)
+	}
+	if !m.NeedsGroupRecovery() {
+		t.Fatal("needsGroupRecovery should survive Reset until Flutter acknowledges")
+	}
+	if got := m.HealthyRelayCount(); got != 0 {
+		t.Fatalf("healthy relay count after reset = %d, want 0", got)
+	}
+	if got := m.AggregateState(); got != AggregateRelayStarting {
+		t.Fatalf("aggregate state after reset = %s, want %s", got, AggregateRelayStarting)
+	}
+
+	fields := m.StatusFields()
+	if got := fields["watchdogRestartCount"]; got != 1 {
+		t.Fatalf("status watchdogRestartCount after reset = %v, want 1", got)
+	}
+	if got := fields["needsGroupRecovery"]; got != true {
+		t.Fatalf("status needsGroupRecovery after reset = %v, want true", got)
+	}
+	if got := fields["healthyRelayCount"]; got != 0 {
+		t.Fatalf("status healthyRelayCount after reset = %v, want 0", got)
+	}
+
+	m.AcknowledgeGroupRecovery()
+	if m.NeedsGroupRecovery() {
+		t.Fatal("needsGroupRecovery should clear only after acknowledgement")
+	}
+}
+
 func TestRelaySession_ResetPreservesInFlightRecovery(t *testing.T) {
 	m := NewRelaySessionManager()
 
@@ -427,6 +539,66 @@ func TestRecoveryPromise_StalledRecoveryTimesOut(t *testing.T) {
 	// Should have taken roughly RecoveryWaitTimeout (30s), with margin.
 	if elapsed < RecoveryWaitTimeout-time.Second || elapsed > RecoveryWaitTimeout+2*time.Second {
 		t.Errorf("timeout took %v, expected ~%v", elapsed, RecoveryWaitTimeout)
+	}
+}
+
+func TestGR003RelaySessionStalledRecoveryClearsGateAfterTimeout(t *testing.T) {
+	m := NewRelaySessionManager()
+	m.recoveryWaitTimeout = 20 * time.Millisecond
+
+	stalled, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("first BeginRecovery should start a new recovery")
+	}
+	if stalled == nil {
+		t.Fatal("first BeginRecovery returned nil promise")
+	}
+
+	waiter, isNew := m.BeginRecovery()
+	if isNew {
+		t.Fatal("second BeginRecovery should coalesce onto the stalled recovery")
+	}
+	if waiter != stalled {
+		t.Fatal("waiter should share the stalled recovery promise")
+	}
+
+	result, err := waiter.Wait()
+	if err == nil || err.Error() != "RECOVERY_TIMEOUT" {
+		t.Fatalf("Wait() error = %v, want RECOVERY_TIMEOUT", err)
+	}
+	if result == nil {
+		t.Fatal("Wait() returned nil timeout result")
+	}
+	if result.RecoveryMode != "timeout" {
+		t.Fatalf("RecoveryMode = %q, want timeout", result.RecoveryMode)
+	}
+	if m.IsRecovering() {
+		t.Fatal("timeout did not clear the stalled recovery gate")
+	}
+
+	fresh, isNew := m.BeginRecovery()
+	if !isNew {
+		t.Fatal("BeginRecovery after timeout should start a fresh recovery")
+	}
+	if fresh == nil {
+		t.Fatal("fresh recovery promise is nil")
+	}
+	if fresh == stalled {
+		t.Fatal("fresh recovery reused the stalled promise")
+	}
+
+	m.CompleteRecovery(&RecoveryResult{
+		RecoveryMode: "in_place",
+		Success:      true,
+		RelayState:   string(AggregateRelayOnline),
+	}, nil)
+
+	freshResult, freshErr := fresh.Wait()
+	if freshErr != nil {
+		t.Fatalf("fresh recovery should complete without error: %v", freshErr)
+	}
+	if freshResult == nil || !freshResult.Success || freshResult.RecoveryMode != "in_place" {
+		t.Fatalf("fresh recovery result = %+v, want successful in_place", freshResult)
 	}
 }
 
@@ -621,6 +793,69 @@ func TestWatchdog_TriggersAfterNConsecutiveRefreshFailures(t *testing.T) {
 	}
 }
 
+func TestGR009RefreshFailuresTriggerWatchdogOnlyAfterAllRelaysReachThreshold(t *testing.T) {
+	m := NewRelaySessionManager()
+	relayA := fakePeerID("relay-a")
+	relayB := fakePeerID("relay-b")
+
+	m.OnReservationOpened(relayA)
+	m.OnReservationOpened(relayB)
+	if got := m.HealthyRelayCount(); got != 2 {
+		t.Fatalf("healthy relay count after reservations = %d, want 2", got)
+	}
+
+	for i := 0; i < WatchdogMaxConsecutiveFailures-1; i++ {
+		m.OnRefreshFailed(relayA, fmt.Errorf("relay-a failure %d", i))
+	}
+	if m.NeedsGroupRecovery() {
+		t.Fatal("watchdog triggered before the first relay reached threshold")
+	}
+	if got := m.AggregateState(); got == AggregateRelayWatchdogRestart {
+		t.Fatalf("aggregate state = %s before first relay threshold, want not watchdog_restart", got)
+	}
+
+	m.OnRefreshFailed(relayA, fmt.Errorf("relay-a threshold failure"))
+	if m.NeedsGroupRecovery() {
+		t.Fatal("watchdog triggered while relay-b remained reserved below threshold")
+	}
+	if got := m.AggregateState(); got == AggregateRelayWatchdogRestart {
+		t.Fatalf("aggregate state = %s while relay-b remained below threshold, want not watchdog_restart", got)
+	}
+
+	if s := m.GetSession(relayA); s == nil || s.ConsecutiveRefreshFailures != WatchdogMaxConsecutiveFailures {
+		t.Fatalf("relay-a consecutive failures = %+v, want %d", s, WatchdogMaxConsecutiveFailures)
+	}
+	if s := m.GetSession(relayB); s == nil || s.ConsecutiveRefreshFailures != 0 || s.State != RelayStateReserved {
+		t.Fatalf("relay-b state before failures = %+v, want reserved with 0 failures", s)
+	}
+
+	for i := 0; i < WatchdogMaxConsecutiveFailures-1; i++ {
+		m.OnRefreshFailed(relayB, fmt.Errorf("relay-b failure %d", i))
+	}
+	if m.NeedsGroupRecovery() {
+		t.Fatal("watchdog triggered before relay-b reached threshold")
+	}
+	if got := m.AggregateState(); got == AggregateRelayWatchdogRestart {
+		t.Fatalf("aggregate state = %s before all relays reached threshold, want not watchdog_restart", got)
+	}
+
+	m.OnRefreshFailed(relayB, fmt.Errorf("relay-b threshold failure"))
+	if !m.NeedsGroupRecovery() {
+		t.Fatal("watchdog did not trigger after all tracked relays reached threshold")
+	}
+	if got := m.AggregateState(); got != AggregateRelayWatchdogRestart {
+		t.Fatalf("aggregate state after all relays reached threshold = %s, want watchdog_restart", got)
+	}
+
+	fields := m.StatusFields()
+	if fields["needsGroupRecovery"] != true {
+		t.Fatalf("status needsGroupRecovery = %v, want true", fields["needsGroupRecovery"])
+	}
+	if fields["relayState"] != string(AggregateRelayWatchdogRestart) {
+		t.Fatalf("status relayState = %v, want %s", fields["relayState"], AggregateRelayWatchdogRestart)
+	}
+}
+
 func TestWatchdog_SingleSuccessfulRefreshResetsFailureCounter(t *testing.T) {
 	m := NewRelaySessionManager()
 	pid := fakePeerID("relay-1")
@@ -654,6 +889,73 @@ func TestWatchdog_SingleSuccessfulRefreshResetsFailureCounter(t *testing.T) {
 	// needsGroupRecovery should NOT be set since we never crossed the threshold.
 	if m.NeedsGroupRecovery() {
 		t.Error("needsGroupRecovery should be false when threshold was not crossed")
+	}
+}
+
+func TestGR010RefreshSuccessResetsFailureCounterAndStaleError(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-gr010")
+
+	m.OnReservationOpened(pid)
+	for i := 0; i < WatchdogMaxConsecutiveFailures-1; i++ {
+		m.OnRefreshFailed(pid, fmt.Errorf("gr010 failure %d", i))
+	}
+
+	before := m.GetSession(pid)
+	if before == nil {
+		t.Fatal("expected relay session before successful refresh")
+	}
+	if got := before.ConsecutiveRefreshFailures; got != WatchdogMaxConsecutiveFailures-1 {
+		t.Fatalf("consecutive failures before success = %d, want %d", got, WatchdogMaxConsecutiveFailures-1)
+	}
+	if before.LastError == "" {
+		t.Fatal("expected failed refresh streak to record a last error before success")
+	}
+
+	m.OnRefreshSucceeded(pid)
+
+	after := m.GetSession(pid)
+	if after == nil {
+		t.Fatal("expected relay session after successful refresh")
+	}
+	if after.ConsecutiveRefreshFailures != 0 {
+		t.Fatalf("consecutive failures after success = %d, want 0", after.ConsecutiveRefreshFailures)
+	}
+	if after.State != RelayStateReserved {
+		t.Fatalf("state after success = %s, want reserved", after.State)
+	}
+	if after.LastError != "" {
+		t.Fatalf("last error after success = %q, want empty", after.LastError)
+	}
+	if after.LastReservedAt.IsZero() {
+		t.Fatal("last reserved timestamp should be set after successful refresh")
+	}
+	if m.NeedsGroupRecovery() {
+		t.Fatal("successful refresh below threshold should not require group recovery")
+	}
+	if got := m.AggregateState(); got != AggregateRelayOnline {
+		t.Fatalf("aggregate state after success = %s, want online", got)
+	}
+
+	fields := m.StatusFields()
+	if fields["relayState"] != string(AggregateRelayOnline) {
+		t.Fatalf("status relayState = %v, want %s", fields["relayState"], AggregateRelayOnline)
+	}
+	if fields["healthyRelayCount"] != 1 {
+		t.Fatalf("status healthyRelayCount = %v, want 1", fields["healthyRelayCount"])
+	}
+	relayStates, ok := fields["relayStates"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("status relayStates has type %T, want []map[string]interface{}", fields["relayStates"])
+	}
+	if len(relayStates) != 1 {
+		t.Fatalf("status relayStates length = %d, want 1", len(relayStates))
+	}
+	if relayStates[0]["state"] != string(RelayStateReserved) {
+		t.Fatalf("status relay state = %v, want reserved", relayStates[0]["state"])
+	}
+	if _, ok := relayStates[0]["lastError"]; ok {
+		t.Fatalf("status relay state still exposes stale lastError: %v", relayStates[0]["lastError"])
 	}
 }
 

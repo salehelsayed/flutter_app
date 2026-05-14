@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns
 import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
 import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
 import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
+import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -43,6 +44,7 @@ void main() {
     await runGroupsBacklogRetentionColumnsMigration(db);
     await runGroupMemberPermissionsMigration(db);
     await runGroupMemberDeviceIdentitiesMigration(db);
+    await runRemovedGroupMemberSnapshotsMigration(db);
     groupKeyStore = FakeSecureKeyStore();
     sharedPushKeyStore = FakeSecureKeyStore();
 
@@ -65,6 +67,10 @@ void main() {
           dbDeleteGroupMember(db, groupId, peerId),
       dbDeleteAllGroupMembers: (groupId) =>
           dbDeleteAllGroupMembers(db, groupId),
+      dbInsertRemovedGroupMemberSnapshot: (row, removedAt) =>
+          dbInsertRemovedGroupMemberSnapshot(db, row, removedAt),
+      dbLoadRemovedGroupMemberSnapshot: (groupId, peerId) =>
+          dbLoadRemovedGroupMemberSnapshot(db, groupId, peerId),
       dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
       dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
       dbLoadGroupKeyByGeneration: (groupId, gen) =>
@@ -385,6 +391,41 @@ void main() {
 
       await repo.removeAllMembers('group-1');
       expect((await repo.getMembers('group-1')).length, 0);
+    });
+
+    test('removed member snapshot survives active member deletion', () async {
+      final removedAt = now.add(const Duration(minutes: 5));
+      final member = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-removed',
+        username: 'Removed',
+        role: MemberRole.writer,
+        publicKey: 'pk-removed',
+        mlKemPublicKey: 'mlkem-removed',
+        joinedAt: now,
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'device-1',
+            transportPeerId: 'transport-1',
+            deviceSigningPublicKey: 'pk-device-1',
+            keyPackageId: 'kp-1',
+          ),
+        ],
+      );
+
+      await repo.saveMember(member);
+      await repo.saveRemovedMemberSnapshot(member, removedAt: removedAt);
+      await repo.removeMember('group-1', 'peer-removed');
+
+      expect(await repo.getMember('group-1', 'peer-removed'), isNull);
+      final snapshot = await repo.getRemovedMemberSnapshot(
+        'group-1',
+        'peer-removed',
+      );
+      expect(snapshot, isNotNull);
+      expect(snapshot!.publicKey, 'pk-removed');
+      expect(snapshot.devices, hasLength(1));
+      expect(snapshot.devices.single.deviceSigningPublicKey, 'pk-device-1');
     });
   });
 

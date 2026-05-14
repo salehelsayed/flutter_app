@@ -359,6 +359,99 @@ void main() {
     });
 
     test(
+      'GR-006 recovery ack waits until every active group topic rejoins',
+      () async {
+        final groupRepo = InMemoryGroupRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        final now = DateTime.utc(2026, 5, 13, 5, 50);
+
+        Future<void> seedGroup(String groupId, {required bool hasKey}) async {
+          await groupRepo.saveGroup(
+            GroupModel(
+              id: groupId,
+              name: 'Recovery $groupId',
+              type: GroupType.chat,
+              topicName: 'topic-$groupId',
+              createdAt: now,
+              createdBy: 'my-peer-id-1234567890',
+              myRole: GroupRole.admin,
+            ),
+          );
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: groupId,
+              peerId: 'my-peer-id-1234567890',
+              username: 'Self',
+              role: MemberRole.admin,
+              publicKey: 'pk-self-$groupId',
+              joinedAt: now,
+            ),
+          );
+          if (hasKey) {
+            await groupRepo.saveKey(
+              GroupKeyInfo(
+                groupId: groupId,
+                keyGeneration: 1,
+                encryptedKey: 'group-key-$groupId',
+                createdAt: now,
+              ),
+            );
+          }
+        }
+
+        await seedGroup('group-gr006-ready', hasKey: true);
+        await seedGroup('group-gr006-missing-key', hasKey: false);
+
+        final runningP2P = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-1234567890',
+            needsGroupRecovery: true,
+          ),
+          recoveryMethod: 'watchdog_restart',
+        );
+
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: runningP2P,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(1),
+        );
+        expect(bridge.commandLog, isNot(contains('group:acknowledgeRecovery')));
+
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-gr006-missing-key',
+            keyGeneration: 1,
+            encryptedKey: 'group-key-group-gr006-missing-key',
+            createdAt: now.add(const Duration(seconds: 1)),
+          ),
+        );
+        bridge.commandLog.clear();
+        bridge.sentMessages.clear();
+
+        await handleAppResumed(
+          bridge: bridge,
+          p2pService: runningP2P,
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(2),
+        );
+        expect(bridge.commandLog, contains('group:acknowledgeRecovery'));
+        runningP2P.dispose();
+      },
+    );
+
+    test(
       'in-place recovery without Go signal rejoins but does not ack',
       () async {
         final groupRepo = InMemoryGroupRepository();

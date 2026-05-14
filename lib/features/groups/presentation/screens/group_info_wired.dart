@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -19,6 +20,7 @@ import 'package:flutter_app/features/groups/application/group_avatar_storage.dar
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
@@ -306,9 +308,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         details: {'error': e.toString()},
       );
       if (!mounted) return;
-      final message = e is StateError && e.message != null
-          ? e.message.toString()
-          : 'Failed to leave group';
+      final message = e is StateError ? e.message : 'Failed to leave group';
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -419,7 +419,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         msgRepo: widget.msgRepo!,
         groupId: _group.id,
         actorPeerId: identity.peerId,
-        actorUsername: identity.username ?? '',
+        actorUsername: identity.username,
         actorPublicKey: identity.publicKey,
         actorPrivateKey: identity.privateKey,
       );
@@ -478,9 +478,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError && e.message != null
-          ? e.message.toString()
-          : 'Failed to dissolve group';
+      final message = e is StateError ? e.message : 'Failed to dissolve group';
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -555,8 +553,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError && e.message != null
-          ? e.message.toString()
+      final message = e is StateError
+          ? e.message
           : 'Failed to delete group locally';
       ScaffoldMessenger.of(
         context,
@@ -578,8 +576,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       identityRepo: widget.identityRepo,
       msgRepo: widget.msgRepo,
       sendP2PMessage: (peerId, message) async {
-        await widget.p2pService.sendMessage(peerId, message);
-        return true;
+        return widget.p2pService.sendMessage(peerId, message);
       },
     );
   }
@@ -600,7 +597,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         groupId: widget.group.id,
         memberPeerId: member.peerId,
         selfPeerId: identity?.peerId,
+        actorUsername: identity?.username,
         eventAt: removedAt,
+        msgRepo: widget.msgRepo,
       );
 
       // 2. Broadcast member_removed system message to remaining members
@@ -621,7 +620,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             sourceEventId: sourceEventId,
             eventAt: removedAt,
             actorPeerId: identity.peerId,
-            actorUsername: identity.username ?? '',
+            actorUsername: identity.username,
             actorSigningPublicKey: identity.publicKey,
             actorPrivateKey: identity.privateKey,
             preTransitionStateHash: preTransitionStateHash,
@@ -638,7 +637,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             removedPeerId: member.peerId,
             removedUsername: member.username,
             senderId: identity.peerId,
-            senderUsername: identity.username ?? '',
+            senderUsername: identity.username,
             eventAt: removedAt,
           );
           if (widget.msgRepo != null) {
@@ -647,7 +646,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           final removalInboxPayload = jsonEncode({
             'groupId': widget.group.id,
             'senderId': identity.peerId,
-            'senderUsername': identity.username ?? '',
+            'senderUsername': identity.username,
             'text': sysMessage,
             'timestamp': removedAt.toIso8601String(),
             'messageId': sourceEventId,
@@ -660,10 +659,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPeerId: identity.peerId,
             senderPublicKey: identity.publicKey,
             senderPrivateKey: identity.privateKey,
-            senderUsername: identity.username ?? '',
+            senderUsername: identity.username,
             messageId: sourceEventId,
           );
-          await storeGroupOfflineReplayEnvelope(
+          final removalReplayEnvelope = await buildGroupOfflineReplayEnvelope(
             bridge: widget.bridge,
             groupRepo: widget.groupRepo,
             groupId: widget.group.id,
@@ -674,6 +673,25 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             senderPrivateKey: identity.privateKey,
             messageId: removalTimelineMessage.id,
             recipientPeerIds: [member.peerId],
+          );
+          await callGroupInboxStore(
+            widget.bridge,
+            widget.group.id,
+            removalReplayEnvelope,
+            recipientPeerIds: [member.peerId],
+          );
+          unawaited(
+            sendGroupMembershipUpdateDirect(
+              sendP2PMessage: (peerId, message) async {
+                return widget.p2pService.sendMessage(peerId, message);
+              },
+              recipientPeerId: member.peerId,
+              groupId: widget.group.id,
+              senderPeerId: identity.peerId,
+              replayEnvelope: removalReplayEnvelope,
+              timestamp: removedAt,
+              messageId: sourceEventId,
+            ),
           );
 
           emitFlowEvent(
@@ -690,19 +708,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
           );
 
           // 3. Rotate group key and distribute to remaining members
-          await rotateAndDistributeGroupKey(
+          final rotatedKey = await rotateAndDistributeGroupKey(
             bridge: widget.bridge,
             groupRepo: widget.groupRepo,
             groupId: widget.group.id,
             selfPeerId: identity.peerId,
             senderPublicKey: identity.publicKey,
             senderPrivateKey: identity.privateKey,
-            senderUsername: identity.username ?? '',
+            senderUsername: identity.username,
             sendP2PMessage: (peerId, message) async {
-              await widget.p2pService.sendMessage(peerId, message);
-              return true;
+              return widget.p2pService.sendMessage(peerId, message);
             },
           );
+          if (rotatedKey == null) {
+            throw StateError('Failed to rotate group key after removal');
+          }
         }
       }
 
@@ -715,9 +735,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         details: {'error': e.toString()},
       );
       if (!mounted) return;
-      final message = e is StateError && e.message != null
-          ? e.message.toString()
-          : 'Failed to remove member';
+      final message = e is StateError ? e.message : 'Failed to remove member';
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(message)));
@@ -802,7 +820,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         sourceEventId: sourceEventId,
         eventAt: changedAt,
         actorPeerId: identity.peerId,
-        actorUsername: identity.username ?? '',
+        actorUsername: identity.username,
         actorSigningPublicKey: identity.publicKey,
         actorPrivateKey: identity.privateKey,
         preTransitionStateHash: preTransitionStateHash,
@@ -827,7 +845,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         previousRole: member.role,
         newRole: updatedMember.role,
         senderId: identity.peerId,
-        senderUsername: identity.username ?? '',
+        senderUsername: identity.username,
         eventAt: changedAt,
       );
 
@@ -842,7 +860,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderPeerId: identity.peerId,
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
-        senderUsername: identity.username ?? '',
+        senderUsername: identity.username,
         messageId: sourceEventId,
       );
 
@@ -855,7 +873,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         final inboxPayload = jsonEncode({
           'groupId': _group.id,
           'senderId': identity.peerId,
-          'senderUsername': identity.username ?? '',
+          'senderUsername': identity.username,
           'text': sysText,
           'timestamp': changedAt.toIso8601String(),
           'messageId': sourceEventId,
@@ -902,8 +920,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError && e.message != null
-          ? e.message.toString()
+      final message = e is StateError
+          ? e.message
           : 'Failed to update member role';
       ScaffoldMessenger.of(
         context,
@@ -1068,7 +1086,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             groupId: _group.id,
             updatedAt: changedAt,
             actorPeerId: identity.peerId,
-            actorUsername: identity.username ?? '',
+            actorUsername: identity.username,
             actorPublicKey: identity.publicKey,
             groupConfig: groupConfig,
           );
@@ -1108,7 +1126,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             sourceEventId: sourceEventId,
             eventAt: changedAt,
             actorPeerId: identity.peerId,
-            actorUsername: identity.username ?? '',
+            actorUsername: identity.username,
             actorSigningPublicKey: identity.publicKey,
             actorPrivateKey: identity.privateKey,
             preTransitionStateHash: preTransitionStateHash,
@@ -1126,7 +1144,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final metadataTimelineMessage = buildGroupMetadataUpdatedTimelineMessage(
         groupId: _group.id,
         senderId: identity.peerId,
-        senderUsername: identity.username ?? '',
+        senderUsername: identity.username,
         eventAt: changedAt,
       );
 
@@ -1141,7 +1159,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         senderPeerId: identity.peerId,
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
-        senderUsername: identity.username ?? '',
+        senderUsername: identity.username,
         messageId:
             'group_metadata_updated:${_group.id}:${identity.peerId}:${changedAt.microsecondsSinceEpoch}',
       );
@@ -1154,7 +1172,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         final inboxPayload = jsonEncode({
           'groupId': _group.id,
           'senderId': identity.peerId,
-          'senderUsername': identity.username ?? '',
+          'senderUsername': identity.username,
           'text': signedSysText,
           'timestamp': changedAt.toIso8601String(),
           'messageId':
@@ -1192,8 +1210,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         },
       );
       if (!mounted) return;
-      final message = e is StateError && e.message != null
-          ? e.message.toString()
+      final message = e is StateError
+          ? e.message
           : 'Failed to update group details';
       ScaffoldMessenger.of(
         context,

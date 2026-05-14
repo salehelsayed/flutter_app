@@ -22,6 +22,16 @@
 - repo-owned simulator / local-relay exploratory proof rows intentionally left evidence-gated: none
 - note: this refresh removes the stale completed-rollout verdict and reopens the remaining unresolved matrix rows into implementation-committed row-owned work with explicit shared prerequisites where the blocker is repo-owned; the `Matrix Row Inventory` remains the decomposition-time intake table, while the runnable truth for this rollout now lives in the `Session Ledger` and `Ordered Session Breakdown`
 
+## Run Mode Snapshot
+
+- refreshed on: 2026-05-13
+- active mode: `implementation-committed gap-closure`
+- degraded local continuation explicitly allowed for this run: `no`
+- source proposal / matrix / closure doc path: `/Users/I560101/Project-Sat/mknoon-2/flutter_app/Test-Flight-Improv/Group-Chat-Feature/Discussion_and_announcement_test_matrix_full_with_rules_COMPLETE.md`
+- source row status vocabulary: `Covered`, `Partial`, `Open`, `Unsupported`
+- overall closure bar: every row-owned source row must be `Covered` with concrete file-and-test evidence, or `Unsupported` only when the breakdown classifies the row as `unsupported_product_scope` with supporting scope evidence; all shared prerequisites must be accepted.
+- final verdict policy for this run: `closed` only when every required row-owned gap is covered and unsupported rows remain explicitly non-blocking; `still_open` if any row-owned source row is `Open`, `Partial`, `Contract-undefined`, `Needs evidence`, `Needs tests`, or `Blocked`, or if an unsupported row lacks explicit product-scope evidence.
+
 ## Overall Closure Bar
 
 - overall verdict: `closed`

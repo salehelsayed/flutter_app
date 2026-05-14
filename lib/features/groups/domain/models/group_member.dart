@@ -505,6 +505,7 @@ class GroupMember {
     required Map<String, dynamic> map,
     GroupMember? existing,
     DateTime? joinedAt,
+    bool preserveMissingPermissions = true,
   }) {
     final peerId = map['peerId'] as String? ?? existing?.peerId ?? '';
     return GroupMember(
@@ -514,7 +515,9 @@ class GroupMember {
       role: MemberRole.fromValue(map['role'] as String? ?? 'writer'),
       permissions: map.containsKey('permissions')
           ? GroupMemberPermissions.fromJson(map['permissions'])
-          : existing?.permissions ?? GroupMemberPermissions.empty,
+          : preserveMissingPermissions
+          ? existing?.permissions ?? GroupMemberPermissions.empty
+          : GroupMemberPermissions.empty,
       publicKey: map['publicKey'] as String? ?? existing?.publicKey,
       mlKemPublicKey:
           map['mlKemPublicKey'] as String? ?? existing?.mlKemPublicKey,

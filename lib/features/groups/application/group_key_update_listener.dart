@@ -240,20 +240,18 @@ class GroupKeyUpdateListener {
         return;
       }
 
-      final expectedSignedPayload = sourcePeerId == null
-          ? null
-          : canonicalGroupKeyUpdateSignedPayload(
-              groupId: groupId,
-              sourcePeerId: sourcePeerId,
-              sourceDeviceId: sourceDeviceId,
-              sourceTransportPeerId: sourceTransportPeerId,
-              recipientPeerId: recipientPeerId,
-              recipientDeviceId: recipientDeviceId,
-              recipientTransportPeerId: recipientTransportPeerId,
-              recipientKeyPackageId: recipientKeyPackageId,
-              keyGeneration: keyGeneration,
-              encryptedKey: encryptedKey,
-            );
+      final expectedSignedPayload = canonicalGroupKeyUpdateSignedPayload(
+        groupId: groupId,
+        sourcePeerId: sourcePeerId,
+        sourceDeviceId: sourceDeviceId,
+        sourceTransportPeerId: sourceTransportPeerId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDeviceId,
+        recipientTransportPeerId: recipientTransportPeerId,
+        recipientKeyPackageId: recipientKeyPackageId,
+        keyGeneration: keyGeneration,
+        encryptedKey: encryptedKey,
+      );
       final senderPublicKey = sourceDevice.deviceSigningPublicKey;
       final hasValidSignatureEnvelope =
           signatureAlgorithm == groupKeyUpdateSignatureAlgorithm &&
@@ -279,8 +277,8 @@ class GroupKeyUpdateListener {
       }
 
       final verifiedSenderPublicKey = senderPublicKey;
-      final verifiedSignedPayload = signedPayload!;
-      final verifiedSignature = signature!;
+      final verifiedSignedPayload = signedPayload;
+      final verifiedSignature = signature;
       final signatureValid = await callVerifyPayload(
         bridge: _bridge,
         publicKey: verifiedSenderPublicKey,

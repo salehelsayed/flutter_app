@@ -11,7 +11,8 @@ String sharedGroupPushKeyName(String groupId, int keyGeneration) =>
     'group_key:$groupId:$keyGeneration';
 
 /// Implementation of GroupRepository using constructor-injected DB helper functions.
-class GroupRepositoryImpl implements GroupRepository {
+class GroupRepositoryImpl
+    implements GroupRepository, RemovedGroupMemberSnapshotRepository {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
   final Future<List<Map<String, Object?>>> Function() dbLoadAllGroups;
@@ -33,6 +34,10 @@ class GroupRepositoryImpl implements GroupRepository {
   final Future<void> Function(String groupId, String peerId)
   dbDeleteGroupMember;
   final Future<void> Function(String groupId) dbDeleteAllGroupMembers;
+  final Future<void> Function(Map<String, Object?> row, String removedAt)?
+  dbInsertRemovedGroupMemberSnapshot;
+  final Future<Map<String, Object?>?> Function(String groupId, String peerId)?
+  dbLoadRemovedGroupMemberSnapshot;
 
   // --- Key DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupKey;
@@ -63,6 +68,8 @@ class GroupRepositoryImpl implements GroupRepository {
     required this.dbUpdateGroupMemberRole,
     required this.dbDeleteGroupMember,
     required this.dbDeleteAllGroupMembers,
+    this.dbInsertRemovedGroupMemberSnapshot,
+    this.dbLoadRemovedGroupMemberSnapshot,
     required this.dbInsertGroupKey,
     required this.dbLoadLatestGroupKey,
     required this.dbLoadGroupKeyByGeneration,
@@ -176,6 +183,34 @@ class GroupRepositoryImpl implements GroupRepository {
   @override
   Future<void> removeMember(String groupId, String peerId) async {
     await dbDeleteGroupMember(groupId, peerId);
+  }
+
+  @override
+  Future<void> saveRemovedMemberSnapshot(
+    GroupMember member, {
+    required DateTime removedAt,
+  }) async {
+    final insert = dbInsertRemovedGroupMemberSnapshot;
+    if (insert == null) {
+      return;
+    }
+    await insert(member.toMap(), removedAt.toUtc().toIso8601String());
+  }
+
+  @override
+  Future<GroupMember?> getRemovedMemberSnapshot(
+    String groupId,
+    String peerId,
+  ) async {
+    final load = dbLoadRemovedGroupMemberSnapshot;
+    if (load == null) {
+      return null;
+    }
+    final row = await load(groupId, peerId);
+    if (row == null) {
+      return null;
+    }
+    return GroupMember.fromMap(row);
   }
 
   @override

@@ -361,6 +361,8 @@ void main() {
       senderPublicKey: 'selfPubKey',
       senderPrivateKey: 'selfPrivKey',
       senderUsername: 'Self',
+      distributionAttemptCount: 2,
+      distributionRetryDelay: Duration.zero,
       sendP2PMessage: (peerId, message) async {
         sentMessages.add((peerId, message));
         return true;
@@ -498,6 +500,8 @@ void main() {
       senderPublicKey: 'selfPubKey',
       senderPrivateKey: 'selfPrivKey',
       senderUsername: 'Self',
+      distributionAttemptCount: 2,
+      distributionRetryDelay: Duration.zero,
       sendP2PMessage: (peerId, message) async {
         sentMessages.add((peerId, message));
         return true;
@@ -671,7 +675,7 @@ void main() {
 
     final sentMessages = <(String, String)>[];
 
-    await rotateAndDistributeGroupKey(
+    final result = await rotateAndDistributeGroupKey(
       bridge: selectiveBridge,
       groupRepo: groupRepo,
       groupId: groupId,
@@ -679,6 +683,8 @@ void main() {
       senderPublicKey: 'selfPubKey',
       senderPrivateKey: 'selfPrivKey',
       senderUsername: 'Self',
+      distributionAttemptCount: 2,
+      distributionRetryDelay: Duration.zero,
       sendP2PMessage: (peerId, message) async {
         sentMessages.add((peerId, message));
         return true;
@@ -686,12 +692,15 @@ void main() {
     );
 
     // Only Carol should receive a P2P message (Bob's encrypt failed)
+    expect(result, isNull);
     expect(sentMessages.length, 1);
     expect(sentMessages.first.$1, 'peer-carol');
+    expect(selectiveBridge.commandLog, isNot(contains('group:updateKey')));
+    expect(selectiveBridge.commandLog, isNot(contains('group:publish')));
   });
 
-  test('continues distribution when sendP2PMessage throws', () async {
-    var callCount = 0;
+  test('retries transient send failures before promotion', () async {
+    final attemptsByPeer = <String, int>{};
     final sentMessages = <(String, String)>[];
 
     final result = await rotateAndDistributeGroupKey(
@@ -702,9 +711,10 @@ void main() {
       senderPublicKey: 'selfPubKey',
       senderPrivateKey: 'selfPrivKey',
       senderUsername: 'Self',
+      distributionRetryDelay: Duration.zero,
       sendP2PMessage: (peerId, message) async {
-        callCount++;
-        if (callCount == 1) {
+        attemptsByPeer[peerId] = (attemptsByPeer[peerId] ?? 0) + 1;
+        if (peerId == 'peer-bob' && attemptsByPeer[peerId] == 1) {
           throw Exception('Network error for first peer');
         }
         sentMessages.add((peerId, message));
@@ -716,11 +726,12 @@ void main() {
     expect(result, isNotNull);
     expect(result!.keyGeneration, 2);
 
-    // The second member's message should still have been sent
-    expect(sentMessages.length, 1);
+    expect(attemptsByPeer['peer-bob'], 2);
+    expect(sentMessages.any((message) => message.$1 == 'peer-bob'), isTrue);
+    expect(bridge.commandLog, contains('group:updateKey'));
   });
 
-  test('distribution timeout does not block later recipients', () async {
+  test('distribution timeout starts all recipients but fails closed', () async {
     final blockedSend = Completer<bool>();
     var bobStarted = false;
     var carolStarted = false;
@@ -735,6 +746,7 @@ void main() {
       senderUsername: 'Self',
       perRecipientTimeout: const Duration(seconds: 1),
       distributionTimeout: const Duration(milliseconds: 40),
+      distributionAttemptCount: 1,
       sendP2PMessage: (peerId, message) {
         if (peerId == 'peer-bob') {
           bobStarted = true;
@@ -754,13 +766,15 @@ void main() {
     expect(bridge.commandLog, isNot(contains('group:updateKey')));
 
     final result = await pending;
+    blockedSend.complete(false);
 
-    expect(result, isNotNull);
-    expect(bridge.commandLog, contains('group:updateKey'));
-    expect(bridge.commandLog.last, 'group:publish');
+    expect(result, isNull);
+    expect(bridge.commandLog, isNot(contains('group:updateKey')));
+    expect(bridge.commandLog, isNot(contains('group:publish')));
   });
 
-  test('updates admin key after distribution timeout', () async {
+  test('does not update admin key after distribution timeout', () async {
+    final blockedSend = Completer<bool>();
     final result = await rotateAndDistributeGroupKey(
       bridge: bridge,
       groupRepo: groupRepo,
@@ -771,22 +785,18 @@ void main() {
       senderUsername: 'Self',
       perRecipientTimeout: const Duration(seconds: 1),
       distributionTimeout: const Duration(milliseconds: 40),
-      sendP2PMessage: (_, __) => Completer<bool>().future,
+      distributionAttemptCount: 1,
+      sendP2PMessage: (_, _) => blockedSend.future,
     );
+    blockedSend.complete(false);
 
-    expect(result, isNotNull);
-
-    final updateIdx = bridge.commandLog.indexOf('group:updateKey');
-    final publishIdx = bridge.commandLog.lastIndexOf('group:publish');
-    expect(
-      updateIdx,
-      greaterThan(bridge.commandLog.indexOf('message.encrypt')),
-    );
-    expect(publishIdx, greaterThan(updateIdx));
+    expect(result, isNull);
+    expect(bridge.commandLog, isNot(contains('group:updateKey')));
+    expect(bridge.commandLog, isNot(contains('group:publish')));
 
     final latestKey = await groupRepo.getLatestKey(groupId);
     expect(latestKey, isNotNull);
-    expect(latestKey!.keyGeneration, 2);
+    expect(latestKey!.keyGeneration, 1);
   });
 }
 

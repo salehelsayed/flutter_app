@@ -75,6 +75,9 @@ type RelaySessionManager struct {
 	// Singleflight gate for recovery — only one recovery runs at a time.
 	recovering bool
 	recovery   *recoveryPromise
+	// recoveryWaitTimeout defaults to RecoveryWaitTimeout and is adjustable in
+	// tests so timeout behavior can be proven without a 30s wall-clock wait.
+	recoveryWaitTimeout time.Duration
 
 	// Counts for diagnostics.
 	watchdogRestartCount int
@@ -112,14 +115,16 @@ type recoveryPromise struct {
 	result           *RecoveryResult
 	err              error
 	manager          *RelaySessionManager // back-reference for timeout gate clearing
+	waitTimeout      time.Duration
 	coalescedWaiters int
 }
 
 // NewRelaySessionManager creates a new relay session manager.
 func NewRelaySessionManager() *RelaySessionManager {
 	return &RelaySessionManager{
-		sessions:       make(map[string]*RelaySessionState),
-		aggregateState: AggregateRelayStarting,
+		sessions:            make(map[string]*RelaySessionState),
+		aggregateState:      AggregateRelayStarting,
+		recoveryWaitTimeout: RecoveryWaitTimeout,
 	}
 }
 
@@ -340,7 +345,11 @@ func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 	}
 
 	m.recovering = true
-	m.recovery = &recoveryPromise{done: make(chan struct{}), manager: m}
+	waitTimeout := m.recoveryWaitTimeout
+	if waitTimeout <= 0 {
+		waitTimeout = RecoveryWaitTimeout
+	}
+	m.recovery = &recoveryPromise{done: make(chan struct{}), manager: m, waitTimeout: waitTimeout}
 	m.aggregateState = AggregateRelayRecovering
 
 	return m.recovery, true
@@ -353,10 +362,14 @@ func (p *recoveryPromise) Wait() (*RecoveryResult, error) {
 	if p == nil {
 		return nil, nil
 	}
+	waitTimeout := p.waitTimeout
+	if waitTimeout <= 0 {
+		waitTimeout = RecoveryWaitTimeout
+	}
 	select {
 	case <-p.done:
 		return p.result, p.err
-	case <-time.After(RecoveryWaitTimeout):
+	case <-time.After(waitTimeout):
 		// Clear the stalled recovery gate so the next BeginRecovery can start fresh.
 		if p.manager != nil {
 			p.manager.ClearStalledRecovery()

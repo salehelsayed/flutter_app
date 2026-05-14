@@ -208,4 +208,54 @@ void main() {
       );
     },
   );
+
+  test('GK-028 decode rejects senderPublicKey tamper before decrypt', () async {
+    final rawEnvelope = await buildGroupOfflineReplayEnvelope(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: 'group-1',
+      payloadType: groupOfflineReplayPayloadTypeMessage,
+      plaintext: jsonEncode({
+        'groupId': 'group-1',
+        'senderId': 'peer-sender',
+        'senderDeviceId': 'device-sender',
+        'transportPeerId': 'transport-sender',
+        'senderUsername': 'Sender',
+        'keyEpoch': 7,
+        'text': 'signed replay',
+        'timestamp': '2026-05-02T07:15:00.000Z',
+        'messageId': 'msg-gk028-signed',
+      }),
+      messageId: 'msg-gk028-signed',
+      senderPeerId: 'peer-sender',
+      senderPublicKey: 'pk-sender',
+      senderPrivateKey: 'sk-sender',
+      senderDeviceId: 'device-sender',
+      senderTransportPeerId: 'transport-sender',
+    );
+    final tamperedEnvelope = jsonDecode(rawEnvelope) as Map<String, dynamic>;
+    tamperedEnvelope['senderPublicKey'] = 'pk-attacker';
+    tamperedEnvelope['signedPayload'] =
+        (tamperedEnvelope['signedPayload'] as String).replaceFirst(
+          'pk-sender',
+          'pk-attacker',
+        );
+
+    bridge.commandLog.clear();
+    await expectLater(
+      decodeInboxMessage(bridge, groupRepo, {
+        'from': 'transport-sender',
+        'message': jsonEncode(tamperedEnvelope),
+      }, 'group-1'),
+      throwsA(
+        isA<GroupOfflineReplaySignatureException>().having(
+          (error) => error.reason,
+          'reason',
+          'sender_key_mismatch',
+        ),
+      ),
+    );
+    expect(bridge.commandLog, isNot(contains('payload.verify')));
+    expect(bridge.commandLog, isNot(contains('group.decrypt')));
+  });
 }

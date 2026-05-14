@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
 )
 
 // GenerateGroupKey generates a random 32-byte AES-256 key for group
@@ -73,9 +74,19 @@ func DecryptGroupMessage(groupKeyB64, ctB64, nonceB64 string) (string, error) {
 		return "", fmt.Errorf("invalid group key length: got %d, want 32", len(key))
 	}
 
+	if strings.TrimSpace(ctB64) == "" {
+		return "", fmt.Errorf("missing ciphertext")
+	}
+	if strings.TrimSpace(nonceB64) == "" {
+		return "", fmt.Errorf("missing nonce")
+	}
+
 	ciphertext, err := base64.StdEncoding.DecodeString(ctB64)
 	if err != nil {
 		return "", fmt.Errorf("decode ciphertext: %w", err)
+	}
+	if len(ciphertext) == 0 {
+		return "", fmt.Errorf("missing ciphertext")
 	}
 
 	nonce, err := base64.StdEncoding.DecodeString(nonceB64)
@@ -93,6 +104,9 @@ func DecryptGroupMessage(groupKeyB64, ctB64, nonceB64 string) (string, error) {
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", fmt.Errorf("aes new gcm: %w", err)
+	}
+	if len(nonce) != gcm.NonceSize() {
+		return "", fmt.Errorf("invalid nonce length: got %d, want %d", len(nonce), gcm.NonceSize())
 	}
 
 	// 4. Open: decrypt and verify auth tag.

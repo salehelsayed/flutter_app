@@ -30,9 +30,14 @@ class GroupMetadataActorEventVerificationData {
 
 Map<String, dynamic> buildGroupConfigPayload(
   GroupModel group,
-  List<GroupMember> members,
-) {
-  final configVersion = _groupConfigVersion(group);
+  List<GroupMember> members, {
+  DateTime? configVersionOverride,
+}) {
+  final configVersion = _groupConfigVersion(
+    group,
+    override: configVersionOverride,
+  );
+  final normalizedMembers = normalizeGroupConfigMembers(members);
   final payload = {
     'name': group.name,
     'groupType': group.type.toValue(),
@@ -41,7 +46,9 @@ Map<String, dynamic> buildGroupConfigPayload(
     'avatarMime': group.avatarMime,
     'metadataUpdatedAt': group.lastMetadataEventAt?.toUtc().toIso8601String(),
     groupConfigVersionField: configVersion,
-    'members': members.map((member) => member.toConfigJson()).toList(),
+    'members': normalizedMembers
+        .map((member) => member.toConfigJson())
+        .toList(),
     'createdBy': group.createdBy,
     'createdAt': group.createdAt.toUtc().toIso8601String(),
   };
@@ -52,6 +59,352 @@ Map<String, dynamic> buildGroupConfigPayload(
       groupConfig: payload,
     ),
   };
+}
+
+List<GroupMember> normalizeGroupConfigMembers(List<GroupMember> members) {
+  final normalized = <GroupMember>[];
+  final indexByPeerId = <String, int>{};
+
+  for (final member in members) {
+    final peerId = member.peerId.trim();
+    if (peerId.isEmpty) {
+      continue;
+    }
+    final candidate = member.copyWith(
+      peerId: peerId,
+      devices: _normalizeGroupMemberDevices(member.devices),
+    );
+    if (!hasDeliverableGroupMemberIdentity(candidate)) {
+      continue;
+    }
+    final existingIndex = indexByPeerId[peerId];
+    if (existingIndex == null) {
+      indexByPeerId[peerId] = normalized.length;
+      normalized.add(candidate);
+      continue;
+    }
+    if (_preferGroupMemberCandidate(candidate, normalized[existingIndex])) {
+      normalized[existingIndex] = candidate;
+    }
+  }
+
+  return normalized;
+}
+
+Map<String, dynamic> normalizeGroupConfigPayload({
+  required String groupId,
+  required Map<String, dynamic> groupConfig,
+}) {
+  final normalized = Map<String, dynamic>.from(groupConfig);
+  final members = groupConfig['members'];
+  if (members is List) {
+    normalized['members'] = normalizeGroupConfigMemberEntries(members);
+  }
+  if (normalized.containsKey(groupConfigStateHashField)) {
+    normalized[groupConfigStateHashField] = buildGroupConfigStateHash(
+      groupId: groupId,
+      groupConfig: normalized,
+    );
+  }
+  return normalized;
+}
+
+List<Map<String, dynamic>> normalizeGroupConfigMemberEntries(
+  List<dynamic> members,
+) {
+  final normalized = <Map<String, dynamic>>[];
+  final indexByPeerId = <String, int>{};
+
+  for (final rawMember in members) {
+    final member = _stringKeyedDynamicMap(rawMember);
+    if (member == null) {
+      continue;
+    }
+    final peerId = (member['peerId'] as String?)?.trim();
+    if (peerId == null || peerId.isEmpty) {
+      continue;
+    }
+    final candidate = Map<String, dynamic>.from(member)..['peerId'] = peerId;
+    final devices = candidate['devices'];
+    if (devices is List) {
+      candidate['devices'] = _normalizeGroupConfigDeviceEntries(devices);
+    }
+    if (!hasDeliverableGroupConfigMemberIdentity(candidate)) {
+      continue;
+    }
+
+    final existingIndex = indexByPeerId[peerId];
+    if (existingIndex == null) {
+      indexByPeerId[peerId] = normalized.length;
+      normalized.add(candidate);
+      continue;
+    }
+    if (_preferGroupConfigMemberCandidate(
+      candidate,
+      normalized[existingIndex],
+    )) {
+      normalized[existingIndex] = candidate;
+    }
+  }
+
+  return normalized;
+}
+
+bool hasDeliverableGroupMemberIdentity(GroupMember member) {
+  if (!_hasTrimmedString(member.peerId)) {
+    return false;
+  }
+  if (member.devices.any(_deviceIdentityIsDeliverable)) {
+    return true;
+  }
+  return _hasTrimmedString(member.publicKey);
+}
+
+bool hasDeliverableGroupConfigMemberIdentity(Map<String, dynamic> member) {
+  if (!_hasTrimmedString(member['peerId'])) {
+    return false;
+  }
+  final devices = member['devices'];
+  if (devices is List) {
+    for (final rawDevice in devices) {
+      final device = _stringKeyedDynamicMap(rawDevice);
+      if (device != null && _deviceMapIsDeliverable(device)) {
+        return true;
+      }
+    }
+  }
+  return _hasTrimmedString(member['publicKey']);
+}
+
+List<GroupMemberDeviceIdentity> _normalizeGroupMemberDevices(
+  List<GroupMemberDeviceIdentity> devices,
+) {
+  final normalized = <GroupMemberDeviceIdentity>[];
+  final indexByKey = <String, int>{};
+  for (final device in devices) {
+    final key = _deviceIdentityDedupKey(device);
+    if (key == null) {
+      continue;
+    }
+    final existingIndex = indexByKey[key];
+    if (existingIndex == null) {
+      indexByKey[key] = normalized.length;
+      normalized.add(device);
+      continue;
+    }
+    if (_preferDeviceIdentityCandidate(device, normalized[existingIndex])) {
+      normalized[existingIndex] = device;
+    }
+  }
+  return normalized;
+}
+
+List<Map<String, dynamic>> _normalizeGroupConfigDeviceEntries(
+  List<dynamic> devices,
+) {
+  final normalized = <Map<String, dynamic>>[];
+  final indexByKey = <String, int>{};
+  for (final rawDevice in devices) {
+    final device = _stringKeyedDynamicMap(rawDevice);
+    if (device == null) {
+      continue;
+    }
+    final key = _deviceMapDedupKey(device);
+    if (key == null) {
+      continue;
+    }
+    final candidate = Map<String, dynamic>.from(device);
+    final existingIndex = indexByKey[key];
+    if (existingIndex == null) {
+      indexByKey[key] = normalized.length;
+      normalized.add(candidate);
+      continue;
+    }
+    if (_preferDeviceMapCandidate(candidate, normalized[existingIndex])) {
+      normalized[existingIndex] = candidate;
+    }
+  }
+  return normalized;
+}
+
+bool _preferGroupMemberCandidate(GroupMember candidate, GroupMember current) {
+  final candidateScore = _groupMemberFreshnessScore(candidate);
+  final currentScore = _groupMemberFreshnessScore(current);
+  if (candidateScore != currentScore) {
+    return candidateScore > currentScore;
+  }
+  final candidateJoinedAt = candidate.joinedAt.toUtc();
+  final currentJoinedAt = current.joinedAt.toUtc();
+  if (!candidateJoinedAt.isAtSameMomentAs(currentJoinedAt)) {
+    return candidateJoinedAt.isAfter(currentJoinedAt);
+  }
+  return true;
+}
+
+bool _preferGroupConfigMemberCandidate(
+  Map<String, dynamic> candidate,
+  Map<String, dynamic> current,
+) {
+  final candidateScore = _groupConfigMemberFreshnessScore(candidate);
+  final currentScore = _groupConfigMemberFreshnessScore(current);
+  if (candidateScore != currentScore) {
+    return candidateScore > currentScore;
+  }
+  return true;
+}
+
+int _groupMemberFreshnessScore(GroupMember member) {
+  final activeDevices = member.activeDevices;
+  return activeDevices.length * 100 +
+      activeDevices.where(_deviceIdentityHasKeyPackage).length * 10 +
+      (member.publicKey?.trim().isNotEmpty == true ? 2 : 0) +
+      (member.mlKemPublicKey?.trim().isNotEmpty == true ? 1 : 0);
+}
+
+int _groupConfigMemberFreshnessScore(Map<String, dynamic> member) {
+  final devices = member['devices'];
+  final deviceMaps = devices is List
+      ? devices
+            .map(_stringKeyedDynamicMap)
+            .whereType<Map<String, dynamic>>()
+            .toList(growable: false)
+      : const <Map<String, dynamic>>[];
+  final activeDevices = deviceMaps.where(_deviceMapIsActive).toList();
+  return activeDevices.length * 100 +
+      activeDevices.where(_deviceMapHasKeyPackage).length * 10 +
+      ((member['publicKey'] as String?)?.trim().isNotEmpty == true ? 2 : 0) +
+      ((member['mlKemPublicKey'] as String?)?.trim().isNotEmpty == true
+          ? 1
+          : 0);
+}
+
+bool _preferDeviceIdentityCandidate(
+  GroupMemberDeviceIdentity candidate,
+  GroupMemberDeviceIdentity current,
+) {
+  final candidateScore = _deviceIdentityFreshnessScore(candidate);
+  final currentScore = _deviceIdentityFreshnessScore(current);
+  if (candidateScore != currentScore) {
+    return candidateScore > currentScore;
+  }
+  return true;
+}
+
+bool _preferDeviceMapCandidate(
+  Map<String, dynamic> candidate,
+  Map<String, dynamic> current,
+) {
+  final candidateScore = _deviceMapFreshnessScore(candidate);
+  final currentScore = _deviceMapFreshnessScore(current);
+  if (candidateScore != currentScore) {
+    return candidateScore > currentScore;
+  }
+  return true;
+}
+
+int _deviceIdentityFreshnessScore(GroupMemberDeviceIdentity device) {
+  return (device.isActive ? 100 : 0) +
+      (_deviceIdentityHasKeyPackage(device) ? 10 : 0) +
+      (device.deviceSigningPublicKey.trim().isNotEmpty ? 2 : 0) +
+      (device.mlKemPublicKey?.trim().isNotEmpty == true ? 1 : 0);
+}
+
+int _deviceMapFreshnessScore(Map<String, dynamic> device) {
+  return (_deviceMapIsActive(device) ? 100 : 0) +
+      (_deviceMapHasKeyPackage(device) ? 10 : 0) +
+      ((device['deviceSigningPublicKey'] as String?)?.trim().isNotEmpty == true
+          ? 2
+          : 0) +
+      ((device['mlKemPublicKey'] as String?)?.trim().isNotEmpty == true
+          ? 1
+          : 0);
+}
+
+bool _deviceIdentityHasKeyPackage(GroupMemberDeviceIdentity device) {
+  return device.keyPackageId?.trim().isNotEmpty == true ||
+      device.keyPackagePublicMaterial?.trim().isNotEmpty == true;
+}
+
+bool _deviceIdentityIsDeliverable(GroupMemberDeviceIdentity device) {
+  return device.isActive &&
+      _hasTrimmedString(device.deviceId) &&
+      _hasTrimmedString(device.transportPeerId) &&
+      _hasTrimmedString(device.deviceSigningPublicKey) &&
+      (_hasTrimmedString(device.mlKemPublicKey) ||
+          _deviceIdentityHasKeyPackage(device));
+}
+
+bool _deviceMapHasKeyPackage(Map<String, dynamic> device) {
+  return (device['keyPackageId'] as String?)?.trim().isNotEmpty == true ||
+      (device['keyPackagePublicMaterial'] as String?)?.trim().isNotEmpty ==
+          true;
+}
+
+bool _deviceMapIsDeliverable(Map<String, dynamic> device) {
+  return _deviceMapIsActive(device) &&
+      _hasTrimmedString(device['deviceId']) &&
+      _hasTrimmedString(device['transportPeerId']) &&
+      _hasTrimmedString(device['deviceSigningPublicKey']) &&
+      (_hasTrimmedString(device['mlKemPublicKey']) ||
+          _deviceMapHasKeyPackage(device));
+}
+
+bool _deviceMapIsActive(Map<String, dynamic> device) {
+  final status = (device['status'] as String?)?.trim();
+  final revokedAt = (device['revokedAt'] as String?)?.trim();
+  return (status == null || status.isEmpty || status == 'active') &&
+      (revokedAt == null || revokedAt.isEmpty);
+}
+
+String? _deviceIdentityDedupKey(GroupMemberDeviceIdentity device) {
+  final deviceId = device.deviceId.trim();
+  if (deviceId.isNotEmpty) {
+    return 'device:$deviceId';
+  }
+  final transportPeerId = device.transportPeerId.trim();
+  if (transportPeerId.isNotEmpty) {
+    return 'transport:$transportPeerId';
+  }
+  return null;
+}
+
+String? _deviceMapDedupKey(Map<String, dynamic> device) {
+  final deviceId = (device['deviceId'] as String?)?.trim();
+  if (deviceId != null && deviceId.isNotEmpty) {
+    return 'device:$deviceId';
+  }
+  final transportPeerId = (device['transportPeerId'] as String?)?.trim();
+  if (transportPeerId != null && transportPeerId.isNotEmpty) {
+    return 'transport:$transportPeerId';
+  }
+  return null;
+}
+
+Map<String, dynamic>? _stringKeyedDynamicMap(Object? raw) {
+  if (raw is! Map) {
+    return null;
+  }
+  final result = <String, dynamic>{};
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    if (key is! String) {
+      return null;
+    }
+    result[key] = entry.value;
+  }
+  return result;
+}
+
+bool _hasTrimmedString(Object? value) {
+  return value is String && value.trim().isNotEmpty;
+}
+
+DateTime? parseGroupConfigVersionAt(Map<String, dynamic>? groupConfig) {
+  final value = groupConfig?[groupConfigVersionField];
+  if (value is! String || value.trim().isEmpty) {
+    return null;
+  }
+  return DateTime.tryParse(value)?.toUtc();
 }
 
 String buildGroupConfigStateHash({
@@ -209,10 +562,17 @@ extractGroupMetadataActorEventVerificationData({
   );
 }
 
-String _groupConfigVersion(GroupModel group) {
-  return (group.lastMetadataEventAt ?? group.createdAt)
-      .toUtc()
-      .toIso8601String();
+String _groupConfigVersion(GroupModel group, {DateTime? override}) {
+  if (override != null) {
+    return override.toUtc().toIso8601String();
+  }
+  final candidates = <DateTime>[
+    group.createdAt.toUtc(),
+    if (group.lastMetadataEventAt != null) group.lastMetadataEventAt!.toUtc(),
+    if (group.lastMembershipEventAt != null)
+      group.lastMembershipEventAt!.toUtc(),
+  ]..sort((a, b) => a.compareTo(b));
+  return candidates.last.toIso8601String();
 }
 
 Map<String, Object?> _canonicalGroupConfigForHash({

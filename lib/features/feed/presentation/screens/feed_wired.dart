@@ -263,6 +263,12 @@ class _FeedWiredState extends State<FeedWired>
   StreamSubscription<IntroductionModel>? _introStatusSubscription;
   int _orbitBadgeLoadRequestId = 0;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
+
+  String? get _currentSenderDeviceId {
+    final peerId = widget.p2pService.currentState.peerId?.trim();
+    return peerId == null || peerId.isEmpty ? null : peerId;
+  }
+
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
   bool _hasMountedOrbitHost = false;
@@ -2245,6 +2251,7 @@ class _FeedWiredState extends State<FeedWired>
 
     try {
       bgTaskId = await callBgBegin(widget.bridge);
+      final senderDeviceId = _currentSenderDeviceId;
       final (result, message) = await sendGroupMessage(
         bridge: widget.bridge,
         groupRepo: groupRepo,
@@ -2256,6 +2263,8 @@ class _FeedWiredState extends State<FeedWired>
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
         quotedMessageId: quotedMsgId,
+        senderDeviceId: senderDeviceId,
+        senderTransportPeerId: senderDeviceId,
       );
 
       if (!mounted) return;

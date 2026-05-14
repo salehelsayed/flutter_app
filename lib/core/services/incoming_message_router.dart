@@ -20,6 +20,8 @@ class IncomingMessageRouter {
   final _messageDeletionController = StreamController<ChatMessage>.broadcast();
   final _groupInviteController = StreamController<ChatMessage>.broadcast();
   final _groupKeyUpdateController = StreamController<ChatMessage>.broadcast();
+  final _groupMembershipUpdateController =
+      StreamController<ChatMessage>.broadcast();
   final _introductionController = StreamController<ChatMessage>.broadcast();
   final _postCreateController = StreamController<ChatMessage>.broadcast();
   final _postCommentController = StreamController<ChatMessage>.broadcast();
@@ -58,6 +60,10 @@ class IncomingMessageRouter {
   /// Stream of incoming group_key_update messages.
   Stream<ChatMessage> get groupKeyUpdateStream =>
       _groupKeyUpdateController.stream;
+
+  /// Stream of incoming direct group membership update messages.
+  Stream<ChatMessage> get groupMembershipUpdateStream =>
+      _groupMembershipUpdateController.stream;
 
   /// Stream of incoming introduction messages.
   Stream<ChatMessage> get introductionStream => _introductionController.stream;
@@ -186,6 +192,8 @@ class IncomingMessageRouter {
           _groupInviteController.add(message);
         case 'group_key_update':
           _groupKeyUpdateController.add(message);
+        case 'group_membership_update':
+          _groupMembershipUpdateController.add(message);
         case 'introduction':
           _introductionController.add(message);
         case 'post_create':
@@ -250,6 +258,7 @@ class IncomingMessageRouter {
     _messageDeletionController.close();
     _groupInviteController.close();
     _groupKeyUpdateController.close();
+    _groupMembershipUpdateController.close();
     _introductionController.close();
     _postCreateController.close();
     _postCommentController.close();

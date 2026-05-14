@@ -1,12 +1,12 @@
 import 'dart:convert';
 
+import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/group_test_user.dart';
 
@@ -312,6 +312,65 @@ void main() {
 
         alice.dispose();
         bob.dispose();
+        charlie.dispose();
+      },
+    );
+
+    test(
+      'GM-016 deleted removed-member state is not rejoined from stale pubsub state',
+      () async {
+        const groupId = 'gm016-rejoin-guard';
+
+        final alice = GroupTestUser.create(
+          peerId: 'gm016-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'gm016-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+
+        await alice.createGroup(groupId: groupId, name: 'GM-016 Guard');
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await charlie.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'gm016-charlie-key',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+
+        expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
+
+        await leaveGroup(
+          bridge: charlie.bridge,
+          groupRepo: charlie.groupRepo,
+          groupId: groupId,
+        );
+
+        // Simulate stale transport/discovery state that outlives deleted app
+        // persistence. Rejoin must be driven by stored groups/keys only.
+        network.subscribe(groupId, charlie.peerId);
+        expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
+        charlie.bridge.commandLog.clear();
+
+        final result = await rejoinGroupTopics(
+          bridge: charlie.bridge,
+          groupRepo: charlie.groupRepo,
+        );
+
+        expect(result.joinedGroupCount, 0);
+        expect(result.skippedNoKeyCount, 0);
+        expect(result.errorCount, 0);
+        expect(charlie.bridge.commandLog, isNot(contains('group:join')));
+        expect(await charlie.groupRepo.getGroup(groupId), isNull);
+        expect(await charlie.groupRepo.getMembers(groupId), isEmpty);
+        expect(await charlie.groupRepo.getLatestKey(groupId), isNull);
+
+        alice.dispose();
         charlie.dispose();
       },
     );

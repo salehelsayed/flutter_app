@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
@@ -103,6 +104,112 @@ void main() {
       memberPeerId: 'peer-to-remove',
     );
 
+    expect(bridge.commandLog, isNot(contains('group:rotateKey')));
+  });
+
+  test('GM-015 blocks creator/admin self-removal before mutation', () async {
+    const groupId = 'group-gm015-self-remove';
+    const alicePeerId = 'peer-gm015-alice';
+    const bobPeerId = 'peer-gm015-bob';
+    const charliePeerId = 'peer-gm015-charlie';
+    final createdAt = DateTime.utc(2026, 5, 11, 1);
+    final eventAt = createdAt.add(const Duration(minutes: 1));
+    final keyCreatedAt = createdAt.add(const Duration(seconds: 30));
+
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'GM-015 Group',
+        type: GroupType.chat,
+        topicName: 'group-topic-gm015',
+        createdAt: createdAt,
+        createdBy: alicePeerId,
+        myRole: GroupRole.admin,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: alicePeerId,
+        username: 'Alice',
+        role: MemberRole.admin,
+        publicKey: 'pk-gm015-alice',
+        joinedAt: createdAt,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: bobPeerId,
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'pk-gm015-bob',
+        joinedAt: createdAt.add(const Duration(seconds: 1)),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: charliePeerId,
+        username: 'Charlie',
+        role: MemberRole.writer,
+        publicKey: 'pk-gm015-charlie',
+        joinedAt: createdAt.add(const Duration(seconds: 2)),
+      ),
+    );
+    await groupRepo.saveKey(
+      GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'gm015-initial-key',
+        createdAt: keyCreatedAt,
+      ),
+    );
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        memberPeerId: alicePeerId,
+        selfPeerId: alicePeerId,
+        actorUsername: 'Alice',
+        eventAt: eventAt,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains(lastAdminRemovalBlockedMessage),
+        ),
+      ),
+    );
+
+    final group = await groupRepo.getGroup(groupId);
+    expect(group, isNotNull);
+    expect(group!.createdBy, alicePeerId);
+    expect(group.isDissolved, isFalse);
+    final members = await groupRepo.getMembers(groupId);
+    expect(members.map((member) => member.peerId), [
+      alicePeerId,
+      bobPeerId,
+      charliePeerId,
+    ]);
+    expect(
+      members.where((member) => member.role == MemberRole.admin),
+      hasLength(1),
+    );
+    expect(
+      members.singleWhere((member) => member.peerId == alicePeerId).role,
+      MemberRole.admin,
+    );
+    final latestKey = await groupRepo.getLatestKey(groupId);
+    expect(latestKey, isNotNull);
+    expect(latestKey!.keyGeneration, 1);
+    expect(latestKey.encryptedKey, 'gm015-initial-key');
+    expect(latestKey.createdAt, keyCreatedAt);
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    expect(bridge.commandLog, isNot(contains('group:publish')));
     expect(bridge.commandLog, isNot(contains('group:rotateKey')));
   });
 

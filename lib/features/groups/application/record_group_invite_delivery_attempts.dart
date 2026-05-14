@@ -85,3 +85,28 @@ Future<void> recordMissingGroupKeyInviteDeliveryAttempts({
     );
   }
 }
+
+Future<void> recordPendingGroupInviteFanoutAttempts({
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required String groupId,
+  required Iterable<GroupMember> members,
+  DateTime? now,
+}) async {
+  final repo = inviteDeliveryAttemptRepo;
+  if (repo == null) return;
+  final timestamp = (now ?? DateTime.now()).toUtc();
+
+  for (final member in members) {
+    await repo.saveAttempt(
+      GroupInviteDeliveryAttempt(
+        groupId: groupId,
+        peerId: member.peerId,
+        username: member.username,
+        status: GroupInviteDeliveryStatus.needsResend,
+        attemptedAt: timestamp,
+        updatedAt: timestamp,
+        lastError: 'invite_fanout_pending_after_membership_update',
+      ),
+    );
+  }
+}

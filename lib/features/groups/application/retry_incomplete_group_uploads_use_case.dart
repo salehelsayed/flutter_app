@@ -461,6 +461,11 @@ Future<int> retryIncompleteGroupUploads({
           .where((attachment) => attachment.downloadStatus == 'done')
           .toList(growable: false);
 
+      final senderDeviceId = p2pService.currentState.peerId?.trim();
+      final currentSenderDeviceId =
+          senderDeviceId == null || senderDeviceId.isEmpty
+          ? null
+          : senderDeviceId;
       final (result, _) = await sendGroupMessage(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -474,6 +479,8 @@ Future<int> retryIncompleteGroupUploads({
         messageId: refreshedMessage.id,
         timestamp: refreshedMessage.timestamp,
         quotedMessageId: refreshedMessage.quotedMessageId,
+        senderDeviceId: currentSenderDeviceId,
+        senderTransportPeerId: currentSenderDeviceId,
         mediaAttachments: fullAttachmentList,
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,

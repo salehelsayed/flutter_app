@@ -38,6 +38,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   List<Map<String, dynamic>>? media,
   MediaAttachmentRepository? mediaAttachmentRepo,
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
+  bool enforceSelfJoinedAtLowerBound = false,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -117,6 +118,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     groupId: groupId,
     senderId: senderId,
   );
+  final isSystemMessage = text.startsWith('{"__sys":');
 
   final dissolvedAt = group.dissolvedAt?.toUtc();
   if (group.isDissolved &&
@@ -197,6 +199,75 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       },
     );
     return null;
+  } else {
+    final removalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
+      groupId,
+      senderId,
+    );
+    final joinedAt = member.joinedAt.toUtc();
+    if (removalCutoff != null &&
+        !normalizedTimestamp.isBefore(removalCutoff) &&
+        normalizedTimestamp.isBefore(joinedAt)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_REMOVED_WINDOW_AFTER_REJOIN',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'cutoffAt': removalCutoff.toIso8601String(),
+          'joinedAt': joinedAt.toIso8601String(),
+        },
+      );
+      return null;
+    }
+  }
+
+  final normalizedSelfPeerId = selfPeerId?.trim();
+  if (normalizedSelfPeerId != null && normalizedSelfPeerId.isNotEmpty) {
+    final selfRemovalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
+      groupId,
+      normalizedSelfPeerId,
+    );
+    final selfMember = await groupRepo.getMember(groupId, normalizedSelfPeerId);
+    final selfJoinedAt = selfMember?.joinedAt.toUtc();
+    if (selfRemovalCutoff != null &&
+        selfJoinedAt != null &&
+        !normalizedTimestamp.isBefore(selfRemovalCutoff) &&
+        normalizedTimestamp.isBefore(selfJoinedAt)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_SELF_REMOVED_WINDOW_AFTER_REJOIN',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'selfPeerId': normalizedSelfPeerId.length > 8
+              ? normalizedSelfPeerId.substring(0, 8)
+              : normalizedSelfPeerId,
+          'cutoffAt': selfRemovalCutoff.toIso8601String(),
+          'joinedAt': selfJoinedAt.toIso8601String(),
+        },
+      );
+      return null;
+    }
+    if (!isSystemMessage &&
+        enforceSelfJoinedAtLowerBound &&
+        selfJoinedAt != null &&
+        !normalizedTimestamp.isBefore(group.createdAt.toUtc()) &&
+        normalizedTimestamp.isBefore(selfJoinedAt)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_BEFORE_SELF_JOINED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'selfPeerId': normalizedSelfPeerId.length > 8
+              ? normalizedSelfPeerId.substring(0, 8)
+              : normalizedSelfPeerId,
+          'joinedAt': selfJoinedAt.toIso8601String(),
+        },
+      );
+      return null;
+    }
   }
   final sanitizedSenderUsername = sanitizeUsername(senderUsername).trim();
 

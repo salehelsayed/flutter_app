@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // GroupEncryptedPayload holds the encrypted fields of a v3 group envelope.
@@ -15,7 +16,8 @@ type GroupEncryptedPayload struct {
 //
 //	{
 //	  "version": "3", "type": "group_message",
-//	  "groupId": "...", "senderId": "...", "senderPublicKey": "...",
+//	  "groupId": "...", "messageId": "...",
+//	  "senderId": "...", "senderPublicKey": "...",
 //	  "signature": "...", "keyEpoch": 0,
 //	  "encrypted": { "ciphertext": "...", "nonce": "..." }
 //	}
@@ -23,6 +25,7 @@ type GroupEnvelope struct {
 	Version               string                `json:"version"`
 	Type                  string                `json:"type"`
 	GroupId               string                `json:"groupId"`
+	MessageId             string                `json:"messageId,omitempty"`
 	SenderId              string                `json:"senderId"`
 	SenderDeviceId        string                `json:"senderDeviceId,omitempty"`
 	SenderTransportPeerId string                `json:"senderTransportPeerId,omitempty"`
@@ -92,9 +95,43 @@ func MarshalGroupPayload(payload *GroupMessagePayload) (string, error) {
 
 // ParseGroupPayload deserializes a JSON string into a GroupMessagePayload.
 func ParseGroupPayload(data string) (*GroupMessagePayload, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &raw); err != nil {
+		return nil, fmt.Errorf("parse group payload: %w", err)
+	}
+	if raw == nil {
+		return nil, fmt.Errorf("parse group payload: expected JSON object")
+	}
+	if _, err := requiredGroupPayloadString(raw, "text", true); err != nil {
+		return nil, fmt.Errorf("parse group payload: %w", err)
+	}
+	if _, err := requiredGroupPayloadString(raw, "timestamp", false); err != nil {
+		return nil, fmt.Errorf("parse group payload: %w", err)
+	}
+
 	var payload GroupMessagePayload
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		return nil, fmt.Errorf("parse group payload: %w", err)
 	}
 	return &payload, nil
+}
+
+func requiredGroupPayloadString(raw map[string]json.RawMessage, field string, allowBlank bool) (string, error) {
+	value, ok := raw[field]
+	if !ok {
+		return "", fmt.Errorf("missing %s", field)
+	}
+
+	var decoded interface{}
+	if err := json.Unmarshal(value, &decoded); err != nil {
+		return "", fmt.Errorf("invalid %s: %w", field, err)
+	}
+	text, ok := decoded.(string)
+	if !ok {
+		return "", fmt.Errorf("invalid %s", field)
+	}
+	if !allowBlank && strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("missing %s", field)
+	}
+	return text, nil
 }

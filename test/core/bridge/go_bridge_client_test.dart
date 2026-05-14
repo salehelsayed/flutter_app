@@ -543,7 +543,7 @@ void main() {
     );
 
     test(
-      'group decryption failure push event reaches diagnostics stream without invoking group message callback',
+      'GO-004 group decryption failure diagnostic reaches repair stream without message callback',
       () async {
         var groupMessageCalls = 0;
         client.onGroupMessageReceived = (_) {
@@ -563,23 +563,33 @@ void main() {
               'keyEpoch': 3,
               'localKeyEpoch': 4,
               'error': 'cipher: message authentication failed',
+              'plaintext': 'GO-004 plaintext must not leak',
+              'groupKey': 'GO-004 group key must not leak',
+              'ciphertext': 'GO-004 ciphertext must not leak',
+              'nonce': 'GO-004 nonce must not leak',
             },
           }),
         );
 
         final received = await eventFuture;
+        final encoded = jsonEncode(received);
         expect(received['event'], 'group:decryption_failed');
         expect(received['groupId'], 'group-1');
         expect(received['senderId'], 'peer-2');
         expect(received['keyEpoch'], 3);
         expect(received['localKeyEpoch'], 4);
         expect(received['error'], contains('failed'));
+        expect(encoded, isNot(contains('GO-004 plaintext must not leak')));
+        expect(encoded, isNot(contains('GO-004 group key must not leak')));
+        expect(encoded, isNot(contains('GO-004 ciphertext must not leak')));
+        expect(encoded, isNot(contains('GO-004 nonce must not leak')));
+        expect(encoded, contains('[redacted]'));
         expect(groupMessageCalls, 0);
       },
     );
 
     test(
-      'ER005 group diagnostic stream redacts sensitive payload fields',
+      'GO-004 group diagnostic stream redacts sensitive payload fields',
       () async {
         final eventFuture = groupDiagnosticEventStream.first.timeout(
           const Duration(seconds: 1),
@@ -589,6 +599,10 @@ void main() {
           jsonEncode({
             'event': 'group:decryption_failed',
             'data': {
+              'groupId': 'group-1',
+              'senderId': 'peer-2',
+              'keyEpoch': 3,
+              'localKeyEpoch': 4,
               'groupHash': 'safe-group-hash',
               'ciphertext': 'raw-ciphertext-blob',
               'nonce': 'nonce-secret',
@@ -604,6 +618,10 @@ void main() {
         final encoded = jsonEncode(received);
 
         expect(received['event'], 'group:decryption_failed');
+        expect(received['groupId'], 'group-1');
+        expect(received['senderId'], 'peer-2');
+        expect(received['keyEpoch'], 3);
+        expect(received['localKeyEpoch'], 4);
         expect(received['groupHash'], 'safe-group-hash');
         expect(encoded, isNot(contains('raw-ciphertext-blob')));
         expect(encoded, isNot(contains('nonce-secret')));
@@ -612,6 +630,138 @@ void main() {
         expect(encoded, isNot(contains('/ip4/10.0.0.1')));
         expect(encoded, contains('[redacted]'));
         expect(encoded, contains('[redacted:multiaddr]'));
+      },
+    );
+
+    test(
+      'GO-008 group message raw flow logs metadata only without plaintext or sensitive payloads',
+      () {
+        const protectedText = 'GO-008 protected plaintext must not hit logs';
+        const mediaKey = 'GO-008 media key must not hit logs';
+        const mediaNonce = 'GO-008 media nonce must not hit logs';
+        const rawCiphertext = 'GO-008 raw ciphertext must not hit logs';
+        const rawGroupKey = 'GO-008 group key must not hit logs';
+        final flowEvents = <Map<String, dynamic>>[];
+        flowEventLoggingEnabled = true;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null && message.startsWith('[FLOW] ')) {
+            flowEvents.add(
+              jsonDecode(message.substring('[FLOW] '.length))
+                  as Map<String, dynamic>,
+            );
+          }
+        };
+
+        Map<String, dynamic>? delivered;
+        client.onGroupMessageReceived = (data) {
+          delivered = data;
+        };
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-go008',
+              'senderId': 'peer-go008',
+              'senderDeviceId': 'device-go008',
+              'transportPeerId': 'transport-go008',
+              'messageId': 'msg-go008',
+              'keyEpoch': 8,
+              'text': protectedText,
+              'ciphertext': rawCiphertext,
+              'groupKey': rawGroupKey,
+              'media': [
+                {
+                  'id': 'blob-go008',
+                  'encryptionKeyBase64': mediaKey,
+                  'encryptionNonce': mediaNonce,
+                },
+              ],
+              'decryptMs': 3,
+              'deliveryMs': 4,
+            },
+          }),
+        );
+
+        expect(delivered, isNotNull);
+        expect(delivered!['text'], protectedText);
+
+        final rawFlow = flowEvents.firstWhere(
+          (event) => event['event'] == 'group_message:received',
+        );
+        expect(rawFlow['details']['messageId'], 'msg-go008');
+        expect(rawFlow['details']['textLength'], protectedText.length);
+        expect(rawFlow['details']['mediaCount'], 1);
+        expect(rawFlow['details'].containsKey('text'), isFalse);
+        expect(rawFlow['details'].containsKey('media'), isFalse);
+
+        final encodedFlow = jsonEncode(flowEvents);
+        for (final fragment in [
+          protectedText,
+          mediaKey,
+          mediaNonce,
+          rawCiphertext,
+          rawGroupKey,
+        ]) {
+          expect(encodedFlow, isNot(contains(fragment)));
+        }
+      },
+    );
+
+    test(
+      'GO-008 diagnostic flow logs redact JSON-encoded sensitive payload strings',
+      () async {
+        const protectedText = 'GO-008 diagnostic plaintext must not hit logs';
+        const rawCiphertext = 'GO-008 diagnostic ciphertext must not hit logs';
+        const rawNonce = 'GO-008 diagnostic nonce must not hit logs';
+        const rawGroupKey = 'GO-008 diagnostic group key must not hit logs';
+        const mediaKey = 'GO-008 diagnostic media key must not hit logs';
+        final flowEvents = <Map<String, dynamic>>[];
+        flowEventLoggingEnabled = true;
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null && message.startsWith('[FLOW] ')) {
+            flowEvents.add(
+              jsonDecode(message.substring('[FLOW] '.length))
+                  as Map<String, dynamic>,
+            );
+          }
+        };
+        final eventFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:decryption_failed',
+            'data': {
+              'groupId': 'group-go008',
+              'senderId': 'peer-go008',
+              'keyEpoch': 8,
+              'error':
+                  'decrypt failed {"text":"$protectedText","ciphertext":"$rawCiphertext","nonce":"$rawNonce","groupKey":"$rawGroupKey","encryptionKeyBase64":"$mediaKey"}',
+              'plaintext': protectedText,
+              'ciphertext': rawCiphertext,
+              'nonce': rawNonce,
+              'groupKey': rawGroupKey,
+            },
+          }),
+        );
+
+        final diagnostic = await eventFuture;
+        final encodedDiagnostic = jsonEncode(diagnostic);
+        final encodedFlow = jsonEncode(flowEvents);
+        for (final payload in [encodedDiagnostic, encodedFlow]) {
+          for (final fragment in [
+            protectedText,
+            rawCiphertext,
+            rawNonce,
+            rawGroupKey,
+            mediaKey,
+          ]) {
+            expect(payload, isNot(contains(fragment)));
+          }
+          expect(payload, contains('[redacted]'));
+        }
       },
     );
 
@@ -685,6 +835,44 @@ void main() {
         expect(received['keyEpoch'], 2);
         expect(received.containsKey('groupId'), isFalse);
         expect(received.containsKey('senderId'), isFalse);
+        expect(groupMessageCalls, 0);
+      },
+    );
+
+    test(
+      'GO-003 group publish validation feedback reaches diagnostics stream without invoking group message callback',
+      () async {
+        var groupMessageCalls = 0;
+        client.onGroupMessageReceived = (_) {
+          groupMessageCalls++;
+        };
+
+        final eventFuture = groupDiagnosticEventStream.first.timeout(
+          const Duration(seconds: 1),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:publish_validation_rejected',
+            'data': {
+              'groupId': 'group-go003',
+              'messageId': 'msg-go003',
+              'reason': 'non_member',
+              'envelopeType': 'group_message',
+              'keyEpoch': 4,
+              'recipientPeerId': '12D3KooWLongSensitivePeerIdentifier',
+            },
+          }),
+        );
+
+        final received = await eventFuture;
+        expect(received['event'], 'group:publish_validation_rejected');
+        expect(received['groupId'], 'group-go003');
+        expect(received['messageId'], 'msg-go003');
+        expect(received['reason'], 'non_member');
+        expect(received['envelopeType'], 'group_message');
+        expect(received['keyEpoch'], 4);
+        expect(received['recipientPeerId'], '[redacted]');
         expect(groupMessageCalls, 0);
       },
     );

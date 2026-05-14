@@ -146,6 +146,7 @@ Future<void> updateGroupMemberRole({
   final updatedMyRole = memberPeerId == selfPeerId
       ? (role == MemberRole.admin ? GroupRole.admin : GroupRole.member)
       : group.myRole;
+  final normalizedEventAt = eventAt?.toUtc() ?? DateTime.now().toUtc();
 
   await groupRepo.updateMemberRole(groupId, memberPeerId, role);
   if (updatedMyRole != group.myRole) {
@@ -157,12 +158,16 @@ Future<void> updateGroupMemberRole({
     await callGroupUpdateConfig(
       bridge,
       groupId: groupId,
-      groupConfig: buildGroupConfigPayload(group, updatedMembers),
+      groupConfig: buildGroupConfigPayload(
+        group.copyWith(lastMembershipEventAt: normalizedEventAt),
+        updatedMembers,
+        configVersionOverride: normalizedEventAt,
+      ),
     );
     await recordGroupMembershipEventWatermark(
       groupRepo: groupRepo,
       groupId: groupId,
-      eventAt: eventAt,
+      eventAt: normalizedEventAt,
     );
 
     emitFlowEvent(

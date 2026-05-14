@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 
+typedef FakeGroupNetworkDelay = Future<void> Function(Duration delay);
+
 /// Routes group messages between peers via topic-based fan-out.
 ///
 /// Simulates GossipSub pubsub: when a peer publishes to a group topic,
@@ -8,6 +10,11 @@ import 'dart:math';
 /// device per peer id, while same-user multi-device tests can register more
 /// than one device for the same peer id.
 class FakeGroupPubSubNetwork {
+  FakeGroupPubSubNetwork({int randomSeed = 0, FakeGroupNetworkDelay? delay})
+    : _randomSeed = randomSeed,
+      _random = Random(randomSeed),
+      _delay = delay ?? ((duration) => Future<void>.delayed(duration));
+
   final Map<String, Set<String>> _subscriptions = {};
   final Map<String, String> _devicePeerIds = {};
   final Map<String, Set<String>> _peerDeviceIds = {};
@@ -18,7 +25,9 @@ class FakeGroupPubSubNetwork {
   final Set<String> _heldDeliveryDeviceIds = {};
   final Map<String, List<Map<String, dynamic>>> _heldMessageDeliveries = {};
 
-  final _random = Random();
+  final int _randomSeed;
+  Random _random;
+  final FakeGroupNetworkDelay _delay;
 
   // -- Fault-injection hooks --
 
@@ -139,7 +148,7 @@ class FakeGroupPubSubNetwork {
 
       for (final envelope in deliveries) {
         if (deliveryDelay != null) {
-          await Future.delayed(deliveryDelay!);
+          await _delay(deliveryDelay!);
         }
 
         controller.add(Map<String, dynamic>.from(envelope));
@@ -210,7 +219,7 @@ class FakeGroupPubSubNetwork {
       if (dropRate > 0.0 && _random.nextDouble() < dropRate) continue;
 
       if (deliveryDelay != null) {
-        await Future.delayed(deliveryDelay!);
+        await _delay(deliveryDelay!);
       }
 
       final deliveredEnvelope = Map<String, dynamic>.from(envelope)
@@ -262,7 +271,7 @@ class FakeGroupPubSubNetwork {
       if (dropRate > 0.0 && _random.nextDouble() < dropRate) continue;
 
       if (deliveryDelay != null) {
-        await Future.delayed(deliveryDelay!);
+        await _delay(deliveryDelay!);
       }
 
       controller.add(envelope);
@@ -304,6 +313,7 @@ class FakeGroupPubSubNetwork {
     deliveryDelay = null;
     dropRate = 0.0;
     duplicateOnDeliver = false;
+    _random = Random(_randomSeed);
     _heldDeliveryDeviceIds.clear();
     _heldMessageDeliveries.clear();
   }

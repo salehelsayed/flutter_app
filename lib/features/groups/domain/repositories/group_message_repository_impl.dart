@@ -239,8 +239,11 @@ class GroupMessageRepositoryImpl
 
     final messages = await getMessagesPage(groupId, limit: 500);
     final removalPrefix = 'sys-member_removed:$groupId:$senderPeerId:';
+    final cutoffPrefix =
+        '$groupRemovalCutoffMessageIdPrefix:$groupId:$senderPeerId:';
     for (final message in messages.reversed) {
-      if (message.id.startsWith(removalPrefix)) {
+      if (message.id.startsWith(removalPrefix) ||
+          message.id.startsWith(cutoffPrefix)) {
         return message.timestamp.toUtc();
       }
     }

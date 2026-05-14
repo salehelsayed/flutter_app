@@ -385,14 +385,42 @@ Future<_ReplaySignatureVerification> _verifyReplaySignature({
     throw GroupOfflineReplaySignatureException('signed_payload_mismatch');
   }
 
-  final member = await groupRepo.getMember(groupId, senderPeerId);
-  final device = _resolveSigningDevice(
+  var member = await groupRepo.getMember(groupId, senderPeerId);
+  var device = _resolveSigningDevice(
     member: member,
     senderPublicKey: senderPublicKey,
     senderDeviceId: senderDeviceId,
     senderTransportPeerId: senderTransportPeerId,
   );
-  if (member == null || device == null) {
+  if (member == null) {
+    final snapshotRepo = groupRepo is RemovedGroupMemberSnapshotRepository
+        ? groupRepo as RemovedGroupMemberSnapshotRepository
+        : null;
+    member = await snapshotRepo?.getRemovedMemberSnapshot(
+      groupId,
+      senderPeerId,
+    );
+    device = _resolveSigningDevice(
+      member: member,
+      senderPublicKey: senderPublicKey,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+    );
+    if (member == null || device == null) {
+      throw GroupOfflineReplaySignatureException('unknown_sender');
+    }
+  }
+  if (device == null) {
+    final inactiveDevice = _resolveSigningDevice(
+      member: member,
+      senderPublicKey: senderPublicKey,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+      activeOnly: false,
+    );
+    if (inactiveDevice != null && !inactiveDevice.isActive) {
+      throw GroupOfflineReplaySignatureException('revoked_device');
+    }
     throw GroupOfflineReplaySignatureException('unknown_sender');
   }
   if (device.deviceSigningPublicKey != senderPublicKey) {
@@ -494,21 +522,52 @@ GroupMemberDeviceIdentity? _resolveSigningDevice({
   required String senderPublicKey,
   required String? senderDeviceId,
   required String? senderTransportPeerId,
+  bool activeOnly = true,
 }) {
   if (member == null) return null;
   if (senderDeviceId != null) {
-    return member.findDeviceById(senderDeviceId, allowLegacyFallback: true);
+    return member.findDeviceById(
+      senderDeviceId,
+      activeOnly: activeOnly,
+      allowLegacyFallback: true,
+    );
   }
   if (senderTransportPeerId != null) {
     return member.findDeviceByTransportPeerId(
       senderTransportPeerId,
+      activeOnly: activeOnly,
       allowLegacyFallback: true,
     );
   }
-  return member.firstActiveDeviceForSigningKey(
+  return _firstDeviceForSigningKey(
+    member,
     senderPublicKey,
+    activeOnly: activeOnly,
     allowLegacyFallback: true,
   );
+}
+
+GroupMemberDeviceIdentity? _firstDeviceForSigningKey(
+  GroupMember member,
+  String? signingPublicKey, {
+  bool activeOnly = true,
+  bool allowLegacyFallback = false,
+}) {
+  final normalized = signingPublicKey?.trim();
+  if (normalized == null || normalized.isEmpty) return null;
+  final devices = activeOnly ? member.activeDevices : member.devices;
+  for (final device in devices) {
+    if (device.deviceSigningPublicKey == normalized) {
+      return device;
+    }
+  }
+  if (allowLegacyFallback) {
+    final legacy = member.legacyDeviceIdentity;
+    if (legacy?.deviceSigningPublicKey == normalized) {
+      return legacy;
+    }
+  }
+  return null;
 }
 
 String _buildReplaySignedPayload({

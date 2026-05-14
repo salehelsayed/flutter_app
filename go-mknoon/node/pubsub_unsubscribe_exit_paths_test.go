@@ -1,9 +1,13 @@
 package node
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"runtime/pprof"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -316,6 +320,241 @@ func TestGL008LeaveGroupTopicStopsDiscoveryAndInboundAfterLeave(t *testing.T) {
 	publishRawGroupEnvelope(t, nodeA, groupId, decryptFailureEnvelope)
 
 	assertGL008NoPostLeaveGroupActivity(t, leaverEvents, postLeaveBaseline, groupId, 4*time.Second)
+}
+
+func TestGP010DiscoveryLoopUnregistersOnceAndStopsAfterLeave(t *testing.T) {
+	selfPrivB64, selfPubB64 := generateEd25519KeyPair(t)
+	_, otherPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	collector := &testEventCollector{}
+	n := startLocalNodeForUnsubscribeExitPathWithCollector(t, collector)
+	other := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "gp010-discovery-unregisters-on-leave"
+	expectedNamespace := groupRendezvousNamespace(groupId)
+	registeredNamespaces := make(chan string, 2)
+	unregisteredNamespaces := make(chan string, 2)
+	var discoverCalls atomic.Int32
+
+	n.waitForCircuitAddressHook = func(timeout time.Duration) bool { return true }
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registeredNamespaces <- namespace
+		return nil
+	}
+	n.rendezvousDiscoverHook = func(namespace string, serverAddresses []string) ([]peer.AddrInfo, error) {
+		discoverCalls.Add(1)
+		return nil, nil
+	}
+	n.rendezvousUnregisterHook = func(namespace string, serverAddresses []string) error {
+		unregisteredNamespaces <- namespace
+		return nil
+	}
+	n.relayReadyOnce.Do(func() { close(n.relayReady) })
+
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	config := &GroupConfig{
+		Name:      "GP010 Unregister Proof",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: selfPubB64},
+			{PeerId: other.PeerId(), Role: GroupRoleWriter, PublicKey: otherPubB64},
+		},
+		CreatedBy: n.PeerId(),
+	}
+
+	if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	select {
+	case namespace := <-registeredNamespaces:
+		if namespace != expectedNamespace {
+			t.Fatalf("registered namespace = %q, want %q", namespace, expectedNamespace)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatalf("timed out waiting for GP-010 group rendezvous register; events=%v", collector.snapshot())
+	}
+	waitForCollectedEventContaining(t, collector, `"step":"registered"`, time.Second)
+	if got := discoverCalls.Load(); got == 0 {
+		t.Fatal("expected discovery loop to execute at least one discover before leave")
+	}
+
+	if _, _, err := n.PublishGroupMessage(
+		groupId,
+		selfPrivB64,
+		n.PeerId(),
+		selfPubB64,
+		"Alice",
+		"GP010 pre-leave sanity publish",
+		"gp010-pre-leave-sanity",
+		nil,
+	); err != nil {
+		t.Fatalf("pre-leave PublishGroupMessage should still be allowed before leave: %v", err)
+	}
+
+	if err := n.LeaveGroupTopic(groupId); err != nil {
+		t.Fatalf("LeaveGroupTopic: %v", err)
+	}
+	assertLP003GroupPubSubStateRemoved(t, n, groupId)
+
+	select {
+	case namespace := <-unregisteredNamespaces:
+		if namespace != expectedNamespace {
+			t.Fatalf("unregistered namespace = %q, want %q", namespace, expectedNamespace)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for GP-010 rendezvous unregister; events=%v", collector.snapshot())
+	}
+
+	select {
+	case namespace := <-unregisteredNamespaces:
+		t.Fatalf("RendezvousUnregister called more than once; second namespace=%q", namespace)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	postLeaveDiscoverCalls := discoverCalls.Load()
+	postLeaveBaseline := len(collector.snapshot())
+	assertGL008NoPostLeaveGroupActivity(t, collector, postLeaveBaseline, groupId, 750*time.Millisecond)
+	if got := discoverCalls.Load(); got != postLeaveDiscoverCalls {
+		t.Fatalf("discovery continued after leave: discover calls before=%d after=%d", postLeaveDiscoverCalls, got)
+	}
+}
+
+func TestGO010JoinLeaveRecoveryCyclesDoNotLeakGroupGoroutines(t *testing.T) {
+	selfPrivB64, selfPubB64 := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	collector := &testEventCollector{}
+	n := startLocalNodeForUnsubscribeExitPathWithCollector(t, collector)
+
+	baseline, baselineStacks := go010GroupRuntimeGoroutineSnapshot()
+	if baseline != 0 {
+		t.Logf("GO-010 baseline group runtime goroutines=%d:\n%s", baseline, baselineStacks)
+	}
+
+	var registered atomic.Int32
+	var discovered atomic.Int32
+	n.rendezvousRegisterHook = func(namespace string, serverAddresses []string) error {
+		registered.Add(1)
+		return nil
+	}
+	n.rendezvousDiscoverHook = func(namespace string, serverAddresses []string) ([]peer.AddrInfo, error) {
+		discovered.Add(1)
+		return nil, nil
+	}
+	n.rendezvousUnregisterHook = func(namespace string, serverAddresses []string) error {
+		return nil
+	}
+
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	for i := 0; i < 4; i++ {
+		groupId := fmt.Sprintf("go010-join-leave-recovery-%02d", i)
+		config := &GroupConfig{
+			Name:      "GO010 Leak Check",
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: selfPubB64},
+			},
+			CreatedBy: n.PeerId(),
+		}
+
+		if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("JoinGroupTopic(%s): %v", groupId, err)
+		}
+
+		executed, cycleRegistered := n.runGroupDiscoveryCycle(
+			n.ctx,
+			groupId,
+			groupRendezvousNamespace(groupId),
+			true,
+			false,
+		)
+		if !executed || !cycleRegistered {
+			t.Fatalf("GO-010 recovery cycle %s executed=%t registered=%t, want true/true", groupId, executed, cycleRegistered)
+		}
+
+		if _, _, err := n.PublishGroupMessage(
+			groupId,
+			selfPrivB64,
+			n.PeerId(),
+			selfPubB64,
+			"Alice",
+			"GO-010 pre-leave sanity publish",
+			fmt.Sprintf("go010-pre-leave-%02d", i),
+			nil,
+		); err != nil {
+			t.Fatalf("PublishGroupMessage(%s) before leave: %v", groupId, err)
+		}
+
+		if err := n.LeaveGroupTopic(groupId); err != nil {
+			t.Fatalf("LeaveGroupTopic(%s): %v", groupId, err)
+		}
+		assertLP003GroupPubSubStateRemoved(t, n, groupId)
+		waitForGO010GroupRuntimeGoroutinesAtMost(t, baseline, 2*time.Second)
+
+		n.mu.RLock()
+		heldRecoverySlots := len(n.groupRecoverySem)
+		n.mu.RUnlock()
+		if heldRecoverySlots != 0 {
+			t.Fatalf("group recovery slots held after cycle %d = %d, want 0", i, heldRecoverySlots)
+		}
+	}
+
+	if got := registered.Load(); got != 4 {
+		t.Fatalf("registered recovery cycles = %d, want 4", got)
+	}
+	if got := discovered.Load(); got != 4 {
+		t.Fatalf("discovered recovery cycles = %d, want 4", got)
+	}
+
+	if err := n.Stop(); err != nil {
+		t.Fatalf("Stop after GO-010 cycles: %v", err)
+	}
+	waitForGO010GroupRuntimeGoroutinesAtMost(t, baseline, 2*time.Second)
+}
+
+func waitForGO010GroupRuntimeGoroutinesAtMost(t *testing.T, max int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	lastCount := 0
+	lastStacks := ""
+	for {
+		lastCount, lastStacks = go010GroupRuntimeGoroutineSnapshot()
+		if lastCount <= max {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GO-010 group runtime goroutines = %d, want <= %d after %v\n%s", lastCount, max, timeout, lastStacks)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func go010GroupRuntimeGoroutineSnapshot() (int, string) {
+	var buf bytes.Buffer
+	if err := pprof.Lookup("goroutine").WriteTo(&buf, 2); err != nil {
+		return 0, fmt.Sprintf("goroutine profile failed: %v", err)
+	}
+
+	var matches []string
+	for _, block := range strings.Split(buf.String(), "\n\n") {
+		if strings.Contains(block, "github.com/mknoon/go-mknoon/node.(*Node).handleGroupSubscription") ||
+			strings.Contains(block, "github.com/mknoon/go-mknoon/node.(*Node).groupPeerDiscoveryLoop") ||
+			strings.Contains(block, "github.com/mknoon/go-mknoon/node.(*Node).runGroupDiscoveryCycle") ||
+			strings.Contains(block, "github.com/mknoon/go-mknoon/node.(*Node).discoverAndConnectGroupPeers") {
+			matches = append(matches, strings.TrimSpace(block))
+		}
+	}
+
+	return len(matches), strings.Join(matches, "\n\n")
 }
 
 func startLocalNodeForUnsubscribeExitPathWithCollector(t *testing.T, collector *testEventCollector) *Node {

@@ -12,6 +12,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -42,11 +43,19 @@ _loadGroupSendMembership({
   required GroupRepository groupRepo,
   required String groupId,
   required String senderPeerId,
+  DateTime? membershipCutoff,
 }) async {
   final members = await groupRepo.getMembers(groupId);
+  final normalizedCutoff = membershipCutoff?.toUtc();
   final recipientPeerIds = members
-      .map((member) => member.peerId)
-      .where((peerId) => peerId.isNotEmpty && peerId != senderPeerId)
+      .where(
+        (member) =>
+            (normalizedCutoff == null ||
+                !member.joinedAt.toUtc().isAfter(normalizedCutoff)) &&
+            hasDeliverableGroupMemberIdentity(member) &&
+            member.peerId.trim() != senderPeerId,
+      )
+      .map((member) => member.peerId.trim())
       .toSet()
       .toList();
   return (members: members, recipientPeerIds: recipientPeerIds);
@@ -406,9 +415,9 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'outcome': outcome,
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'hasMedia': hasMedia,
-        if (prepareMs != null) 'prepareMs': prepareMs,
-        if (publishMs != null) 'publishMs': publishMs,
-        if (inboxMs != null) 'inboxMs': inboxMs,
+        'prepareMs': ?prepareMs,
+        'publishMs': ?publishMs,
+        'inboxMs': ?inboxMs,
         ...details,
       },
     );
@@ -501,11 +510,16 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   // 3. Prepare all parameters
   final prepareStopwatch = Stopwatch()..start();
   final now = timestamp ?? DateTime.now().toUtc();
+  final membershipCutoff =
+      timestamp != null && !timestamp.toUtc().isBefore(group.createdAt.toUtc())
+      ? timestamp
+      : null;
   final latestKeyFuture = groupRepo.getLatestKey(groupId);
   final sendMembershipFuture = _loadGroupSendMembership(
     groupRepo: groupRepo,
     groupId: groupId,
     senderPeerId: senderPeerId,
+    membershipCutoff: membershipCutoff,
   );
   final latestKey = await latestKeyFuture;
   if (latestKey == null && group.myRole != GroupRole.admin) {
@@ -522,6 +536,22 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       details: {'role': group.myRole.toValue()},
     );
     return (SendGroupMessageResult.error, null);
+  }
+  final sendMembership = await sendMembershipFuture;
+  final members = sendMembership.members;
+  if (group.type == GroupType.chat && members.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_EMPTY_MEMBERSHIP_DISSOLVED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      },
+    );
+    emitGroupSendTiming(
+      outcome: 'group_dissolved',
+      details: {'reason': 'empty_membership'},
+    );
+    return (SendGroupMessageResult.groupDissolved, null);
   }
   final resolvedMessageId = await _resolveOutgoingMessageId(
     msgRepo: msgRepo,
@@ -545,8 +575,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.error, null);
   }
   final keyEpoch = latestKey?.keyGeneration ?? 0;
-  final sendMembership = await sendMembershipFuture;
-  final members = sendMembership.members;
   if (members.isNotEmpty &&
       !members.any((member) => member.peerId == senderPeerId)) {
     emitFlowEvent(
@@ -709,6 +737,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderDeviceId: resolvedSenderDeviceId,
     senderTransportPeerId: resolvedSenderTransportPeerId,
     senderDevicePublicKey: resolvedSenderDevicePublicKey,
+    senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
     messageId: resolvedMessageId,
     quotedMessageId: quotedMessageId,
     media: mediaJson,
@@ -982,11 +1011,20 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'messageId': resolvedMessageId.length > 8
             ? resolvedMessageId.substring(0, 8)
             : resolvedMessageId,
+        'status': sentMessage.status,
+        'topicPeers': 0,
+        'inboxStored': true,
+        'inboxPending': false,
       },
     );
     emitGroupSendTiming(
       outcome: 'success_no_peers',
-      details: {'status': sentMessage.status, 'topicPeers': 0},
+      details: {
+        'status': sentMessage.status,
+        'topicPeers': 0,
+        'inboxStored': true,
+        'inboxPending': false,
+      },
     );
     return (SendGroupMessageResult.successNoPeers, sentMessage);
   } else {

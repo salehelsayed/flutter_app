@@ -197,6 +197,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
 
+  String? get _currentSenderDeviceId {
+    final peerId = widget.p2pService.currentState.peerId?.trim();
+    return peerId == null || peerId.isEmpty ? null : peerId;
+  }
+
   bool get _isRecording => _composerViewState.recordingState.isActive;
 
   UploadProgressViewState? get _uploadProgressViewState {
@@ -1455,6 +1460,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         return;
       }
 
+      final senderDeviceId = _currentSenderDeviceId;
       final (result, message) = await sendGroupMessage(
         bridge: widget.bridge,
         groupRepo: widget.groupRepo,
@@ -1468,6 +1474,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         messageId: messageId,
         timestamp: now,
         quotedMessageId: quotedMessageId,
+        senderDeviceId: senderDeviceId,
+        senderTransportPeerId: senderDeviceId,
         mediaAttachments: uploadedAttachments,
         mediaAttachmentRepo: widget.mediaAttachmentRepo,
       );
@@ -2656,6 +2664,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           _updateComposerState(isUploading: false);
         }
 
+        final senderDeviceId = _currentSenderDeviceId;
         final (result, message) = await sendGroupMessage(
           bridge: widget.bridge,
           groupRepo: widget.groupRepo,
@@ -2669,6 +2678,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           messageId: messageId,
           timestamp: now,
           quotedMessageId: quotedMessageId,
+          senderDeviceId: senderDeviceId,
+          senderTransportPeerId: senderDeviceId,
           mediaAttachments: [stableVoiceAttachment],
           mediaAttachmentRepo: mediaAttachmentRepo,
         );

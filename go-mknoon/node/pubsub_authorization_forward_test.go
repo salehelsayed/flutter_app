@@ -27,6 +27,189 @@ func TestRP017RemovedPeerContinuedPublishesAreRejectedBeforeAcceptAndForward(t *
 	runRemovedPeerRawPubSubRejectsBeforeAcceptAndForward(t, "rp017", "RP017")
 }
 
+func TestGA002NonMemberCannotPublishValidEnvelope(t *testing.T) {
+	nonMemberPriv, nonMemberPub := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeX := startLocalNodeForMultiRelayTest(t)
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
+	nodeBCapture := &testEventCollector{}
+	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
+
+	groupId := "ga002-non-member-publish"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	currentConfig := &GroupConfig{
+		Name:      "GA002 Current Private Chat",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: "nodeAPubKey"},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "nodeBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	stalePublisherConfig := &GroupConfig{
+		Name:      "GA002 Stale Publisher View",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeX.PeerId(), Role: GroupRoleWriter, PublicKey: nonMemberPub},
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: "nodeAPubKey"},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: "nodeBPubKey"},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+
+	if err := nodeX.JoinGroupTopic(groupId, stalePublisherConfig, keyInfo); err != nil {
+		t.Fatalf("nodeX JoinGroupTopic: %v", err)
+	}
+	if err := nodeA.JoinGroupTopic(groupId, currentConfig, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+	if err := nodeB.JoinGroupTopic(groupId, currentConfig, keyInfo); err != nil {
+		t.Fatalf("nodeB JoinGroupTopic: %v", err)
+	}
+
+	connectLocalGroupNodes(t, nodeX, nodeA)
+	connectLocalGroupNodes(t, nodeX, nodeB)
+	connectLocalGroupNodes(t, nodeA, nodeB)
+	waitForGroupTopicPeerCount(t, nodeX, groupId, 2, 3*time.Second)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 2, 3*time.Second)
+	waitForGroupTopicPeerCount(t, nodeB, groupId, 2, 3*time.Second)
+
+	plaintextMarker := "ga002-non-member-plaintext"
+	envelopeJSON := buildTestEnvelopeWithPlaintext(
+		t,
+		groupId,
+		"group_message",
+		nodeX.PeerId(),
+		nonMemberPriv,
+		nonMemberPub,
+		groupKey,
+		keyInfo.KeyEpoch,
+		`{"text":"`+plaintextMarker+`","timestamp":"2026-05-12T19:34:10Z"}`,
+	)
+
+	if result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, currentConfig, keyInfo, nodeX.PeerId()); result != "reject:non_member" {
+		t.Fatalf("pure validator = %s, want reject:non_member", result)
+	}
+
+	baselineA := len(nodeACapture.snapshot())
+	baselineB := len(nodeBCapture.snapshot())
+	publishRawGroupEnvelope(t, nodeX, groupId, envelopeJSON)
+
+	waitForCollectedValidationReject(t, nodeACapture, baselineA, "non_member", keyInfo.KeyEpoch, 5*time.Second)
+	waitForCollectedValidationReject(t, nodeBCapture, baselineB, "non_member", keyInfo.KeyEpoch, 5*time.Second)
+
+	for _, check := range []struct {
+		label     string
+		collector *testEventCollector
+		baseline  int
+	}{
+		{label: "node A", collector: nodeACapture, baseline: baselineA},
+		{label: "node B", collector: nodeBCapture, baseline: baselineB},
+	} {
+		for _, forbidden := range []string{
+			`"event":"group_message:received"`,
+			`"event":"group_reaction:received"`,
+			`"event":"group:decryption_failed"`,
+			`"event":"group:payload_parse_failed"`,
+			plaintextMarker,
+		} {
+			t.Run(check.label+"/"+forbidden, func(t *testing.T) {
+				assertNoCollectedEventContainingAfter(t, check.collector, check.baseline, forbidden, 500*time.Millisecond)
+			})
+		}
+	}
+}
+
+func TestGA006SenderTransportPeerMismatchRejects(t *testing.T) {
+	privB, pubB := generateEd25519KeyPair(t)
+	groupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate group key: %v", err)
+	}
+
+	nodeX := startLocalNodeForMultiRelayTest(t)
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
+	nodeB := startLocalNodeForMultiRelayTest(t)
+
+	groupId := "ga006-sender-transport-peer-mismatch"
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	currentConfig := &GroupConfig{
+		Name:      "GA006 Current Private Chat",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: "nodeAPubKey"},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: pubB},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+	publisherConfig := &GroupConfig{
+		Name:      "GA006 Publisher View",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: nodeX.PeerId(), Role: GroupRoleWriter, PublicKey: "nodeXPubKey"},
+			{PeerId: nodeA.PeerId(), Role: GroupRoleAdmin, PublicKey: "nodeAPubKey"},
+			{PeerId: nodeB.PeerId(), Role: GroupRoleWriter, PublicKey: pubB},
+		},
+		CreatedBy: nodeA.PeerId(),
+	}
+
+	if err := nodeX.JoinGroupTopic(groupId, publisherConfig, keyInfo); err != nil {
+		t.Fatalf("nodeX JoinGroupTopic: %v", err)
+	}
+	if err := nodeA.JoinGroupTopic(groupId, currentConfig, keyInfo); err != nil {
+		t.Fatalf("nodeA JoinGroupTopic: %v", err)
+	}
+
+	connectLocalGroupNodes(t, nodeX, nodeA)
+	waitForGroupTopicPeerCount(t, nodeX, groupId, 1, 3*time.Second)
+	waitForGroupTopicPeerCount(t, nodeA, groupId, 1, 3*time.Second)
+
+	plaintextMarker := "ga006-transport-peer-mismatch"
+	envelopeJSON := buildTestEnvelopeWithPlaintext(
+		t,
+		groupId,
+		"group_message",
+		nodeB.PeerId(),
+		privB,
+		pubB,
+		groupKey,
+		keyInfo.KeyEpoch,
+		`{"text":"`+plaintextMarker+`","timestamp":"2026-05-12T20:01:00Z"}`,
+	)
+	if result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, currentConfig, keyInfo, nodeB.PeerId()); result != "accept" {
+		t.Fatalf("pure validator from B transport = %s, want accept", result)
+	}
+	if result := validateGroupEnvelopeForTransportPeer(envelopeJSON, groupId, currentConfig, keyInfo, nodeX.PeerId()); result != "reject:peer_mismatch" {
+		t.Fatalf("pure validator from X transport = %s, want reject:peer_mismatch", result)
+	}
+
+	if err := nodeX.pubsub.UnregisterTopicValidator(GroupTopicPrefix + groupId); err != nil {
+		t.Fatalf("nodeX unregister local validator before GA006 raw publish: %v", err)
+	}
+
+	baselineA := len(nodeACapture.snapshot())
+	publishRawGroupEnvelope(t, nodeX, groupId, envelopeJSON)
+	waitForCollectedValidationReject(t, nodeACapture, baselineA, "peer_mismatch", keyInfo.KeyEpoch, 5*time.Second)
+
+	for _, forbidden := range []string{
+		`"event":"group_message:received"`,
+		`"event":"group_reaction:received"`,
+		`"event":"group:decryption_failed"`,
+		`"event":"group:payload_parse_failed"`,
+		plaintextMarker,
+	} {
+		t.Run("peer mismatch rejected/"+forbidden, func(t *testing.T) {
+			assertNoCollectedEventContainingAfter(t, nodeACapture, baselineA, forbidden, 500*time.Millisecond)
+		})
+	}
+}
+
 func runRemovedPeerRawPubSubRejectsBeforeAcceptAndForward(t *testing.T, idPrefix, label string) {
 	removedPriv, removedPub := generateEd25519KeyPair(t)
 	groupKey, err := mcrypto.GenerateGroupKey()
@@ -264,6 +447,67 @@ func TestLP002UnauthorizedRejectDiagnosticsArePrivacySafeAndRateLimited(t *testi
 	})
 }
 
+func TestGO005ValidationRejectDiagnosticsAreRateLimitedByReasonGroupSenderTransport(t *testing.T) {
+	collector := &testEventCollector{}
+	n := NewNode()
+	n.peerId = "go005-local-peer"
+	n.eventCallback = collector
+
+	now := time.Date(2026, 5, 14, 7, 30, 0, 0, time.UTC)
+	n.pubsubRejectDiagNow = func() time.Time { return now }
+	logs := captureLP002ValidatorLogs(t)
+
+	pidA := peer.ID("go005-transport-a")
+	pidB := peer.ID("go005-transport-b")
+	envA := &internal.GroupEnvelope{
+		SenderId: "go005-sender-a",
+		Type:     "group_message",
+		KeyEpoch: 7,
+	}
+	envB := &internal.GroupEnvelope{
+		SenderId: "go005-sender-b",
+		Type:     "group_message",
+		KeyEpoch: 7,
+	}
+
+	for i := 0; i < 50; i++ {
+		n.logPubSubValidationReject("non_member", "go005-group-a", pidA, envA)
+	}
+	assertGO005ValidationRejectTotals(t, collector, map[string]int{"non_member": 1})
+	if got := countLP002RejectLogs(logs.String(), "non_member"); got != 1 {
+		t.Fatalf("repeated same-key rejects emitted %d non_member logs, want 1; logs:\n%s", got, logs.String())
+	}
+
+	n.logPubSubValidationReject("non_member", "go005-group-a", pidB, envA)
+	n.logPubSubValidationReject("non_member", "go005-group-a", pidA, envB)
+	n.logPubSubValidationReject("non_member", "go005-group-b", pidA, envA)
+	n.logPubSubValidationReject("missing_key", "go005-group-a", pidA, envA)
+	for i := 0; i < 10; i++ {
+		n.logPubSubValidationReject("missing_key", "go005-group-a", pidA, envA)
+	}
+
+	assertGO005ValidationRejectTotals(t, collector, map[string]int{
+		"non_member":  4,
+		"missing_key": 1,
+	})
+	if got := countLP002RejectLogs(logs.String(), "non_member"); got != 4 {
+		t.Fatalf("non_member logs after distinct transport/sender/group = %d, want 4; logs:\n%s", got, logs.String())
+	}
+	if got := countLP002RejectLogs(logs.String(), "missing_key"); got != 1 {
+		t.Fatalf("repeated same-key missing_key rejects emitted %d logs, want 1; logs:\n%s", got, logs.String())
+	}
+
+	now = now.Add(pubsubAuthorizationRejectDiagnosticWindow + time.Nanosecond)
+	n.logPubSubValidationReject("non_member", "go005-group-a", pidA, envA)
+	assertGO005ValidationRejectTotals(t, collector, map[string]int{
+		"non_member":  5,
+		"missing_key": 1,
+	})
+	if got := countLP002RejectLogs(logs.String(), "non_member"); got != 5 {
+		t.Fatalf("same diagnostic key after rate-limit window emitted %d non_member logs, want 5 total; logs:\n%s", got, logs.String())
+	}
+}
+
 func TestER001InvalidSignatureDiagnosticsArePrivacySafeAndActionable(t *testing.T) {
 	adminPriv, adminPub := generateEd25519KeyPair(t)
 	attackerPriv, attackerPub := generateEd25519KeyPair(t)
@@ -462,6 +706,195 @@ func TestER001InvalidSignatureDiagnosticsArePrivacySafeAndActionable(t *testing.
 	}
 }
 
+func TestGA026ValidationRejectDiagnosticsArePrivacySafeForAllReasons(t *testing.T) {
+	transportPeerId := generatePeerIDStr(t)
+	localPeerId := generatePeerIDStr(t)
+	transportPID, err := peer.Decode(transportPeerId)
+	if err != nil {
+		t.Fatalf("decode transport peer ID: %v", err)
+	}
+
+	groupId := "ga026-sensitive-group-id-must-not-leak"
+	envGroupId := "ga026-sensitive-envelope-group-id-must-not-leak"
+	senderId := "ga026-sensitive-sender-id-must-not-leak"
+	env := &internal.GroupEnvelope{
+		Version:               "3",
+		Type:                  "group_message",
+		GroupId:               envGroupId,
+		MessageId:             "ga026-sensitive-message-id-must-not-leak",
+		SenderId:              senderId,
+		SenderDeviceId:        "ga026-sensitive-device-id-must-not-leak",
+		SenderTransportPeerId: transportPeerId,
+		SenderDevicePublicKey: "ga026-sensitive-device-public-key-must-not-leak",
+		SenderKeyPackageId:    "ga026-sensitive-key-package-id-must-not-leak",
+		SenderPublicKey:       "ga026-sensitive-sender-public-key-must-not-leak",
+		Signature:             "ga026-sensitive-signature-must-not-leak",
+		KeyEpoch:              26,
+		Encrypted: internal.GroupEncryptedPayload{
+			Ciphertext: "ga026-sensitive-ciphertext-must-not-leak",
+			Nonce:      "ga026-sensitive-nonce-must-not-leak",
+		},
+	}
+
+	collector := &testEventCollector{}
+	n := New(collector)
+	n.peerId = localPeerId
+	now := time.Date(2026, 5, 13, 21, 30, 0, 0, time.UTC)
+	n.pubsubRejectDiagNow = func() time.Time { return now }
+	logs := captureLP002ValidatorLogs(t)
+
+	cases := []struct {
+		reason       string
+		env          *internal.GroupEnvelope
+		wantSender   string
+		wantType     string
+		wantKeyEpoch float64
+	}{
+		{reason: "not_v3_envelope", env: nil, wantSender: "", wantType: "unknown", wantKeyEpoch: 0},
+		{reason: "invalid_envelope", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "group_mismatch", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "peer_mismatch", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "unknown_group", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "ambiguous_signing_key", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "ambiguous_transport_peer", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "non_member", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "unbound_device", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "unauthorized_writer", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "missing_key", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+		{reason: "bad_signature_or_epoch", env: env, wantSender: senderId, wantType: "group_message", wantKeyEpoch: 26},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.reason, func(t *testing.T) {
+			beforeEvents := len(collector.snapshot())
+			beforeLogs := countLP002RejectLogs(logs.String(), tc.reason)
+			n.logPubSubValidationReject(tc.reason, groupId, transportPID, tc.env)
+			now = now.Add(pubsubAuthorizationRejectDiagnosticWindow + time.Nanosecond)
+
+			if got := countLP002RejectLogs(logs.String(), tc.reason) - beforeLogs; got != 1 {
+				t.Fatalf("diagnostic logs added for %s = %d, want 1; logs:\n%s", tc.reason, got, logs.String())
+			}
+
+			events := collector.snapshot()
+			if got := len(events) - beforeEvents; got != 1 {
+				t.Fatalf("diagnostic events added for %s = %d, want 1; events:\n%s", tc.reason, got, strings.Join(events, "\n"))
+			}
+
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(events[len(events)-1]), &payload); err != nil {
+				t.Fatalf("decode diagnostic event: %v", err)
+			}
+			if payload["event"] != "group:validation_rejected" {
+				t.Fatalf("event = %v, want group:validation_rejected", payload["event"])
+			}
+			data, ok := payload["data"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("event data has type %T, want object", payload["data"])
+			}
+
+			assertGA026DiagnosticKeys(t, data)
+			if got := data["reason"]; got != tc.reason {
+				t.Fatalf("event reason = %v, want %s", got, tc.reason)
+			}
+			if got := data["envelopeType"]; got != tc.wantType {
+				t.Fatalf("event envelopeType = %v, want %s", got, tc.wantType)
+			}
+			if got := data["keyEpoch"]; got != tc.wantKeyEpoch {
+				t.Fatalf("event keyEpoch = %v, want %v", got, tc.wantKeyEpoch)
+			}
+			assertGA026DiagnosticHash(t, data, "groupHash", pubsubAuthorizationRejectHash(groupId))
+			assertGA026DiagnosticHash(t, data, "senderHash", pubsubAuthorizationRejectHash(tc.wantSender))
+			assertGA026DiagnosticHash(t, data, "transportPeerHash", pubsubAuthorizationRejectHash(transportPeerId))
+			assertGA026DiagnosticHash(t, data, "localPeerHash", pubsubAuthorizationRejectHash(localPeerId))
+		})
+	}
+
+	rawEvents := strings.Join(collector.snapshot(), "\n")
+	rawLogs := logs.String()
+	assertGA026DiagnosticsOmitSensitive(t, rawEvents, rawLogs, []string{
+		groupId,
+		envGroupId,
+		senderId,
+		transportPeerId,
+		localPeerId,
+		env.MessageId,
+		env.SenderDeviceId,
+		env.SenderDevicePublicKey,
+		env.SenderKeyPackageId,
+		env.SenderPublicKey,
+		env.Signature,
+		env.Encrypted.Ciphertext,
+		env.Encrypted.Nonce,
+		"GA026 plaintext marker must not leak",
+	})
+	for _, label := range []string{"groupHash=", "senderHash=", "transportPeerHash=", "localPeerHash="} {
+		if !strings.Contains(rawLogs, label) {
+			t.Fatalf("diagnostic logs missing %s; logs:\n%s", label, rawLogs)
+		}
+	}
+}
+
+func assertGA026DiagnosticKeys(t *testing.T, data map[string]interface{}) {
+	t.Helper()
+
+	allowed := map[string]struct{}{
+		"reason":            {},
+		"groupHash":         {},
+		"senderHash":        {},
+		"transportPeerHash": {},
+		"localPeerHash":     {},
+		"envelopeType":      {},
+		"keyEpoch":          {},
+	}
+	if len(data) != len(allowed) {
+		t.Fatalf("event data keys = %v, want only %v", data, allowed)
+	}
+	for key := range data {
+		if _, ok := allowed[key]; !ok {
+			t.Fatalf("event data contains disallowed key %q in %v", key, data)
+		}
+	}
+}
+
+func assertGA026DiagnosticHash(t *testing.T, data map[string]interface{}, key, want string) {
+	t.Helper()
+
+	got, ok := data[key].(string)
+	if !ok {
+		t.Fatalf("event data[%s] = %v (%T), want string", key, data[key], data[key])
+	}
+	if got != want {
+		t.Fatalf("event data[%s] = %q, want %q", key, got, want)
+	}
+	if got == "none" {
+		return
+	}
+	if len(got) != pubsubAuthorizationRejectHashLength {
+		t.Fatalf("event data[%s] = %q, want %d-char truncated hash", key, got, pubsubAuthorizationRejectHashLength)
+	}
+	for _, r := range got {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			t.Fatalf("event data[%s] = %q, want lowercase hex hash", key, got)
+		}
+	}
+}
+
+func assertGA026DiagnosticsOmitSensitive(t *testing.T, rawEvents, rawLogs string, fragments []string) {
+	t.Helper()
+
+	for _, fragment := range fragments {
+		if fragment == "" {
+			continue
+		}
+		if strings.Contains(rawEvents, fragment) {
+			t.Fatalf("GA-026 diagnostic event leaked sensitive fragment %q in events: %s", fragment, rawEvents)
+		}
+		if strings.Contains(rawLogs, fragment) {
+			t.Fatalf("GA-026 diagnostic log leaked sensitive fragment %q in logs: %s", fragment, rawLogs)
+		}
+	}
+}
+
 type lp002LogBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -504,6 +937,41 @@ func resetLP002RejectDiagnostics(nodes ...*Node) {
 
 func countLP002RejectLogs(logs, reason string) int {
 	return strings.Count(logs, "Validator: authorization reject reason="+reason)
+}
+
+func assertGO005ValidationRejectTotals(t *testing.T, collector *testEventCollector, want map[string]int) {
+	t.Helper()
+
+	got := make(map[string]int)
+	for _, raw := range collector.snapshot() {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("decode emitted event %q: %v", raw, err)
+		}
+		if payload["event"] != "group:validation_rejected" {
+			t.Fatalf("unexpected event in GO-005 collector: %s", raw)
+		}
+		data, ok := payload["data"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("validation_rejected event missing data object: %s", raw)
+		}
+		reason, ok := data["reason"].(string)
+		if !ok || reason == "" {
+			t.Fatalf("validation_rejected event missing reason: %s", raw)
+		}
+		got[reason]++
+	}
+
+	for reason, wantCount := range want {
+		if got[reason] != wantCount {
+			t.Fatalf("validation_rejected count for %s = %d, want %d; all counts=%v", reason, got[reason], wantCount, got)
+		}
+	}
+	for reason, gotCount := range got {
+		if _, ok := want[reason]; !ok {
+			t.Fatalf("unexpected validation_rejected reason %s count=%d; all counts=%v", reason, gotCount, got)
+		}
+	}
 }
 
 func waitForLP002RejectLogCount(t *testing.T, logs *lp002LogBuffer, reason string, want int, timeout time.Duration) {

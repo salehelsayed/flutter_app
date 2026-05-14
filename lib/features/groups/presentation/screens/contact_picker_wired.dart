@@ -200,6 +200,12 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       }
       if (addedMembers.isEmpty) throw StateError('No members could be added');
 
+      await recordPendingGroupInviteFanoutAttempts(
+        inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+        groupId: widget.groupId,
+        members: addedMembers,
+      );
+
       // 2. Build full GroupConfig and update Go topic validator ONCE
       final group = await widget.groupRepo.getGroup(widget.groupId);
       final allMembers = await widget.groupRepo.getMembers(widget.groupId);
@@ -216,6 +222,10 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
       } catch (e) {
         for (final member in addedMembers) {
           await widget.groupRepo.removeMember(widget.groupId, member.peerId);
+          await widget.inviteDeliveryAttemptRepo?.deleteAttempt(
+            groupId: widget.groupId,
+            peerId: member.peerId,
+          );
         }
         emitFlowEvent(
           layer: 'FL',

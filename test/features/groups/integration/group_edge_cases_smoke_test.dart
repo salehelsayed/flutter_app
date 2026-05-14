@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
@@ -12,6 +13,19 @@ void main() {
 
   Future<void> pump([Duration d = const Duration(milliseconds: 50)]) =>
       Future.delayed(d);
+
+  Future<void> waitUntil(
+    Future<bool> Function() condition, {
+    int maxTicks = 80,
+    Duration interval = const Duration(milliseconds: 25),
+    String? reason,
+  }) async {
+    for (var i = 0; i < maxTicks; i++) {
+      if (await condition()) return;
+      await Future<void>.delayed(interval);
+    }
+    fail(reason ?? 'Timed out waiting for condition');
+  }
 
   group('Group edge cases and fault injection smoke tests', () {
     // ---------------------------------------------------------------
@@ -333,6 +347,211 @@ void main() {
       admin.dispose();
       bob.dispose();
     });
+
+    test(
+      'GP-028 high-volume burst keeps entitlement windows exact while adding and removing Diana',
+      () async {
+        const groupId = 'grp-gp028-burst-mutation';
+        const totalMessages = 120;
+        const addDianaAt = 30;
+        const removeDianaAt = 90;
+        final baseTime = DateTime.utc(2024, 1, 1);
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-gp028-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-gp028-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-gp028-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        final diana = GroupTestUser.create(
+          peerId: 'peer-gp028-diana',
+          username: 'Diana',
+          network: network,
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        diana.start();
+
+        await alice.createGroup(groupId: groupId, name: 'GP-028 Burst Group');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+
+        String messageIdFor(int index) =>
+            'gp028-burst-${index.toString().padLeft(3, '0')}';
+        String messageTextFor(int index) =>
+            'GP-028 burst ${index.toString().padLeft(3, '0')}';
+
+        for (var i = 0; i < totalMessages; i++) {
+          if (i == addDianaAt) {
+            await alice.addMember(
+              groupId: groupId,
+              invitee: diana,
+              joinedAt: baseTime.add(const Duration(seconds: addDianaAt)),
+            );
+            await alice.broadcastMemberAdded(
+              groupId: groupId,
+              newMember: diana,
+            );
+          }
+
+          if (i == removeDianaAt) {
+            await alice.removeMember(
+              groupId: groupId,
+              memberPeerId: diana.peerId,
+              memberUsername: diana.username,
+              removedAt: baseTime.add(const Duration(seconds: removeDianaAt)),
+            );
+          }
+
+          await alice.sendGroupMessage(
+            groupId: groupId,
+            text: messageTextFor(i),
+            messageId: messageIdFor(i),
+            timestamp: baseTime.add(Duration(seconds: i, milliseconds: 1)),
+          );
+        }
+
+        const burstPageLimit = totalMessages + 10;
+        Future<List<GroupMessage>> loadBurstMessages(GroupTestUser user) async {
+          final messages = await user.msgRepo.getMessagesPage(
+            groupId,
+            limit: burstPageLimit,
+          );
+          return messages
+              .where((message) => message.id.startsWith('gp028-burst-'))
+              .toList();
+        }
+
+        var bobBurstCount = 0;
+        var charlieBurstCount = 0;
+        var dianaBurstCount = 0;
+        var settled = false;
+        for (var tick = 0; tick < 400; tick++) {
+          bobBurstCount = (await loadBurstMessages(bob)).length;
+          charlieBurstCount = (await loadBurstMessages(charlie)).length;
+          dianaBurstCount = (await loadBurstMessages(diana)).length;
+          if (bobBurstCount == totalMessages &&
+              charlieBurstCount == totalMessages &&
+              dianaBurstCount == removeDianaAt - addDianaAt) {
+            settled = true;
+            break;
+          }
+          await pump(const Duration(milliseconds: 25));
+        }
+        expect(
+          settled,
+          isTrue,
+          reason:
+              'GP-028 burst deliveries did not settle: '
+              'Bob=$bobBurstCount/$totalMessages, '
+              'Charlie=$charlieBurstCount/$totalMessages, '
+              'Diana=$dianaBurstCount/${removeDianaAt - addDianaAt}',
+        );
+
+        Future<void> expectBurstWindow(
+          GroupTestUser user, {
+          required Iterable<int> expectedIndexes,
+          required bool incoming,
+        }) async {
+          final expectedIds = expectedIndexes.map(messageIdFor).toSet();
+          final messages = await loadBurstMessages(user);
+          final ids = messages.map((message) => message.id).toList();
+
+          expect(
+            ids,
+            hasLength(expectedIds.length),
+            reason: '${user.username} should have the expected burst count',
+          );
+          expect(
+            ids.toSet(),
+            expectedIds,
+            reason: '${user.username} should have exactly the expected ids',
+          );
+          expect(
+            ids.toSet(),
+            hasLength(ids.length),
+            reason: '${user.username} should not have duplicate burst ids',
+          );
+          expect(
+            messages.every((message) => message.isIncoming == incoming),
+            isTrue,
+            reason: '${user.username} message direction should match role',
+          );
+
+          for (final index in expectedIndexes) {
+            final matching = messages
+                .where(
+                  (message) =>
+                      message.id == messageIdFor(index) &&
+                      message.text == messageTextFor(index),
+                )
+                .toList();
+            expect(
+              matching,
+              hasLength(1),
+              reason:
+                  '${user.username} should have ${messageIdFor(index)} exactly once',
+            );
+          }
+        }
+
+        final allIndexes = List<int>.generate(totalMessages, (i) => i);
+        final dianaWindow = List<int>.generate(
+          removeDianaAt - addDianaAt,
+          (i) => addDianaAt + i,
+        );
+
+        await expectBurstWindow(
+          alice,
+          expectedIndexes: allIndexes,
+          incoming: false,
+        );
+        await expectBurstWindow(
+          bob,
+          expectedIndexes: allIndexes,
+          incoming: true,
+        );
+        await expectBurstWindow(
+          charlie,
+          expectedIndexes: allIndexes,
+          incoming: true,
+        );
+        await expectBurstWindow(
+          diana,
+          expectedIndexes: dianaWindow,
+          incoming: true,
+        );
+
+        final dianaMessages = await loadBurstMessages(diana);
+        expect(
+          dianaMessages.any(
+            (message) =>
+                message.id.startsWith('gp028-burst-') &&
+                int.parse(message.id.substring('gp028-burst-'.length)) >=
+                    removeDianaAt,
+          ),
+          isFalse,
+          reason: 'Diana must not receive burst messages after removal cutoff',
+        );
+        expect(network.isSubscribed(groupId, diana.peerId), isFalse);
+
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+        diana.dispose();
+      },
+    );
 
     // ---------------------------------------------------------------
     // 7. Network counters track publish and delivery correctly

@@ -309,23 +309,46 @@ Future<void> _drainGroupInbox({
             'error': error.reason,
           },
         );
+        if (error.reason == 'revoked_device') {
+          return true;
+        }
         throw error;
       }
 
       var placeholderSaved = false;
-      if (_isMissingGroupReplayKeyError(error) &&
-          pendingKeyRepairRepo != null) {
+      if (_isMissingGroupReplayKeyError(error)) {
         final replayEnvelope = _tryDecodeReplayEnvelope(msg['message']);
         if (replayEnvelope != null) {
-          placeholderSaved = await queueMissingGroupReplayKeyRepairFromEnvelope(
-            pendingKeyRepairRepo: pendingKeyRepairRepo,
-            msgRepo: msgRepo,
+          final staleEpoch = await _resolveStaleReplayEpoch(
+            groupRepo: groupRepo,
             groupId: groupId,
-            relayEnvelope: msg,
             replayEnvelope: replayEnvelope,
-            requestGroupKeyRepair:
-                requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
           );
+          if (staleEpoch != null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_DRAIN_OFFLINE_INBOX_STALE_REPLAY_EPOCH_SKIPPED',
+              details: {
+                'groupId': _safeId(groupId),
+                'keyEpoch': staleEpoch.keyEpoch,
+                'latestKeyGeneration': staleEpoch.latestKeyGeneration,
+                'minAcceptedKeyGeneration': staleEpoch.minAcceptedKeyGeneration,
+              },
+            );
+            return true;
+          }
+          if (pendingKeyRepairRepo != null) {
+            placeholderSaved =
+                await queueMissingGroupReplayKeyRepairFromEnvelope(
+                  pendingKeyRepairRepo: pendingKeyRepairRepo,
+                  msgRepo: msgRepo,
+                  groupId: groupId,
+                  relayEnvelope: msg,
+                  replayEnvelope: replayEnvelope,
+                  requestGroupKeyRepair:
+                      requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
+                );
+          }
         }
       }
       if (!placeholderSaved) {
@@ -344,6 +367,55 @@ Future<void> _drainGroupInbox({
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'error': error.toString(),
           'placeholderSaved': placeholderSaved,
+        },
+      );
+      return true;
+    }
+
+    Future<bool> shouldSkipPreJoinReplay(Map<String, dynamic> msg) async {
+      final normalizedSelfPeerId = selfPeerId?.trim();
+      if (normalizedSelfPeerId == null || normalizedSelfPeerId.isEmpty) {
+        return false;
+      }
+
+      final replayEnvelope = _tryDecodeReplayEnvelope(msg['message']);
+      if (replayEnvelope == null ||
+          !isGroupOfflineReplayEnvelope(replayEnvelope)) {
+        return false;
+      }
+
+      final payloadType =
+          replayEnvelope['payloadType'] as String? ??
+          groupOfflineReplayPayloadTypeMessage;
+      if (payloadType != groupOfflineReplayPayloadTypeMessage) {
+        return false;
+      }
+
+      final relayTimestamp = _tryParseRelayTimestamp(msg['timestamp']);
+      if (relayTimestamp == null) {
+        return false;
+      }
+
+      final selfMember = await groupRepo.getMember(
+        groupId,
+        normalizedSelfPeerId,
+      );
+      final selfJoinedAt = selfMember?.joinedAt.toUtc();
+      if (selfJoinedAt == null || !relayTimestamp.isBefore(selfJoinedAt)) {
+        return false;
+      }
+
+      final messageId = (replayEnvelope['messageId'] as String?)?.trim();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_DRAIN_OFFLINE_INBOX_PRE_JOIN_REPLAY_SKIPPED',
+        details: {
+          'groupId': _safeId(groupId),
+          'selfPeerId': _safeId(normalizedSelfPeerId),
+          if (messageId != null && messageId.isNotEmpty)
+            'messageId': _safeId(messageId),
+          'relayTimestamp': relayTimestamp.toIso8601String(),
+          'joinedAt': selfJoinedAt.toIso8601String(),
         },
       );
       return true;
@@ -543,10 +615,12 @@ Future<void> _drainGroupInbox({
             ? effectiveTransportPeerId
             : null,
         senderDeviceId: senderDeviceId,
+        selfPeerId: selfPeerId,
         messageId: wireMessageId,
         quotedMessageId: payload['quotedMessageId'] as String?,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        enforceSelfJoinedAtLowerBound: true,
       );
       // Re-derive the local-delivered receipt even when the message dedup'd
       // (handleIncomingGroupMessage returns null on dedup). Without this, a
@@ -595,6 +669,9 @@ Future<void> _drainGroupInbox({
     for (final msg in messages) {
       Map<String, dynamic> payload;
       try {
+        if (await shouldSkipPreJoinReplay(msg)) {
+          continue;
+        }
         payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
       } catch (e) {
         await handleDecodeError(e, msg, allowUnknownSenderDeferral: true);
@@ -608,6 +685,9 @@ Future<void> _drainGroupInbox({
       for (final msg in deferredUnknownSenderMessages) {
         Map<String, dynamic> payload;
         try {
+          if (await shouldSkipPreJoinReplay(msg)) {
+            continue;
+          }
           payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
         } catch (e) {
           await handleDecodeError(e, msg, allowUnknownSenderDeferral: false);
@@ -952,6 +1032,7 @@ Future<void> _repairHistoryGapsFromPage({
         messages: repairResult.messages,
         groupMessageListener: groupMessageListener,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        selfPeerId: selfPeerId,
       );
 
       if (repairedMessageIds.length != repairResult.messages.length) {
@@ -1022,6 +1103,7 @@ Future<List<String>> _applyRepairedHistoryMessages({
   required List<Map<String, dynamic>> messages,
   GroupMessageListener? groupMessageListener,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  String? selfPeerId,
 }) async {
   final appliedMessageIds = <String>[];
 
@@ -1101,10 +1183,12 @@ Future<List<String>> _applyRepairedHistoryMessages({
             ? effectiveTransportPeerId
             : null,
         senderDeviceId: senderDeviceId,
+        selfPeerId: selfPeerId,
         messageId: messageId,
         quotedMessageId: payload['quotedMessageId'] as String?,
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
+        enforceSelfJoinedAtLowerBound: true,
       );
     }
 
@@ -1279,6 +1363,34 @@ Future<bool> _persistUndecryptablePlaceholderFromEnvelope({
 
 bool _isMissingGroupReplayKeyError(Object error) {
   return error.toString().contains('Missing group replay key');
+}
+
+Future<({int keyEpoch, int latestKeyGeneration, int minAcceptedKeyGeneration})?>
+_resolveStaleReplayEpoch({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required Map<String, dynamic> replayEnvelope,
+}) async {
+  if (!isGroupOfflineReplayEnvelope(replayEnvelope)) {
+    return null;
+  }
+  final keyEpoch = replayEnvelope['keyEpoch'] as int;
+  final latestKey = await groupRepo.getLatestKey(groupId);
+  final latestKeyGeneration = latestKey?.keyGeneration;
+  if (latestKeyGeneration == null) {
+    return null;
+  }
+
+  final minAcceptedKeyGeneration = latestKeyGeneration - 1;
+  if (keyEpoch >= minAcceptedKeyGeneration) {
+    return null;
+  }
+
+  return (
+    keyEpoch: keyEpoch,
+    latestKeyGeneration: latestKeyGeneration,
+    minAcceptedKeyGeneration: minAcceptedKeyGeneration,
+  );
 }
 
 Future<bool> _isUnknownSenderForDeletedLocalGroup({

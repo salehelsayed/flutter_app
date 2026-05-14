@@ -49,7 +49,7 @@ type Node struct {
 	eventSub       event.Subscription
 	connections    map[string]connectionInfo
 	relayReady     chan struct{}
-	relayReadyOnce sync.Once
+	relayReadyOnce *sync.Once
 	startedAt      time.Time   // for startup timing instrumentation
 	lastConfig     *NodeConfig // saved for Restart()
 
@@ -77,6 +77,8 @@ type Node struct {
 	waitForCircuitAddressHook          func(time.Duration) bool
 	rendezvousRegisterHook             func(string, []string) error
 	rendezvousDiscoverHook             func(string, []string) ([]peer.AddrInfo, error)
+	rendezvousUnregisterHook           func(string, []string) error
+	dialPeerViaRelayHook               func(string) error
 	refreshRelaySessionHook            func() *RecoveryResult
 	openChatStreamHook                 func(context.Context, host.Host, peer.ID) (network.Stream, error)
 	recoverPeerForSendHook             func(host.Host, peer.ID, string, time.Duration) error
@@ -175,6 +177,7 @@ func NewNode() *Node {
 	return &Node{
 		connections:           make(map[string]connectionInfo),
 		relaySessionMgr:       NewRelaySessionManager(),
+		relayReadyOnce:        &sync.Once{},
 		groupDialBackoff:      make(map[string]groupPeerDialState),
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
 		pubsubRejectDiagLast:  make(map[string]time.Time),
@@ -188,6 +191,7 @@ func New(cb EventCallback) *Node {
 		connections:           make(map[string]connectionInfo),
 		eventCallback:         cb,
 		relaySessionMgr:       NewRelaySessionManager(),
+		relayReadyOnce:        &sync.Once{},
 		groupDialBackoff:      make(map[string]groupPeerDialState),
 		groupRecoverySem:      make(chan struct{}, GroupDiscoveryConcurrency),
 		pubsubRejectDiagLast:  make(map[string]time.Time),
@@ -353,6 +357,7 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 
 	// Register chat message handler
 	h.SetStreamHandler(ChatProtocol, n.handleIncomingMessage)
+	h.SetStreamHandler(GroupValidationFeedbackProtocol, n.handleGroupValidationFeedback)
 
 	// Subscribe to connection and address events
 	sub, err := h.EventBus().Subscribe([]interface{}{
@@ -363,12 +368,13 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 		log.Printf("[NODE] Failed to subscribe to events: %v", err)
 	} else {
 		n.eventSub = sub
-		go n.watchConnectionEvents()
+		go n.watchConnectionEvents(sub)
 	}
 
 	n.isStarted = true
 	n.startedAt = time.Now()
 	n.relayReady = make(chan struct{})
+	n.relayReadyOnce = &sync.Once{}
 	n.personalRendezvousRegistering.Store(false)
 
 	// Phase 4: Initialize event dispatcher for async delivery.
@@ -386,13 +392,15 @@ func (n *Node) Start(cfg NodeConfig) (*NodeState, error) {
 	// Each relayInfo may contain multiple addresses (e.g. WSS + QUIC) for
 	// the same peer — host.Connect() tries all addresses internally.
 	relayWarmStart := time.Now()
+	relayReadyCh := n.relayReady
+	relayReadyOnce := n.relayReadyOnce
 	go func() {
 		for _, info := range relayInfos {
 			go func(ri peer.AddrInfo) {
 				if err := n.warmRelayConnectionForStart(ri); err != nil {
 					log.Printf("[NODE] relay dial FAILED (%s): %v", ri.ID.String()[:min(20, len(ri.ID.String()))], err)
 				} else {
-					n.relayReadyOnce.Do(func() { close(n.relayReady) })
+					relayReadyOnce.Do(func() { close(relayReadyCh) })
 				}
 			}(info)
 		}
@@ -481,7 +489,7 @@ func (n *Node) Stop() error {
 	n.eventSub = nil
 	n.groupDialBackoff = make(map[string]groupPeerDialState)
 	n.groupRecoverySem = make(chan struct{}, GroupDiscoveryConcurrency)
-	n.relayReadyOnce = sync.Once{} // reset so next Start() can use it
+	n.relayReadyOnce = &sync.Once{} // reset so next Start() can use it
 	n.featureFlags = nil
 	n.personalRendezvousRegistering.Store(false)
 
@@ -1042,6 +1050,9 @@ func (n *Node) DialPeer(peerIdStr string, addresses []string) error {
 // determine if a peer is online without a full discover/dial cycle.
 // Tries each configured relay in order until one succeeds.
 func (n *Node) DialPeerViaRelay(peerIdStr string) error {
+	if n.dialPeerViaRelayHook != nil {
+		return n.dialPeerViaRelayHook(peerIdStr)
+	}
 	return n.dialPeerViaRelayWithTimeout(peerIdStr, RelayProbeTimeout)
 }
 
@@ -1537,8 +1548,11 @@ func (n *Node) rendezvousRegisterForStart(namespace string, serverAddresses []st
 }
 
 // watchConnectionEvents monitors peer connect/disconnect and address events.
-func (n *Node) watchConnectionEvents() {
-	for ev := range n.eventSub.Out() {
+func (n *Node) watchConnectionEvents(sub event.Subscription) {
+	if sub == nil {
+		return
+	}
+	for ev := range sub.Out() {
 		switch e := ev.(type) {
 		case event.EvtPeerConnectednessChanged:
 			pid := e.Peer.String()

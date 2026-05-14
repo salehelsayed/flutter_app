@@ -40,6 +40,8 @@ class GoBridgeClient extends Bridge {
     'group_message:received',
     'group:decryption_failed',
     'group:payload_parse_failed',
+    'group:validation_rejected',
+    'group:publish_validation_rejected',
     'group:discovery',
     'group:publish_debug',
     'group:dispatcher_pressure',
@@ -262,7 +264,38 @@ class GoBridgeClient extends Bridge {
     if (eventName == null || !_rawFlowPassthroughEvents.contains(eventName)) {
       return;
     }
-    emitFlowEvent(layer: 'GO', event: eventName, details: eventData);
+    emitFlowEvent(
+      layer: 'GO',
+      event: eventName,
+      details: _rawGoFlowEventDetails(eventName, eventData),
+    );
+  }
+
+  Map<String, dynamic> _rawGoFlowEventDetails(
+    String eventName,
+    Map<String, dynamic> eventData,
+  ) {
+    if (eventName != 'group_message:received') return eventData;
+
+    final text = eventData['text'];
+    final media = eventData['media'];
+    return {
+      if (eventData.containsKey('groupId')) 'groupId': eventData['groupId'],
+      if (eventData.containsKey('senderId')) 'senderId': eventData['senderId'],
+      if (eventData.containsKey('senderDeviceId'))
+        'senderDeviceId': eventData['senderDeviceId'],
+      if (eventData.containsKey('transportPeerId'))
+        'transportPeerId': eventData['transportPeerId'],
+      if (eventData.containsKey('messageId'))
+        'messageId': eventData['messageId'],
+      if (eventData.containsKey('keyEpoch')) 'keyEpoch': eventData['keyEpoch'],
+      if (eventData.containsKey('decryptMs'))
+        'decryptMs': eventData['decryptMs'],
+      if (eventData.containsKey('deliveryMs'))
+        'deliveryMs': eventData['deliveryMs'],
+      if (text is String) 'textLength': text.length,
+      if (media is List) 'mediaCount': media.length,
+    };
   }
 
   /// Handle push events from the Go layer.
@@ -392,6 +425,7 @@ class GoBridgeClient extends Bridge {
         case 'group:decryption_failed':
         case 'group:payload_parse_failed':
         case 'group:validation_rejected':
+        case 'group:publish_validation_rejected':
         case 'group:discovery':
         case 'group:publish_debug':
         case 'group:dispatcher_pressure':
@@ -399,6 +433,7 @@ class GoBridgeClient extends Bridge {
           if (eventName == 'group:decryption_failed' ||
               eventName == 'group:payload_parse_failed' ||
               eventName == 'group:validation_rejected' ||
+              eventName == 'group:publish_validation_rejected' ||
               eventName == 'group:dispatcher_pressure' ||
               eventName == 'group:dispatcher_overflow') {
             emitGroupDiagnosticEvent(eventName!, eventData);

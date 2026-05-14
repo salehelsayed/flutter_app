@@ -211,6 +211,52 @@ List<String> _parseDevices(List<String> args) {
 
 List<String> _scenariosToRun(String scenario) {
   switch (scenario) {
+    case 'ge001':
+      return const <String>['ge001'];
+    case 'ge002':
+      return const <String>['ge002'];
+    case 'ge003':
+      return const <String>['ge003'];
+    case 'ge004':
+      return const <String>['ge004'];
+    case 'ge005':
+      return const <String>['ge005'];
+    case 'ge006':
+      return const <String>['ge006'];
+    case 'ge007':
+      return const <String>['ge007'];
+    case 'ge008':
+      return const <String>['ge008'];
+    case 'ge009':
+      return const <String>['ge009'];
+    case 'ge010':
+      return const <String>['ge010'];
+    case 'go001':
+      return const <String>['go001'];
+    case 'go002':
+      return const <String>['go002'];
+    case 'go003':
+      return const <String>['go003'];
+    case 'ge011':
+      return const <String>['ge011'];
+    case 'ge012':
+      return const <String>['ge012'];
+    case 'ge013':
+      return const <String>['ge013'];
+    case 'ge014':
+      return const <String>['ge014'];
+    case 'ge015':
+      return const <String>['ge015'];
+    case 'ge016':
+      return const <String>['ge016'];
+    case 'ge020':
+      return const <String>['ge020'];
+    case 'ge021':
+      return const <String>['ge021'];
+    case 'ge023':
+      return const <String>['ge023'];
+    case 'ge024':
+      return const <String>['ge024'];
     case 'gm001':
       return const <String>['gm001'];
     case 'gm002':
@@ -225,14 +271,326 @@ List<String> _scenariosToRun(String scenario) {
       return const <String>['gm006'];
     case 'gm007':
       return const <String>['gm007'];
+    case 'gm008':
+      return const <String>['gm008'];
+    case 'gm009':
+      return const <String>['gm009'];
+    case 'gm010':
+      return const <String>['gm010'];
+    case 'gm011':
+      return const <String>['gm011'];
+    case 'gm012':
+      return const <String>['gm012'];
+    case 'gm013':
+      return const <String>['gm013'];
+    case 'gm014':
+      return const <String>['gm014'];
+    case 'gm015':
+      return const <String>['gm015'];
+    case 'gm016':
+      return const <String>['gm016'];
+    case 'gm017':
+      return const <String>['gm017'];
+    case 'gm018':
+      return const <String>['gm018'];
+    case 'gm019':
+      return const <String>['gm019'];
+    case 'gm020':
+      return const <String>['gm020'];
+    case 'gm021':
+      return const <String>['gm021'];
+    case 'gm022':
+      return const <String>['gm022'];
+    case 'gm023':
+      return const <String>['gm023'];
+    case 'gm024':
+      return const <String>['gm024'];
+    case 'gm025':
+      return const <String>['gm025'];
+    case 'gm033':
+      return const <String>['gm033'];
+    case 'gm034':
+      return const <String>['gm034'];
+    case 'gm035':
+      return const <String>['gm035'];
     case 'all':
       return const <String>['gm001', 'gm002'];
     default:
       throw ArgumentError.value(
         scenario,
         'scenario',
-        'Expected --scenario gm001, gm002, gm003, gm004, gm005, gm006, gm007, or all',
+        'Expected --scenario ge001, ge002, ge003, ge004, ge005, ge006, ge007, ge008, ge009, ge010, go001, go002, go003, ge011, ge012, ge013, ge014, ge015, ge016, ge020, ge021, ge023, ge024, gm001, gm002, gm003, gm004, gm005, gm006, gm007, gm008, gm009, gm010, gm011, gm012, gm013, gm014, gm015, gm016, gm017, gm018, gm019, gm020, gm021, gm022, gm023, gm024, gm025, gm033, gm034, gm035, or all',
       );
+  }
+}
+
+Future<void> _runGe012Scenario({
+  required List<String> devices,
+  required String relayAddresses,
+}) async {
+  const scenario = 'ge012';
+  final deviceCheck = evaluateDeviceSelection(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  if (!deviceCheck.ok) {
+    throw ArgumentError(deviceCheck.detail);
+  }
+  final roleDevices = roleDeviceMapForScenario(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  final roles = scenarioRequirement(scenario).roles;
+  final runId = DateTime.now().millisecondsSinceEpoch.toString();
+  final sharedDir = await Directory.systemTemp.createTemp(
+    'group_multi_party_${scenario}_',
+  );
+  final processes = <String, Process>{};
+  final logs = <String, IOSink>{};
+  final logPaths = <String, String>{};
+
+  _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
+  _log('ORCH', '$scenario run id: $runId');
+  _log('ORCH', '$scenario ${deviceCheck.detail}');
+
+  Future<void> launchRole(String role, {String? restoreMnemonic}) async {
+    final logPath = '${sharedDir.path}/$role.log';
+    final logSink = File(logPath).openWrite(mode: FileMode.writeOnlyAppend);
+    logs[role] = logSink;
+    logPaths[role] = logPath;
+    final process = await _startHarnessRole(
+      scenario: scenario,
+      role: role,
+      deviceId: roleDevices[role]!,
+      sharedDir: sharedDir,
+      runId: runId,
+      relayAddresses: relayAddresses,
+      restoreMnemonic: restoreMnemonic,
+    );
+    processes[role] = process;
+    _pipeOutput(process.stdout, role.toUpperCase(), logSink);
+    _pipeOutput(process.stderr, '${role.toUpperCase()}-ERR', logSink);
+    await _waitForJson(
+      _signalPath(sharedDir, runId, '${role}_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario/$role identity ready');
+  }
+
+  try {
+    await launchRole('alice');
+    await launchRole('bob');
+    final bobIdentity = await _waitForJson(
+      _signalPath(sharedDir, runId, 'bob_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
+    if (bobMnemonic == null || bobMnemonic.isEmpty) {
+      throw StateError('$scenario Bob primary did not publish a mnemonic');
+    }
+    await launchRole('charlie', restoreMnemonic: bobMnemonic);
+
+    final verdicts = await Future.wait<Map<String, dynamic>>(
+      roles.map(
+        (role) => _waitForVerdictOrExit(
+          process: processes[role]!,
+          path: _verdictPath(sharedDir, runId, role),
+          role: role,
+          logPath: logPaths[role]!,
+        ),
+      ),
+    );
+
+    final criterion = evaluateGroupMultiPartyVerdicts(
+      scenario: scenario,
+      relayAddresses: relayAddresses,
+      verdicts: verdicts,
+    );
+    File(
+      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+    ).writeAsStringSync(
+      jsonEncode(<String, dynamic>{
+        'scenario': scenario,
+        'ok': criterion.ok,
+        'detail': criterion.detail,
+        'sharedDir': sharedDir.path,
+        'roleDevices': roleDevices,
+        'roleVerdicts': {
+          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+        },
+      }),
+    );
+    if (!criterion.ok) {
+      throw StateError(
+        '$scenario verdict validation failed: ${criterion.detail}',
+      );
+    }
+
+    for (final role in roles) {
+      final exitCode = await processes[role]!.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          processes[role]!.kill();
+          return -1;
+        },
+      );
+      if (exitCode != 0) {
+        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
+      }
+    }
+
+    _log('ORCH', '$scenario proof passed: ${criterion.detail}');
+    _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
+    for (final role in roles) {
+      _log('ORCH', '$role log: ${logPaths[role]}');
+      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+    }
+  } finally {
+    for (final entry in processes.entries) {
+      await _stopHarnessProcess(entry.value, '$scenario/${entry.key}');
+    }
+    for (final entry in roleDevices.entries) {
+      await _terminateRunnerApp(entry.value, '$scenario/${entry.key}');
+    }
+    for (final sink in logs.values) {
+      await sink.flush();
+      await sink.close();
+    }
+  }
+}
+
+Future<void> _runGe013Scenario({
+  required List<String> devices,
+  required String relayAddresses,
+}) async {
+  const scenario = 'ge013';
+  final deviceCheck = evaluateDeviceSelection(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  if (!deviceCheck.ok) {
+    throw ArgumentError(deviceCheck.detail);
+  }
+  final roleDevices = roleDeviceMapForScenario(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  final roles = scenarioRequirement(scenario).roles;
+  final runId = DateTime.now().millisecondsSinceEpoch.toString();
+  final sharedDir = await Directory.systemTemp.createTemp(
+    'group_multi_party_${scenario}_',
+  );
+  final processes = <String, Process>{};
+  final logs = <String, IOSink>{};
+  final logPaths = <String, String>{};
+
+  _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
+  _log('ORCH', '$scenario run id: $runId');
+  _log('ORCH', '$scenario ${deviceCheck.detail}');
+
+  Future<void> launchRole(String role, {String? restoreMnemonic}) async {
+    final logPath = '${sharedDir.path}/$role.log';
+    final logSink = File(logPath).openWrite(mode: FileMode.writeOnlyAppend);
+    logs[role] = logSink;
+    logPaths[role] = logPath;
+    final process = await _startHarnessRole(
+      scenario: scenario,
+      role: role,
+      deviceId: roleDevices[role]!,
+      sharedDir: sharedDir,
+      runId: runId,
+      relayAddresses: relayAddresses,
+      restoreMnemonic: restoreMnemonic,
+    );
+    processes[role] = process;
+    _pipeOutput(process.stdout, role.toUpperCase(), logSink);
+    _pipeOutput(process.stderr, '${role.toUpperCase()}-ERR', logSink);
+    await _waitForJson(
+      _signalPath(sharedDir, runId, '${role}_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario/$role identity ready');
+  }
+
+  try {
+    await launchRole('alice');
+    await launchRole('bob');
+    final bobIdentity = await _waitForJson(
+      _signalPath(sharedDir, runId, 'bob_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
+    if (bobMnemonic == null || bobMnemonic.isEmpty) {
+      throw StateError('$scenario Bob primary did not publish a mnemonic');
+    }
+    await launchRole('charlie', restoreMnemonic: bobMnemonic);
+
+    final verdicts = await Future.wait<Map<String, dynamic>>(
+      roles.map(
+        (role) => _waitForVerdictOrExit(
+          process: processes[role]!,
+          path: _verdictPath(sharedDir, runId, role),
+          role: role,
+          logPath: logPaths[role]!,
+        ),
+      ),
+    );
+
+    final criterion = evaluateGroupMultiPartyVerdicts(
+      scenario: scenario,
+      relayAddresses: relayAddresses,
+      verdicts: verdicts,
+    );
+    File(
+      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+    ).writeAsStringSync(
+      jsonEncode(<String, dynamic>{
+        'scenario': scenario,
+        'ok': criterion.ok,
+        'detail': criterion.detail,
+        'sharedDir': sharedDir.path,
+        'roleDevices': roleDevices,
+        'roleVerdicts': {
+          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+        },
+      }),
+    );
+    if (!criterion.ok) {
+      throw StateError(
+        '$scenario verdict validation failed: ${criterion.detail}',
+      );
+    }
+
+    for (final role in roles) {
+      final exitCode = await processes[role]!.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          processes[role]!.kill();
+          return -1;
+        },
+      );
+      if (exitCode != 0) {
+        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
+      }
+    }
+
+    _log('ORCH', '$scenario proof passed: ${criterion.detail}');
+    _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
+    for (final role in roles) {
+      _log('ORCH', '$role log: ${logPaths[role]}');
+      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+    }
+  } finally {
+    for (final entry in processes.entries) {
+      await _stopHarnessProcess(entry.value, '$scenario/${entry.key}');
+    }
+    for (final entry in roleDevices.entries) {
+      await _terminateRunnerApp(entry.value, '$scenario/${entry.key}');
+    }
+    for (final sink in logs.values) {
+      await sink.flush();
+      await sink.close();
+    }
   }
 }
 
@@ -247,6 +605,34 @@ Future<void> _runScenario({
   }
   if (scenario == 'gm005') {
     await _runGm005Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ge006') {
+    await _runGe006Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ge007') {
+    await _runGe007Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ge012') {
+    await _runGe012Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ge013') {
+    await _runGe013Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ge014') {
+    await _runGe014Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ge015') {
+    await _runGe015Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'gm008') {
+    await _runGm008Scenario(devices: devices, relayAddresses: relayAddresses);
     return;
   }
 
@@ -367,11 +753,753 @@ Future<void> _runScenario({
   }
 }
 
-Future<void> _runGm005Scenario({
+Future<void> _runGe014Scenario({
   required List<String> devices,
   required String relayAddresses,
 }) async {
-  const scenario = 'gm005';
+  const scenario = 'ge014';
+  final deviceCheck = evaluateDeviceSelection(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  if (!deviceCheck.ok) {
+    throw ArgumentError(deviceCheck.detail);
+  }
+  final roleDevices = roleDeviceMapForScenario(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  final roles = scenarioRequirement(scenario).roles;
+  final runId = DateTime.now().millisecondsSinceEpoch.toString();
+  final sharedDir = await Directory.systemTemp.createTemp(
+    'group_multi_party_${scenario}_',
+  );
+  final processes = <String, Process>{};
+  final logs = <String, IOSink>{};
+  final logPaths = <String, String>{};
+
+  _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
+  _log('ORCH', '$scenario run id: $runId');
+  _log('ORCH', '$scenario ${deviceCheck.detail}');
+
+  Future<Process> launchRole(
+    String role, {
+    String mode = 'proof',
+    String? restoreMnemonic,
+    String? logLabel,
+  }) async {
+    final label = logLabel ?? role;
+    final logPath = '${sharedDir.path}/$label.log';
+    final logSink = File(logPath).openWrite(mode: FileMode.writeOnlyAppend);
+    logs[label] = logSink;
+    logPaths[label] = logPath;
+    final process = await _startHarnessRole(
+      scenario: scenario,
+      role: role,
+      deviceId: roleDevices[role]!,
+      sharedDir: sharedDir,
+      runId: runId,
+      relayAddresses: relayAddresses,
+      mode: mode,
+      restoreMnemonic: restoreMnemonic,
+    );
+    processes[label] = process;
+    _pipeOutput(process.stdout, label.toUpperCase(), logSink);
+    _pipeOutput(process.stderr, '${label.toUpperCase()}-ERR', logSink);
+    return process;
+  }
+
+  try {
+    for (final role in const <String>['alice', 'bob']) {
+      await launchRole(role);
+      await _waitForJson(
+        _signalPath(sharedDir, runId, '${role}_identity.json'),
+        timeout: const Duration(minutes: 15),
+      );
+      _log('ORCH', '$scenario/$role identity ready');
+    }
+
+    final charlieSeed = await launchRole(
+      'charlie',
+      mode: 'restartSeed',
+      logLabel: 'charlie_seed',
+    );
+    final charlieIdentity = await _waitForJson(
+      _signalPath(sharedDir, runId, 'charlie_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final charlieMnemonic = (charlieIdentity['mnemonic12'] as String?)?.trim();
+    if (charlieMnemonic == null || charlieMnemonic.isEmpty) {
+      throw StateError('ge014 Charlie seed did not publish a mnemonic');
+    }
+    await _waitForJson(
+      _signalPath(
+        sharedDir,
+        runId,
+        'charlie_ge014_persisted_invite_restart_ready.json',
+      ),
+      timeout: const Duration(minutes: 15),
+    );
+    final seedExit = await charlieSeed.exitCode.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        charlieSeed.kill();
+        return -1;
+      },
+    );
+    if (seedExit != 0) {
+      throw StateError('ge014/charlie seed flutter process exitCode=$seedExit');
+    }
+    processes.remove('charlie_seed');
+    await _terminateRunnerApp(
+      roleDevices['charlie']!,
+      '$scenario/charlie-seed',
+    );
+    _log('ORCH', '$scenario/charlie stopped after persisted invite/key');
+
+    await launchRole('charlie', restoreMnemonic: charlieMnemonic);
+    await _waitForSignal(
+      _signalPath(
+        sharedDir,
+        runId,
+        'charlie_ge014_restarted_before_topic_join',
+      ),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario/charlie restart boundary recorded');
+
+    final verdicts = await Future.wait<Map<String, dynamic>>(
+      roles.map(
+        (role) => _waitForVerdictOrExit(
+          process: processes[role]!,
+          path: _verdictPath(sharedDir, runId, role),
+          role: role,
+          logPath: logPaths[role]!,
+        ),
+      ),
+    );
+
+    final criterion = evaluateGroupMultiPartyVerdicts(
+      scenario: scenario,
+      relayAddresses: relayAddresses,
+      verdicts: verdicts,
+    );
+    File(
+      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+    ).writeAsStringSync(
+      jsonEncode(<String, dynamic>{
+        'scenario': scenario,
+        'ok': criterion.ok,
+        'detail': criterion.detail,
+        'sharedDir': sharedDir.path,
+        'roleDevices': roleDevices,
+        'roleVerdicts': {
+          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+        },
+      }),
+    );
+    if (!criterion.ok) {
+      throw StateError(
+        '$scenario verdict validation failed: ${criterion.detail}',
+      );
+    }
+
+    for (final role in roles) {
+      final exitCode = await processes[role]!.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          processes[role]!.kill();
+          return -1;
+        },
+      );
+      if (exitCode != 0) {
+        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
+      }
+    }
+
+    _log('ORCH', '$scenario proof passed: ${criterion.detail}');
+    _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
+    for (final role in roles) {
+      _log('ORCH', '$role log: ${logPaths[role]}');
+      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+    }
+  } finally {
+    for (final process in processes.values) {
+      process.kill();
+    }
+    for (final entry in roleDevices.entries) {
+      await _terminateRunnerApp(entry.value, '$scenario/${entry.key}');
+    }
+    for (final sink in logs.values) {
+      await sink.flush();
+      await sink.close();
+    }
+  }
+}
+
+Future<void> _runGe015Scenario({
+  required List<String> devices,
+  required String relayAddresses,
+}) async {
+  const scenario = 'ge015';
+  final deviceCheck = evaluateDeviceSelection(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  if (!deviceCheck.ok) {
+    throw ArgumentError(deviceCheck.detail);
+  }
+  final roleDevices = roleDeviceMapForScenario(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  final roles = scenarioRequirement(scenario).roles;
+  final runId = DateTime.now().millisecondsSinceEpoch.toString();
+  final sharedDir = await Directory.systemTemp.createTemp(
+    'group_multi_party_${scenario}_',
+  );
+  final processes = <String, Process>{};
+  final logs = <String, IOSink>{};
+  final logPaths = <String, String>{};
+
+  _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
+  _log('ORCH', '$scenario run id: $runId');
+  _log('ORCH', '$scenario ${deviceCheck.detail}');
+
+  Future<Process> launchRole(
+    String role, {
+    String mode = 'proof',
+    String? restoreMnemonic,
+    String? logLabel,
+  }) async {
+    final label = logLabel ?? role;
+    final logPath = '${sharedDir.path}/$label.log';
+    final logSink = File(logPath).openWrite(mode: FileMode.writeOnlyAppend);
+    logs[label] = logSink;
+    logPaths[label] = logPath;
+    final process = await _startHarnessRole(
+      scenario: scenario,
+      role: role,
+      deviceId: roleDevices[role]!,
+      sharedDir: sharedDir,
+      runId: runId,
+      relayAddresses: relayAddresses,
+      mode: mode,
+      restoreMnemonic: restoreMnemonic,
+    );
+    processes[label] = process;
+    _pipeOutput(process.stdout, label.toUpperCase(), logSink);
+    _pipeOutput(process.stderr, '${label.toUpperCase()}-ERR', logSink);
+    return process;
+  }
+
+  try {
+    for (final role in const <String>['bob', 'charlie']) {
+      await launchRole(role);
+      await _waitForJson(
+        _signalPath(sharedDir, runId, '${role}_identity.json'),
+        timeout: const Duration(minutes: 15),
+      );
+      _log('ORCH', '$scenario/$role identity ready');
+    }
+
+    final aliceSeed = await launchRole(
+      'alice',
+      mode: 'restartSeed',
+      logLabel: 'alice_seed',
+    );
+    final aliceIdentity = await _waitForJson(
+      _signalPath(sharedDir, runId, 'alice_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final aliceMnemonic = (aliceIdentity['mnemonic12'] as String?)?.trim();
+    if (aliceMnemonic == null || aliceMnemonic.isEmpty) {
+      throw StateError('ge015 Alice seed did not publish a mnemonic');
+    }
+    await _waitForJson(
+      _signalPath(
+        sharedDir,
+        runId,
+        'alice_ge015_post_remove_restart_ready.json',
+      ),
+      timeout: const Duration(minutes: 15),
+    );
+    final seedExit = await aliceSeed.exitCode.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        aliceSeed.kill();
+        return -1;
+      },
+    );
+    if (seedExit != 0) {
+      throw StateError('ge015/alice seed flutter process exitCode=$seedExit');
+    }
+    processes.remove('alice_seed');
+    await _terminateRunnerApp(roleDevices['alice']!, '$scenario/alice-seed');
+    _log('ORCH', '$scenario/alice stopped before fanout repair');
+
+    await launchRole('alice', restoreMnemonic: aliceMnemonic);
+    await _waitForSignal(
+      _signalPath(
+        sharedDir,
+        runId,
+        'alice_ge015_restarted_before_fanout_repair',
+      ),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario/alice restart boundary recorded');
+
+    final verdicts = await Future.wait<Map<String, dynamic>>(
+      roles.map(
+        (role) => _waitForVerdictOrExit(
+          process: processes[role]!,
+          path: _verdictPath(sharedDir, runId, role),
+          role: role,
+          logPath: logPaths[role]!,
+        ),
+      ),
+    );
+
+    final criterion = evaluateGroupMultiPartyVerdicts(
+      scenario: scenario,
+      relayAddresses: relayAddresses,
+      verdicts: verdicts,
+    );
+    File(
+      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+    ).writeAsStringSync(
+      jsonEncode(<String, dynamic>{
+        'scenario': scenario,
+        'ok': criterion.ok,
+        'detail': criterion.detail,
+        'sharedDir': sharedDir.path,
+        'roleDevices': roleDevices,
+        'roleVerdicts': {
+          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+        },
+      }),
+    );
+    if (!criterion.ok) {
+      throw StateError(
+        '$scenario verdict validation failed: ${criterion.detail}',
+      );
+    }
+
+    for (final role in roles) {
+      final exitCode = await processes[role]!.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          processes[role]!.kill();
+          return -1;
+        },
+      );
+      if (exitCode != 0) {
+        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
+      }
+    }
+
+    _log('ORCH', '$scenario proof passed: ${criterion.detail}');
+    _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
+    for (final role in roles) {
+      _log('ORCH', '$role log: ${logPaths[role]}');
+      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+    }
+  } finally {
+    for (final entry in processes.entries) {
+      await _stopHarnessProcess(entry.value, '$scenario/${entry.key}');
+    }
+    for (final entry in roleDevices.entries) {
+      await _terminateRunnerApp(entry.value, '$scenario/${entry.key}');
+    }
+    for (final sink in logs.values) {
+      await sink.flush();
+      await sink.close();
+    }
+  }
+}
+
+Future<void> _runGm008Scenario({
+  required List<String> devices,
+  required String relayAddresses,
+}) async {
+  const scenario = 'gm008';
+  final deviceCheck = evaluateDeviceSelection(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  if (!deviceCheck.ok) {
+    throw ArgumentError(deviceCheck.detail);
+  }
+  final roleDevices = roleDeviceMapForScenario(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  final roles = scenarioRequirement(scenario).roles;
+  final runId = DateTime.now().millisecondsSinceEpoch.toString();
+  final sharedDir = await Directory.systemTemp.createTemp(
+    'group_multi_party_${scenario}_',
+  );
+  final processes = <String, Process>{};
+  final logs = <String, IOSink>{};
+  final logPaths = <String, String>{};
+
+  _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
+  _log('ORCH', '$scenario run id: $runId');
+  _log('ORCH', '$scenario ${deviceCheck.detail}');
+
+  Future<Process> launchRole(
+    String role, {
+    String mode = 'proof',
+    String? restoreMnemonic,
+    String? logLabel,
+  }) async {
+    final label = logLabel ?? role;
+    final logPath = '${sharedDir.path}/$label.log';
+    final logSink = File(logPath).openWrite(mode: FileMode.writeOnlyAppend);
+    logs[label] = logSink;
+    logPaths[label] = logPath;
+    final process = await _startHarnessRole(
+      scenario: scenario,
+      role: role,
+      deviceId: roleDevices[role]!,
+      sharedDir: sharedDir,
+      runId: runId,
+      relayAddresses: relayAddresses,
+      mode: mode,
+      restoreMnemonic: restoreMnemonic,
+    );
+    processes[label] = process;
+    _pipeOutput(process.stdout, label.toUpperCase(), logSink);
+    _pipeOutput(process.stderr, '${label.toUpperCase()}-ERR', logSink);
+    return process;
+  }
+
+  try {
+    for (final role in const <String>['alice', 'bob']) {
+      await launchRole(role);
+      await _waitForJson(
+        _signalPath(sharedDir, runId, '${role}_identity.json'),
+        timeout: const Duration(minutes: 15),
+      );
+      _log('ORCH', '$scenario/$role identity ready');
+    }
+
+    final charlieSeed = await launchRole(
+      'charlie',
+      mode: 'restartSeed',
+      logLabel: 'charlie_seed',
+    );
+    final charlieIdentity = await _waitForJson(
+      _signalPath(sharedDir, runId, 'charlie_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final charlieMnemonic = (charlieIdentity['mnemonic12'] as String?)?.trim();
+    if (charlieMnemonic == null || charlieMnemonic.isEmpty) {
+      throw StateError('gm008 Charlie seed did not publish a mnemonic');
+    }
+    await _waitForJson(
+      _signalPath(sharedDir, runId, 'charlie_removed_restart_ready.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final seedExit = await charlieSeed.exitCode.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        charlieSeed.kill();
+        return -1;
+      },
+    );
+    if (seedExit != 0) {
+      throw StateError('gm008/charlie seed flutter process exitCode=$seedExit');
+    }
+    processes.remove('charlie_seed');
+    await _terminateRunnerApp(
+      roleDevices['charlie']!,
+      '$scenario/charlie-seed',
+    );
+    _log('ORCH', '$scenario/charlie stopped after removal; relaunching');
+
+    await launchRole('charlie', restoreMnemonic: charlieMnemonic);
+    await _waitForSignal(
+      _signalPath(sharedDir, runId, 'charlie_restarted_after_removal'),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario/charlie restart boundary recorded');
+
+    final verdicts = await Future.wait<Map<String, dynamic>>(
+      roles.map(
+        (role) => _waitForVerdictOrExit(
+          process: processes[role]!,
+          path: _verdictPath(sharedDir, runId, role),
+          role: role,
+          logPath: logPaths[role]!,
+        ),
+      ),
+    );
+
+    final criterion = evaluateGroupMultiPartyVerdicts(
+      scenario: scenario,
+      relayAddresses: relayAddresses,
+      verdicts: verdicts,
+    );
+    File(
+      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+    ).writeAsStringSync(
+      jsonEncode(<String, dynamic>{
+        'scenario': scenario,
+        'ok': criterion.ok,
+        'detail': criterion.detail,
+        'sharedDir': sharedDir.path,
+        'roleDevices': roleDevices,
+        'roleVerdicts': {
+          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+        },
+      }),
+    );
+    if (!criterion.ok) {
+      throw StateError(
+        '$scenario verdict validation failed: ${criterion.detail}',
+      );
+    }
+
+    for (final role in roles) {
+      final exitCode = await processes[role]!.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          processes[role]!.kill();
+          return -1;
+        },
+      );
+      if (exitCode != 0) {
+        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
+      }
+    }
+
+    _log('ORCH', '$scenario proof passed: ${criterion.detail}');
+    _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
+    for (final role in roles) {
+      _log('ORCH', '$role log: ${logPaths[role]}');
+      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+    }
+  } finally {
+    for (final entry in processes.entries) {
+      await _stopHarnessProcess(entry.value, '$scenario/${entry.key}');
+    }
+    for (final entry in roleDevices.entries) {
+      await _terminateRunnerApp(entry.value, '$scenario/${entry.key}');
+    }
+    for (final sink in logs.values) {
+      await sink.close();
+    }
+  }
+}
+
+Future<void> _runGm005Scenario({
+  required List<String> devices,
+  required String relayAddresses,
+}) {
+  return _runOfflineCharlieRelaunchScenario(
+    scenario: 'gm005',
+    devices: devices,
+    relayAddresses: relayAddresses,
+  );
+}
+
+Future<void> _runGe006Scenario({
+  required List<String> devices,
+  required String relayAddresses,
+}) {
+  return _runOfflineCharlieRelaunchScenario(
+    scenario: 'ge006',
+    devices: devices,
+    relayAddresses: relayAddresses,
+  );
+}
+
+Future<void> _runGe007Scenario({
+  required List<String> devices,
+  required String relayAddresses,
+}) async {
+  const scenario = 'ge007';
+  final deviceCheck = evaluateDeviceSelection(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  if (!deviceCheck.ok) {
+    throw ArgumentError(deviceCheck.detail);
+  }
+  final roleDevices = roleDeviceMapForScenario(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  final roles = scenarioRequirement(scenario).roles;
+  final runId = DateTime.now().millisecondsSinceEpoch.toString();
+  final sharedDir = await Directory.systemTemp.createTemp(
+    'group_multi_party_${scenario}_',
+  );
+  final processes = <String, Process>{};
+  final logs = <String, IOSink>{};
+  final logPaths = <String, String>{};
+
+  _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
+  _log('ORCH', '$scenario run id: $runId');
+  _log('ORCH', '$scenario ${deviceCheck.detail}');
+
+  Future<Process> launchRole(
+    String role, {
+    String mode = 'proof',
+    String? restoreMnemonic,
+    String? logLabel,
+  }) async {
+    final label = logLabel ?? role;
+    final logPath = '${sharedDir.path}/$label.log';
+    final logSink = File(logPath).openWrite(mode: FileMode.writeOnlyAppend);
+    logs[label] = logSink;
+    logPaths[label] = logPath;
+    final process = await _startHarnessRole(
+      scenario: scenario,
+      role: role,
+      deviceId: roleDevices[role]!,
+      sharedDir: sharedDir,
+      runId: runId,
+      relayAddresses: relayAddresses,
+      mode: mode,
+      restoreMnemonic: restoreMnemonic,
+    );
+    processes[label] = process;
+    _pipeOutput(process.stdout, label.toUpperCase(), logSink);
+    _pipeOutput(process.stderr, '${label.toUpperCase()}-ERR', logSink);
+    return process;
+  }
+
+  try {
+    for (final role in const <String>['alice', 'charlie']) {
+      await launchRole(role);
+      await _waitForJson(
+        _signalPath(sharedDir, runId, '${role}_identity.json'),
+        timeout: const Duration(minutes: 15),
+      );
+      _log('ORCH', '$scenario/$role identity ready');
+    }
+
+    final bobSeed = await launchRole(
+      'bob',
+      mode: 'seedOffline',
+      logLabel: 'bob_seed',
+    );
+    final bobIdentity = await _waitForJson(
+      _signalPath(sharedDir, runId, 'bob_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
+    if (bobMnemonic == null || bobMnemonic.isEmpty) {
+      throw StateError('$scenario Bob seed did not publish a mnemonic');
+    }
+    await _waitForJson(
+      _signalPath(sharedDir, runId, 'bob_old_state_persisted.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final seedExit = await bobSeed.exitCode.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        bobSeed.kill();
+        return -1;
+      },
+    );
+    if (seedExit != 0) {
+      throw StateError('$scenario/bob seed flutter process exitCode=$seedExit');
+    }
+    processes.remove('bob_seed');
+    await _terminateRunnerApp(roleDevices['bob']!, '$scenario/bob-seed');
+    File(
+      _signalPath(sharedDir, runId, 'bob_offline_before_mutation'),
+    ).writeAsStringSync('ok');
+    _log('ORCH', '$scenario/bob old state persisted; Bob offline');
+
+    await _waitForSignal(
+      _signalPath(sharedDir, runId, 'bob_relaunch_ready'),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario relaunching Bob after mutation and sends');
+    await launchRole('bob', restoreMnemonic: bobMnemonic);
+    await _waitForJson(
+      _signalPath(sharedDir, runId, 'bob_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario/bob reconnect identity ready');
+
+    final verdicts = await Future.wait<Map<String, dynamic>>(
+      roles.map(
+        (role) => _waitForVerdictOrExit(
+          process: processes[role]!,
+          path: _verdictPath(sharedDir, runId, role),
+          role: role,
+          logPath: logPaths[role]!,
+        ),
+      ),
+    );
+
+    final criterion = evaluateGroupMultiPartyVerdicts(
+      scenario: scenario,
+      relayAddresses: relayAddresses,
+      verdicts: verdicts,
+    );
+    File(
+      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+    ).writeAsStringSync(
+      jsonEncode(<String, dynamic>{
+        'scenario': scenario,
+        'ok': criterion.ok,
+        'detail': criterion.detail,
+        'sharedDir': sharedDir.path,
+        'roleDevices': roleDevices,
+        'roleVerdicts': {
+          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+        },
+      }),
+    );
+    if (!criterion.ok) {
+      throw StateError(
+        '$scenario verdict validation failed: ${criterion.detail}',
+      );
+    }
+
+    for (final role in roles) {
+      final exitCode = await processes[role]!.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          processes[role]!.kill();
+          return -1;
+        },
+      );
+      if (exitCode != 0) {
+        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
+      }
+    }
+
+    _log('ORCH', '$scenario proof passed: ${criterion.detail}');
+    _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
+    for (final role in roles) {
+      _log('ORCH', '$role log: ${logPaths[role]}');
+      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+    }
+  } finally {
+    for (final entry in processes.entries) {
+      await _stopHarnessProcess(entry.value, '$scenario/${entry.key}');
+    }
+    for (final entry in roleDevices.entries) {
+      await _terminateRunnerApp(entry.value, '$scenario/${entry.key}');
+    }
+    for (final sink in logs.values) {
+      await sink.close();
+    }
+  }
+}
+
+Future<void> _runOfflineCharlieRelaunchScenario({
+  required String scenario,
+  required List<String> devices,
+  required String relayAddresses,
+}) async {
   final deviceCheck = evaluateDeviceSelection(
     scenario: scenario,
     deviceIds: devices,
@@ -444,7 +1572,7 @@ Future<void> _runGm005Scenario({
     );
     final charlieMnemonic = (charlieIdentity['mnemonic12'] as String?)?.trim();
     if (charlieMnemonic == null || charlieMnemonic.isEmpty) {
-      throw StateError('gm005 Charlie seed did not publish a mnemonic');
+      throw StateError('$scenario Charlie seed did not publish a mnemonic');
     }
     await _waitForJson(
       _signalPath(sharedDir, runId, 'charlie_old_state_persisted.json'),
@@ -458,7 +1586,9 @@ Future<void> _runGm005Scenario({
       },
     );
     if (seedExit != 0) {
-      throw StateError('gm005/charlie seed flutter process exitCode=$seedExit');
+      throw StateError(
+        '$scenario/charlie seed flutter process exitCode=$seedExit',
+      );
     }
     processes.remove('charlie_seed');
     await _terminateRunnerApp(
@@ -732,7 +1862,7 @@ Future<void> main(List<String> args) async {
   final relayCheck = evaluateRelayConfiguration(relayAddresses);
   final usage =
       'Usage: dart run integration_test/scripts/run_group_multi_party_device_real.dart '
-      '--scenario gm001|gm002|gm003|gm004|gm005|gm006|gm007|all -d <alice,bob,charlie[,dana]>';
+      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]>';
 
   try {
     final scenarioForDeviceCheck = scenario == 'all' ? 'all' : scenario;

@@ -163,6 +163,19 @@ void main() {
       expect(msg.content, contains('"type":"chat_message"'));
     });
 
+    test(
+      'routes group_membership_update messages to groupMembershipUpdateStream',
+      () async {
+        final received = router.groupMembershipUpdateStream.first;
+
+        p2pService.inject(_makeMessage('group_membership_update'));
+
+        final msg = await received.timeout(const Duration(seconds: 1));
+        expect(msg.from, 'peer-a');
+        expect(msg.content, contains('"type":"group_membership_update"'));
+      },
+    );
+
     test('ignores legacy delivery_receipt messages', () async {
       final contactRequests = <ChatMessage>[];
       final chatMessages = <ChatMessage>[];

@@ -151,6 +151,11 @@ class DefaultShareBatchDeliveryCoordinator
     this.sendToGroupFn,
   });
 
+  String? get _currentSenderDeviceId {
+    final peerId = p2pService.currentState.peerId?.trim();
+    return peerId == null || peerId.isEmpty ? null : peerId;
+  }
+
   @override
   Future<ShareBatchDeliveryResult> deliver({
     required ShareIntent shareIntent,
@@ -412,6 +417,7 @@ class DefaultShareBatchDeliveryCoordinator
         );
       }
 
+      final senderDeviceId = _currentSenderDeviceId;
       final (result, message) = await sendGroupMessage(
         bridge: bridge,
         groupRepo: groupRepo,
@@ -422,6 +428,8 @@ class DefaultShareBatchDeliveryCoordinator
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,
         senderUsername: identity.username,
+        senderDeviceId: senderDeviceId,
+        senderTransportPeerId: senderDeviceId,
         mediaAttachments: attachments.isEmpty ? null : attachments,
         mediaAttachmentRepo: mediaAttachmentRepository,
       );

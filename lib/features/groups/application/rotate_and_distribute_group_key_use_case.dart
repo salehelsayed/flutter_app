@@ -31,6 +31,8 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
   Future<bool> Function(String peerId, String message)? sendP2PMessage,
   Duration perRecipientTimeout = const Duration(seconds: 5),
   Duration distributionTimeout = const Duration(seconds: 15),
+  int distributionAttemptCount = 5,
+  Duration distributionRetryDelay = const Duration(milliseconds: 500),
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -75,7 +77,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
     senderPublicKey: senderPublicKey,
     sourceDeviceId: sourceDeviceId,
   );
-  if (selfMember?.devices.isNotEmpty == true && sourceDevice == null) {
+  if (selfMember.devices.isNotEmpty && sourceDevice == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_ROTATE_KEY_UNBOUND_SOURCE_DEVICE',
@@ -105,6 +107,9 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
   final newEpoch = generateResult['keyEpoch'] as int;
   final newKey = generateResult['groupKey'] as String;
   final directKeyUpdateEventAt = DateTime.now().toUtc();
+  final maxDistributionAttempts = distributionAttemptCount < 1
+      ? 1
+      : distributionAttemptCount;
 
   // 2. Distribute to remaining members via concurrent 1:1 encrypted P2P.
   final members = await groupRepo.getMembers(groupId);
@@ -124,7 +129,7 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
       .toList(growable: false);
   final distributionFutures = distributionTargets
       .map(
-        (target) => _distributeRotatedKeyToDevice(
+        (target) => _distributeRotatedKeyToDeviceWithRetry(
           bridge: bridge,
           groupRepo: groupRepo,
           groupId: groupId,
@@ -141,25 +146,45 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
           preTransitionStateHash: preTransitionStateHash,
           sendP2PMessage: sendP2PMessage,
           perRecipientTimeout: perRecipientTimeout,
+          attemptCount: maxDistributionAttempts,
+          retryDelay: distributionRetryDelay,
         ),
       )
       .toList();
 
+  var distributionResults = <bool>[];
   try {
-    await Future.wait(
-      distributionFutures,
-      eagerError: false,
-    ).timeout(distributionTimeout, onTimeout: () => <bool>[]);
+    distributionResults =
+        await Future.wait(distributionFutures, eagerError: false).timeout(
+          distributionTimeout,
+          onTimeout: () => List<bool>.filled(distributionTargets.length, false),
+        );
   } on Exception catch (e) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_ROTATE_KEY_DISTRIBUTE_ERROR',
       details: {'error': e.toString()},
     );
+    distributionResults = List<bool>.filled(distributionTargets.length, false);
+  }
+
+  final failedDistributionCount = distributionResults.where((ok) => !ok).length;
+  if (failedDistributionCount > 0) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_DISTRIBUTION_INCOMPLETE',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'newEpoch': newEpoch,
+        'targetCount': distributionTargets.length,
+        'failedCount': failedDistributionCount,
+      },
+    );
+    return null;
   }
 
   // 3. Promote the admin's own validator and local key only after
-  // distribution completes or times out.
+  // every required recipient confirms key delivery.
   try {
     await callGroupUpdateKey(
       bridge,
@@ -242,6 +267,55 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
   );
 
   return keyInfo;
+}
+
+Future<bool> _distributeRotatedKeyToDeviceWithRetry({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String sourcePeerId,
+  required GroupMemberDeviceIdentity? sourceDevice,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required String senderUsername,
+  required GroupMember member,
+  required GroupMemberDeviceIdentity device,
+  required int newEpoch,
+  required String newKey,
+  required DateTime eventAt,
+  required String preTransitionStateHash,
+  required Future<bool> Function(String peerId, String message)? sendP2PMessage,
+  required Duration perRecipientTimeout,
+  required int attemptCount,
+  required Duration retryDelay,
+}) async {
+  for (var attempt = 1; attempt <= attemptCount; attempt++) {
+    final sent = await _distributeRotatedKeyToDevice(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      sourcePeerId: sourcePeerId,
+      sourceDevice: sourceDevice,
+      senderPublicKey: senderPublicKey,
+      senderPrivateKey: senderPrivateKey,
+      senderUsername: senderUsername,
+      member: member,
+      device: device,
+      newEpoch: newEpoch,
+      newKey: newKey,
+      eventAt: eventAt,
+      preTransitionStateHash: preTransitionStateHash,
+      sendP2PMessage: sendP2PMessage,
+      perRecipientTimeout: perRecipientTimeout,
+    );
+    if (sent) {
+      return true;
+    }
+    if (attempt < attemptCount && retryDelay > Duration.zero) {
+      await Future<void>.delayed(retryDelay);
+    }
+  }
+  return false;
 }
 
 Future<bool> _distributeRotatedKeyToDevice({

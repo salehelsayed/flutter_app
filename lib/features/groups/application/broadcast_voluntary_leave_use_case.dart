@@ -14,20 +14,36 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
+enum VoluntaryLeaveBroadcastSkipReason { lastAdmin, memberNotFound }
+
 class VoluntaryLeaveBroadcastResult {
   final bool didBroadcast;
   final List<String> remainingPeerIds;
   final GroupKeyInfo? rotatedKey;
+  final VoluntaryLeaveBroadcastSkipReason? skipReason;
 
   const VoluntaryLeaveBroadcastResult({
     required this.didBroadcast,
     required this.remainingPeerIds,
     this.rotatedKey,
+    this.skipReason,
   });
 
   static const skipped = VoluntaryLeaveBroadcastResult(
     didBroadcast: false,
     remainingPeerIds: <String>[],
+  );
+
+  static const skippedLastAdmin = VoluntaryLeaveBroadcastResult(
+    didBroadcast: false,
+    remainingPeerIds: <String>[],
+    skipReason: VoluntaryLeaveBroadcastSkipReason.lastAdmin,
+  );
+
+  static const skippedMemberNotFound = VoluntaryLeaveBroadcastResult(
+    didBroadcast: false,
+    remainingPeerIds: <String>[],
+    skipReason: VoluntaryLeaveBroadcastSkipReason.memberNotFound,
   );
 }
 
@@ -54,14 +70,14 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
       .where((member) => member.role == MemberRole.admin)
       .length;
   if (group.myRole == GroupRole.admin && adminCount <= 1) {
-    return VoluntaryLeaveBroadcastResult.skipped;
+    return VoluntaryLeaveBroadcastResult.skippedLastAdmin;
   }
 
   final selfMember = members.where(
     (member) => member.peerId == identity.peerId,
   );
   if (selfMember.isEmpty) {
-    return VoluntaryLeaveBroadcastResult.skipped;
+    return VoluntaryLeaveBroadcastResult.skippedMemberNotFound;
   }
 
   final remainingMembers = members
@@ -167,5 +183,6 @@ Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
     didBroadcast: true,
     remainingPeerIds: remainingPeerIds,
     rotatedKey: rotatedKey,
+    skipReason: null,
   );
 }

@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -498,6 +499,87 @@ void main() {
 
       expect(result, isNull);
       expect(await msgRepo.getMessage('msg-at-cutoff'), isNull);
+    },
+  );
+
+  test(
+    'GM-013 accepts before-cutoff removed-sender traffic and emits after-cutoff rejection event',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      const sharedMessageId = 'gm013-charlie-boundary';
+      final removedAt = DateTime.utc(2026, 4, 5, 12, 0, 0);
+      final beforeSentAt = removedAt.subtract(const Duration(milliseconds: 1));
+      await saveRemovalCutoff(
+        removedPeerId: 'peer-charlie',
+        removedAt: removedAt,
+      );
+
+      final before = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-charlie',
+        senderUsername: 'Charlie',
+        keyEpoch: 0,
+        text: 'GM-013 before cutoff',
+        timestamp: beforeSentAt.toIso8601String(),
+        messageId: sharedMessageId,
+      );
+      expect(before, isNotNull);
+      expect(before!.id, sharedMessageId);
+      expect(before.timestamp, beforeSentAt);
+
+      final after = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-charlie',
+        senderUsername: 'Charlie',
+        keyEpoch: 0,
+        text: 'GM-013 at cutoff',
+        timestamp: removedAt.toIso8601String(),
+        messageId: 'gm013-charlie-at-cutoff',
+      );
+      expect(after, isNull);
+      expect(await msgRepo.getMessage('gm013-charlie-at-cutoff'), isNull);
+
+      final replayAfterCutoff = await handleIncomingGroupMessage(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: 'group-1',
+        senderId: 'peer-charlie',
+        senderUsername: 'Charlie',
+        keyEpoch: 0,
+        text: 'GM-013 after cutoff replay',
+        timestamp: removedAt.add(const Duration(seconds: 1)).toIso8601String(),
+        messageId: sharedMessageId,
+      );
+      expect(replayAfterCutoff, isNull);
+
+      final saved = await msgRepo.getMessage(sharedMessageId);
+      expect(saved, isNotNull);
+      expect(saved!.text, 'GM-013 before cutoff');
+      expect(saved.timestamp, beforeSentAt);
+      expect(
+        (await msgRepo.getMessagesPage(
+          'group-1',
+        )).where((message) => message.id == sharedMessageId),
+        hasLength(1),
+      );
+
+      final rejectionEvents = flowEvents
+          .where(
+            (event) =>
+                event['event'] ==
+                'GROUP_HANDLE_INCOMING_MSG_REMOVED_AFTER_CUTOFF',
+          )
+          .toList(growable: false);
+      expect(rejectionEvents, hasLength(1));
+      final details = rejectionEvents.single['details'] as Map<String, dynamic>;
+      expect(details['cutoffAt'], removedAt.toIso8601String());
     },
   );
 
