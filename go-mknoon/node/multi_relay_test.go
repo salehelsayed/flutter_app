@@ -3,6 +3,7 @@ package node
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -114,6 +115,52 @@ func TestRelaySelector_ForEach_FallsBackToSecondRelay(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Errorf("expected 2 calls (fall through to second), got %d", calls)
+	}
+}
+
+func TestRelaySelector_ForEach_FallsBackAcrossAddressesForSameRelay(t *testing.T) {
+	seedAddr := generateFakeRelayAddr(t, 19024)
+	maddr, err := ma.NewMultiaddr(seedAddr)
+	if err != nil {
+		t.Fatalf("NewMultiaddr(%q): %v", seedAddr, err)
+	}
+	info, err := peer.AddrInfoFromP2pAddr(maddr)
+	if err != nil {
+		t.Fatalf("AddrInfoFromP2pAddr(%q): %v", seedAddr, err)
+	}
+	peerID := info.ID.String()
+	addrs := []string{
+		fmt.Sprintf("/ip4/127.0.0.1/udp/19025/quic-v1/p2p/%s", peerID),
+		fmt.Sprintf("/ip4/127.0.0.1/tcp/19026/ws/p2p/%s", peerID),
+	}
+
+	rs := NewRelaySelector(addrs)
+	if rs.Len() != 1 {
+		t.Fatalf("Len() = %d, want one grouped relay peer", rs.Len())
+	}
+
+	attempts := make([]string, 0, 2)
+	err = rs.ForEach(func(relay RelayInfo) error {
+		if len(relay.Addrs) != 1 {
+			t.Fatalf("relay attempt got %d addrs, want one", len(relay.Addrs))
+		}
+		attempts = append(attempts, relay.Addrs[0].String())
+		if len(attempts) == 1 {
+			return errors.New("first transport failed")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2 (%v)", len(attempts), attempts)
+	}
+	if attempts[0] != "/ip4/127.0.0.1/udp/19025/quic-v1" {
+		t.Fatalf("first attempt = %q, want QUIC address", attempts[0])
+	}
+	if attempts[1] != "/ip4/127.0.0.1/tcp/19026/ws" {
+		t.Fatalf("second attempt = %q, want WSS address", attempts[1])
 	}
 }
 
