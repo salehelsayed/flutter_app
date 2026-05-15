@@ -153,3 +153,4 @@
 
   Visible to relay/WiFi: username, peer ID, public keys, which relay server they use, and when the request was sent. This is inherent — you can't encrypt a contact request with ML-KEM because the request is the ML-KEM key exchange. The
   only way to protect this would be encrypting with the recipient's Ed25519 key (convert to X25519 for Diffie-Hellman), but that's a different design.
+

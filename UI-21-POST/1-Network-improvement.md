@@ -78,3 +78,20 @@ Yes, there is a real, architectural difference. Posts are genuinely slower by de
   3. Per-recipient encryption — N bridge round-trips
   4. Media processing inline — EXIF strip + compress + upload during blocked send
   5. No background send queue — everything synchronous in the UI callback
+
+
+
+  ====
+  NOTES:
+   If Posts grow to large audiences (50+ recipients), consider a Status-style split:
+
+  1. Small audience (< ~20): Keep parallel per-recipient ML-KEM encryption (forward secrecy preserved)
+  2. Large audience ("All Friends"): Switch to a symmetric group key broadcast:
+    - Derive a per-post symmetric key
+    - Encrypt once with AES-256-GCM
+    - Fan out the same ciphertext to all recipients (still parallel, but only one encryption)
+    - Distribute the post key via each recipient's ML-KEM channel (O(N) key wraps, but key wrapping is much cheaper than full
+  message encryption)
+
+  This is what Status does for communities vs private groups. But this is a bigger architectural change — save it for when the
+  parallel fan-out from Option A proves insufficient.

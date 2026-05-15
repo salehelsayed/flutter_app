@@ -56,17 +56,7 @@ GossipSub can also be a "private" group chat?
 
   The catch: what if a member is offline?
 
-  GossipSub is live delivery only. If a peer isn't connected when a message is published, they miss it. For a group chat, you'd need to solve this. Common approaches:
-
-  ┌───────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-  │     Approach      │                                                                           How                                                                            │
-  ├───────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ Store nodes       │ Some always-online peers (could be your relay server) subscribe to the topic and cache messages. When a peer comes online, they request missed messages. │
-  ├───────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ Peer-to-peer sync │ When a peer reconnects, they ask other group members "what did I miss since timestamp X?"                                                                │
-  ├───────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-  │ Hybrid            │ Use your existing relay server as a "store-and-forward" participant in the group topic                                                                   │
-  └───────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  GossipSub is live delivery only. If a peer isn't connected when a message is published, they miss it. For a group chat, you'd need to solve this. you can use your online inbox.
 
   For your project specifically
 

@@ -34,3 +34,37 @@ Your plan is the right direction, but it misses a few critical integration detai
      chat_message_listener.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/lib/features/conversation/
      application/chat_message_listener.dart) currently auto-downloads pending media from relay. Local-
      received media should be marked done with localPath so this path is skipped.
+
+
+
+
+can you add defaultQUICRelayAddress to the deafult relay list
+
+can you test Quick connection to make sure the identify handshake does not hang now on the QUIC connection problem so we can add defaultQUICRelayAddress to the deafult relay list
+
+
+  3. Verify the QUIC identify handshake completes (test with a client)
+  4. Once confirmed working, re-add defaultQUICRelayAddress to the client defaults in p2p_bridge_client.dart
+
+  
+
+⏺ Huge version gaps. Here's the comparison:
+
+  ┌──────────┬────────────────┬────────────────────┐
+  │ Package  │ Server (relay) │ Client (go-mknoon) │
+  ├──────────┼────────────────┼────────────────────┤
+  │ x/crypto │ v0.31.0        │ v0.48.0            │
+  ├──────────┼────────────────┼────────────────────┤
+  │ x/net    │ v0.33.0        │ v0.50.0            │
+  ├──────────┼────────────────┼────────────────────┤
+  │ x/sys    │ v0.28.0        │ v0.41.0            │
+  ├──────────┼────────────────┼────────────────────┤
+  │ x/sync   │ v0.10.0        │ v0.19.0            │
+  ├──────────┼────────────────┼────────────────────┤
+  │ x/mod    │ v0.22.0        │ v0.33.0            │
+  ├──────────┼────────────────┼────────────────────┤
+  │ x/text   │ v0.21.0        │ v0.34.0            │
+  ├──────────┼────────────────┼────────────────────┤
+  │ x/tools  │ v0.28.0        │ v0.42.0            │
+  └──────────┴────────────────┴────────────────────┘
+

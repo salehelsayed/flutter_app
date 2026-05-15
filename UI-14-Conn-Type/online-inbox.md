@@ -401,3 +401,62 @@ The nullable `acked` field with fallback getter means existing fakes that set `r
 7. **Failed media retry:** Voice message fails → saved as `'failed'` with `wire_envelope` → retrier uses wire_envelope → inbox → `'queued'`. No media-rebuild needed.
 8. **Dedup:** Verify no duplicate messages when message arrives via direct + inbox.
 9. **No re-queue spam:** Once `'queued'`, message is not retried again.
+
+
+
+
+
+
+3 Attempts
+
+  ┌─────────────────────┬──────────┬───────────────────┐
+  │        Step         │ Duration │    Timestamps     │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Optimistic DB save  │ ~91ms    │ 14.282 → 14.373   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Contact lookup      │ ~1ms     │ 14.374 → 14.374   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ ML-KEM encrypt      │ ~2ms     │ 14.377 → 14.378   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 1: discover │ ~951ms   │ 14.379 → 15.330   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 1: dial     │ ~10s     │ 15.331 → 25.335   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 1 total     │ 10,956ms │ durationMs: 10956 │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ backoff sleep       │ ~502ms   │ 25.335 → 25.837   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 2: discover │ ~48ms    │ 25.838 → 25.886   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 2: dial     │ ~5.1s    │ 25.887 → 30.980   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 2 total     │ 5,143ms  │ durationMs: 5143  │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ backoff sleep       │ ~1s      │ 30.981 → 31.982   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 3: discover │ ~48ms    │ 31.982 → 32.030   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 3: dial     │ ~5.1s    │ 32.031 → 37.083   │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Attempt 3 total     │ 5,101ms  │ durationMs: 5101  │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ Inbox store         │ 1,441ms  │ durationMs: 1441  │
+  ├─────────────────────┼──────────┼───────────────────┤
+  │ DB save (queued)    │ ~2ms     │ 38.522 → 38.524   │
+  └─────────────────────┴──────────┴───────────────────┘
+
+first lets reduce attempts to 1. create a detailed plan to do this change
+
+DialPeer wraps the call with context.WithTimeout(n.ctx, DialTimeout) — so the 15s context deadline is what governs how long it waits for all addresses to fail. The ~10s you saw in the logs is the dial giving up before the full 15s because all addresses had already errored or timed out at the TCP/QUIC level.
+
+
+
+
+
+
+  So we're already in the "probably offline" territory. The relay NO_RESERVATION check would slot in right at the top of step
+   5, before any dial attempts:
+
+  1. Ask relay: does this peer have a reservation?
+  2. NO_RESERVATION → skip dial loop entirely, go straight to inbox
+  3. Reservation exists → peer is online somewhere, proceed with discover/dial (1 attempt, lower timeout)

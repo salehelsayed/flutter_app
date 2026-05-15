@@ -351,7 +351,9 @@ launch_warm_app_for_host_push() {
     "$log_pid" \
     90 \
     "P2P_SERVICE_START_NODE_CORE_SUCCESS" \
-    "P2P_SERVICE_START_NODE_CORE_ALREADY_RUNNING"; then
+    "P2P_SERVICE_START_NODE_CORE_ALREADY_RUNNING" \
+    'P2P_NODE_STATUS_RESPONSE","details":{"ok":true,"isStarted":true' \
+    '"capability":"inbox","success":true'; then
     printf 'Timed out waiting for warm app node readiness in %s\n' "$log_file" >&2
     return 1
   fi

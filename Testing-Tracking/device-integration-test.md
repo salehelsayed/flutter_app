@@ -143,3 +143,136 @@
   Option 4 (loopback echo) if you want something quick that still exercises the Go bridge and network layer end-to-end with minimal setup.
 
   Want me to build one of these?
+
+
+
+
+  ----
+
+
+
+
+   Debug Log Tags
+
+  ┌────────────────┬─────────────────────────┬──────────────────────────────────────────────────────┐
+  │      Tag       │          Where          │                    What it traces                    │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [LIFECYCLE]    │ main.dart               │ App lifecycle state changes (background/foreground)  │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [RESUME]       │ handle_app_resumed.dart │ Full resume recovery with timing for each step       │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [BRIDGE]       │ go_bridge_client.dart   │ Bridge health check, reinit, EventChannel status     │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [BRIDGE-EVENT] │ go_bridge_client.dart   │ Push events from Go (addresses:updated, etc.)        │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [HEALTH]       │ p2p_service_impl.dart   │ Health check logic, relay re-dial, recovery attempts │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [ADDR]         │ p2p_service_impl.dart   │ addresses:updated push events with circuit addresses │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [CONN]         │ p2p_service_impl.dart   │ Peer connect/disconnect events                       │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [WARM]         │ p2p_service_impl.dart   │ warmBackground startup path                          │
+  ├────────────────┼─────────────────────────┼──────────────────────────────────────────────────────┤
+  │ [START]        │ p2p_service_impl.dart   │ Node start (first launch)                            │
+  └────────────────┴─────────────────────────┴──────────────────────────────────────────────────────┘
+
+  What to Look For
+
+  When you background the app and bring it back, watch the console for:
+
+  1. [LIFECYCLE] → resumed — confirm the lifecycle event fires
+  2. [RESUME] state before resume — check if circuitAddresses=0 (relay dropped)
+  3. [BRIDGE] checkHealth() — does it succeed? How long does it take?
+  4. [HEALTH] DEGRADED — confirms the relay connection was lost
+  5. [HEALTH] Relay dial SUCCESS/FAILED — did the re-dial work?
+  6. [HEALTH] Post-dial status — are circuit addresses still 0 after re-dial?
+  7. [HEALTH] ⚠ Still no circuit addresses after re-dial! — this is the likely culprit: the circuit reservation takes a few seconds after the dial succeeds, but we poll immediately
+  8. [BRIDGE-EVENT] addresses:updated → [ADDR] ★ TRANSITION connecting→online — when does this finally arrive? The gap between the re-dial and this event is the "stuck in Connecting" duration
+  9. [BRIDGE] ⚠ EventChannel DONE — if you see this, the event stream died and push events are lost entirely (would explain permanent "Connecting")
+
+  Suspected Root Cause
+
+  The re-dial succeeds but circuit reservation takes 2-5 seconds. The code polls status immediately after dial, sees 0 circuits, and then waits 30 seconds for the next health check. Meanwhile the addresses:updated push event should
+  arrive — but if the EventChannel died during backgrounding, it never will.
+
+
+  ## All tests pass consistently! The fix is verified on device.
+
+  Here's a summary of the complete fix:
+
+  Root Cause
+
+  go-libp2p v0.38.2's AutoRelay does NOT reliably re-reserve circuit addresses after a relay disconnection. It
+  auto-reconnects to the relay peer (connections go back to 1) but never triggers a new client.Reserve() call, so circuit
+  addresses (/p2p-circuit) are never restored. This means h.Addrs() never includes circuit addresses again, and the app stays
+   in "Connecting" (degraded) state indefinitely.
+
+  Fix: Full Node Restart
+
+  Since AutoRelay's recovery is fundamentally broken, the fix performs a full node Stop() + Start() when degraded circuit
+  addresses are detected:
+
+  Go layer (go-mknoon/node/node.go):
+
+  - Added lastConfig *NodeConfig field to save the startup config
+  - Stop() now resets relayReadyOnce so restart works cleanly
+  - ReconnectRelays() does Stop() → Start(savedConfig) → waitForCircuitAddress(10s)
+
+  Bridge layer (go-mknoon/bridge/bridge.go):
+
+  - RelayReconnect() exposed as bridge command calling node.ReconnectRelays()
+
+  Platform wrappers:
+
+  - iOS GoBridge.swift: relayReconnect method channel handler
+  - Android GoBridge.kt: relayReconnect method channel handler
+
+  Dart layer:
+
+  - go_bridge_client.dart: relay:reconnect in command map
+  - p2p_bridge_client.dart: callP2PRelayReconnect() helper
+  - p2p_service_impl.dart:
+    - Health check recovery uses relay:reconnect instead of peer:dial
+    - Added _hasEverBeenOnline guard to prevent restart during first startup
+    - Only triggers restart when node was previously online and lost circuits
+
+  Results:
+
+  ┌────────────────────┬──────────────────────┬────────────────────┐
+  │       Metric       │        Before        │       After        │
+  ├────────────────────┼──────────────────────┼────────────────────┤
+  │ Recovery to Online │ NEVER (60s+ timeout) │ ~200ms             │
+  ├────────────────────┼──────────────────────┼────────────────────┤
+  │ handleAppResumed() │ N/A                  │ ~280ms             │
+  ├────────────────────┼──────────────────────┼────────────────────┤
+  │ First startup      │ ~700ms               │ ~700ms (unchanged) │
+  └────────────────────┴──────────────────────┴────────────────────┘
+
+
+
+we have  (integration test + CLI peer)  Simulator A: runs the real Flutter app via `flutter drive` and   "Simulator B": a headless Dart/Go CLI process that acts as the other peer.
+
+
+
+
+
+
+  1. Build a deterministic in-process transport-switch integration test (PR-blocking)
+     Implement an integration test that reproduces WiFi/local WS -> transport loss -> relay recovery -> online without using 2 simulators/devices.
+     The test must drive state transitions through controlled test events (not real network flakiness), verify message delivery before/after switch, and assert bounded recovery timing (no indefinite “connecting”).
+     Done when CI can run it reliably and it fails on regressions in transport switching logic. 
+     Deterministic in-process WiFi -> relay -> online regression test
+     Files: create f2_transport_switch_recovery_test.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/core/resilience/f2_transport_switch_recovery_test.dart), update lifecycle_bridge.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/shared/fakes/lifecycle_bridge.dart), update fake_p2p_service_integration.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/shared/fakes/fake_p2p_service_integration.dart).
+
+  2. Add test-only fault-injection hooks and scenario tests (PR-blocking)
+     Introduce test-only controls to force failures such as: local WS drop, relay disconnect, delayed/missing ACK, bad nonce, and lost relay reservation.
+     Use these hooks to add targeted tests for recovery behavior, including: no stuck states, correct retries/fallbacks, no duplicate sends, timer cleanup, and no overlapping health-check side effects.
+     Done when each injected failure has at least one explicit assertion-based test and all are stable in CI.
+     Fault-injection hooks + targeted recovery tests
+     Files: update lifecycle_bridge.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/shared/fakes/lifecycle_bridge.dart), update fake_p2p_network.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/shared/fakes/fake_p2p_network.dart), update chaos_p2p_network.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/shared/fakes/chaos_p2p_network.dart), create p2p_service_fault_injection_test.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/core/services/p2p_service_fault_injection_test.dart), update local_ws_server_test.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/test/core/local_discovery/local_ws_server_test.dart).
+  3. Create one real multi-device smoke test (non-blocking, nightly/release)
+     Implement a high-fidelity end-to-end test using two real app instances/devices to validate actual local discovery + chat + WiFi -> relay fallback.
+     Do not gate PRs with this test; run it nightly or before release with retry policy and log/artifact capture for debugging.
+     Done when failures are observable in reporting, but flaky infrastructure does not block normal development merges.
+     Real multi-device smoke (non-blocking nightly/release)
+     Files: create wifi_relay_fallback_smoke_test.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/integration_test/wifi_relay_fallback_smoke_test.dart), create run_wifi_relay_fallback_smoke.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/integration_test/scripts/run_wifi_relay_fallback_smoke.dart), optionally update run_transport_e2e.dart (/Users/I560101/Project-Sat/mknoon-2/flutter_app/integration_test/scripts/run_transport_e2e.dart) to share orchestration helpers.

@@ -2000,26 +2000,19 @@ Use $libp2p-phase-orchestrator in auto-advance mode. If unavailable, follow the 
   =================================
 
 
-Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow the same controller
-  workflow manually with fresh isolated implementer/reviewer/fixer agents per phase and parallel
-  implementers only for disjoint within-phase slices.
+Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow the same controller workflow manually with fresh isolated implementer/reviewer/fixer agents per phase and parallel implementers only for disjoint within-phase slices.
 
   Authoritative plan
   - `docs/qa/BIDI_FEED_ORBIT_TDD_PLAN.md`
 
   Goal
-  - Implement the full BiDi cross-surface plan end-to-end so mixed Arabic/English user content is
-  rendered, entered, previewed, and persisted correctly across Feed, Orbit, 1:1 chat, groups,
-  announcements, posts, comments, share previews, intro/contact-request surfaces, and notification
-  passthrough.
-  - Fix the real bugs, not just isolated widgets: sender/receiver parity, open/collapsed parity,
-  timestamp/footer layout, optimistic/send parity, and sanitization policy must all be correct.
+  - Implement the full BiDi cross-surface plan end-to-end so mixed Arabic/English user content is rendered, entered, previewed, and persisted correctly across Feed, Orbit, 1:1 chat, groups, announcements, posts, comments, share previews, intro/contact-request surfaces, and notification passthrough.
+  - Fix the real bugs, not just isolated widgets: sender/receiver parity, open/collapsed parity, timestamp/footer layout, optimistic/send parity, and sanitization policy must all be correct.
   - Implement the whole plan, not just the original Feed and Orbit regressions.
 
   Phase model
   - Treat each top-level `Phase` in the plan as one controller phase.
-  - Treat each phase’s internal bullets, tests, policy decisions, and addendum items as internal slices
-  that must be completed before that phase is accepted.
+  - Treat each phase’s internal bullets, tests, policy decisions, and addendum items as internal slices that must be completed before that phase is accepted.
   - Do not stop mid-phase for approval unless genuinely blocked.
 
   Controller mode
@@ -2051,23 +2044,18 @@ Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow 
   - Use fresh isolated agents per phase.
   - Phase progression must stay sequential. Do not work on multiple phases at once.
   - Inside a phase, parallelize only when slices have disjoint edit zones.
-  - Before coding each phase, explicitly decide whether that phase should use one implementer or
-  multiple parallel implementers, and justify the choice from file ownership.
+  - Before coding each phase, explicitly decide whether that phase should use one implementer or multiple parallel implementers, and justify the choice from file ownership.
   - If parallel implementers are used, give each agent explicit ownership of a non-overlapping file set.
   - Use one reviewer agent for the whole phase after integration.
   - Use a separate fixer agent only if the review finds blocking gaps.
   - Close or discard all phase agents before advancing to the next phase.
-  - Review may use additional read-only explorers in parallel for disjoint audit areas, but the final
-  verdict must be a single phase-level `PASS`, `NEEDS WORK`, or `FAIL`.
+  - Review may use additional read-only explorers in parallel for disjoint audit areas, but the final verdict must be a single phase-level `PASS`, `NEEDS WORK`, or `FAIL`.
   - Do not orchestrate overlapping implementers on the same widget, helper, or test file.
 
   Parallelism guidance
-  - Likely parallelizable when file ownership stays disjoint: `Phase 0`, `Phase 5`, `Phase 6`, `Phase
-  7`, `Phase 8`, and `Phase 10`.
-  - Likely better as single-implementer phases because edits converge tightly: `Phase 3`, `Phase 4`,
-  `Phase 9`, and `Phase 11`.
-  - Do not force parallelism if the current phase depends on a shared helper refactor, the same test
-  fixture, or a model/API shape change that fans out widely.
+  - Likely parallelizable when file ownership stays disjoint: `Phase 0`, `Phase 5`, `Phase 6`, `Phase 7`, `Phase 8`, and `Phase 10`.
+  - Likely better as single-implementer phases because edits converge tightly: `Phase 3`, `Phase 4`, `Phase 9`, and `Phase 11`.
+  - Do not force parallelism if the current phase depends on a shared helper refactor, the same test fixture, or a model/API shape change that fans out widely.
 
   Implementation requirements
   - Follow strict `RED -> GREEN -> REFACTOR` for every production phase.
@@ -2075,42 +2063,24 @@ Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow 
   - Implement only the current phase, plus the minimum compatibility changes required to compile.
   - Add or update only the tests required by the current phase.
   - Respect the plan’s current-tree notes. Do not assume the repo still matches the older baseline.
-  - In Phase 0, use the current stable suites first. Do not create fresh `*_bidi_test.dart` files by
-  default if the existing file is already the stable harness.
-  - Do not treat `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart` as a noisy
-  red baseline. In the current tree it is a valid Phase 1 entry point.
-  - In Phase 3, update the existing `message_bubble_test.dart` assertions that lock in timestamp-
-  in-`Stack`; do not try to bypass them only by adding a separate test file.
-  - In Phase 4, treat draft rehydration, send-failure restore, session-reply clear behavior, and admin
-  announcement flow as already implemented baselines; add direction/parity coverage on top of those
-  behaviors.
-  - In Phase 7, use the live post-comment test files under `test/features/posts/phase2/`, not the older
-  `phase1` paths.
-  - In Phase 9, extend `share_target_picker_screen_test.dart` and `share_intent_service_test.dart`
-  first; do not invent a new screen harness unless the existing one becomes too noisy.
-  - In Phase 10, use `lib/features/push/application/show_notification_use_case.dart` as the push source
-  of truth. Notification passthrough means preserving mixed-script content except the current trim-to-
-  null normalization already present in code.
-  - In Phase 11, keep scope on helper/policy alignment and the `LinkableText` user-content rule. Do not
-  re-own earlier UI phase acceptance work inside Phase 11.
-  - Preserve the plan’s explicit policy decision points, especially share-boundary sanitization and
-  cross-domain helper usage.
-  - Do not rely on ambient text direction for user content unless the current phase explicitly proves
-  that exception is intentional.
+  - In Phase 0, use the current stable suites first. Do not create fresh `*_bidi_test.dart` files by default if the existing file is already the stable harness.
+  - Do not treat `test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart` as a noisy red baseline. In the current tree it is a valid Phase 1 entry point.
+  - In Phase 3, update the existing `message_bubble_test.dart` assertions that lock in timestamp- in-`Stack`; do not try to bypass them only by adding a separate test file.
+  - In Phase 4, treat draft rehydration, send-failure restore, session-reply clear behavior, and admin announcement flow as already implemented baselines; add direction/parity coverage on top of those behaviors.
+  - In Phase 7, use the live post-comment test files under `test/features/posts/phase2/`, not the older `phase1` paths.
+  - In Phase 9, extend `share_target_picker_screen_test.dart` and `share_intent_service_test.dart` first; do not invent a new screen harness unless the existing one becomes too noisy.
+  - In Phase 10, use `lib/features/push/application/show_notification_use_case.dart` as the push source of truth. Notification passthrough means preserving mixed-script content except the current trim-to- null normalization already present in code.
+  - In Phase 11, keep scope on helper/policy alignment and the `LinkableText` user-content rule. Do not re-own earlier UI phase acceptance work inside Phase 11.
+  - Preserve the plan’s explicit policy decision points, especially share-boundary sanitization and cross-domain helper usage.
+  - Do not rely on ambient text direction for user content unless the current phase explicitly proves that exception is intentional.
 
   Environment caveat
-  - If `test/features/feed/integration/expanded_collapsed_card_test.dart` or `test/features/feed/
-  integration/feed_card_flow_test.dart` fail before executing tests because of a Flutter native-assets/
-  Xcode `lipo` issue under `build/native_assets/macos`, record that as a machine-specific environment
-  blocker, not as a product failure. Continue with the widget/unit acceptance evidence for the phase.
+  - If `test/features/feed/integration/expanded_collapsed_card_test.dart` or `test/features/feed/integration/feed_card_flow_test.dart` fail before executing tests because of a Flutter native-assets/Xcode `lipo` issue under `build/native_assets/macos`, record that as a machine-specific environment blocker, not as a product failure. Continue with the widget/unit acceptance evidence for the phase.
 
   Acceptance rules
-  - Accept a phase only if the required behavior is implemented, the required tests are green, the
-  reviewer returns `PASS`, and there is no later-phase scope leakage.
-  - If the reviewer returns `NEEDS WORK` or `FAIL`, run a focused fixer agent only on the reviewer’s
-  blocking gap ledger, then re-review before advancing.
-  - Require the reviewer to call out whether the phase used the correct current-tree test files and
-  whether any stale plan assumption was corrected during implementation.
+  - Accept a phase only if the required behavior is implemented, the required tests are green, the reviewer returns `PASS`, and there is no later-phase scope leakage.
+  - If the reviewer returns `NEEDS WORK` or `FAIL`, run a focused fixer agent only on the reviewer’s blocking gap ledger, then re-review before advancing.
+  - Require the reviewer to call out whether the phase used the correct current-tree test files and whether any stale plan assumption was corrected during implementation.
 
   Deliverables per accepted phase
   - Acceptance note
@@ -2121,3 +2091,242 @@ Use `$libp2p-phase-orchestrator` in `auto-advance` mode. If unavailable, follow 
   - GREEN verification
   - Residual risks or deferrals
   - Next-phase trigger
+
+
+  =========================================================================================================
+
+
+    Use $libp2p-phase-orchestrator in auto-advance mode. If that skill is unavailable, follow the same controller workflow manually with fresh isolated implementer/reviewer/fixer agents per phase.
+
+  Important
+  - The authoritative plan for this run is `UI-TestFlight-1/group-message-delivery-reliability-tdd-plan.md`.
+  - Treat that document only, including Section 0, Database Schema Changes, all numbered sections, Go-Side Changes, Wire Envelope Persistence Design, Appendix A/B, dependencies, guardrails, and acceptance proofs, as authoritative for
+  scope and sequencing.
+  - Do not use `UI-TestFlight-1/message-delivery-reliability-tdd-plan.md` or any other TestFlight/UI plan as the source of truth for this run.
+  - The companion 1:1 plan is contextual only. You may inspect existing 1:1 code or tests only when the group plan explicitly points to an analogous pattern. Do not import scope, sequencing, or requirements from the companion plan.
+
+  Goal
+  - Implement the full group and announcement message-delivery reliability plan end-to-end so the real group send-then-lock failure is fixed:
+    sender sends a group or announcement message, backgrounds/locks the device, the message is not lost, recipients receive it through live publish or inbox fallback as the plan defines, the sender sees the correct local final state
+  (`sent`, `pending`, or `failed`), and announcement authorization still holds.
+  - Cover the full plan, not just one narrow path. That includes the DB/schema/send-contract work, inbox fallback, 0-peer detection, stuck-sending recovery, lifecycle pause/resume handling, media retry, voice durability, iOS background-
+  task protection, key rotation safety, member-config sync atomicity, announcement proofs, test infrastructure, and the in-scope Go work.
+  - Do not implement `Go 10.4 Validator Pre-Check for Own Messages`; the plan explicitly defers it.
+
+  Phase Granularity
+  - Treat `Database Schema Changes` plus `Wire Envelope Persistence Design` plus the shared unified pre-persist send-contract requirements referenced by Section 0 and Section 1.1.1 as the first controller phase.
+  - Treat each numbered section (`Section 1` through `Section 11`) as one controller phase.
+  - Treat these in-scope Go headings as standalone controller phases:
+    - `Go 10.1: Peer Count in Publish Response`
+    - `Go 10.3: Decryption Failure Event Emission`
+    - `Go 10.2: Key Rotation Grace Period`
+  - Treat `Section 0`, Appendix A, and Appendix B as authoritative contract/context, not standalone implementation phases.
+  - Internal subsections, parts, steps, dependencies, and acceptance proofs stay inside the current phase; do not confuse them with phase advancement.
+
+  Controller Mode
+  - `auto-advance`
+
+  Start Phase
+  - `Database Schema Changes + Wire Envelope Persistence Design`
+
+  Allowed Phase Sequence
+  1. `Database Schema Changes + Wire Envelope Persistence Design`
+  2. `Section 4: Inbox Store as Required Fallback`
+  3. `Go 10.1: Peer Count in Publish Response`
+  4. `Section 8: 0-Peer Publish Detection and Compensation`
+  5. `Section 1: Stuck-Sending Recovery for Group Messages`
+  6. `Section 2: Lifecycle Pause Handler for Groups`
+  7. `Section 5: Parallel Media Upload + Group Media Retry`
+  8. `Section 6: Voice Message Reliability for Groups`
+  9. `Section 3: iOS Background Task Protection for Group Sends`
+  10. `Go 10.3: Decryption Failure Event Emission`
+  11. `Go 10.2: Key Rotation Grace Period`
+  12. `Section 7: Key Rotation Safety Window`
+  13. `Section 9: Member Config Sync Atomicity`
+  14. `Section 10: Announcement-Specific Acceptance Proofs`
+  15. `Section 11: Test Infrastructure`
+
+  Stop Condition
+  - Stop on the first blocked phase or when `Section 11: Test Infrastructure` is accepted.
+  - Do not start `Go 10.4` or any other deferred follow-up work unless I explicitly request it later.
+  - Do not stop for intermediate approval between accepted phases.
+
+  Repo State / Partial Implementation Rules
+  - Some code or tests may already be partially implemented. Start from the first phase anyway.
+  - At the start of every phase, audit current repo state against that phase contract before changing code.
+  - If a file, helper, interface, migration, or test already exists, verify whether it fully satisfies the phase contract. Extend or correct it instead of assuming the phase is done.
+  - Do not skip a phase just because some implementation is present.
+  - If the plan says a test file is `new` but it already exists, extend the existing file instead of creating a duplicate suite.
+  - If later-phase code already exists, do not revert it unless it blocks the current phase. Isolate it, work around it, and keep acceptance scoped to the current phase.
+
+  Agent Rules
+  - Use fresh isolated agents per phase: one implementer, one reviewer, and a separate fixer only if review finds blocking gaps.
+  - Never let the implementer review its own phase.
+  - Close all phase-local agents before advancing.
+  - Do not run overlapping implementers on the same edit surface.
+
+  Phase-Control Rules
+  - Build a fresh phase contract from the plan at the start of each phase.
+  - Enforce strict `RED -> GREEN -> REFACTOR` for every production phase.
+  - Capture the exact failing tests, compile failures, or commands before any production edits.
+  - Auto-advance only after reviewer verdict `PASS` and explicit phase acceptance.
+  - If review returns `NEEDS WORK` or `FAIL`, stay in the same phase, run a fix loop, and review again before advancing.
+  - Record residual risks, explicit deferrals, stale-test updates applied, and next-phase prerequisites before advancing.
+  - Do not widen into later phases unless a minimal compatibility change is required for compilation.
+
+  Global Execution Rules
+  - Follow the allowed sequence above, not numeric section order.
+  - If the plan’s phase table and dependency notes appear to conflict, prefer the stricter dependency-safe interpretation used in the allowed sequence above.
+  - Keep scope inside the plan’s named files, helpers, migrations, bridge contracts, and test suites unless a minimal compile fix is required.
+  - Do not introduce unrelated architecture changes, transport redesigns, persistence redesigns, or UI rewrites.
+  - Do not store `senderPrivateKey` in the DB.
+  - Do not add `upload_retry_count` to `group_messages`; attachment-scoped retry state belongs on `media_attachments`.
+  - Do not reintroduce fire-and-forget inbox semantics after Section 4.
+  - Do not issue duplicate `group:inboxStore` calls when the plan requires reuse of the same in-flight inbox future.
+  - Do not treat the 1:1 plan as a shortcut for requirements the group plan does not explicitly include.
+
+  Phase-Specific Rules
+
+  `Database Schema + Wire Envelope Persistence Design`
+  - Add migration `041_group_message_reliability_columns.dart` and the `GroupMessage` model/DB-helper changes the plan names.
+  - Implement `wireEnvelope`, `inboxStored`, and `inboxRetryPayload` exactly as the plan specifies.
+  - Use Option B from `Wire Envelope Persistence Design`: persist plaintext retry inputs, not the encrypted v3 envelope, and not private keys.
+  - Land the unified pre-persist send contract so `sendGroupMessage()` owns pre-persisted outgoing rows and retry payloads for all production callers before recovery phases proceed.
+
+  `Section 4: Inbox Store as Required Fallback`
+  - Replace `_safeInboxStore` with `_tryInboxStore`.
+  - `sendGroupMessage()` must own one observable in-flight inbox future and persist the inbox outcome on the row.
+  - Add resume-only inbox-store retry using `inbox_retry_payload`.
+  - Do not add `successNoPeers` here; 0-peer semantics belong to Section 8.
+
+  `Go 10.1: Peer Count in Publish Response`
+  - Return `topicPeers` through Go publish response and update all direct callers that need to accept or explicitly discard the new value.
+
+  `Section 8: 0-Peer Publish Detection and Compensation`
+  - Use `topicPeers` to distinguish normal success from zero-peer publish.
+  - Implement `SendGroupMessageResult.successNoPeers` plus local `status: 'pending'`.
+  - `0 peers + inbox ok` is success with `pending`; `0 peers + inbox fail` is error.
+  - All production callers must treat `successNoPeers` as success, and UI surfaces must render `pending` distinctly.
+
+  `Section 1: Stuck-Sending Recovery for Group Messages`
+  - Complete the unified retry-discoverable send contract for all production callers, including `FeedWired`.
+  - Add repo methods, DB helpers, `recoverStuckSendingGroupMessages`, and `retryFailedGroupMessages`.
+  - Retry in place using the original `messageId` and `timestamp`.
+  - Early recovery scope is text-only first; skip failed media/voice rows until Sections 5 and 6 land durable retry inputs.
+  - Unauthorized and not-found paths must not persist outgoing rows.
+
+  `Section 2: Lifecycle Pause Handler for Groups`
+  - `handleAppPaused()` remains local-DB only; no network calls.
+  - Add group pause sweep and resume callbacks in the real lifecycle flow.
+  - Do not let any 1:1-only fast path skip group-only pending rows.
+  - Keep early auto-retry scope aligned with the plan’s text-only-first rule.
+
+  `Section 5: Parallel Media Upload + Group Media Retry`
+  - Replace sequential group media uploads with `Future.wait()` fail-all behavior.
+  - Keep `getGroup()` as the sequential validation gate, then parallelize only `getLatestKey()` and `_loadGroupPushRecipients()`.
+  - Persist durable `pending_uploads/...` paths and `upload_pending` rows before upload.
+  - Implement attachment-scoped group upload retry and stable `blobId` reuse.
+  - Resume-only retry in this phase; do not wire it into generic 1:1 retrier infrastructure.
+
+  `Section 6: Voice Message Reliability for Groups`
+  - Add durable pre-upload copy, stable attachment/message IDs, pre-upload persistence, and retry-safe cleanup.
+  - If `mediaAttachmentRepo` or `mediaFileManager` is unavailable, do not expose the group voice send path.
+  - Preserve quote-restoration behavior on failure.
+
+  `Section 3: iOS Background Task Protection for Group Sends`
+  - Do this only after the final group send path from Sections 4, 5, and 6 is in place.
+  - `bg:begin` / `bg:end` live only in `group_conversation_wired.dart` presentation-layer text and voice paths.
+  - Feed-inline group send remains excluded in this phase, exactly as the plan says.
+  - Start protection after optimistic persistence and release it in `finally` after the full protected pipeline, including inbox-store completion.
+
+  `Go 10.3: Decryption Failure Event Emission`
+  - Emit `group:decryption_failed` and `group:payload_parse_failed` as diagnostic observability events.
+  - Keep this scope narrow; do not widen into extra Dart routing unless the plan explicitly requires it for current-phase acceptance.
+
+  `Go 10.2: Key Rotation Grace Period`
+  - Add previous-key grace-period validation and decryption support.
+  - Add non-mutating `group:generateNextKey`.
+  - Do not implement `Go 10.4` pre-check work in this run.
+
+  `Section 7: Key Rotation Safety Window`
+  - Reorder rotation to generate next key, distribute first, update admin validator last, then broadcast the system message.
+  - Receiver-side promotion happens only after `group:updateKey` succeeds.
+  - Keep the existing member-removal flow shape compatible while changing rotation ownership.
+
+  `Section 9: Member Config Sync Atomicity`
+  - Implement only the sufficient phase: rollback on sync failure, single owner for `group:updateConfig`, per-group serialization, one retry using incoming `groupConfig`, and terminal `CONFIG_SYNC_FAILED`.
+  - Keep the deferred hardening items out unless the plan is explicitly expanded.
+
+  `Section 10: Announcement-Specific Acceptance Proofs`
+  - Run the announcement proofs through the real group send path and the final reliability contract.
+  - Reliability work must never bypass admin-only authorization.
+  - Non-admin rejection must leave no unauthorized retryable outgoing row behind.
+
+  `Section 11: Test Infrastructure`
+  - Extend existing `FakeGroupPubSubNetwork`, `GroupTestUser`, `lifecycle_helpers.dart`, and `InMemoryGroupMessageRepository`.
+  - Do not replace the existing group harnesses with isolated fake-only infrastructure.
+  - Add only the helpers the plan names, and extract a higher-level harness only if the plan’s reuse threshold is actually met.
+
+  Verification Rules
+  - Use each phase’s `TDD Tests` and `Acceptance Proof` subsections as the minimum required verification contract.
+  - Before accepting each phase, run the targeted Dart, Go, and iOS tests required by that phase and record exact results.
+  - Before final acceptance, run the full regression required by the touched group areas, including targeted new/updated group suites, repo-local `flutter test`, targeted `go test` for touched Go packages, and the repo-local iOS
+  background-task test command if executable.
+  - If any verification cannot be run, report the exact blocker and do not silently accept the phase.
+
+  Manual QA / Smoke Expectations
+  - Use each phase’s `Acceptance Proof` subsection as required evidence, not optional notes.
+  - Record which smoke scenarios were executed versus deferred.
+  - If a smoke scenario cannot be executed in this environment, record it as an explicit residual risk or deferral.
+
+  Acceptance Rules
+  - Accept a phase only if:
+    - all required behavior for that phase is implemented
+    - required RED evidence was captured before production edits
+    - required targeted tests/commands are green, or any non-green item is explicitly understood and accepted
+    - the reviewer reports `PASS`
+    - scope stayed inside the phase boundary
+    - residual risks, deferrals, and next-phase prerequisites are written down
+  - In auto-advance mode, advance only if the current phase is accepted and the next phase is inside the allowed sequence.
+
+  Commit Rule
+  - If a commit is requested, use: `fix(groups): implement <accepted phase label>`
+
+  Assumptions
+  - Assume the plan is approved and ready.
+  - Begin with `Database Schema Changes + Wire Envelope Persistence Design`.
+  - Continue through the allowed sequence without pausing for intermediate approval unless a phase is genuinely blocked.
+
+
+  =========
+
+  Implement the TDD plan in UI-TestFlight-1/tdd_plan_avatar_tap_navigation.md
+
+  Run 2 agents in parallel:
+
+  **Agent 1 — OpenModeCardBody (Phase 1):**
+  Read UI-TestFlight-1/tdd_plan_avatar_tap_navigation.md for the full plan. Implement Phase 1:
+  - Read lib/features/feed/presentation/widgets/open_mode_card_body.dart and test/features/feed/presentation/widgets/open_mode_card_body_test.dart
+  - Add Tests 1.1 and 1.2 to the existing test file (tapping UserAvatar fires onViewEarlier for 1:1, tapping group icon fires onViewEarlier for group thread)
+  - Run the new tests, confirm they fail (RED)
+  - Implement: in _buildHeader(), wrap both the UserAvatar and the group icon Container in GestureDetector(onTap: onViewEarlier). No new parameters — use the existing onViewEarlier callback.
+  - Run the new tests, confirm they pass (GREEN)
+  - Run the full existing test file to confirm no regressions
+
+  **Agent 2 — CollapsedModeCardBody (Phase 2):**
+  Read UI-TestFlight-1/tdd_plan_avatar_tap_navigation.md for the full plan. Implement Phase 2:
+  - Read lib/features/feed/presentation/widgets/collapsed_mode_card_body.dart and test/features/feed/presentation/widgets/collapsed_mode_card_body_test.dart
+  - Add Tests 2.1 through 2.6 to the existing test file (avatar tap fires onViewFullConversation not onTapExpand; display name tap still fires onTapExpand; timestamp tap still fires onTapExpand; group icon tap fires
+  onViewFullConversation; expanded avatar tap fires onViewFullConversation; replied checkmark tap still fires onTapExpand)
+  - Run the new tests, confirm they fail (RED)
+  - Implement: keep the outer GestureDetector(onTap: onTapExpand, behavior: HitTestBehavior.opaque) in build() wrapping _buildHeader() completely unchanged. Inside _buildHeader(), wrap just the avatar/group-icon widget in
+  GestureDetector(onTap: onViewFullConversation). No new parameters — use the existing onViewFullConversation callback. Flutter hit-testing lets the inner detector win its 42px area while everything else falls through to the outer
+  expand handler.
+  - Run the new tests, confirm they pass (GREEN)
+  - Run the full existing test file to confirm no regressions
+
+  After both agents complete, run a QA agent:
+  - Read UI-TestFlight-1/tdd_plan_avatar_tap_navigation.md, the two modified source files, and the two modified test files
+  - Verify the implementation matches the plan: no new callbacks added, no changes to feed_card.dart, outer GestureDetector in CollapsedModeCardBody.build() is unchanged
+  - Run all feed tests: flutter test test/features/feed/
+  - Report any failures, regressions, or deviations from the plan
