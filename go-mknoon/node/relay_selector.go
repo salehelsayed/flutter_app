@@ -81,10 +81,11 @@ func (rs *RelaySelector) First() (RelayInfo, error) {
 	return rs.relays[0], nil
 }
 
-// ForEach calls fn for each relay in order. If fn returns nil, iteration
-// stops and ForEach returns nil. If fn returns an error, iteration continues
-// to the next relay. If all relays fail, the last error is returned with
-// context about the number of relays tried.
+// ForEach calls fn for each relay address in configured order. If a relay has
+// multiple transport addresses, each address is tried before moving to the next
+// relay peer. If fn returns nil, iteration stops and ForEach returns nil. If
+// all relays fail, the last error is returned with context about the number of
+// relays tried.
 func (rs *RelaySelector) ForEach(fn func(relay RelayInfo) error) error {
 	rs.mu.RLock()
 	relays := make([]RelayInfo, len(rs.relays))
@@ -97,19 +98,23 @@ func (rs *RelaySelector) ForEach(fn func(relay RelayInfo) error) error {
 
 	var lastErr error
 	for i, relay := range relays {
-		err := fn(relay)
-		if err == nil {
-			return nil
+		candidates := relayInfoAttemptCandidates(relay)
+		for j, candidate := range candidates {
+			err := fn(candidate)
+			if err == nil {
+				return nil
+			}
+			lastErr = err
+			log.Printf("[RELAY_SELECTOR] Relay %d/%d addr %d/%d (%s) failed: %v",
+				i+1, len(relays), j+1, len(candidates), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
 		}
-		lastErr = err
-		log.Printf("[RELAY_SELECTOR] Relay %d/%d (%s) failed: %v",
-			i+1, len(relays), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
 	}
 
 	return fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
 }
 
-// FanOut calls fn for every relay in order.
+// FanOut calls fn for every relay in order, trying same-peer transport
+// addresses until that relay succeeds or all of its addresses fail.
 // Returns nil if at least one relay succeeds, otherwise returns the last error.
 func (rs *RelaySelector) FanOut(fn func(relay RelayInfo) error) error {
 	rs.mu.RLock()
@@ -126,14 +131,21 @@ func (rs *RelaySelector) FanOut(fn func(relay RelayInfo) error) error {
 		successCount int
 	)
 	for i, relay := range relays {
-		err := fn(relay)
-		if err == nil {
-			successCount++
-			continue
+		candidates := relayInfoAttemptCandidates(relay)
+		var relaySucceeded bool
+		for j, candidate := range candidates {
+			err := fn(candidate)
+			if err == nil {
+				relaySucceeded = true
+				break
+			}
+			lastErr = err
+			log.Printf("[RELAY_SELECTOR] Relay %d/%d addr %d/%d (%s) failed: %v",
+				i+1, len(relays), j+1, len(candidates), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
 		}
-		lastErr = err
-		log.Printf("[RELAY_SELECTOR] Relay %d/%d (%s) failed: %v",
-			i+1, len(relays), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
+		if relaySucceeded {
+			successCount++
+		}
 	}
 
 	if successCount > 0 {
@@ -143,9 +155,9 @@ func (rs *RelaySelector) FanOut(fn func(relay RelayInfo) error) error {
 	return fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
 }
 
-// ForEachWithResult calls fn for each relay in order. If fn returns a non-nil
-// result and nil error, iteration stops and the result is returned. If all
-// relays fail, the last error is returned.
+// ForEachWithResult calls fn for each relay address in configured order. If fn
+// returns a non-nil result and nil error, iteration stops and the result is
+// returned. If all relays fail, the last error is returned.
 func ForEachWithResult[T any](rs *RelaySelector, fn func(relay RelayInfo) (T, error)) (T, error) {
 	rs.mu.RLock()
 	relays := make([]RelayInfo, len(rs.relays))
@@ -159,16 +171,34 @@ func ForEachWithResult[T any](rs *RelaySelector, fn func(relay RelayInfo) (T, er
 
 	var lastErr error
 	for i, relay := range relays {
-		result, err := fn(relay)
-		if err == nil {
-			return result, nil
+		candidates := relayInfoAttemptCandidates(relay)
+		for j, candidate := range candidates {
+			result, err := fn(candidate)
+			if err == nil {
+				return result, nil
+			}
+			lastErr = err
+			log.Printf("[RELAY_SELECTOR] Relay %d/%d addr %d/%d (%s) failed: %v",
+				i+1, len(relays), j+1, len(candidates), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
 		}
-		lastErr = err
-		log.Printf("[RELAY_SELECTOR] Relay %d/%d (%s) failed: %v",
-			i+1, len(relays), relay.ID.String()[:min(20, len(relay.ID.String()))], err)
 	}
 
 	return zero, fmt.Errorf("all %d relays failed, last error: %w", len(relays), lastErr)
+}
+
+func relayInfoAttemptCandidates(relay RelayInfo) []RelayInfo {
+	if len(relay.Addrs) <= 1 {
+		return []RelayInfo{relay}
+	}
+
+	candidates := make([]RelayInfo, 0, len(relay.Addrs))
+	for _, addr := range relay.Addrs {
+		candidates = append(candidates, RelayInfo{
+			ID:    relay.ID,
+			Addrs: []ma.Multiaddr{addr},
+		})
+	}
+	return candidates
 }
 
 // buildRelaySelector creates a RelaySelector from the provided addresses,

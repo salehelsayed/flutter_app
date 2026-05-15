@@ -1,9 +1,11 @@
 package node
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -608,6 +610,55 @@ func TestPersonalRendezvousRefreshInterval_IsSafelyBelowTTL(t *testing.T) {
 	cfg.PersonalRendezvousRefreshInterval = 7 * time.Second
 	if got := cfg.PersonalRendezvousRefreshEvery(); got != 7*time.Second {
 		t.Fatalf("configured refresh interval = %v, want %v", got, 7*time.Second)
+	}
+}
+
+func TestWarmRelayConnectionWithTimeout_FallsBackAcrossSamePeerAddresses(t *testing.T) {
+	seedAddr := generateFakeRelayAddr(t, 19021)
+	seedMaddr, err := ma.NewMultiaddr(seedAddr)
+	if err != nil {
+		t.Fatalf("NewMultiaddr(%q): %v", seedAddr, err)
+	}
+	seedInfo, err := peer.AddrInfoFromP2pAddr(seedMaddr)
+	if err != nil {
+		t.Fatalf("AddrInfoFromP2pAddr(%q): %v", seedAddr, err)
+	}
+	peerID := seedInfo.ID.String()
+	firstAddr := fmt.Sprintf("/ip4/127.0.0.1/udp/19022/quic-v1/p2p/%s", peerID)
+	secondAddr := fmt.Sprintf("/ip4/127.0.0.1/tcp/19023/ws/p2p/%s", peerID)
+	relay := NewRelaySelector([]string{firstAddr, secondAddr}).Relays()[0]
+
+	n := NewNode()
+	n.ctx, n.cancel = context.WithCancel(context.Background())
+	defer n.cancel()
+
+	attempts := make([]string, 0, 2)
+	n.connectRelayHook = func(ctx context.Context, info peer.AddrInfo) error {
+		if len(info.Addrs) != 1 {
+			t.Fatalf("connect attempt got %d addrs, want one", len(info.Addrs))
+		}
+		attempts = append(attempts, info.Addrs[0].String())
+		if len(attempts) == 1 {
+			return errors.New("first transport failed")
+		}
+		return nil
+	}
+
+	if err := n.warmRelayConnectionWithTimeout(peer.AddrInfo{
+		ID:    relay.ID,
+		Addrs: relay.Addrs,
+	}, time.Second); err != nil {
+		t.Fatalf("warmRelayConnectionWithTimeout: %v", err)
+	}
+
+	if len(attempts) != 2 {
+		t.Fatalf("connect attempts = %d, want 2 (%v)", len(attempts), attempts)
+	}
+	if attempts[0] != "/ip4/127.0.0.1/udp/19022/quic-v1" {
+		t.Fatalf("first attempt = %q, want QUIC address", attempts[0])
+	}
+	if attempts[1] != "/ip4/127.0.0.1/tcp/19023/ws" {
+		t.Fatalf("second attempt = %q, want WSS address", attempts[1])
 	}
 }
 

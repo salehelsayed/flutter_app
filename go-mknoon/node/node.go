@@ -74,6 +74,7 @@ type Node struct {
 	// Test seams for startup timing behavior.
 	warmRelayConnectionHook            func(peer.AddrInfo) error
 	warmRelayConnectionWithTimeoutHook func(peer.AddrInfo, time.Duration) error
+	connectRelayHook                   func(context.Context, peer.AddrInfo) error
 	waitForCircuitAddressHook          func(time.Duration) bool
 	rendezvousRegisterHook             func(string, []string) error
 	rendezvousDiscoverHook             func(string, []string) ([]peer.AddrInfo, error)
@@ -602,29 +603,65 @@ func (n *Node) warmRelayConnectionWithTimeout(info peer.AddrInfo, timeout time.D
 	}
 
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(n.ctx, timeout)
-	defer cancel()
-	ctx = network.WithDialPeerTimeout(ctx, timeout)
-
-	if err := n.host.Connect(ctx, info); err != nil {
+	var lastErr error
+	candidates := relayConnectCandidates(info)
+	for i, candidate := range candidates {
+		ctx, cancel := context.WithTimeout(n.ctx, timeout)
+		ctx = network.WithDialPeerTimeout(ctx, timeout)
+		err := n.connectRelay(ctx, candidate)
+		cancel()
+		if err == nil {
+			n.emitEvent("relay:warm_timing", map[string]interface{}{
+				"elapsedMs": time.Since(start).Milliseconds(),
+				"outcome":   "success",
+				"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
+			})
+			log.Printf("[NODE] Warmed relay connection: %s", info.ID.String()[:min(20, len(info.ID.String()))])
+			return nil
+		}
+		lastErr = err
 		if ctx.Err() == context.DeadlineExceeded {
 			n.emitTimeoutFired("DialTimeout", timeout, start)
 		}
-		n.emitEvent("relay:warm_timing", map[string]interface{}{
-			"elapsedMs": time.Since(start).Milliseconds(),
-			"outcome":   "failed",
-			"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
-		})
-		return fmt.Errorf("dial relay: %w", err)
+		if len(candidates) > 1 {
+			log.Printf(
+				"[NODE] relay address dial FAILED (%s, addr %d/%d): %v",
+				info.ID.String()[:min(20, len(info.ID.String()))],
+				i+1,
+				len(candidates),
+				err,
+			)
+		}
 	}
 
 	n.emitEvent("relay:warm_timing", map[string]interface{}{
 		"elapsedMs": time.Since(start).Milliseconds(),
-		"outcome":   "success",
+		"outcome":   "failed",
 		"relayId":   info.ID.String()[:min(20, len(info.ID.String()))],
 	})
-	log.Printf("[NODE] Warmed relay connection: %s", info.ID.String()[:min(20, len(info.ID.String()))])
-	return nil
+	return fmt.Errorf("dial relay: %w", lastErr)
+}
+
+func relayConnectCandidates(info peer.AddrInfo) []peer.AddrInfo {
+	if len(info.Addrs) <= 1 {
+		return []peer.AddrInfo{info}
+	}
+
+	candidates := make([]peer.AddrInfo, 0, len(info.Addrs))
+	for _, addr := range info.Addrs {
+		candidates = append(candidates, peer.AddrInfo{
+			ID:    info.ID,
+			Addrs: []ma.Multiaddr{addr},
+		})
+	}
+	return candidates
+}
+
+func (n *Node) connectRelay(ctx context.Context, info peer.AddrInfo) error {
+	if n.connectRelayHook != nil {
+		return n.connectRelayHook(ctx, info)
+	}
+	return n.host.Connect(ctx, info)
 }
 
 func (n *Node) warmRelayConnectionForStart(info peer.AddrInfo) error {
