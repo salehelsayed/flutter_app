@@ -80,13 +80,33 @@ Future<Map<String, dynamic>> _waitForVerdict(
 }) async {
   final deadline = DateTime.now().add(timeout);
   final file = File(_verdictPath(sharedDir, runId, role));
+  Object? lastDecodeError;
   while (DateTime.now().isBefore(deadline)) {
     if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final contents = file.readAsStringSync();
+      if (contents.trim().isNotEmpty) {
+        try {
+          final decoded = jsonDecode(contents);
+          if (decoded is Map<String, dynamic>) {
+            return decoded;
+          }
+          if (decoded is Map) {
+            return Map<String, dynamic>.from(decoded);
+          }
+          throw const FormatException('Verdict JSON was not an object');
+        } on FormatException catch (error) {
+          lastDecodeError = error;
+        }
+      }
     }
     await Future<void>.delayed(const Duration(milliseconds: 250));
   }
-  throw TimeoutException('Timed out waiting for $role verdict at ${file.path}');
+  final suffix = lastDecodeError == null
+      ? ''
+      : '; last decode error: $lastDecodeError';
+  throw TimeoutException(
+    'Timed out waiting for parseable $role verdict at ${file.path}$suffix',
+  );
 }
 
 Future<Map<String, dynamic>> _waitForVerdictOrExit({
@@ -104,6 +124,21 @@ Future<Map<String, dynamic>> _waitForVerdictOrExit({
     return result;
   }
   if (result is _ProcessExit) {
+    if (result.exitCode == 0) {
+      try {
+        return await _waitForVerdict(
+          sharedDir,
+          runId,
+          role.name,
+          timeout: const Duration(seconds: 5),
+        );
+      } catch (error) {
+        throw StateError(
+          '${role.name} exited successfully before writing a parseable '
+          'verdict; log=$logPath; $error',
+        );
+      }
+    }
     throw StateError(
       '${role.name} exited with code ${result.exitCode} before writing a '
       'verdict; log=$logPath',

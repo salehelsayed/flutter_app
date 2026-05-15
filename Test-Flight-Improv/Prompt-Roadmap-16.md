@@ -9,10 +9,8 @@
   - `flutter-test-orchestrator` for regression/test planning, gate selection, and QA
   - `flutter-ui-performance-profiler` for Sessions 15, 16, 17 and other profile-gated work
   - `go-libp2p-resilience-implementer` for cross-tree Go / bridge work
-  - `mobile-network-resilience-qa` only when the active session touches startup, resume, transport, failover,
-  inbox catch-up, or device/simulator resilience validation
-  - `flutter-sqlite-migrations-and-repositories` only when the active session changes DB helpers, migrations, or
-  repository persistence contracts
+  - `mobile-network-resilience-qa` only when the active session touches startup, resume, transport, failover, inbox catch-up, or device/simulator resilience validation
+  - `flutter-sqlite-migrations-and-repositories` only when the active session changes DB helpers, migrations, or repository persistence contracts
 
   Work through Sessions 12 through 23 from `Test-Flight-Improv/16-session-todo-roadmap-2.md` in strict order.
 
@@ -32,13 +30,10 @@
     - `soft external dependency blocker`
     - `stale/already-covered`
     - `prerequisite-blocked`
-  - A `soft external dependency blocker` means the remaining gap lives in an external CI host, external repo,
-  external owner path, or inaccessible release system, and no more repo-local work can safely reduce uncertainty.
+  - A `soft external dependency blocker` means the remaining gap lives in an external CI host, external repo, external owner path, or inaccessible release system, and no more repo-local work can safely reduce uncertainty.
   - A `soft external dependency blocker` must NOT stop the whole workflow.
-  - Instead, switch the session into `External Handoff Mode` and finish it as `accepted_with_external_follow_up`
-  if the handoff criteria are met.
-  - A `hard blocker` means the session cannot be completed safely even after all possible repo-local work is
-  done, and the blocker is not just inaccessible external ownership.
+  - Instead, switch the session into `External Handoff Mode` and finish it as `accepted_with_external_follow_up` if the handoff criteria are met.
+  - A `hard blocker` means the session cannot be completed safely even after all possible repo-local work is done, and the blocker is not just inaccessible external ownership.
   - A `prerequisite-blocked` session means a required artifact or prior session output is missing.
   - If a session is `blocked` or `prerequisite-blocked`, do not automatically stop the whole roadmap.
   - First determine whether later sessions explicitly depend on that blocker.
@@ -51,8 +46,7 @@
     - `sufficient`
     - or `sufficient with explicit follow-up`
     - or `accepted_with_external_follow_up`
-  - Mark a session `blocked` only if the same structural blockers repeat without meaningful reduction across 2
-  consecutive fix rounds.
+  - Mark a session `blocked` only if the same structural blockers repeat without meaningful reduction across 2 consecutive fix rounds.
   - Do not loop forever over incremental details.
 
   For each session N in {12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}, use:
@@ -72,12 +66,9 @@
   - `prerequisite-blocked`
 
   Classification rules:
-  - `profile-gated`: the roadmap requires traces, profiling, measurements, or query-plan evidence before deciding
-  whether code should change
-  - `evidence-gated`: the roadmap requires proof of an existing contract and may validly end with “already
-  sufficient, document it”
-  - `cross-tree`: the work lives partly outside the Flutter tree, such as `go-mknoon/` or external CI/release
-  config
+  - `profile-gated`: the roadmap requires traces, profiling, measurements, or query-plan evidence before deciding whether code should change
+  - `evidence-gated`: the roadmap requires proof of an existing contract and may validly end with “already sufficient, document it”
+  - `cross-tree`: the work lives partly outside the Flutter tree, such as `go-mknoon/` or external CI/release config
   - `stale`: the repo already covers the gap strongly enough; update docs and stop without implementation
   - `prerequisite-blocked`: a required artifact from roadmap 15 or an earlier accepted session is missing
 
@@ -92,8 +83,7 @@
   - Session 20: likely `implementation-ready`
   - Session 21: likely `implementation-ready`
   - Session 22: likely `implementation-ready`
-  - Session 23: likely `implementation-ready`, but `prerequisite-blocked` if roadmap 15 Session 11 observability
-  artifacts do not exist yet
+  - Session 23: likely `implementation-ready`, but `prerequisite-blocked` if roadmap 15 Session 11 observability artifacts do not exist yet
 
   If Session N is `stale`:
   - update the session plan and any affected roadmap/docs
@@ -140,8 +130,7 @@
   Planner rules:
   - If the session is profile-gated, require evidence before proposing production edits
   - If the session is evidence-gated, allow a valid outcome of “no code change needed”
-  - If the session is cross-tree, inspect and edit the relevant repo/config path instead of forcing the work into
-  Flutter only
+  - If the session is cross-tree, inspect and edit the relevant repo/config path instead of forcing the work into Flutter only
   - If the session encounters an inaccessible external repo / CI host / owner path, classify that as a possible
   `soft external dependency blocker`
   - For Session 12:
@@ -182,8 +171,7 @@
   - another issue that makes the session unsafe to execute
 
   Soft external dependency blocker means:
-  - the only remaining unresolved work lives in an external CI/release host, external repo, or external owner
-  path that is not accessible from the current workspace
+  - the only remaining unresolved work lives in an external CI/release host, external repo, or external owner path that is not accessible from the current workspace
   - and no more repo-local work can safely reduce uncertainty
 
   Plan-fix loop:
@@ -194,8 +182,7 @@
     - verdict becomes `sufficient`
     - or `sufficient with explicit follow-up`
     - or `accepted_with_external_follow_up`
-    - or the same structural blockers repeat without meaningful reduction across 2 consecutive fix rounds, in
-  which case mark Session N `blocked`
+    - or the same structural blockers repeat without meaningful reduction across 2 consecutive fix rounds, in which case mark Session N `blocked`
 
   External Handoff Mode:
   - If Arbiter finds only soft external dependency blockers, do not mark the session blocked
@@ -255,8 +242,7 @@
   - continue until the plan becomes:
     - `sufficient`
     - or `sufficient with explicit follow-up`
-  - if the same structural blockers repeat without meaningful reduction across 2 consecutive update rounds, mark
-  Session N `blocked`
+  - if the same structural blockers repeat without meaningful reduction across 2 consecutive update rounds, mark Session N `blocked`
 
   Phase B output:
   1. plan review verdict: sufficient / sufficient with explicit follow-up / blocked
@@ -279,17 +265,14 @@
 
   Execution mode rules by session type:
   - `implementation-ready`: add required regression first when the plan requires it, then implement
-  - `profile-gated`: collect evidence first; if the evidence says “no code change justified,” document it and
-  stop without speculative edits
-  - `evidence-gated`: verify the contract first; if current evidence is already sufficient, document it and stop
-  without implementation
+  - `profile-gated`: collect evidence first; if the evidence says “no code change justified,” document it and stop without speculative edits
+  - `evidence-gated`: verify the contract first; if current evidence is already sufficient, document it and stop without implementation
   - `cross-tree`: inspect and edit the correct repo/config locations; do not force the work into Flutter only
   - `stale`: no production implementation; only doc updates
   - `prerequisite-blocked`: do not execute
 
   Executor:
-  - read the Session N roadmap item, approved plan, source reports, code-entry files, and any required
-  prerequisite outputs
+  - read the Session N roadmap item, approved plan, source reports, code-entry files, and any required prerequisite outputs
   - follow the scope guard exactly
   - if the session is profile-gated or evidence-gated, capture the required evidence before editing code
   - add the required regression/test first if the plan requires it
@@ -300,8 +283,7 @@
   - run Startup / Transport Gate only if the plan requires it
   - for Go-tree work, run the exact Go tests from the plan
   - for CI/release/config work, validate the exact invoked commands or wiring path from the plan
-  - if the only remaining blocker is inaccessible external ownership, switch to `External Handoff Mode` instead
-  of failing
+  - if the only remaining blocker is inaccessible external ownership, switch to `External Handoff Mode` instead of failing
   - then stop and report:
     1. files changed
     2. repos/config paths changed
@@ -330,14 +312,10 @@
   Gate rules:
   - Baseline Gate is required only when Flutter production code changes
   - Subsystem gates are required only when the session changes that subsystem
-  - Startup / Transport Gate is required only when the session affects bootstrap, resume, transport fallback, DB-
-  open startup, or device-backed media flows
-  - Pure evidence-only or profile-only sessions may complete without Baseline Gate if no Flutter production code
-  changed
-  - For Session 12, validate the canonical gate runner / CI invocation contract rather than inventing a larger
-  matrix
-  - For Session 14, use the Go-side test commands from the plan and run Flutter gates only if Flutter-facing
-  contracts changed
+  - Startup / Transport Gate is required only when the session affects bootstrap, resume, transport fallback, DB-open startup, or device-backed media flows
+  - Pure evidence-only or profile-only sessions may complete without Baseline Gate if no Flutter production code changed
+  - For Session 12, validate the canonical gate runner / CI invocation contract rather than inventing a larger matrix
+  - For Session 14, use the Go-side test commands from the plan and run Flutter gates only if Flutter-facing contracts changed
 
   QA Reviewer:
   - only after Executor fully finishes
@@ -378,8 +356,7 @@
     - execution becomes `sufficient`
     - or `sufficient with explicit follow-up`
     - or `accepted_with_external_follow_up`
-    - or the same blocking issues repeat without meaningful reduction across 2 consecutive fix rounds, in which
-  case mark Session N `blocked`
+    - or the same blocking issues repeat without meaningful reduction across 2 consecutive fix rounds, in which case mark Session N `blocked`
 
   Do not keep looping over non-blocking follow-ups.
 
@@ -392,8 +369,7 @@
   - only non-blocking follow-ups remain, if any
 
   Phase C output:
-  1. execution verdict: sufficient / sufficient with explicit follow-up / accepted_with_external_follow_up /
-  blocked
+  1. execution verdict: sufficient / sufficient with explicit follow-up / accepted_with_external_follow_up /blocked
   2. files changed
   3. repos/config paths changed
   4. tests added or updated
@@ -438,5 +414,4 @@
     - soft external dependency blockers remaining
     - non-blocking follow-ups deferred
   6. all docs/files updated across Sessions 12..23
-  7. whether the overall workflow finished all sessions or which remaining sessions were skipped due to
-  dependency
+  7. whether the overall workflow finished all sessions or which remaining sessions were skipped due to dependency

@@ -13,3 +13,8 @@
 
   Fix: Removed the !Platform.isAndroid guard so both platforms show a local notification via flutter_local_notifications. The iOS
   DarwinNotificationDetails with presentAlert: true was already configured.
+
+
+
+============
+Network-Arch/Push-Notification-Visibility-Fix-TDD-Plan.md.

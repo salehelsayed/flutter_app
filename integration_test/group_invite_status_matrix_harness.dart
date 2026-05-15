@@ -386,7 +386,9 @@ void _writeVerdict(Map<String, Object?> verdict) {
     '$configuredSharedDir/invite_status_${configuredRunId}_'
     '${configuredRole}_verdict.json',
   );
-  file.writeAsStringSync(jsonEncode(verdict));
+  final tempFile = File('${file.path}.tmp');
+  tempFile.writeAsStringSync(jsonEncode(verdict), flush: true);
+  tempFile.renameSync(file.path);
 }
 
 void main() {

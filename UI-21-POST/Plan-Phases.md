@@ -1365,3 +1365,63 @@ Outcome: all phase deliverables, command matrices, and carry-forward items are c
 5. Phase 5
 
 This order keeps the hardest ambiguity out of the first vertical slice. It gives you a real Posts feature quickly, then adds engagement, then privacy-sensitive nearby logic, then trust-mediated extended reach, and finally long-lived pin lifecycle.
+---------------
+
+
+  Findings
+
+  - The pinned UI does not render profile pictures today. The collapsed header uses initials-only
+    badges in _PinnedAvatarStack:254, and the expanded pinned cards render only authorUsername plus
+    text in _PinnedPostCard:171. That is the direct reason the creator avatar is missing on both the
+    owner and recipient screens.
+  - Unpin propagation already exists and the current transport path is correct in principle. Sender
+    remove is emitted in remove_pin_use_case.dart:21, routed by incoming_message_router.dart:184,
+    and applied on recipients in handle_incoming_post_pins_use_case.dart:124. Existing tests for
+    that slice pass.
+  - The semantic gap is that unpin does not currently put the offer down at the post level. Both the
+    sender-side remove path and the receiver-side remove path update only post_pins; they do not set
+    post.keepAvailable = false in remove_pin_use_case.dart:53 and
+    handle_incoming_post_pins_use_case.dart:187. That matters because feed visibility logic keys off
+    keepAvailable in load_posts_feed_use_case.dart:28.
+  - Repeated pin/unpin cycles are not hardened by tests. Current coverage checks one pin, one edit,
+    one remove, and one stale ordering case in pin_post_use_case_test.dart:56 and
+    handle_incoming_post_pins_use_case_test.dart:76, but not pin -> unpin -> pin -> unpin end to
+    end.
+  - The pinned-section widget tests also do not assert avatar rendering at all in
+    pinned_posts_section_chrome_test.dart:9 and posts_wired_pinned_section_test.dart:67.
+
+  Plan
+
+  1. Fix pinned avatar rendering in pinned_posts_section.dart by replacing initials-only
+     _AvatarBadge usage with UserAvatar(peerId: post.authorPeerId, ...), and by giving
+     _PinnedPostCard the same author header treatment as the main post_card.dart. This is the
+     smallest change that guarantees the creator photo appears on both the owner device and
+     recipient devices through the existing avatar pipeline.
+  2. Make unpin actually put the offer down. In remove_pin_use_case.dart, update the local PostModel
+     to keepAvailable: false before saving. In handle_incoming_post_pins_use_case.dart, mirror that
+     on incoming post_pin_remove so recipients also stop treating the post as an active keep-
+     available offer.
+  3. Add repeat-cycle tests. Extend pin_post_use_case_test.dart with pin -> unpin -> pin -> unpin
+     assertions on both saved post state and emitted envelopes. Extend
+     handle_incoming_post_pins_use_case_test.dart with update -> remove -> update -> remove and
+     assert recipient pin state, keepAvailable, and visible post text after each step.
+  4. Add UI coverage for avatars and removal. Update pinned_posts_section_chrome_test.dart and
+     posts_wired_pinned_section_test.dart to assert UserAvatar presence in collapsed and expanded
+     pinned UI, and to prove recipient pinned cards disappear after an incoming remove while the
+     normal feed behavior remains correct.
+  5. Add one hardening case for local dismissals. Even though your stated cycle includes an
+     intervening unpin, I would also add a test that a fresh active pin can reappear after prior
+     local dismissal. Right now incoming remove clears dismissals, but a future active update does
+     not. That is an avoidable edge-case trap in handle_incoming_post_pins_use_case.dart:93.
+  6. Run a focused acceptance slice after the fix: sender pin/unpin local UI, recipient receive/
+     remove UI, repeated cycle, and restart restoration.
+
+  Verification Baseline
+  Current pin-related tests already pass:
+  ./.codex-bin/flutter test test/features/posts/phase5/pin_post_use_case_test.dart test/features/
+  posts/phase5/handle_incoming_post_pins_use_case_test.dart test/features/posts/phase5/
+  load_pinned_posts_use_case_test.dart test/features/posts/phase5/
+  pinned_posts_section_chrome_test.dart test/features/posts/phase5/
+  posts_wired_pinned_section_test.dart test/features/posts/phase5/
+  posts_wired_sender_pin_action_test.dart test/core/services/
+  incoming_message_router_posts_pins_test.dart

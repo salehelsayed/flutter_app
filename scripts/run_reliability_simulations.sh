@@ -259,6 +259,30 @@ ios_notification_tap_devices() {
   multi_device_ids
 }
 
+four_device_ids() {
+  if [ -n "${DEVICE_A:-}" ] &&
+     [ -n "${DEVICE_B:-}" ] &&
+     [ -n "${DEVICE_C:-}" ] &&
+     [ -n "${DEVICE_D:-}" ]; then
+    printf '%s,%s,%s,%s\n' "$DEVICE_A" "$DEVICE_B" "$DEVICE_C" "$DEVICE_D"
+    return
+  fi
+
+  multi_device_ids
+}
+
+path_needs_four_device() {
+  case "$1" in
+    integration_test/scripts/run_group_invite_status_matrix_sim.dart|\
+    integration_test/scripts/run_group_multi_party_device_real.dart)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 path_needs_multi_device() {
   case "$1" in
     integration_test/scripts/run_foreground_group_push_simulator_smoke.dart|\
@@ -276,6 +300,11 @@ path_needs_multi_device() {
 
 device_arg_for_path() {
   local path="$1"
+
+  if path_needs_four_device "$path"; then
+    four_device_ids
+    return
+  fi
 
   if path_needs_multi_device "$path"; then
     multi_device_ids
@@ -309,6 +338,12 @@ print_command_for_path() {
       device_id="$(ios_notification_tap_devices)"
       if [ -n "$device_id" ]; then
         printf ' --devices %s' "$(quote_for_display "$device_id")"
+      fi
+      ;;
+    scripts/smoke_test_push_decrypt_simulator.sh)
+      printf './%s' "$path"
+      if [ "${RELIABILITY_IOS_ONLY:-0}" = "1" ]; then
+        printf ' --ios-only'
       fi
       ;;
     scripts/*.sh)
@@ -366,6 +401,13 @@ run_path() {
       device_id="$(ios_notification_tap_devices)"
       if [ -n "$device_id" ]; then
         cmd+=(--devices "$device_id")
+      fi
+      MKNOON_RELAY_ADDRESSES="$(relay_addresses)" "${cmd[@]}"
+      ;;
+    scripts/smoke_test_push_decrypt_simulator.sh)
+      cmd=("./$path")
+      if [ "${RELIABILITY_IOS_ONLY:-0}" = "1" ]; then
+        cmd+=(--ios-only)
       fi
       MKNOON_RELAY_ADDRESSES="$(relay_addresses)" "${cmd[@]}"
       ;;

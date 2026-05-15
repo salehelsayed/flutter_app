@@ -26,6 +26,37 @@ esac
 BUNDLE_ID="com.mknoon.app"
 DEVICE_COUNT="${#DEVICES[@]}"
 
+flutter_build_for_name() {
+  local name="$1"
+  local log_file
+  local attempt
+  log_file="$(mktemp "${TMPDIR:-/tmp}/intro-e2e-flutter-build.XXXXXX")"
+
+  for attempt in 1 2; do
+    if flutter build ios --simulator --no-pub \
+      --dart-define="AUTO_SETUP_USERNAME=$name" \
+      --dart-define=E2E_TEST_MODE=true \
+      --dart-define=DISABLE_LOCAL_DISCOVERY=true \
+      >"$log_file" 2>&1; then
+      tail -3 "$log_file"
+      rm -f "$log_file"
+      return 0
+    fi
+
+    if [ "$attempt" -lt 2 ] &&
+       grep -q 'Xcode build is missing expected TARGET_BUILD_DIR build setting' "$log_file"; then
+      tail -6 "$log_file" >&2
+      echo "  [$name] Retrying Flutter build after transient Xcode build-settings failure ..." >&2
+      sleep 5
+      continue
+    fi
+
+    tail -40 "$log_file" >&2
+    echo "  [$name] Flutter build log: $log_file" >&2
+    return 1
+  done
+}
+
 # ── Step 1: Uninstall ──────────────────────────────────────
 echo "=== Step 1/3: Uninstalling from all devices ==="
 for dev in "${DEVICES[@]}"; do
@@ -60,11 +91,7 @@ for i in "${!DEVICES[@]}"; do
   dev="${DEVICES[$i]}"
   name="${NAMES[$i]}"
   echo "  [$name] Building with AUTO_SETUP_USERNAME=$name E2E_TEST_MODE=true DISABLE_LOCAL_DISCOVERY=true ..."
-  flutter build ios --simulator --no-pub \
-    --dart-define="AUTO_SETUP_USERNAME=$name" \
-    --dart-define=E2E_TEST_MODE=true \
-    --dart-define=DISABLE_LOCAL_DISCOVERY=true \
-    2>&1 | tail -3
+  flutter_build_for_name "$name"
   echo "  [$name] Installing + launching ..."
   xcrun simctl install "$dev" build/ios/iphonesimulator/Runner.app
   xcrun simctl privacy "$dev" grant notifications "$BUNDLE_ID" 2>/dev/null || true

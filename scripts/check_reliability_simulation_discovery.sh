@@ -191,14 +191,22 @@ classify_path() {
   case "$path" in
     integration_test/scripts/run_group_recovery_e2e.dart|\
     integration_test/scripts/run_group_multi_device_real.dart|\
+    integration_test/scripts/run_group_invite_status_matrix_sim.dart|\
+    integration_test/scripts/run_group_multi_party_device_real.dart|\
     integration_test/scripts/run_foreground_group_push_simulator_smoke.dart)
       record "group" "$path" "runner" "group simulator/E2E orchestrator"
       return
       ;;
     integration_test/foreground_group_push_simulator_alice_harness.dart|\
     integration_test/foreground_group_push_simulator_bob_harness.dart|\
+    integration_test/group_invite_status_matrix_harness.dart|\
+    integration_test/group_multi_party_device_real_harness.dart|\
     integration_test/group_multi_device_real_harness.dart)
       record "support" "$path" "support" "group simulator harness"
+      return
+      ;;
+    integration_test/scripts/group_multi_party_device_criteria.dart)
+      record "support" "$path" "support" "group multi-party device criteria helper"
       return
       ;;
   esac

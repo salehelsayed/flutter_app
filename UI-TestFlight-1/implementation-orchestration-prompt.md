@@ -1,8 +1,4 @@
-# Message Delivery Reliability — Implementation Orchestration Prompt
 
-Copy everything below this line and paste it into a new Claude Code session.
-
----
 
 ## Task
 

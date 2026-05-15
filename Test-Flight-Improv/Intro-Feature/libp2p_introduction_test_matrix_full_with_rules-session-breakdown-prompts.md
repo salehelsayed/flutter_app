@@ -630,3 +630,12 @@ Session id: `019d6e60-f43d-7f51-ba1c-c5678bd589ae`
 ```text
 Use [$implementation-session-pipeline-orchestrator](/Users/I560101/.codex/skills/implementation-session-pipeline-orchestrator/SKILL.md)  on Test-Flight-Improv/Intro-Feature/libp2p_introduction_test_matrix_full_with_rules-session-breakdown.md in implementation-committed gap-closure mode. Opt into degraded local continuation mode. Resume from the persisted breakdown, ledger, and existing plan artifacts, continue processing the remaining sessions in order, and do not stop after partial progress checkpoints. Use bounded local plan/execution/closure fallbacks when fresh-child isolation no-progresses, and stop only when a final program verdict is persisted or a real blocker is recorded.
 ```
+
+
+
+
+Use $flutter-test-orchestrator on Test-Flight-Improv/Message-Bubble-List-Feature/message_context_overlay_test_matrix_full_with_rules-session-breakdown.md for a full verification-and-fix pass.
+
+Read the breakdown, extract the exact deduplicated set of tests and commands that were implemented or relied on to close this rollout, run all of them, and make the full set green. Use `flutter test --no- pub`; use `-d macos` when a device is needed unless iOS simulator behavior is genuinely required, then use `iPhone 17` (`5BA69F1C-B112-47BE-B1FF-8C1003728C8F`).
+
+If any test fails, fix only the smallest feature- owned code or test issue necessary, rerun affected tests, then rerun the final deduplicated set. Do not reopen unrelated work. Stop only when the full Message Context Overlay rollout test set is green or there is a concrete unresolved blocker with exact failing commands.

@@ -465,3 +465,79 @@ how do users do the (Circle referral bonus) ? give me examples of products that 
 
   If Ahmed is in 2 circles that both have the deal, the €0.20 splits across both circles (€0.10 each), then splits among members of each circle. Small amounts per person, but they add up — and the social glue it creates is worth more
   than the money.
+
+
+===
+lets say a coffee shop has offers a deal, then a user went by the coffee shop, how can the user rediem that deal? opens the app and scans qr code with the coffee shop?
+
+Good question — let me walk through the practical flow. There are two realistic options:
+
+  Option A: User shows, shop scans (recommended)
+
+  User walks into coffee shop
+       │
+       ▼
+  Opens app → Deals tab → "My Deals" → taps Luigi's deal
+       │
+       ▼
+  App shows QR code on screen (the blind token)
+       │
+       ▼
+  Cashier scans it with their phone (business web app)
+       │
+       ▼
+  Cashier's screen: "Deal verified ✓ — 50% off applied"
+       │
+       ▼
+  User pays the discounted price
+       │
+       ▼
+  €0.80 credited to user's wallet automatically
+
+  For the shop: They just open business.mknoun.xyz on their phone and tap "Scan". No app install needed — it's a web page with camera access. Like how restaurants use QR menus but in reverse.
+
+  For the user: Same flow as Apple Wallet, Starbucks app, or any loyalty card. Phone out, show screen, done.
+
+  Option B: User scans shop's QR (simplest for the shop)
+
+  Coffee shop has a sticker/poster near the register
+  with a static QR code
+       │
+       ▼
+  User scans it with the mknoon app
+       │
+       ▼
+  App shows: "Redeem 50% off latte at Barn Coffee?"
+       │
+       ▼
+  User taps "Redeem" → gets a 4-digit code (e.g. 7294)
+       │
+       ▼
+  User tells cashier: "mknoon code 7294"
+       │
+       ▼
+  Cashier enters code in their POS or dashboard → verified
+
+  For the shop: Zero tech needed. Just a printed QR sticker. They verify the 4-digit code on their dashboard.
+
+  For the user: Scan → confirm → tell the code.
+
+  Which is better?
+
+  ┌─────────────┬──────────────────────────────┬───────────────────────────────────┐
+  │             │      User shows QR (A)       │         User scans QR (B)         │
+  ├─────────────┼──────────────────────────────┼───────────────────────────────────┤
+  │ Shop effort │ Needs phone to scan          │ Just a printed sticker            │
+  ├─────────────┼──────────────────────────────┼───────────────────────────────────┤
+  │ User effort │ Open app, show screen        │ Scan + say a code                 │
+  ├─────────────┼──────────────────────────────┼───────────────────────────────────┤
+  │ Security    │ High (unique per redemption) │ High (unique code per redemption) │
+  ├─────────────┼──────────────────────────────┼───────────────────────────────────┤
+  │ Speed       │ 5 seconds                    │ 10 seconds                        │
+  ├─────────────┼──────────────────────────────┼───────────────────────────────────┤
+  │ Best for    │ Chains, cafés with tablets   │ Small shops, market stalls        │
+  └─────────────┴──────────────────────────────┴───────────────────────────────────┘
+
+  Support both. Let the business choose. Most coffee shops will prefer Option B (printed sticker) because it requires zero hardware and zero training. Bigger chains will prefer Option A because it's faster and more professional.
+
+  Either way, the blind token ensures anonymity — the shop sees "valid deal code" not "Sara, age 22, from Berlin."

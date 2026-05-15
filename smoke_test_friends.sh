@@ -1154,6 +1154,142 @@ EOF
   wait_for_all_results "$step_id"
 }
 
+run_intro_action_phase() {
+  local step_id="$1"
+  local b_intro_action="$2"
+  local c_intro_action="$3"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 40,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "$b_intro_action",
+  "poll_cycles": 70,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "$c_intro_action",
+  "poll_cycles": 70,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_settle_phase() {
+  local step_id="$1"
+  clear_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 60,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 60,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 60,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_all
+  wait_for_all_results "$step_id"
+}
+
+run_four_settle_phase() {
+  local step_id="$1"
+  clear_four_results
+
+  write_config "$DEVICE_A" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 60,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_B" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 60,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_C" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 60,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  write_config "$DEVICE_D" "$(cat <<EOF
+{
+  "stepId": "$step_id",
+  "contact_request_action": "none",
+  "introduction_action": "none",
+  "poll_cycles": 60,
+  "poll_interval_ms": 500
+}
+EOF
+)"
+
+  relaunch_four_devices
+  wait_for_four_results "$step_id"
+}
+
 run_copy_send_phase() {
   local step_id="copy-send"
   clear_results
@@ -1298,7 +1434,7 @@ EOF
   "contact_request_action": "none",
   "node_action_before_intro_phase": "stop_node",
   "introduction_action": "none",
-  "poll_cycles": 30,
+  "poll_cycles": 0,
   "poll_interval_ms": 500
 }
 EOF
@@ -1666,6 +1802,7 @@ scenario_happy_path() {
   prepare_devices
   run_handshake_phase "happy-handshake"
   run_intro_phase "happy-intro" "accept_all" "accept_all"
+  run_settle_phase "happy-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1677,7 +1814,8 @@ scenario_resend_refresh_pending() {
   run_intro_phase "refresh-first-intro" "none" "none"
   run_intro_phase "refresh-resend-intro" "none" "none"
   assert_pair_state "pending" "no"
-  run_intro_phase "refresh-final-accept" "accept_all" "accept_all"
+  run_intro_action_phase "refresh-final-accept" "accept_all" "accept_all"
+  run_settle_phase "refresh-final-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1688,6 +1826,7 @@ scenario_resend_after_pass() {
   run_handshake_phase "pass-handshake"
   run_intro_phase "pass-first-intro" "pass_all" "none"
   run_intro_phase "pass-resend-intro" "accept_all" "accept_all"
+  run_settle_phase "pass-resend-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1698,6 +1837,7 @@ scenario_repair_missing_side() {
   run_handshake_phase "repair-handshake"
   run_intro_phase "repair-first-intro" "none" "drop_first"
   run_intro_phase "repair-resend-intro" "accept_all" "accept_all"
+  run_settle_phase "repair-resend-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1708,6 +1848,7 @@ scenario_visible_copy_review() {
   run_handshake_phase "copy-handshake"
   run_copy_send_phase
   run_copy_accept_phase
+  run_settle_phase "copy-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1720,6 +1861,7 @@ scenario_partial_fanout_same_intro_recovery() {
   assert_partial_fanout_mid_state
   PARTIAL_INTRO_ID=$(pair_intro_id_from_result "$(result_file_path "$DEVICE_B")")
   run_partial_fanout_recovery_phase
+  run_settle_phase "partial-settle"
   assert_pair_state "mutual_accepted" "yes"
   assert_pair_intro_id_equals "$(result_file_path "$DEVICE_A")" "$PARTIAL_INTRO_ID"
   assert_pair_intro_id_equals "$(result_file_path "$DEVICE_B")" "$PARTIAL_INTRO_ID"
@@ -1735,6 +1877,7 @@ scenario_partition_heal_divergent_accepts() {
   run_partition_divergent_accept_phase
   assert_partition_mid_state
   run_partition_heal_phase
+  run_settle_phase "partition-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1746,8 +1889,10 @@ scenario_offline_relay_first_chat() {
   run_partial_fanout_send_phase
   assert_partial_fanout_mid_state
   run_partial_fanout_recovery_phase
+  run_settle_phase "offline-chat-intro-settle"
   assert_pair_state "mutual_accepted" "yes"
   run_first_chat_phase
+  run_settle_phase "offline-chat-final-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1773,6 +1918,7 @@ scenario_split_brain_mutual_acceptance_recovery() {
   run_split_brain_second_accept_phase
   assert_split_brain_mid_state
   run_split_brain_recovery_phase
+  run_settle_phase "split-brain-settle"
   assert_pair_state "mutual_accepted" "yes"
 }
 
@@ -1785,6 +1931,7 @@ scenario_folded_duplicate() {
   FOLDED_DUPLICATE_INTRO_IDS=$(folded_duplicate_intro_ids_from_result "$(result_file_path "$DEVICE_B")")
   run_folded_duplicate_accept_phase
   assert_folded_duplicate_accept_action "$FOLDED_DUPLICATE_INTRO_IDS"
+  run_four_settle_phase "folded-duplicate-settle"
   assert_folded_duplicate_terminal_state "$FOLDED_DUPLICATE_INTRO_IDS"
 }
 

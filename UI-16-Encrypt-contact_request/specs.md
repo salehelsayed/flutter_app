@@ -24,3 +24,27 @@ Step 1 — QR code (offline, in-person)
 
   There's also a retry_incomplete_key_exchanges_use_case.dart that re-sends contact requests on app resume for any contact
   still missing an ML-KEM key.
+
+
+
+
+
+
+
+
+
+
+
+
+orchestrate multiple agents (up to 10 agent) to work in parallel or sequence,  in order to create a plan to update @C4_MODEL.md and @file-structure.md to be updated withour current codebase, they are pretty outdated. each agent should be responsible of planning and executing a specific part.
+
+
+PRompt:
+the emojis are now implemented in bubble card in the main chat screen. I want you to enable users to send emojies on the feed cards in the app and also when they press on a chat bubble the emojies appear and they can select it. like in whatsapp/signal/telegram.
+
+orchestrate multiple agents (up to 5) to review codebase to identify all the information you need to create a detailed TDD plan for this feature
+
+
+
+
+ok great, now orchestrate up to 5 agents to work in parallel or sequence to lookup the codebase and understand everything it needs in order to generate a detailed TDD plan for this feature. take into consideration all the componentes from database to go-libp2p to bridnge to UI/UX. in your plan create all the unit tests, integration tests, smoke tests needed for the group messaging to work we.. when you orchestrate the agents and create the plan, make sure that you utilize multiple agents (up to 5 agents ) to implement the plan in parrallel or in sequnce as you needed to implement this well.

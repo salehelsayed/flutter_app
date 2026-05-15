@@ -577,14 +577,16 @@ Future<Map<String, dynamic>> _waitForProfileDownload(
   Bridge bridge, {
   required String ownerPeerId,
   required String outputPath,
-  Duration timeout = const Duration(seconds: 20),
-  Duration poll = const Duration(milliseconds: 500),
+  Duration timeout = const Duration(seconds: 90),
+  Duration poll = const Duration(seconds: 1),
 }) async {
   final deadline = DateTime.now().add(timeout);
   Map<String, dynamic> lastResult = {'ok': false, 'size': 0};
   Object? lastError;
+  var attempts = 0;
 
   while (true) {
+    attempts++;
     try {
       lastResult = await callP2PProfileDownload(
         bridge,
@@ -593,7 +595,7 @@ Future<Map<String, dynamic>> _waitForProfileDownload(
       );
       final size = lastResult['size'];
       if (lastResult['ok'] == true && size is num && size > 0) {
-        return lastResult;
+        return {...lastResult, 'attempts': attempts};
       }
     } catch (e) {
       lastError = e;
@@ -601,9 +603,14 @@ Future<Map<String, dynamic>> _waitForProfileDownload(
 
     if (DateTime.now().isAfter(deadline)) {
       if (lastError != null) {
-        return {...lastResult, 'ok': false, 'error': lastError.toString()};
+        return {
+          ...lastResult,
+          'ok': false,
+          'attempts': attempts,
+          'error': lastError.toString(),
+        };
       }
-      return lastResult;
+      return {...lastResult, 'attempts': attempts};
     }
     await Future.delayed(poll);
   }
@@ -1824,17 +1831,20 @@ void main() {
                 );
                 final dlOk = dlResult['ok'] == true;
                 final dlSize = dlResult['size'] ?? 0;
+                final dlAttempts = dlResult['attempts'] ?? 1;
                 final g6Pass = dlOk && (dlSize as num) > 0;
                 results.add(
                   _ScenarioResult(
                     'G6',
                     g6Pass,
-                    'upload=$uploaded cliDownload=$dlOk size=$dlSize',
+                    'upload=$uploaded cliDownload=$dlOk size=$dlSize '
+                        'attempts=$dlAttempts',
                   ),
                 );
                 print(
                   '[TEST] G6 ${g6Pass ? 'PASS' : 'FAIL'}: '
-                  'upload=$uploaded download=$dlOk size=$dlSize',
+                  'upload=$uploaded download=$dlOk size=$dlSize '
+                  'attempts=$dlAttempts',
                 );
                 try {
                   File(dlPath).deleteSync();

@@ -174,6 +174,36 @@ Priority  Transport          When used
 4         DCUtR              Upgrades relay → direct (QUIC/TCP hole punch)
 5         TCP                Server-to-server or local network
 ```
+  Priority 1: QUIC (direct WiFi/UDP)
+  Priority 2: WebSocket (direct TCP)
+  Priority 3: Circuit Relay v2
+  Priority 4: DCUtR (upgrade relay→direct)
+  Priority 5: TCP (local network)
+  → then inbox fallback
+
+### Transport Priority Flow
+ User sends message
+│   │
+│   ├─ Step 1: Is peer on local WiFi? (mDNS discovered)
+│   │   YES → Send via local WebSocket (direct, ~1ms)
+│   │         ├─ Ack received → SUCCESS (delivered)
+│   │         └─ Failed → fall through to Step 2
+│   │   NO → fall through to Step 2
+│   │
+│   ├─ Step 2: Discover + Dial + Send via relay (3 retries, exponential backoff)
+│   │   ├─ discoverPeer() → rendezvous server
+│   │   ├─ dialPeer() → circuit relay connection
+│   │   ├─ sendMessage() → relay-mediated delivery
+│   │   │   ├─ Success → SUCCESS
+│   │   │   └─ Failed → retry or fall through to Step 3
+│   │   └─ All 3 retries failed → fall through to Step 3
+│   │
+│   └─ Step 3: Store in offline inbox (relay server)
+│       ├─ storeInInbox() → relay holds message
+│       │   ├─ Stored → SUCCESS (delivered when peer drains inbox)
+│       │   └─ Failed → SEND_FAILED
+│       └─ Peer drains inbox on next app open → receives message
+
 
 ### Browser (js-libp2p, unchanged)
 

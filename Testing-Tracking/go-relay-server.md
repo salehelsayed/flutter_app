@@ -1,4 +1,4 @@
-## 2. What to Add to `go-relay-server/`
+## 1. What to Add to `go-relay-server/`
 
 ### A. Request timing on every handler
 
