@@ -616,6 +616,27 @@ expand_notification_sound() {
   fi
 }
 
+expand_group_multi_party_device_real() {
+  local category="$1"
+  local path="$2"
+  local note="$3"
+  local scenario
+  local count=0
+
+  while IFS= read -r scenario; do
+    [ -n "$scenario" ] || continue
+    record_check "$category" "$path" "$scenario" "$note; scenario=$scenario"
+    count=$((count + 1))
+  done < <(
+    dart "$path" --scenario all --list-scenarios 2>/dev/null |
+      awk '/^(ge|gm|go)[0-9]+$/ { print }'
+  )
+
+  if [ "$count" -eq 0 ]; then
+    record_expansion_error "$path" "could not list group multi-party device scenarios"
+  fi
+}
+
 expand_record_to_checks() {
   local category="$1"
   local kind="$2"
@@ -652,6 +673,10 @@ expand_record_to_checks() {
       ;;
     integration_test/scripts/run_notification_sound_smoke.dart)
       expand_notification_sound "$category" "$path"
+      return
+      ;;
+    integration_test/scripts/run_group_multi_party_device_real.dart)
+      expand_group_multi_party_device_real "$category" "$path" "$note"
       return
       ;;
   esac

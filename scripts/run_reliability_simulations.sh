@@ -29,7 +29,8 @@ Options:
   --include-direct-targets   Also run direct integration_test files even when a
                              selected runner already targets the same file.
   --start-at <N>             Run the planned command list starting at item N.
-  --only <N|path>            Run only planned item N or the exact planned path.
+  --only <N|path|path:scenario>
+                             Run only planned item N, path, or path:scenario.
   -h, --help                 Show this help.
 
 Environment:
@@ -106,11 +107,13 @@ fi
 records_file="$(mktemp)"
 selected_file="$(mktemp)"
 targeted_tests_file="$(mktemp)"
+raw_plan_file="$(mktemp)"
 plan_file="$(mktemp)"
 indexed_plan_file="$(mktemp)"
 active_plan_file="$(mktemp)"
 failures_file="$(mktemp)"
-trap 'rm -f "$records_file" "$selected_file" "$targeted_tests_file" "$plan_file" "$indexed_plan_file" "$active_plan_file" "$failures_file"' EXIT
+group_multi_party_scenarios_file="$(mktemp)"
+trap 'rm -f "$records_file" "$selected_file" "$targeted_tests_file" "$raw_plan_file" "$plan_file" "$indexed_plan_file" "$active_plan_file" "$failures_file" "$group_multi_party_scenarios_file"' EXIT
 
 printf 'Checking reliability simulation discovery...\n'
 "$CHECKER" --records-tsv >"$records_file"
@@ -165,9 +168,39 @@ awk -F '\t' -v include_direct_targets="$include_direct_targets" '
     if (kind == "test" && include_direct_targets != "1" && targeted[path]) {
       next
     }
-    print kind "\t" path
+    print kind "\t" path "\t"
   }
-' "$targeted_tests_file" "$selected_file" >"$plan_file"
+' "$targeted_tests_file" "$selected_file" >"$raw_plan_file"
+
+group_multi_party_scenarios() {
+  if [ ! -s "$group_multi_party_scenarios_file" ]; then
+    if ! dart integration_test/scripts/run_group_multi_party_device_real.dart \
+      --scenario all \
+      --list-scenarios |
+      awk '/^(ge|gm|go)[0-9]+$/ { print }' >"$group_multi_party_scenarios_file"; then
+      printf 'Failed to list group multi-party reliability scenarios.\n' >&2
+      return 1
+    fi
+  fi
+  cat "$group_multi_party_scenarios_file"
+}
+
+while IFS=$'\t' read -r kind path scenario; do
+  [ -n "$kind" ] || continue
+  if [ "$path" = "integration_test/scripts/run_group_multi_party_device_real.dart" ]; then
+    expanded_scenarios="$(group_multi_party_scenarios)"
+    if [ -z "$expanded_scenarios" ]; then
+      printf 'No group multi-party reliability scenarios were listed.\n' >&2
+      exit 1
+    fi
+    while IFS= read -r expanded_scenario; do
+      [ -n "$expanded_scenario" ] || continue
+      printf '%s\t%s\t%s\n' "$kind" "$path" "$expanded_scenario"
+    done <<<"$expanded_scenarios"
+    continue
+  fi
+  printf '%s\t%s\t%s\n' "$kind" "$path" "$scenario"
+done <"$raw_plan_file" >"$plan_file"
 
 if [ ! -s "$plan_file" ]; then
   printf 'No runnable reliability simulation commands were planned for scope: %s\n' "$scope" >&2
@@ -183,14 +216,25 @@ awk -F '\t' -v start_at="$start_at" -v only_selector="$only_selector" '
   {
     plan_index = $1
     path = $3
+    scenario = $4
+    path_scenario = path ":" scenario
+    path_arg = path " --scenario " scenario
 
     if (only_selector != "") {
       if (is_number(only_selector)) {
         if (plan_index == only_selector) {
           print
         }
-      } else if (path == only_selector) {
-        print
+      } else {
+        selector_matches = path == only_selector
+        if (scenario != "") {
+          if (path_scenario == only_selector || path_arg == only_selector) {
+            selector_matches = 1
+          }
+        }
+        if (selector_matches) {
+          print
+        }
       }
       next
     }
@@ -325,6 +369,7 @@ platform_arg_for_path() {
 print_command_for_path() {
   local kind="$1"
   local path="$2"
+  local scenario="${3:-}"
   local device_id
   local platform
 
@@ -361,6 +406,9 @@ print_command_for_path() {
       ;;
     integration_test/scripts/*.dart)
       printf 'dart run %s' "$path"
+      if [ -n "$scenario" ]; then
+        printf ' --scenario %s' "$(quote_for_display "$scenario")"
+      fi
       device_id="$(device_arg_for_path "$path")"
       if [ -n "$device_id" ]; then
         printf ' -d %s' "$(quote_for_display "$device_id")"
@@ -388,6 +436,7 @@ print_command_for_path() {
 run_path() {
   local kind="$1"
   local path="$2"
+  local scenario="${3:-}"
   local -a cmd=()
   local device_id
   local platform
@@ -427,6 +476,9 @@ run_path() {
       ;;
     integration_test/scripts/*.dart)
       cmd=(dart run "$path")
+      if [ -n "$scenario" ]; then
+        cmd+=(--scenario "$scenario")
+      fi
       device_id="$(device_arg_for_path "$path")"
       if [ -n "$device_id" ]; then
         cmd+=(-d "$device_id")
@@ -463,11 +515,11 @@ if [ -n "$only_selector" ]; then
   printf 'Resume filter: only %s\n' "$only_selector"
 fi
 command_count=0
-while IFS=$'\t' read -r index kind path; do
+while IFS=$'\t' read -r index kind path scenario; do
   [ -n "$kind" ] || continue
   command_count=$((command_count + 1))
   printf '  %2d. ' "$index"
-  print_command_for_path "$kind" "$path"
+  print_command_for_path "$kind" "$path" "$scenario"
   printf '\n'
 done <"$active_plan_file"
 
@@ -477,18 +529,27 @@ if [ "$dry_run" -eq 1 ]; then
 fi
 
 printf '\nRunning %s reliability simulation command(s)...\n' "$command_count"
-while IFS=$'\t' read -r index kind path; do
+while IFS=$'\t' read -r index kind path scenario; do
   [ -n "$kind" ] || continue
   printf '\n==> #%s ' "$index"
-  print_command_for_path "$kind" "$path"
+  print_command_for_path "$kind" "$path" "$scenario"
   printf '\n'
 
-  if run_path "$kind" "$path"; then
-    printf 'PASS: #%s %s\n' "$index" "$path"
+  if run_path "$kind" "$path" "$scenario"; then
+    if [ -n "$scenario" ]; then
+      printf 'PASS: #%s %s --scenario %s\n' "$index" "$path" "$scenario"
+    else
+      printf 'PASS: #%s %s\n' "$index" "$path"
+    fi
   else
     status=$?
-    printf 'FAIL: #%s %s exited with %s\n' "$index" "$path" "$status" >&2
-    printf '%s\t%s\t%s\n' "$index" "$path" "$status" >>"$failures_file"
+    if [ -n "$scenario" ]; then
+      printf 'FAIL: #%s %s --scenario %s exited with %s\n' "$index" "$path" "$scenario" "$status" >&2
+      printf '%s\t%s --scenario %s\t%s\n' "$index" "$path" "$scenario" "$status" >>"$failures_file"
+    else
+      printf 'FAIL: #%s %s exited with %s\n' "$index" "$path" "$status" >&2
+      printf '%s\t%s\t%s\n' "$index" "$path" "$status" >>"$failures_file"
+    fi
     if [ "$continue_on_failure" -ne 1 ]; then
       exit "$status"
     fi
