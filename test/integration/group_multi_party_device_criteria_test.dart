@@ -4,6 +4,41 @@ import '../../integration_test/scripts/group_multi_party_device_criteria.dart';
 
 void main() {
   group('group multi-party device criteria', () {
+    test('all scenario list includes device-backed GE and GM coverage', () {
+      expect(
+        allGroupMultiPartyDeviceScenarioIds,
+        containsAll(<String>[
+          'ge001',
+          'ge002',
+          'ge003',
+          'ge004',
+          'ge005',
+          'ge006',
+          'ge007',
+          'ge008',
+          'ge009',
+          'ge010',
+          'ge011',
+          'ge012',
+          'ge013',
+          'ge014',
+          'ge015',
+          'ge016',
+          'ge020',
+          'ge021',
+          'ge023',
+          'ge024',
+          'gm001',
+          'gm002',
+          'gm035',
+        ]),
+      );
+      expect(allGroupMultiPartyDeviceScenarioIds, isNot(contains('all')));
+      for (final scenario in allGroupMultiPartyDeviceScenarioIds) {
+        expect(scenarioRequirement(scenario).scenario, scenario);
+      }
+    });
+
     test('scenario requirements map GM roles to device counts', () {
       expect(scenarioRequirement('ge001').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('ge001').requiredDeviceCount, 3);

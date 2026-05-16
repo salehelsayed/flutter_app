@@ -230,8 +230,67 @@ const _allRequirement = GroupMultiPartyScenarioRequirement(
   roles: <String>['alice', 'bob', 'charlie', 'dana'],
 );
 
-const _supportedScenarioText =
-    'ge001, ge002, ge003, ge004, ge005, ge006, ge007, ge008, ge009, ge010, go001, go002, go003, ge011, ge012, ge013, ge014, ge015, ge016, ge020, ge021, ge023, ge024, gm001, gm002, gm003, gm004, gm005, gm006, gm007, gm008, gm009, gm010, gm011, gm012, gm013, gm014, gm015, gm016, gm017, gm018, gm019, gm020, gm021, gm022, gm023, gm024, gm025, gm033, gm034, gm035, or all';
+const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
+  'ge001': _ge001Requirement,
+  'ge002': _ge002Requirement,
+  'ge003': _ge003Requirement,
+  'ge004': _ge004Requirement,
+  'ge005': _ge005Requirement,
+  'ge006': _ge006Requirement,
+  'ge007': _ge007Requirement,
+  'ge008': _ge008Requirement,
+  'ge009': _ge009Requirement,
+  'ge010': _ge010Requirement,
+  'go001': _go001Requirement,
+  'go002': _go002Requirement,
+  'go003': _go003Requirement,
+  'ge011': _ge011Requirement,
+  'ge012': _ge012Requirement,
+  'ge013': _ge013Requirement,
+  'ge014': _ge014Requirement,
+  'ge015': _ge015Requirement,
+  'ge016': _ge016Requirement,
+  'ge020': _ge020Requirement,
+  'ge021': _ge021Requirement,
+  'ge023': _ge023Requirement,
+  'ge024': _ge024Requirement,
+  'gm001': _gm001Requirement,
+  'gm002': _gm002Requirement,
+  'gm003': _gm003Requirement,
+  'gm004': _gm004Requirement,
+  'gm005': _gm005Requirement,
+  'gm006': _gm006Requirement,
+  'gm007': _gm007Requirement,
+  'gm008': _gm008Requirement,
+  'gm009': _gm009Requirement,
+  'gm010': _gm010Requirement,
+  'gm011': _gm011Requirement,
+  'gm012': _gm012Requirement,
+  'gm013': _gm013Requirement,
+  'gm014': _gm014Requirement,
+  'gm015': _gm015Requirement,
+  'gm016': _gm016Requirement,
+  'gm017': _gm017Requirement,
+  'gm018': _gm018Requirement,
+  'gm019': _gm019Requirement,
+  'gm020': _gm020Requirement,
+  'gm021': _gm021Requirement,
+  'gm022': _gm022Requirement,
+  'gm023': _gm023Requirement,
+  'gm024': _gm024Requirement,
+  'gm025': _gm025Requirement,
+  'gm033': _gm033Requirement,
+  'gm034': _gm034Requirement,
+  'gm035': _gm035Requirement,
+  'all': _allRequirement,
+};
+
+final allGroupMultiPartyDeviceScenarioIds = List<String>.unmodifiable(
+  _scenarioRequirements.keys.where((scenario) => scenario != 'all'),
+);
+
+final _supportedScenarioText =
+    '${allGroupMultiPartyDeviceScenarioIds.join(', ')}, or all';
 
 GroupMultiPartyScenarioRequirement scenarioRequirement(String scenario) {
   final requirement = _tryScenarioRequirement(scenario);
@@ -687,114 +746,7 @@ void _validateReceivedMessage({
 }
 
 GroupMultiPartyScenarioRequirement? _tryScenarioRequirement(String scenario) {
-  switch (_normalizeScenario(scenario)) {
-    case 'ge001':
-      return _ge001Requirement;
-    case 'ge002':
-      return _ge002Requirement;
-    case 'ge003':
-      return _ge003Requirement;
-    case 'ge004':
-      return _ge004Requirement;
-    case 'ge005':
-      return _ge005Requirement;
-    case 'ge006':
-      return _ge006Requirement;
-    case 'ge007':
-      return _ge007Requirement;
-    case 'ge008':
-      return _ge008Requirement;
-    case 'ge009':
-      return _ge009Requirement;
-    case 'ge010':
-      return _ge010Requirement;
-    case 'go001':
-      return _go001Requirement;
-    case 'go002':
-      return _go002Requirement;
-    case 'go003':
-      return _go003Requirement;
-    case 'ge011':
-      return _ge011Requirement;
-    case 'ge012':
-      return _ge012Requirement;
-    case 'ge013':
-      return _ge013Requirement;
-    case 'ge014':
-      return _ge014Requirement;
-    case 'ge015':
-      return _ge015Requirement;
-    case 'ge016':
-      return _ge016Requirement;
-    case 'ge020':
-      return _ge020Requirement;
-    case 'ge021':
-      return _ge021Requirement;
-    case 'ge023':
-      return _ge023Requirement;
-    case 'ge024':
-      return _ge024Requirement;
-    case 'gm001':
-      return _gm001Requirement;
-    case 'gm002':
-      return _gm002Requirement;
-    case 'gm003':
-      return _gm003Requirement;
-    case 'gm004':
-      return _gm004Requirement;
-    case 'gm005':
-      return _gm005Requirement;
-    case 'gm006':
-      return _gm006Requirement;
-    case 'gm007':
-      return _gm007Requirement;
-    case 'gm008':
-      return _gm008Requirement;
-    case 'gm009':
-      return _gm009Requirement;
-    case 'gm010':
-      return _gm010Requirement;
-    case 'gm011':
-      return _gm011Requirement;
-    case 'gm012':
-      return _gm012Requirement;
-    case 'gm013':
-      return _gm013Requirement;
-    case 'gm014':
-      return _gm014Requirement;
-    case 'gm015':
-      return _gm015Requirement;
-    case 'gm016':
-      return _gm016Requirement;
-    case 'gm017':
-      return _gm017Requirement;
-    case 'gm018':
-      return _gm018Requirement;
-    case 'gm019':
-      return _gm019Requirement;
-    case 'gm020':
-      return _gm020Requirement;
-    case 'gm021':
-      return _gm021Requirement;
-    case 'gm022':
-      return _gm022Requirement;
-    case 'gm023':
-      return _gm023Requirement;
-    case 'gm024':
-      return _gm024Requirement;
-    case 'gm025':
-      return _gm025Requirement;
-    case 'gm033':
-      return _gm033Requirement;
-    case 'gm034':
-      return _gm034Requirement;
-    case 'gm035':
-      return _gm035Requirement;
-    case 'all':
-      return _allRequirement;
-    default:
-      return null;
-  }
+  return _scenarioRequirements[_normalizeScenario(scenario)];
 }
 
 String _normalizeScenario(String scenario) => scenario.trim().toLowerCase();

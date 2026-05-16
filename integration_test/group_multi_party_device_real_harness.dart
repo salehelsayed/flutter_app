@@ -9744,7 +9744,7 @@ Future<void> _runGm010Alice(
   await waitForSharedSignal(_signalName('charlie_group_joined'));
   await Future<void>.delayed(const Duration(seconds: 5));
 
-  final removedAt = await _removeCharlieAndPublish(
+  await _removeCharlieAndPublish(
     stack: stack,
     groupId: groupId,
     charlieIdentity: identities['charlie']!,
@@ -9778,6 +9778,7 @@ Future<void> _runGm010Alice(
   final charliePeerId = charlieIdentity['peerId'] as String;
   final charlieTransportPeerId =
       (charlieIdentity['transportPeerId'] as String?) ?? charliePeerId;
+  final readdedAt = DateTime.now().toUtc();
   final charlieMember = GroupMember(
     groupId: groupId,
     peerId: charliePeerId,
@@ -9795,7 +9796,7 @@ Future<void> _runGm010Alice(
         keyPackagePublicMaterial: charlieIdentity['mlKemPublicKey'] as String?,
       ),
     ],
-    joinedAt: removedAt.add(const Duration(seconds: 10)),
+    joinedAt: readdedAt,
   );
 
   await addGroupMember(
@@ -10526,7 +10527,7 @@ Future<void> _runGm012Alice(
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
-  final readdV3At = removedAt.add(const Duration(seconds: 10));
+  final readdV3At = DateTime.now().toUtc();
   final charlieMember = GroupMember(
     groupId: groupId,
     peerId: charliePeerId,

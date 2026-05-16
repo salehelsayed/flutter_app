@@ -193,6 +193,10 @@ String _parseScenario(List<String> args) {
   return scenario;
 }
 
+bool _parseListScenarios(List<String> args) {
+  return args.contains('--list-scenarios');
+}
+
 List<String> _parseDevices(List<String> args) {
   final devices = <String>[];
   for (var i = 0; i < args.length; i++) {
@@ -314,7 +318,7 @@ List<String> _scenariosToRun(String scenario) {
     case 'gm035':
       return const <String>['gm035'];
     case 'all':
-      return const <String>['gm001', 'gm002'];
+      return allGroupMultiPartyDeviceScenarioIds;
     default:
       throw ArgumentError.value(
         scenario,
@@ -1857,12 +1861,26 @@ Future<void> _runGm003Scenario({
 
 Future<void> main(List<String> args) async {
   final scenario = _parseScenario(args);
+  final listScenarios = _parseListScenarios(args);
   final devices = _parseDevices(args);
   final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
   final relayCheck = evaluateRelayConfiguration(relayAddresses);
   final usage =
       'Usage: dart run integration_test/scripts/run_group_multi_party_device_real.dart '
-      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]>';
+      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]> [--list-scenarios]';
+
+  if (listScenarios) {
+    try {
+      for (final scenarioToRun in _scenariosToRun(scenario)) {
+        stdout.writeln(scenarioToRun);
+      }
+    } on ArgumentError catch (error) {
+      stderr.writeln(error.message);
+      stderr.writeln(usage);
+      exit(64);
+    }
+    return;
+  }
 
   try {
     final scenarioForDeviceCheck = scenario == 'all' ? 'all' : scenario;
