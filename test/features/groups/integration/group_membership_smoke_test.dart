@@ -14797,6 +14797,182 @@ void main() {
     );
 
     test(
+      'UP-002 timeline shows durable add remove and re-add events after reopen',
+      () async {
+        const groupId = 'grp-up002-durable-timeline';
+        final createdAt = DateTime.utc(2026, 5, 15, 9);
+        final bobJoinedAt = createdAt.add(const Duration(seconds: 10));
+        final charlieFirstJoinedAt = createdAt.add(const Duration(seconds: 20));
+        final firstAddEventAt = charlieFirstJoinedAt.add(
+          const Duration(seconds: 1),
+        );
+        final beforeRemovalAt = createdAt.add(const Duration(seconds: 40));
+        final removedAt = createdAt.add(const Duration(minutes: 1));
+        final charlieRejoinedAt = createdAt.add(const Duration(minutes: 2));
+        final readdEventAt = charlieRejoinedAt.add(const Duration(seconds: 1));
+        const firstAddText = 'Alice added Charlie';
+        const removalText = 'Alice removed Charlie';
+        const beforeRemovalText = 'UP-002 retained pre-removal message';
+
+        final alice = GroupTestUser.create(
+          peerId: 'peer-up002-alice',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-up002-bob',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'peer-up002-charlie',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        Future<void> waitForTimelineCount(
+          GroupTestUser user,
+          String text,
+          int count,
+        ) async {
+          await waitUntil(() async {
+            final messages = await user.loadGroupMessages(groupId);
+            return messages.where((message) => message.text == text).length >=
+                count;
+          }, maxTicks: 80);
+          final messages = await user.loadGroupMessages(groupId);
+          expect(
+            messages.where((message) => message.text == text).length,
+            greaterThanOrEqualTo(count),
+            reason: '${user.peerId} durable timeline count for "$text"',
+          );
+        }
+
+        Future<void> restartListener(GroupTestUser user) async {
+          user.groupMessageListener.stop();
+          await pump();
+          user.start();
+        }
+
+        Future<void> expectReopenedTimeline(GroupTestUser user) async {
+          await restartListener(user);
+          final messages = await user.loadGroupMessages(groupId);
+          final texts = messages.map((message) => message.text).toList();
+          final firstAddIndex = texts.indexOf(firstAddText);
+          final removeIndex = texts.indexOf(removalText);
+          final readdIndex = texts.indexOf(firstAddText, firstAddIndex + 1);
+          expect(firstAddIndex, greaterThanOrEqualTo(0));
+          expect(removeIndex, greaterThan(firstAddIndex));
+          expect(readdIndex, greaterThan(removeIndex));
+          expect(
+            messages.where((message) => message.text == firstAddText),
+            hasLength(greaterThanOrEqualTo(2)),
+          );
+
+          final members = await user.groupRepo.getMembers(groupId);
+          expect(
+            members.map((member) => member.peerId).toSet(),
+            {alice.peerId, bob.peerId, charlie.peerId},
+            reason: '${user.peerId} final member list after reopened read',
+          );
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'UP-002 Timeline',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: bobJoinedAt,
+        );
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: charlieFirstJoinedAt,
+        );
+        await alice.msgRepo.saveMessage(
+          buildMembersAddedTimelineMessage(
+            groupId: groupId,
+            addedMembers: [
+              (peerId: charlie.peerId, username: charlie.username),
+            ],
+            senderId: alice.peerId,
+            senderUsername: alice.username,
+            eventAt: firstAddEventAt,
+          ),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: firstAddEventAt,
+        );
+
+        await waitForTimelineCount(bob, firstAddText, 1);
+        await waitForTimelineCount(charlie, firstAddText, 1);
+
+        await alice.sendGroupMessage(
+          groupId: groupId,
+          text: beforeRemovalText,
+          messageId: 'up002-before-removal',
+          timestamp: beforeRemovalAt,
+        );
+        await waitForTimelineCount(charlie, beforeRemovalText, 1);
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: removedAt,
+        );
+        await waitForTimelineCount(alice, removalText, 1);
+        await waitForTimelineCount(bob, removalText, 1);
+        await waitForTimelineCount(charlie, removalText, 1);
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: charlieRejoinedAt,
+        );
+        await alice.msgRepo.saveMessage(
+          buildMembersAddedTimelineMessage(
+            groupId: groupId,
+            addedMembers: [
+              (peerId: charlie.peerId, username: charlie.username),
+            ],
+            senderId: alice.peerId,
+            senderUsername: alice.username,
+            eventAt: readdEventAt,
+          ),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: readdEventAt,
+        );
+
+        await waitForTimelineCount(alice, firstAddText, 2);
+        await waitForTimelineCount(bob, firstAddText, 2);
+        await waitForTimelineCount(charlie, firstAddText, 2);
+
+        await expectReopenedTimeline(alice);
+        await expectReopenedTimeline(bob);
+        await expectReopenedTimeline(charlie);
+      },
+    );
+
+    test(
       'ML-015 shuffled membership timeline matches structural intervals',
       () async {
         const groupId = 'grp-ml015-timeline-truth';

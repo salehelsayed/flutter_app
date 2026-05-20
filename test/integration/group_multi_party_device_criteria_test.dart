@@ -12081,6 +12081,79 @@ void main() {
       expect(verdict.detail, contains('private_timeline_truth verdicts valid'));
     });
 
+    test(
+      'UP-002 accepts private_timeline_truth durable timeline proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateTimelineTruthVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains('private_timeline_truth verdicts valid'),
+        );
+      },
+    );
+
+    test(
+      'UP-002 rejects private_timeline_truth without durable timeline proof',
+      () {
+        final missingProof = _validPrivateTimelineTruthVerdicts();
+        missingProof[0] = Map<String, dynamic>.from(missingProof[0])
+          ..remove('up002DurableTimelineProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('alice: missing UP-002 durable timeline proof fields'),
+        );
+      },
+    );
+
+    test(
+      'UP-002 rejects private_timeline_truth timeline/final-state mismatch',
+      () {
+        final divergent = _validPrivateTimelineTruthVerdicts();
+        divergent[1] = {
+          ...divergent[1],
+          'up002DurableTimelineProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              divergent[1]['up002DurableTimelineProof'] as Map,
+            ),
+            'addTimelineEventCount': 1,
+            'timelineOrderShowsAddRemoveReadd': false,
+            'finalStateMatchesTimeline': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_timeline_truth',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: divergent,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('addTimelineEventCount must be >= 2'));
+        expect(
+          rejected.detail,
+          contains('timelineOrderShowsAddRemoveReadd must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains('finalStateMatchesTimeline must be true'),
+        );
+      },
+    );
+
     test('rejects private_timeline_truth without ML-015 proof fields', () {
       final missingProof = _validPrivateTimelineTruthVerdicts();
       missingProof[1] = Map<String, dynamic>.from(missingProof[1])
@@ -21527,6 +21600,21 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'memberListIncludesCharlie': true,
           'finalEpoch': 3,
         },
+        'up002DurableTimelineProof': <String, Object?>{
+          'rowId': 'UP-002',
+          'role': 'alice',
+          'liveThreePartyProof': true,
+          'reopenedTimelineRead': true,
+          'addTimelineEventCount': 2,
+          'removeTimelineEventCount': 1,
+          'timelineContainsInitialAdd': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'timelineOrderShowsAddRemoveReadd': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalStateMatchesTimeline': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -21596,6 +21684,21 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'memberListIncludesCharlie': true,
           'finalEpoch': 3,
         },
+        'up002DurableTimelineProof': <String, Object?>{
+          'rowId': 'UP-002',
+          'role': 'bob',
+          'liveThreePartyProof': true,
+          'reopenedTimelineRead': true,
+          'addTimelineEventCount': 2,
+          'removeTimelineEventCount': 1,
+          'timelineContainsInitialAdd': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'timelineOrderShowsAddRemoveReadd': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalStateMatchesTimeline': true,
+          'finalEpoch': 3,
+        },
       },
     ),
     _baseVerdict(
@@ -21657,6 +21760,21 @@ List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
           'memberListIncludesCharlie': true,
           'removedWindowPlaintextCount': 0,
           'hasStaleEpochAfterReadd': false,
+          'finalEpoch': 3,
+        },
+        'up002DurableTimelineProof': <String, Object?>{
+          'rowId': 'UP-002',
+          'role': 'charlie',
+          'liveThreePartyProof': true,
+          'reopenedTimelineRead': true,
+          'addTimelineEventCount': 2,
+          'removeTimelineEventCount': 1,
+          'timelineContainsInitialAdd': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'timelineOrderShowsAddRemoveReadd': true,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalStateMatchesTimeline': true,
           'finalEpoch': 3,
         },
       },
