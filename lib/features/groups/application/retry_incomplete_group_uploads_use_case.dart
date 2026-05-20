@@ -8,6 +8,7 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -172,11 +173,7 @@ Future<int> retryIncompleteGroupUploads({
       }
 
       final members = await groupRepo.getMembers(parentMessage.groupId);
-      final allowedPeers = members
-          .map((member) => member.peerId)
-          .where((peerId) => peerId.isNotEmpty && peerId != identity.peerId)
-          .toSet()
-          .toList();
+      final allowedPeers = groupMediaAllowedPeersForMembers(members);
 
       final preparedUploads = <_PreparedGroupRetryUpload>[];
       final resolvedPendingAttachments = <String, MediaAttachment>{};

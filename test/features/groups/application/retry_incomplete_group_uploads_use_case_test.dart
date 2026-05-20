@@ -330,7 +330,7 @@ void main() {
         expect(uploadFn.lastBlobId, 'pending-1');
         expect(
           uploadFn.lastAllowedPeers,
-          equals(['peer-2']),
+          equals(['peer-admin', 'peer-2']),
           reason: 'allowedPeers must come from group members',
         );
         expect(
@@ -359,6 +359,69 @@ void main() {
           isTrue,
           reason: '1:1 upload_pending rows must be skipped',
         );
+      },
+    );
+
+    test(
+      'PL-005 retry upload allowedPeers match active membership at retry time',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            joinedAt: DateTime.utc(2026, 1, 1, 0, 1),
+          ),
+        );
+        await groupRepo.removeMember('group-1', 'peer-charlie');
+
+        await groupMsgRepo.saveMessage(
+          GroupMessage(
+            id: 'msg-pl005-retry',
+            groupId: 'group-1',
+            senderPeerId: 'peer-admin',
+            senderUsername: 'Admin',
+            text: 'Retry active ACL',
+            timestamp: DateTime.utc(2026, 5, 14),
+            status: 'failed',
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 5, 14),
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(
+            id: 'pending-pl005-retry',
+            messageId: 'msg-pl005-retry',
+            localPath: 'pending_uploads/msg-pl005-retry/photo.jpg',
+          ),
+        );
+        uploadFn.willReturn(
+          _doneAttachment(
+            id: 'pending-pl005-retry',
+            messageId: 'msg-pl005-retry',
+          ),
+        );
+
+        final count = await retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadFn.call,
+          mediaFileManager: mediaFileManager,
+        );
+
+        expect(count, 1);
+        expect(
+          uploadFn.lastAllowedPeers,
+          unorderedEquals(['peer-admin', 'peer-2']),
+        );
+        expect(uploadFn.lastAllowedPeers, isNot(contains('peer-charlie')));
+        expect(uploadFn.lastAllowedPeers, isNot(contains('peer-dave')));
       },
     );
 
@@ -477,8 +540,10 @@ void main() {
 
         expect(count, 1);
         expect(uploadFn.callCount, 1);
-        expect(uploadFn.lastAllowedPeers, unorderedEquals(['peer-2']));
-        expect(uploadFn.lastAllowedPeers, isNot(contains('peer-admin')));
+        expect(
+          uploadFn.lastAllowedPeers,
+          unorderedEquals(['peer-admin', 'peer-2']),
+        );
         expect(uploadFn.lastAllowedPeers, isNot(contains('peer-removed')));
 
         final inboxPayload = bridge.sentMessages

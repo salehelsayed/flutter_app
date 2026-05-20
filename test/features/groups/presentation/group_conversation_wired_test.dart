@@ -227,6 +227,7 @@ class _GatedPublishBridge extends FakeBridge {
 class _DownloadRepairBridge extends FakeBridge {
   _DownloadRepairBridge({
     required this.downloadedBytes,
+    // ignore: unused_element_parameter
     this.mime = 'image/png',
   });
 
@@ -1386,6 +1387,112 @@ void main() {
           await sendFuture.future;
         });
         await pumpFrames(tester, count: 5);
+      },
+    );
+
+    testWidgets(
+      'PL-005 ordinary media upload allowedPeers match active membership at upload time',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 5, 14, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-bob',
+            mlKemPublicKey: 'mlkem-peer-bob',
+            joinedAt: DateTime.utc(2026, 5, 14, 10, 1),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-charlie',
+            mlKemPublicKey: 'mlkem-peer-charlie',
+            joinedAt: DateTime.utc(2026, 5, 14, 10, 2),
+          ),
+        );
+        await groupRepo.removeMember(group.id, 'peer-charlie');
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'pl005-group-media-acl-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final file = File('${tempDir.path}/pl005.jpg')
+          ..writeAsStringSync('pl005');
+        final capturedAllowedPeers = <List<String>>[];
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            initialAttachments: [file],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  capturedAllowedPeers.add(List<String>.from(allowedPeers!));
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: localFilePath,
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final sendFuture = await startScreenSend(tester, 'PL-005 media');
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
+        await pumpFrames(tester, count: 10);
+
+        expect(capturedAllowedPeers, hasLength(1));
+        expect(capturedAllowedPeers.single, [testIdentity.peerId, 'peer-bob']);
+        expect(capturedAllowedPeers.single, isNot(contains('peer-charlie')));
+        expect(capturedAllowedPeers.single, isNot(contains('peer-dave')));
       },
     );
 
@@ -5209,6 +5316,128 @@ void main() {
         expect(pendingAfterFail, hasLength(1));
         expect(pendingAfterFail.single.id, receivedBlobId);
         expect(pendingAfterFail.single.downloadStatus, 'upload_pending');
+      },
+    );
+
+    testWidgets(
+      'PL-005 voice media upload allowedPeers match active membership at upload time',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            joinedAt: DateTime.utc(2026, 5, 14, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-bob',
+            mlKemPublicKey: 'mlkem-peer-bob',
+            joinedAt: DateTime.utc(2026, 5, 14, 10, 1),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-charlie',
+            mlKemPublicKey: 'mlkem-peer-charlie',
+            joinedAt: DateTime.utc(2026, 5, 14, 10, 2),
+          ),
+        );
+        await groupRepo.removeMember(group.id, 'peer-charlie');
+
+        final tempDir = Directory.systemTemp.createTempSync(
+          'pl005-group-voice-acl-',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) {
+            tempDir.deleteSync(recursive: true);
+          }
+        });
+        final tempVoice = File(p.join(tempDir.path, 'voice.m4a'))
+          ..writeAsStringSync('voice');
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 1800
+          ..fakeSizeBytes = 32000
+          ..fakeOutputPath = tempVoice.path;
+        final capturedAllowedPeers = <List<String>>[];
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: TrackingDurableMediaFileManager(tempDir),
+            audioRecorderService: recorder,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                }) async {
+                  capturedAllowedPeers.add(List<String>.from(allowedPeers!));
+                  return MediaAttachment(
+                    id: blobId!,
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: localFilePath,
+                    downloadStatus: 'done',
+                    contentHash: _validContentHash,
+                    encryptionKeyBase64: 'key-fixture',
+                    encryptionNonce: 'nonce-fixture',
+                    encryptionScheme:
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                    durationMs: durationMs,
+                    waveform: waveform,
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  );
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await pumpUntil(
+          tester,
+          () => find.byIcon(Icons.stop_rounded).evaluate().isNotEmpty,
+        );
+        final recordingScreen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        await tester.runAsync(() async {
+          await (recordingScreen.onRecordStop! as Future<void> Function())();
+        });
+        await pumpFrames(tester, count: 20);
+
+        expect(capturedAllowedPeers, hasLength(1));
+        expect(capturedAllowedPeers.single, [testIdentity.peerId, 'peer-bob']);
+        expect(capturedAllowedPeers.single, isNot(contains('peer-charlie')));
+        expect(capturedAllowedPeers.single, isNot(contains('peer-dave')));
       },
     );
 
