@@ -453,6 +453,64 @@ void main() {
       expect(find.text('Bob'), findsOneWidget);
     });
 
+    testWidgets(
+      'UP-001 reloads visible member list from local DB after create add remove and re-add',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+
+        Future<void> pumpSnapshot(String snapshotId) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: GroupInfoWired(
+                key: ValueKey('up001-$snapshotId'),
+                group: group,
+                groupRepo: groupRepo,
+                contactRepo: InMemoryContactRepository(),
+                bridge: FakeBridge(),
+                identityRepo: FakeIdentityRepository(identity: testIdentity),
+                p2pService: FakeP2PService(),
+              ),
+            ),
+          );
+          await pumpFrames(tester);
+        }
+
+        await pumpSnapshot('create');
+        expect(find.text('You'), findsOneWidget);
+        expect(find.text('Bob'), findsNothing);
+
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+        await pumpSnapshot('add');
+        expect(find.text('You'), findsOneWidget);
+        expect(find.text('Bob'), findsOneWidget);
+
+        await groupRepo.removeMember(group.id, 'peer-bob');
+        await pumpSnapshot('remove');
+        expect(find.text('You'), findsOneWidget);
+        expect(find.text('Bob'), findsNothing);
+
+        await groupRepo.saveMember(
+          makeMember(peerId: 'peer-bob', username: 'Bob'),
+        );
+        await pumpSnapshot('readd');
+        expect(find.text('You'), findsOneWidget);
+        expect(find.text('Bob'), findsOneWidget);
+      },
+    );
+
     testWidgets('loads invite delivery statuses for member rows', (
       tester,
     ) async {
