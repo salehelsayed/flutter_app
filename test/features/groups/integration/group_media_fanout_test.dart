@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     as group_send;
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -860,6 +862,145 @@ void main() {
         );
         expect(await bob.mediaAttachmentRepo.getPendingDownloads(), isEmpty);
         expect(bob.bridge.commandLog, isNot(contains('media:download')));
+      },
+    );
+
+    test(
+      'PL-005 fake-network media upload allowedPeers match active membership',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-pl005-media-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-pl005-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('bob-pl005-media'),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-pl005-media-peer',
+          username: 'Charlie',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('charlie-pl005-media'),
+        );
+        final tempDir = await Directory.systemTemp.createTemp(
+          'pl005_group_media_',
+        );
+        addTearDown(() async {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+          if (await tempDir.exists()) {
+            await tempDir.delete(recursive: true);
+          }
+        });
+
+        const groupId = 'group-pl005-active-media';
+        await alice.createGroup(groupId: groupId, name: 'PL005 Active Media');
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: 1);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+        );
+        await pump();
+
+        final allowedPeers = groupMediaAllowedPeersForMembers(
+          await alice.groupRepo.getMembers(groupId),
+        );
+        expect(allowedPeers, unorderedEquals([alice.peerId, bob.peerId]));
+        expect(allowedPeers, isNot(contains(charlie.peerId)));
+        expect(allowedPeers, isNot(contains('peer-dave-never-joined')));
+
+        final localMedia = File(p.join(tempDir.path, 'pl005.bin'));
+        await localMedia.writeAsBytes(<int>[1, 2, 3, 4]);
+        final uploaded = await uploadMedia(
+          bridge: alice.bridge,
+          localFilePath: localMedia.path,
+          mime: 'application/octet-stream',
+          recipientPeerId: groupId,
+          allowedPeers: allowedPeers,
+          blobId: 'blob-pl005-active-media',
+        );
+        expect(uploaded, isNotNull);
+        final uploadedAttachment = uploaded!;
+
+        final uploadPayload = alice.bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'media:upload')
+            .map((message) => message['payload'] as Map<String, dynamic>)
+            .last;
+        expect(uploadPayload['id'], 'blob-pl005-active-media');
+        expect(uploadPayload['to'], groupId);
+        expect(
+          (uploadPayload['allowedPeers'] as List<dynamic>).cast<String>(),
+          unorderedEquals([alice.peerId, bob.peerId]),
+        );
+        expect(
+          (uploadPayload['allowedPeers'] as List<dynamic>).cast<String>(),
+          isNot(contains(charlie.peerId)),
+        );
+        expect(
+          (uploadPayload['allowedPeers'] as List<dynamic>).cast<String>(),
+          isNot(contains('peer-dave-never-joined')),
+        );
+
+        network.resetCounters();
+        final (result, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'PL-005 active media',
+          messageId: 'msg-pl005-active-media',
+          mediaAttachments: [uploadedAttachment],
+        );
+        expect(result, group_send.SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+        expect(network.totalDeliveries, 1);
+
+        await waitForDownloads(user: bob, expectedCount: 1);
+        await waitForDownloadedAttachments(
+          user: bob,
+          groupId: groupId,
+          messageTexts: const ['PL-005 active media'],
+        );
+        await expectSingleAttachment(
+          user: bob,
+          groupId: groupId,
+          messageText: 'PL-005 active media',
+          sent: uploadedAttachment,
+          expectDownloaded: true,
+        );
+
+        final charlieMessages = await charlie.loadGroupMessages(groupId);
+        expect(
+          charlieMessages.where((message) => message.id == sentMessage!.id),
+          isEmpty,
+        );
+        expect(
+          await charlie.mediaAttachmentRepo.getPendingDownloads(),
+          isEmpty,
+        );
+        expect(charlie.bridge.commandLog, isNot(contains('media:download')));
+
+        final deliveryRecords = network.deliveryRecords
+            .where((record) => record['messageId'] == 'msg-pl005-active-media')
+            .toList(growable: false);
+        expect(deliveryRecords, hasLength(1));
+        expect(deliveryRecords.single['receiverPeerId'], bob.peerId);
       },
     );
 

@@ -34,6 +34,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -1344,7 +1345,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           composerSnapshot: composerSnapshot,
         );
         final members = await widget.groupRepo.getMembers(widget.group.id);
-        final allowedPeers = members.map((m) => m.peerId).toList();
+        final allowedPeers = groupMediaAllowedPeersForMembers(members);
 
         try {
           if (_supportsDurableGroupMediaUploads) {
@@ -2635,7 +2636,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       final bgTaskId = await callBgBegin(widget.bridge);
       try {
         final members = await widget.groupRepo.getMembers(widget.group.id);
-        final allowedPeers = members.map((m) => m.peerId).toList();
+        final allowedPeers = groupMediaAllowedPeersForMembers(members);
 
         _updateComposerState(isUploading: true);
         await _startRelayUploadTracking(recording.sizeBytes);
