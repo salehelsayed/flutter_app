@@ -2096,6 +2096,89 @@ func TestPL002GroupPublishMediaOnlyAcceptsEmptyText(t *testing.T) {
 	assertGroupPublishMediaOnlyAcceptsEmptyText(t)
 }
 
+func TestPL012GroupPublishOptsPreserveMediaSchemaVariants(t *testing.T) {
+	media := []map[string]interface{}{
+		{
+			"id":                  "pl012-image",
+			"mime":                "image/jpeg",
+			"size":                4096,
+			"mediaType":           "image",
+			"width":               800,
+			"height":              600,
+			"contentHash":         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"encryptionKeyBase64": "key-pl012-image",
+			"encryptionNonce":     "nonce-pl012-image",
+			"encryptionScheme":    "blob_aes_256_gcm_v1",
+		},
+		{
+			"id":                  "pl012-gif",
+			"mime":                "image/gif",
+			"size":                2048,
+			"mediaType":           "image",
+			"width":               320,
+			"height":              240,
+			"contentHash":         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"encryptionKeyBase64": "key-pl012-gif",
+			"encryptionNonce":     "nonce-pl012-gif",
+			"encryptionScheme":    "blob_aes_256_gcm_v1",
+		},
+		{
+			"id":                  "pl012-file",
+			"mime":                "application/octet-stream",
+			"size":                1024,
+			"mediaType":           "file",
+			"contentHash":         "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			"encryptionKeyBase64": "key-pl012-file",
+			"encryptionNonce":     "nonce-pl012-file",
+			"encryptionScheme":    "blob_aes_256_gcm_v1",
+		},
+		{
+			"id":                  "pl012-video",
+			"mime":                "video/mp4",
+			"size":                8192,
+			"mediaType":           "video",
+			"width":               1280,
+			"height":              720,
+			"durationMs":          12000,
+			"contentHash":         "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			"encryptionKeyBase64": "key-pl012-video",
+			"encryptionNonce":     "nonce-pl012-video",
+			"encryptionScheme":    "blob_aes_256_gcm_v1",
+		},
+		{
+			"id":                  "pl012-voice",
+			"mime":                "audio/mp4",
+			"size":                3072,
+			"mediaType":           "audio",
+			"durationMs":          3300,
+			"waveform":            []interface{}{0.1, 0.4, 0.2},
+			"contentHash":         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+			"encryptionKeyBase64": "key-pl012-voice",
+			"encryptionNonce":     "nonce-pl012-voice",
+			"encryptionScheme":    "blob_aes_256_gcm_v1",
+		},
+	}
+
+	opts := buildGroupPublishOpts(media, "")
+	if opts == nil {
+		t.Fatal("buildGroupPublishOpts returned nil for media variants")
+	}
+	got, ok := opts["media"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("opts media type = %T, want []map[string]interface{}", opts["media"])
+	}
+	if len(got) != len(media) {
+		t.Fatalf("media length = %d, want %d", len(got), len(media))
+	}
+	for i := range media {
+		wantJSON, _ := json.Marshal(media[i])
+		gotJSON, _ := json.Marshal(got[i])
+		if string(gotJSON) != string(wantJSON) {
+			t.Fatalf("media[%d] = %s, want %s", i, gotJSON, wantJSON)
+		}
+	}
+}
+
 func assertGroupPublishMediaOnlyAcceptsEmptyText(t *testing.T) {
 	withSingletonNode(t)
 	// GroupPublish will fail at PublishGroupMessage (no real group), but it

@@ -36,6 +36,7 @@ void main() {
           'ir001',
           'ir015',
           'pl002',
+          'pl012',
           'private_abc_create',
           'private_online_add',
           'private_offline_readd',
@@ -198,6 +199,8 @@ void main() {
       expect(scenarioRequirement('ir016').requiredDeviceCount, 3);
       expect(scenarioRequirement('pl002').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('pl002').requiredDeviceCount, 3);
+      expect(scenarioRequirement('pl012').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('pl012').requiredDeviceCount, 3);
       expect(scenarioRequirement('gm002').roles, [
         'alice',
         'bob',
@@ -1342,6 +1345,86 @@ void main() {
         rejected.detail,
         contains(
           'alice: pl002MediaOnlyProof sent media-only descriptor mismatch',
+        ),
+      );
+    });
+
+    test('PL-012 accepts valid media schema variant verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'pl012',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPl012Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('pl012 verdicts valid'));
+    });
+
+    test('PL-012 rejects missing recipient variant descriptor', () {
+      final missingMedia = _validPl012Verdicts();
+      final bobReceived = List<Map<String, Object?>>.from(
+        missingMedia[1]['receivedMessages'] as List,
+      );
+      final media = List<Map<String, Object?>>.from(
+        bobReceived[0]['media'] as List,
+      );
+      bobReceived[0] = {
+        ...bobReceived[0],
+        'media': media
+            .where((attachment) => attachment['mime'] != 'image/gif')
+            .toList(growable: false),
+        'mediaCount': 4,
+      };
+      missingMedia[1] = {...missingMedia[1], 'receivedMessages': bobReceived};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'pl012',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingMedia,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: pl012MediaSchemaProof received variant descriptor mismatch',
+        ),
+      );
+    });
+
+    test('PL-012 rejects missing voice waveform', () {
+      final missingWaveform = _validPl012Verdicts();
+      final aliceSent = List<Map<String, Object?>>.from(
+        missingWaveform[0]['sentMessages'] as List,
+      );
+      final media = List<Map<String, Object?>>.from(
+        aliceSent[0]['media'] as List,
+      );
+      aliceSent[0] = {
+        ...aliceSent[0],
+        'media': media
+            .map((attachment) {
+              if (attachment['mediaType'] != 'audio') return attachment;
+              return <String, Object?>{
+                for (final entry in attachment.entries)
+                  if (entry.key != 'waveform') entry.key: entry.value,
+              };
+            })
+            .toList(growable: false),
+      };
+      missingWaveform[0] = {...missingWaveform[0], 'sentMessages': aliceSent};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'pl012',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingWaveform,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: pl012MediaSchemaProof sent variant descriptor mismatch',
         ),
       );
     });
@@ -27995,6 +28078,163 @@ List<Map<String, dynamic>> _validPl002Verdicts() {
           'emptyTextPreserved': true,
           'mediaDescriptorPersisted': true,
           'mediaCount': 1,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPl012Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const groupId = 'pl012-group';
+  const key = 'alicePl012MediaVariants';
+  const messageId = 'pl012-media-schema-message';
+  const text = 'PL-012 schema variants test';
+  const media = <Map<String, Object?>>[
+    <String, Object?>{
+      'id': 'pl012-image',
+      'mime': 'image/jpeg',
+      'mediaType': 'image',
+      'width': 800,
+      'height': 600,
+      'size': 8192,
+      'contentHash':
+          '1111111111111111111111111111111111111111111111111111111111111111',
+      'hasEncryptionMetadata': true,
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+    },
+    <String, Object?>{
+      'id': 'pl012-gif',
+      'mime': 'image/gif',
+      'mediaType': 'image',
+      'width': 320,
+      'height': 240,
+      'size': 4096,
+      'contentHash':
+          '2222222222222222222222222222222222222222222222222222222222222222',
+      'hasEncryptionMetadata': true,
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+    },
+    <String, Object?>{
+      'id': 'pl012-file',
+      'mime': 'application/octet-stream',
+      'mediaType': 'file',
+      'size': 2048,
+      'contentHash':
+          '3333333333333333333333333333333333333333333333333333333333333333',
+      'hasEncryptionMetadata': true,
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+    },
+    <String, Object?>{
+      'id': 'pl012-video',
+      'mime': 'video/mp4',
+      'mediaType': 'video',
+      'width': 1280,
+      'height': 720,
+      'durationMs': 12000,
+      'size': 32768,
+      'contentHash':
+          '4444444444444444444444444444444444444444444444444444444444444444',
+      'hasEncryptionMetadata': true,
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+    },
+    <String, Object?>{
+      'id': 'pl012-voice',
+      'mime': 'audio/mp4',
+      'mediaType': 'audio',
+      'durationMs': 3300,
+      'waveform': <double>[0.1, 0.4, 0.2],
+      'size': 6144,
+      'contentHash':
+          '5555555555555555555555555555555555555555555555555555555555555555',
+      'hasEncryptionMetadata': true,
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+    },
+  ];
+  const sent = <String, Object?>{
+    'key': key,
+    'messageId': messageId,
+    'groupId': groupId,
+    'text': text,
+    'outcome': 'success',
+    'senderPeerId': 'alice-peer',
+    'keyEpoch': 1,
+    'timestamp': '2026-05-16T03:04:00.000Z',
+    'mediaCount': 5,
+    'media': media,
+  };
+
+  Map<String, Object?> received({required bool live}) {
+    return <String, Object?>{
+      ..._received(
+        key,
+        messageId,
+        text,
+        'alice-peer',
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-16T03:04:00.000Z',
+        liveOnly: live,
+        usedOfflineDrain: false,
+      ),
+      'persistedCount': 1,
+      'mediaCount': 5,
+      'media': media,
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'pl012',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      sentMessages: const <Map<String, Object?>>[sent],
+      extra: const <String, Object?>{
+        'pl012MediaSchemaProof': <String, Object?>{
+          'rowId': 'PL-012',
+          'acceptedVariantMessage': true,
+          'mediaDescriptorPublished': true,
+          'bobReceiptSignalObserved': true,
+          'charlieReceiptSignalObserved': true,
+          'mediaCount': 5,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'pl012',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[received(live: true)],
+      persistedMessageCounts: const <String, int>{key: 1},
+      extra: const <String, Object?>{
+        'pl012MediaSchemaProof': <String, Object?>{
+          'rowId': 'PL-012',
+          'receivedVisibleMessageOnce': true,
+          'matchedMessageId': true,
+          'mediaDescriptorPersisted': true,
+          'mediaCount': 5,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'pl012',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[received(live: true)],
+      persistedMessageCounts: const <String, int>{key: 1},
+      extra: const <String, Object?>{
+        'pl012MediaSchemaProof': <String, Object?>{
+          'rowId': 'PL-012',
+          'receivedVisibleMessageOnce': true,
+          'matchedMessageId': true,
+          'mediaDescriptorPersisted': true,
+          'mediaCount': 5,
         },
       },
     ),

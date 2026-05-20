@@ -594,6 +594,179 @@ void main() {
     );
 
     test(
+      'PL-012 fake-network media schema variants survive fanout and downloads',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-pl012-media-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-pl012-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('bob-pl012-media'),
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'charlie-pl012-media-peer',
+          username: 'Charlie',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('charlie-pl012-media'),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-pl012-media-schema';
+        const messageText = 'PL-012 schema variants';
+        const messageId = 'msg-pl012-media-schema';
+        await alice.createGroup(groupId: groupId, name: 'PL012 Media Schema');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await alice.addMember(groupId: groupId, invitee: charlie);
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: charlie, groupId: groupId, epoch: 1);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+        await pump();
+
+        final variants = <MediaAttachment>[
+          attachment(
+            id: 'blob-pl012-image',
+            mime: 'image/jpeg',
+            size: 4,
+            width: 800,
+            height: 600,
+          ),
+          attachment(
+            id: 'blob-pl012-gif',
+            mime: 'image/gif',
+            size: 4,
+            width: 320,
+            height: 240,
+          ),
+          attachment(
+            id: 'blob-pl012-file',
+            mime: 'application/octet-stream',
+            size: 4,
+          ),
+          attachment(
+            id: 'blob-pl012-video',
+            mime: 'video/mp4',
+            size: 4,
+            width: 1280,
+            height: 720,
+            durationMs: 12000,
+          ),
+          attachment(
+            id: 'blob-pl012-voice',
+            mime: 'audio/mp4',
+            size: 4,
+            durationMs: 3300,
+            waveform: const <double>[0.1, 0.4, 0.2],
+          ),
+        ];
+
+        final (result, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: messageText,
+          messageId: messageId,
+          mediaAttachments: variants,
+        );
+        expect(result, group_send.SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+
+        Future<void> expectVariantSchema(GroupTestUser user) async {
+          final incoming = (await user.loadGroupMessages(groupId))
+              .where(
+                (message) => message.isIncoming && message.text == messageText,
+              )
+              .single;
+          expect(incoming.id, sentMessage!.id, reason: user.username);
+          final attachments = await user.mediaAttachmentRepo
+              .getAttachmentsForMessage(incoming.id);
+          expect(
+            attachments,
+            hasLength(variants.length),
+            reason: user.username,
+          );
+          final byId = {
+            for (final attachment in attachments) attachment.id: attachment,
+          };
+          for (final expected in variants) {
+            final actual = byId[expected.id];
+            expect(
+              actual,
+              isNotNull,
+              reason: '${user.username} ${expected.id}',
+            );
+            expect(actual!.mime, expected.mime, reason: user.username);
+            expect(actual.mediaType, expected.mediaType, reason: user.username);
+            expect(actual.width, expected.width, reason: user.username);
+            expect(actual.height, expected.height, reason: user.username);
+            expect(
+              actual.durationMs,
+              expected.durationMs,
+              reason: user.username,
+            );
+            expect(actual.waveform, expected.waveform, reason: user.username);
+            expect(
+              actual.contentHash,
+              expected.contentHash,
+              reason: user.username,
+            );
+            expect(
+              actual.encryptionKeyBase64,
+              expected.encryptionKeyBase64,
+              reason: user.username,
+            );
+            expect(
+              actual.encryptionNonce,
+              expected.encryptionNonce,
+              reason: user.username,
+            );
+            expect(
+              actual.encryptionScheme,
+              expected.encryptionScheme,
+              reason: user.username,
+            );
+            expect(actual.downloadStatus, 'done', reason: user.username);
+            expect(actual.localPath, isNotNull, reason: user.username);
+          }
+        }
+
+        for (final receiver in [bob, charlie]) {
+          await waitForDownloads(
+            user: receiver,
+            expectedCount: variants.length,
+          );
+          await expectVariantSchema(receiver);
+        }
+
+        final outgoing = (await alice.loadGroupMessages(groupId))
+            .where(
+              (message) => !message.isIncoming && message.text == messageText,
+            )
+            .single;
+        final outgoingAttachments = await alice.mediaAttachmentRepo
+            .getAttachmentsForMessage(outgoing.id);
+        expect(outgoingAttachments, hasLength(variants.length));
+
+        final deliveryRecords = network.deliveryRecords
+            .where((record) => record['messageId'] == messageId)
+            .toList(growable: false);
+        expect(deliveryRecords, hasLength(2));
+      },
+    );
+
+    test(
       'one recipient media download failure remains observable per recipient',
       () async {
         final alice = GroupTestUser.create(

@@ -57,6 +57,10 @@ const _pl002Requirement = GroupMultiPartyScenarioRequirement(
   scenario: 'pl002',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _pl012Requirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'pl012',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
 const _privateAbcCreateRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_abc_create',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -449,6 +453,7 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'ir015': _ir015Requirement,
   'ir016': _ir016Requirement,
   'pl002': _pl002Requirement,
+  'pl012': _pl012Requirement,
   'private_abc_create': _privateAbcCreateRequirement,
   'private_reaction_roundtrip': _privateReactionRoundtripRequirement,
   'private_removed_reaction_rejected':
@@ -1981,6 +1986,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           allowEmptyText: true,
         ),
       ];
+    case 'pl012':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'alicePl012MediaVariants',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
     case 'private_online_add':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
@@ -2777,6 +2790,10 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'pl002') {
     _validatePl002MediaOnlyProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'pl012') {
+    _validatePl012MediaSchemaProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_abc_create') {
@@ -4638,6 +4655,158 @@ void _validatePl002MediaOnlyProof({
 
     if (!mediaOk(entryFor(role, 'receivedMessages'))) {
       failures.add('$role: $proofName received media-only descriptor mismatch');
+    }
+  }
+}
+
+void _validatePl012MediaSchemaProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'pl012MediaSchemaProof';
+  const key = 'alicePl012MediaVariants';
+  const expectedMediaCount = 5;
+
+  bool encrypted(Map<String, dynamic> attachment) {
+    return (_stringValue(attachment['contentHash'])?.isNotEmpty ?? false) &&
+        (attachment['hasEncryptionMetadata'] == true ||
+            ((_stringValue(attachment['encryptionKeyBase64'])?.isNotEmpty ??
+                    false) &&
+                (_stringValue(attachment['encryptionNonce'])?.isNotEmpty ??
+                    false))) &&
+        _stringValue(attachment['encryptionScheme']) == 'blob_aes_256_gcm_v1';
+  }
+
+  bool mediaOk(Map<String, dynamic>? entry) {
+    if (entry == null) return false;
+    if (_messageText(entry) != 'PL-012 schema variants test' &&
+        !(_messageText(entry)?.startsWith('PL-012 schema variants ') ??
+            false)) {
+      return false;
+    }
+    final media = _mapList(entry['media']).isNotEmpty
+        ? _mapList(entry['media'])
+        : _mapList(entry['mediaAttachments']);
+    if (media.length != expectedMediaCount) return false;
+
+    bool hasVariant({
+      required String mime,
+      required String mediaType,
+      int? width,
+      int? height,
+      int? durationMs,
+      bool requireWaveform = false,
+    }) {
+      return media.any((attachment) {
+        final waveform = attachment['waveform'];
+        return _stringValue(attachment['mime']) == mime &&
+            _stringValue(attachment['mediaType']) == mediaType &&
+            (width == null || _intValue(attachment['width']) == width) &&
+            (height == null || _intValue(attachment['height']) == height) &&
+            (durationMs == null ||
+                _intValue(attachment['durationMs']) == durationMs) &&
+            (!requireWaveform || (waveform is List && waveform.length == 3)) &&
+            encrypted(attachment);
+      });
+    }
+
+    return hasVariant(
+          mime: 'image/jpeg',
+          mediaType: 'image',
+          width: 800,
+          height: 600,
+        ) &&
+        hasVariant(
+          mime: 'image/gif',
+          mediaType: 'image',
+          width: 320,
+          height: 240,
+        ) &&
+        hasVariant(mime: 'application/octet-stream', mediaType: 'file') &&
+        hasVariant(
+          mime: 'video/mp4',
+          mediaType: 'video',
+          width: 1280,
+          height: 720,
+          durationMs: 12000,
+        ) &&
+        hasVariant(
+          mime: 'audio/mp4',
+          mediaType: 'audio',
+          durationMs: 3300,
+          requireWaveform: true,
+        );
+  }
+
+  Map<String, dynamic>? entryFor(String role, String collectionName) {
+    final entries = _mapList(byRole[role]?[collectionName])
+        .where((entry) => _stringValue(entry['key']) == key)
+        .toList(growable: false);
+    return entries.length == 1 ? entries.single : null;
+  }
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'PL-012') {
+      failures.add('$role: $proofName.rowId must be PL-012');
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  if (aliceProof == null) {
+    failures.add('alice: missing PL-012 media schema proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'acceptedVariantMessage',
+      'mediaDescriptorPublished',
+      'bobReceiptSignalObserved',
+      'charlieReceiptSignalObserved',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if (_intValue(aliceProof['mediaCount']) != expectedMediaCount) {
+      failures.add('alice: $proofName.mediaCount must be $expectedMediaCount');
+    }
+  }
+
+  if (!mediaOk(entryFor('alice', 'sentMessages'))) {
+    failures.add('alice: $proofName sent variant descriptor mismatch');
+  }
+
+  for (final role in const <String>['bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing PL-012 media schema proof fields');
+    } else {
+      requireRowId(role, proof);
+      for (final field in const <String>[
+        'receivedVisibleMessageOnce',
+        'matchedMessageId',
+        'mediaDescriptorPersisted',
+      ]) {
+        _requireTrueProof(
+          role: role,
+          proofName: proofName,
+          proof: proof,
+          field: field,
+          failures: failures,
+        );
+      }
+      if (_intValue(proof['mediaCount']) != expectedMediaCount) {
+        failures.add(
+          '$role: $proofName.mediaCount must be $expectedMediaCount',
+        );
+      }
+    }
+
+    if (!mediaOk(entryFor(role, 'receivedMessages'))) {
+      failures.add('$role: $proofName received variant descriptor mismatch');
     }
   }
 }

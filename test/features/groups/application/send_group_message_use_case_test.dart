@@ -3267,6 +3267,150 @@ void main() {
     );
 
     test(
+      'PL-012 media schema variants survive live publish and replay payloads',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 5, 16),
+          ),
+        );
+        const messageId = 'pl012-media-schema-variants';
+        final sentAt = DateTime.utc(2026, 5, 16, 3, 4);
+        final variants = <MediaAttachment>[
+          MediaAttachment(
+            id: 'att-pl012-image',
+            messageId: '',
+            mime: 'image/jpeg',
+            size: 4096,
+            mediaType: 'image',
+            width: 800,
+            height: 600,
+            downloadStatus: 'done',
+            createdAt: sentAt.toIso8601String(),
+            localPath: '/tmp/pl012-image.jpg',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-pl012-image',
+            encryptionNonce: 'nonce-pl012-image',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          MediaAttachment(
+            id: 'att-pl012-gif',
+            messageId: '',
+            mime: 'image/gif',
+            size: 2048,
+            mediaType: 'image',
+            width: 320,
+            height: 240,
+            downloadStatus: 'done',
+            createdAt: sentAt.toIso8601String(),
+            localPath: '/tmp/pl012-gif.gif',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-pl012-gif',
+            encryptionNonce: 'nonce-pl012-gif',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          MediaAttachment(
+            id: 'att-pl012-file',
+            messageId: '',
+            mime: 'application/octet-stream',
+            size: 1024,
+            mediaType: 'file',
+            downloadStatus: 'done',
+            createdAt: sentAt.toIso8601String(),
+            localPath: '/tmp/pl012-file.bin',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-pl012-file',
+            encryptionNonce: 'nonce-pl012-file',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          MediaAttachment(
+            id: 'att-pl012-video',
+            messageId: '',
+            mime: 'video/mp4',
+            size: 8192,
+            mediaType: 'video',
+            width: 1280,
+            height: 720,
+            durationMs: 12000,
+            downloadStatus: 'done',
+            createdAt: sentAt.toIso8601String(),
+            localPath: '/tmp/pl012-video.mp4',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-pl012-video',
+            encryptionNonce: 'nonce-pl012-video',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          MediaAttachment(
+            id: 'att-pl012-voice',
+            messageId: '',
+            mime: 'audio/mp4',
+            size: 3072,
+            mediaType: 'audio',
+            durationMs: 3300,
+            waveform: const <double>[0.1, 0.4, 0.2],
+            downloadStatus: 'done',
+            createdAt: sentAt.toIso8601String(),
+            localPath: '/tmp/pl012-voice.m4a',
+            contentHash: _validContentHash,
+            encryptionKeyBase64: 'key-pl012-voice',
+            encryptionNonce: 'nonce-pl012-voice',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+        ];
+        final expectedMedia = variants.map((a) => a.toJson()).toList();
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'PL-012 schema variants',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: messageId,
+          timestamp: sentAt,
+          mediaAttachments: variants,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(result, SendGroupMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.id, messageId);
+
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (m) => (jsonDecode(m) as Map)['cmd'] == 'group:publish',
+        );
+        final payload =
+            (jsonDecode(publishMsg) as Map)['payload'] as Map<String, dynamic>;
+        expect(payload['messageId'], messageId);
+        expect(payload['text'], 'PL-012 schema variants');
+        expect(payload['media'], expectedMedia);
+
+        final replayPayload = _decodedGroupInboxReplayPayload(bridge);
+        expect(replayPayload['messageId'], messageId);
+        expect(replayPayload['text'], 'PL-012 schema variants');
+        expect(replayPayload['timestamp'], sentAt.toIso8601String());
+        expect(replayPayload['media'], expectedMedia);
+
+        final savedAttachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+        );
+        expect(savedAttachments, hasLength(variants.length));
+        expect(savedAttachments.map((a) => a.toJson()).toList(), expectedMedia);
+        expect(
+          savedAttachments.map((a) => a.messageId),
+          everyElement(messageId),
+        );
+      },
+    );
+
+    test(
       'ML-017 retained removed history rejects send before bootstrap-key checks',
       () async {
         await groupRepo.removeMember('group-1', 'peer-1');
