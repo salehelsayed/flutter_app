@@ -3029,6 +3029,7 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateUp002DurableTimelineProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_non_friend_member_delivery') {
@@ -6554,6 +6555,78 @@ void _validateMl015TimelineTruthProof({
   if (charlieEpoch != null) epochs.add(charlieEpoch);
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: ML-015 finalEpoch mismatch');
+  }
+}
+
+void _validateUp002DurableTimelineProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up002DurableTimelineProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+
+  void requireRoleProof(String role, Map<String, dynamic>? proof) {
+    if (proof == null) {
+      failures.add('$role: missing UP-002 durable timeline proof fields');
+      return;
+    }
+    if (_stringValue(proof['rowId']) != 'UP-002') {
+      failures.add('$role: $proofName.rowId must be UP-002');
+    }
+    if (_stringValue(proof['role']) != role) {
+      failures.add('$role: $proofName.role must be $role');
+    }
+    for (final field in const <String>[
+      'liveThreePartyProof',
+      'reopenedTimelineRead',
+      'timelineContainsInitialAdd',
+      'timelineContainsRemoval',
+      'timelineContainsReadd',
+      'timelineOrderShowsAddRemoveReadd',
+      'finalMemberListIncludesAliceBobCharlie',
+      'finalStateMatchesTimeline',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final addCount = _intValue(proof['addTimelineEventCount']);
+    if (addCount == null || addCount < 2) {
+      failures.add('$role: $proofName.addTimelineEventCount must be >= 2');
+    }
+    final removeCount = _intValue(proof['removeTimelineEventCount']);
+    if (removeCount == null || removeCount < 1) {
+      failures.add('$role: $proofName.removeTimelineEventCount must be >= 1');
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  requireRoleProof('alice', aliceProof);
+  requireRoleProof('bob', bobProof);
+  requireRoleProof('charlie', charlieProof);
+
+  final epochs = <int>{};
+  for (final proof in <Map<String, dynamic>?>[
+    aliceProof,
+    bobProof,
+    charlieProof,
+  ]) {
+    final epoch = _intValue(proof?['finalEpoch']);
+    if (epoch != null) {
+      epochs.add(epoch);
+    }
+  }
+  if (epochs.length > 1) {
+    failures.add('alice/bob/charlie: UP-002 finalEpoch mismatch');
   }
 }
 
