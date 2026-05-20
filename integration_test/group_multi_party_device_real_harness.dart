@@ -2716,6 +2716,39 @@ Future<String> _importGm004JoinedGroupFixture({
   return groupId;
 }
 
+Future<String> _importJoinedGroupFixtureWithoutKey({
+  required GroupMultiDeviceTestStack stack,
+  required Map<String, dynamic> fixture,
+}) async {
+  final group = GroupModel.fromMap(
+    Map<String, dynamic>.from(fixture['group'] as Map),
+  );
+  final members = (fixture['members'] as List<dynamic>)
+      .map((raw) => GroupMember.fromMap(Map<String, dynamic>.from(raw as Map)))
+      .toList(growable: false);
+
+  await stack.groupRepo.saveGroup(group);
+  await stack.groupRepo.removeAllMembers(group.id);
+  for (final member in members) {
+    await stack.groupRepo.saveMember(member);
+  }
+  await stack.groupRepo.removeAllKeys(group.id);
+
+  final selfMember = await stack.groupRepo.getMember(
+    group.id,
+    stack.identity.peerId,
+  );
+  if (selfMember != null) {
+    final localRole = selfMember.role == MemberRole.admin
+        ? GroupRole.admin
+        : GroupRole.member;
+    if (group.myRole != localRole) {
+      await stack.groupRepo.updateGroup(group.copyWith(myRole: localRole));
+    }
+  }
+  return group.id;
+}
+
 Future<String> _persistGroupFixtureWithoutJoin({
   required GroupMultiDeviceTestStack stack,
   required Map<String, dynamic> fixture,
@@ -19065,6 +19098,10 @@ Future<void> _runGm006Charlie(
     fixture: fixture,
   );
   writeSharedText(_signalName('charlie_group_joined'), 'ok');
+  final activeBeforeRemovalObserved =
+      isMl007 &&
+      await stack.groupRepo.getMember(groupId, stack.identity.peerId) != null &&
+      await _keyEpoch(stack, groupId) > 0;
 
   var leaveStartedBeforeReadd = false;
   var lateLeaveRepairJoinCompleted = false;
@@ -19127,6 +19164,16 @@ Future<void> _runGm006Charlie(
   }
   writeSharedText(_signalName('charlie_self_removed'), 'ok');
 
+  Map<String, dynamic>? removedSend;
+  if (isMl007) {
+    removedSend = await _attemptRejectedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'charlieRemovedComposeBlocked',
+      text: 'UP-003 Charlie removed compose blocked $_runId',
+    );
+  }
+
   final duringSent = await waitForSharedJson(
     _signalName('alice_sent_aliceDuringCharlieRemoval.json'),
   );
@@ -19177,6 +19224,28 @@ Future<void> _runGm006Charlie(
   final readdFixture = await waitForSharedJson(
     _signalName('charlie_readd_group_fixture.json'),
   );
+  List<String> pendingReaddPeerIds = const <String>[];
+  var pendingReaddEpoch = 0;
+  Map<String, dynamic>? pendingReaddSend;
+  var pendingReaddLocalMessageStored = false;
+  if (isMl007) {
+    await _importJoinedGroupFixtureWithoutKey(
+      stack: stack,
+      fixture: readdFixture,
+    );
+    pendingReaddPeerIds = await _memberPeerIds(stack, groupId);
+    pendingReaddEpoch = await _keyEpoch(stack, groupId);
+    pendingReaddSend = await _attemptRejectedProofMessage(
+      stack: stack,
+      groupId: groupId,
+      key: 'charliePendingReaddNoKeyComposeBlocked',
+      text: 'UP-003 Charlie pending re-add without current key $_runId',
+    );
+    final pendingMessageId = pendingReaddSend['messageId'] as String?;
+    pendingReaddLocalMessageStored =
+        pendingMessageId != null &&
+        await stack.groupMsgRepo.getMessage(pendingMessageId) != null;
+  }
   await _importGm004JoinedGroupFixture(stack: stack, fixture: readdFixture);
   final epochBeforeRejoinAck = await _keyEpoch(stack, groupId);
   writeSharedText(_signalName('charlie_group_rejoined'), 'ok');
@@ -19527,6 +19596,30 @@ Future<void> _runGm006Charlie(
           finalMemberPeerIds: memberPeerIds,
           finalEpoch: finalEpoch,
         ),
+      if (isMl007)
+        'up003ComposeGateProof': <String, dynamic>{
+          'rowId': 'UP-003',
+          'liveThreePartyProof': true,
+          'hostUiComposerGateCovered': true,
+          'activeBeforeRemovalObserved': activeBeforeRemovalObserved,
+          'removedStateSendRejected': removedSend?['accepted'] == false,
+          'removedStateOutcome': removedSend?['outcome'],
+          'pendingReaddImportedWithoutCurrentKey': pendingReaddEpoch == 0,
+          'pendingReaddMemberListIncludesCharlie': pendingReaddPeerIds.contains(
+            charliePeerId,
+          ),
+          'pendingReaddSendRejected': pendingReaddSend?['accepted'] == false,
+          'pendingReaddSendOutcome': pendingReaddSend?['outcome'],
+          'pendingReaddLocalMessageStored': pendingReaddLocalMessageStored,
+          'rejoinAcknowledgedAfterCurrentKey': epochBeforeRejoinAck >= 2,
+          'activeAfterCurrentKeyCanSend':
+              (charlieSent['outcome'] == 'success' ||
+                  charlieSent['outcome'] == 'successNoPeers') &&
+              charlieSentEpoch != null &&
+              charlieSentEpoch == finalEpoch &&
+              finalEpoch >= 2,
+          'finalEpoch': finalEpoch,
+        },
       if (isMl007)
         'pl004QuoteReaddLiveProof': <String, dynamic>{
           'rowId': 'PL-004',

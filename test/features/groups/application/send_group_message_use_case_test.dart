@@ -1113,6 +1113,66 @@ void main() {
     },
   );
 
+  test(
+    'UP-003 active member without current key cannot send until key is installed',
+    () async {
+      const groupId = 'group-up003-current-key';
+      final memberGroup = GroupModel(
+        id: groupId,
+        name: 'UP-003 Current Key',
+        type: GroupType.chat,
+        topicName: 'group-topic-up003-current-key',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      );
+      await groupRepo.saveGroup(memberGroup);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-member',
+          username: 'Member',
+          role: MemberRole.writer,
+          publicKey: 'pk-member',
+          joinedAt: DateTime.utc(2026, 5, 13),
+        ),
+      );
+
+      final (blockedResult, blockedMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: 'UP-003 no current key',
+        senderPeerId: 'peer-member',
+        senderPublicKey: 'pk-member',
+        senderPrivateKey: 'sk-member',
+        senderUsername: 'Member',
+      );
+
+      expect(blockedResult, SendGroupMessageResult.error);
+      expect(blockedMessage, isNull);
+      expect(bridge.commandLog, isEmpty);
+
+      await _saveGroupKey(groupRepo, groupId, generation: 2);
+      final (allowedResult, allowedMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: 'UP-003 with current key',
+        senderPeerId: 'peer-member',
+        senderPublicKey: 'pk-member',
+        senderPrivateKey: 'sk-member',
+        senderUsername: 'Member',
+      );
+
+      expect(allowedResult, SendGroupMessageResult.success);
+      expect(allowedMessage, isNotNull);
+      expect(allowedMessage!.keyGeneration, 2);
+    },
+  );
+
   test('EK004 stores signed offline replay envelope for group_message', () async {
     final (result, message) = await sendGroupMessage(
       bridge: bridge,

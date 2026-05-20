@@ -5454,6 +5454,24 @@ void main() {
       },
     );
 
+    test('UP-003 rejects private_readd_current without compose gate proof', () {
+      final missingProof = _validPrivateReaddCurrentVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('up003ComposeGateProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing UP-003 compose gate proof fields'),
+      );
+    });
+
     test('accepts private_readd_current RA-015 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_readd_current',
@@ -20831,6 +20849,21 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'finalDbConfigUiConverged': true,
           'observedSelfRemovalDuringRemoval': true,
           'observedReaddSnapshot': true,
+          'finalEpoch': 2,
+        },
+        'up003ComposeGateProof': <String, Object?>{
+          'rowId': 'UP-003',
+          'liveThreePartyProof': true,
+          'hostUiComposerGateCovered': true,
+          'activeBeforeRemovalObserved': true,
+          'removedStateSendRejected': true,
+          'removedStateOutcome': 'groupNotFound',
+          'pendingReaddImportedWithoutCurrentKey': true,
+          'pendingReaddMemberListIncludesCharlie': true,
+          'pendingReaddSendRejected': true,
+          'pendingReaddSendOutcome': 'error',
+          'rejoinAcknowledgedAfterCurrentKey': true,
+          'activeAfterCurrentKeyCanSend': true,
           'finalEpoch': 2,
         },
         'pl004QuoteReaddLiveProof': <String, Object?>{
