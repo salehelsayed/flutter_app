@@ -417,6 +417,32 @@ void _expectNoProtectedFragments(String raw, Iterable<String> fragments) {
   }
 }
 
+void _expectNoForbiddenKeys(
+  Object? value,
+  Set<String> forbiddenKeys, {
+  String path = r'$',
+}) {
+  if (value is Map) {
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      expect(
+        forbiddenKeys,
+        isNot(contains(key)),
+        reason: 'forbidden key $key found at $path',
+      );
+      _expectNoForbiddenKeys(entry.value, forbiddenKeys, path: '$path.$key');
+    }
+    return;
+  }
+  if (value is Iterable) {
+    var index = 0;
+    for (final item in value) {
+      _expectNoForbiddenKeys(item, forbiddenKeys, path: '$path[$index]');
+      index++;
+    }
+  }
+}
+
 Future<void> _saveGroupKey(
   InMemoryGroupRepository groupRepo,
   String groupId, {
@@ -2562,6 +2588,115 @@ void main() {
         kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       );
     });
+
+    test(
+      'PL-014 media metadata omits group keys plaintext and private keys from diagnostics and relay replay',
+      () async {
+        final privacyBridge = _OpaqueReplayBridge();
+        privacyBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-pl014-media-privacy',
+          'topicPeers': 1,
+        };
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            joinedAt: DateTime.utc(2026, 1, 2),
+          ),
+        );
+
+        const protectedPlaintext = 'PL014 protected plaintext body alpha';
+        const senderPrivateKey = 'pl014-sender-private-key-secret';
+        const groupKey = 'test-group-key-1';
+        const blobKey = 'pl014-blob-key-for-encrypted-descriptor';
+        const blobNonce = 'pl014-blob-nonce-for-encrypted-descriptor';
+        const forbiddenMetadataKeys = {
+          'groupKey',
+          'group_key',
+          'plaintext',
+          'plainText',
+          'secretKey',
+          'secret_key',
+          'privateKey',
+          'senderPrivateKey',
+        };
+        final protectedFragments = [
+          protectedPlaintext,
+          senderPrivateKey,
+          groupKey,
+        ];
+        final relayProtectedFragments = [
+          ...protectedFragments,
+          blobKey,
+          blobNonce,
+        ];
+        final privateAttachment = testAttachment.copyWith(
+          id: 'blob-pl014-private',
+          encryptionKeyBase64: blobKey,
+          encryptionNonce: blobNonce,
+        );
+
+        final events = await captureFlowEvents(() async {
+          final (result, message) = await sendGroupMessage(
+            bridge: privacyBridge,
+            groupRepo: groupRepo,
+            msgRepo: msgRepo,
+            groupId: 'group-1',
+            text: protectedPlaintext,
+            senderPeerId: 'peer-1',
+            senderPublicKey: 'pk-1',
+            senderPrivateKey: senderPrivateKey,
+            senderUsername: 'Alice',
+            messageId: 'msg-pl014-media-privacy',
+            mediaAttachments: [privateAttachment],
+            mediaAttachmentRepo: mediaRepo,
+          );
+
+          expect(result, SendGroupMessageResult.success);
+          expect(message, isNotNull);
+        });
+
+        final publishRaw = privacyBridge.sentMessages.firstWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final publishMedia = publishPayload['media'] as List<dynamic>;
+        expect(publishMedia, hasLength(1));
+        _expectNoProtectedFragments(
+          jsonEncode(publishMedia),
+          protectedFragments,
+        );
+        _expectNoForbiddenKeys(publishMedia, forbiddenMetadataKeys);
+
+        final inboxStoreCommand = privacyBridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:inboxStore',
+        );
+        _expectNoProtectedFragments(inboxStoreCommand, relayProtectedFragments);
+        final inboxPayload = _lastGroupInboxStorePayload(privacyBridge);
+        expect(inboxPayload.containsKey('pushTitle'), isFalse);
+        expect(inboxPayload.containsKey('pushBody'), isFalse);
+        final replayEnvelope =
+            jsonDecode(inboxPayload['message'] as String)
+                as Map<String, dynamic>;
+        expect(replayEnvelope['kind'], 'group_offline_replay');
+        expect(replayEnvelope['ciphertext'], startsWith('sealed:'));
+        expect(replayEnvelope.containsKey('media'), isFalse);
+        _expectNoForbiddenKeys(replayEnvelope, forbiddenMetadataKeys);
+
+        final diagnosticsJson = jsonEncode(events);
+        _expectNoProtectedFragments(diagnosticsJson, relayProtectedFragments);
+        _expectNoForbiddenKeys(events, forbiddenMetadataKeys);
+      },
+    );
 
     test('saves attachments to MediaAttachmentRepository', () async {
       await sendGroupMessage(

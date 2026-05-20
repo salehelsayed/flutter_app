@@ -2,6 +2,7 @@ package node
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -128,6 +129,97 @@ func TestMediaUploadProgressReader_EventStructureHasSentAndTotalOnly(t *testing.
 			t.Errorf("event %d: sentBytes=%d out of range [0, 10240]", i, e.sentBytes)
 		}
 	}
+}
+
+func TestPL014MediaMetadataAndProgressEventsDoNotExposeSecrets(t *testing.T) {
+	forbiddenFragments := []string{
+		"pl014-group-key-secret",
+		"pl014-plaintext-secret",
+		"pl014-private-key-secret",
+		"groupKey",
+		"group_key",
+		"plaintext",
+		"plainText",
+		"secretKey",
+		"secret_key",
+		"privateKey",
+		"senderPrivateKey",
+	}
+	assertNoForbidden := func(label string, value interface{}) {
+		t.Helper()
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("%s marshal: %v", label, err)
+		}
+		for _, fragment := range forbiddenFragments {
+			if strings.Contains(string(raw), fragment) {
+				t.Fatalf("%s leaked forbidden fragment %q in %s", label, fragment, raw)
+			}
+		}
+	}
+	assertExactKeys := func(label string, value map[string]interface{}, want map[string]struct{}) {
+		t.Helper()
+		if len(value) != len(want) {
+			t.Fatalf("%s keys = %v, want exactly %v", label, value, want)
+		}
+		for key := range value {
+			if _, ok := want[key]; !ok {
+				t.Fatalf("%s unexpected key %q in %v", label, key, value)
+			}
+		}
+	}
+
+	uploadRequest := mediaRequest{
+		Action:       "upload",
+		ID:           "blob-pl014-random-id",
+		To:           "group-pl014-media",
+		Size:         4096,
+		Mime:         "image/jpeg",
+		AllowedPeers: []string{"peer-alice", "peer-bob"},
+	}
+	listResponse := mediaResponse{
+		Status: "OK",
+		Blobs: []MediaMeta{
+			{
+				ID:        "blob-pl014-random-id",
+				From:      "peer-alice",
+				To:        "group-pl014-media",
+				Mime:      "image/jpeg",
+				Size:      4096,
+				CreatedAt: 1778700000,
+			},
+		},
+	}
+	progressEvent := map[string]interface{}{
+		"id":         "blob-pl014-random-id",
+		"sentBytes":  int64(1024),
+		"totalBytes": int64(4096),
+		"toPeerId":   "group-pl014-media",
+	}
+	completeEvent := map[string]interface{}{
+		"id":                    "blob-pl014-random-id",
+		"totalBytes":            int64(4096),
+		"totalMs":               int64(25),
+		"throughputBytesPerSec": int64(163840),
+	}
+
+	assertNoForbidden("media upload request", uploadRequest)
+	assertNoForbidden("media list response", listResponse)
+	assertNoForbidden("media upload progress event", progressEvent)
+	assertNoForbidden("media upload complete event", completeEvent)
+
+	assertExactKeys("media upload progress event", progressEvent, map[string]struct{}{
+		"id":         {},
+		"sentBytes":  {},
+		"totalBytes": {},
+		"toPeerId":   {},
+	})
+	assertExactKeys("media upload complete event", completeEvent, map[string]struct{}{
+		"id":                    {},
+		"totalBytes":            {},
+		"totalMs":               {},
+		"throughputBytesPerSec": {},
+	})
 }
 
 // --- §5: Idle timeout reader tests ---
