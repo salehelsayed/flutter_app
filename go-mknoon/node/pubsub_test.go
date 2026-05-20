@@ -4786,6 +4786,116 @@ func TestBB016GroupConfigMetadataFieldsSurviveSerializationAndUpdate(t *testing.
 	}
 }
 
+func TestUP001UpdateGroupConfigTracksAddRemoveReaddValidator(t *testing.T) {
+	hexKey := generateTestKey(t)
+	privB64A, pubB64A := generateEd25519KeyPair(t)
+	privB64B, pubB64B := generateEd25519KeyPair(t)
+	groupKey, _ := mcrypto.GenerateGroupKey()
+	groupId := "up001-config-sync"
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	keyInfo := &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}
+	createConfig := &GroupConfig{
+		Name:      "UP-001",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-A", Role: GroupRoleAdmin, PublicKey: pubB64A},
+		},
+		CreatedBy: "peer-A",
+	}
+	if err := n.JoinGroupTopic(groupId, createConfig, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	envelopeB := buildTestEnvelope(t, groupId, "peer-B", privB64B, pubB64B, groupKey, 1, "hello from B")
+
+	assertStoredMembers := func(label string, want []string) *GroupConfig {
+		t.Helper()
+		n.mu.RLock()
+		stored := n.groupConfigs[groupId]
+		n.mu.RUnlock()
+		if stored == nil {
+			t.Fatalf("%s: missing stored group config", label)
+		}
+		got := map[string]bool{}
+		for _, member := range stored.Members {
+			got[member.PeerId] = true
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%s: got %d members (%v), want %d (%v)", label, len(got), got, len(want), want)
+		}
+		for _, peerID := range want {
+			if !got[peerID] {
+				t.Fatalf("%s: stored config missing member %s in %v", label, peerID, got)
+			}
+		}
+		return stored
+	}
+
+	stored := assertStoredMembers("create", []string{"peer-A"})
+	if result := validateGroupEnvelope(envelopeB, groupId, stored, keyInfo); result != "reject:non_member" {
+		t.Fatalf("create validator result = %s, want reject:non_member", result)
+	}
+
+	addConfig := &GroupConfig{
+		Name:      "UP-001",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-A", Role: GroupRoleAdmin, PublicKey: pubB64A},
+			{PeerId: "peer-B", Role: GroupRoleWriter, PublicKey: pubB64B},
+		},
+		CreatedBy: "peer-A",
+	}
+	n.UpdateGroupConfig(groupId, addConfig)
+	addConfig.Members[1].PeerId = "caller-mutated-peer-B"
+	stored = assertStoredMembers("add", []string{"peer-A", "peer-B"})
+	if result := validateGroupEnvelope(envelopeB, groupId, stored, keyInfo); result != "accept" {
+		t.Fatalf("add validator result = %s, want accept", result)
+	}
+
+	removeConfig := &GroupConfig{
+		Name:      "UP-001",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-A", Role: GroupRoleAdmin, PublicKey: pubB64A},
+		},
+		CreatedBy: "peer-A",
+	}
+	n.UpdateGroupConfig(groupId, removeConfig)
+	stored = assertStoredMembers("remove", []string{"peer-A"})
+	if result := validateGroupEnvelope(envelopeB, groupId, stored, keyInfo); result != "reject:non_member" {
+		t.Fatalf("remove validator result = %s, want reject:non_member", result)
+	}
+
+	readdConfig := &GroupConfig{
+		Name:      "UP-001",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: "peer-A", Role: GroupRoleAdmin, PublicKey: pubB64A},
+			{PeerId: "peer-B", Role: GroupRoleWriter, PublicKey: pubB64B},
+		},
+		CreatedBy: "peer-A",
+	}
+	n.UpdateGroupConfig(groupId, readdConfig)
+	readdConfig.Members[1].PeerId = "caller-mutated-readd-peer-B"
+	stored = assertStoredMembers("readd", []string{"peer-A", "peer-B"})
+	if result := validateGroupEnvelope(envelopeB, groupId, stored, keyInfo); result != "accept" {
+		t.Fatalf("readd validator result = %s, want accept", result)
+	}
+
+	_ = privB64A
+}
+
 // Test 1.3: UpdateGroupConfig replaces config atomically.
 func TestUpdateGroupConfig_ReplacesConfigAtomically(t *testing.T) {
 	hexKey := generateTestKey(t)

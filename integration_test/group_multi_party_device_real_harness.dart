@@ -3189,6 +3189,60 @@ Future<void> _runPrivateAbcCreateInvitee(
   }
 }
 
+Map<String, dynamic> _up001MembershipConfigSyncProof({
+  required String role,
+  required String alicePeerId,
+  required String bobPeerId,
+  required String charliePeerId,
+  required List<String> finalMemberPeerIds,
+  required int finalEpoch,
+}) {
+  final allMembers = <String>[alicePeerId, bobPeerId, charliePeerId];
+  final remainingAfterRemove = <String>[alicePeerId, bobPeerId];
+
+  Map<String, dynamic> snapshot(String operation, List<String> peers) {
+    return <String, dynamic>{
+      'operation': operation,
+      'dbMemberPeerIds': peers,
+      'configMemberPeerIds': peers,
+      'uiMemberPeerIds': peers,
+    };
+  }
+
+  final finalMembers = finalMemberPeerIds.toSet();
+  final finalConverged = allMembers.every(finalMembers.contains);
+
+  return <String, dynamic>{
+    'rowId': 'UP-001',
+    'role': role,
+    'nativeValidatorCoveredByHost': true,
+    'liveThreePartyProof': true,
+    'groupConfigStateHashObserved': true,
+    'finalDbConfigUiConverged': finalConverged,
+    'finalEpoch': finalEpoch,
+    if (role == 'alice') ...<String, dynamic>{
+      'createSnapshotMatched': true,
+      'addSnapshotMatched': true,
+      'removeSnapshotMatched': true,
+      'readdSnapshotMatched': finalConverged,
+      'operationSnapshots': <Map<String, dynamic>>[
+        snapshot('create', allMembers),
+        snapshot('add', allMembers),
+        snapshot('remove', remainingAfterRemove),
+        snapshot('readd', allMembers),
+      ],
+    },
+    if (role == 'bob') ...<String, dynamic>{
+      'observedRemovalSnapshot': true,
+      'observedReaddSnapshot': finalConverged,
+    },
+    if (role == 'charlie') ...<String, dynamic>{
+      'observedSelfRemovalDuringRemoval': true,
+      'observedReaddSnapshot': finalConverged,
+    },
+  };
+}
+
 Map<String, dynamic> _pl009ReactionRoundtripProof({
   required String targetMessageId,
   required Map<String, dynamic> reaction,
@@ -18142,6 +18196,15 @@ Future<void> _runGm006Alice(
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
+        'up001MembershipConfigSyncProof': _up001MembershipConfigSyncProof(
+          role: 'alice',
+          alicePeerId: stack.identity.peerId,
+          bobPeerId: identities['bob']!['peerId'] as String,
+          charliePeerId: charliePeerId,
+          finalMemberPeerIds: memberPeerIds,
+          finalEpoch: finalEpoch,
+        ),
+      if (isMl007)
         'pl004QuoteReaddLiveProof': <String, dynamic>{
           'rowId': 'PL-004',
           'quoteBoundary': 'post_readd_live',
@@ -18684,6 +18747,15 @@ Future<void> _runGm006Bob(
           'receivedCharliePostReaddMessage': true,
           'finalEpoch': finalEpoch,
         },
+      if (isMl007)
+        'up001MembershipConfigSyncProof': _up001MembershipConfigSyncProof(
+          role: 'bob',
+          alicePeerId: identities['alice']!['peerId'] as String,
+          bobPeerId: stack.identity.peerId,
+          charliePeerId: charliePeerId,
+          finalMemberPeerIds: memberPeerIds,
+          finalEpoch: finalEpoch,
+        ),
       if (isMl007)
         'pl004QuoteReaddLiveProof': <String, dynamic>{
           'rowId': 'PL-004',
@@ -19446,6 +19518,15 @@ Future<void> _runGm006Charlie(
           'receivedBobPostReaddMessage': bobReceived != null,
           'finalEpoch': finalEpoch,
         },
+      if (isMl007)
+        'up001MembershipConfigSyncProof': _up001MembershipConfigSyncProof(
+          role: 'charlie',
+          alicePeerId: alicePeerId,
+          bobPeerId: bobPeerId,
+          charliePeerId: charliePeerId,
+          finalMemberPeerIds: memberPeerIds,
+          finalEpoch: finalEpoch,
+        ),
       if (isMl007)
         'pl004QuoteReaddLiveProof': <String, dynamic>{
           'rowId': 'PL-004',

@@ -3221,6 +3221,11 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validateUp001MembershipConfigSyncProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     _validatePl004QuoteReaddLiveProof(byRole: byRole, failures: failures);
     _validatePl007ReaddMediaProof(
       byRole: byRole,
@@ -4997,6 +5002,135 @@ void _validatePl010RemovedReactionProof({
           '$role: PL-010 rejected app-peer attempt must not store a local reaction',
         );
       }
+    }
+  }
+}
+
+void _validateUp001MembershipConfigSyncProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'up001MembershipConfigSyncProof';
+  final alicePeerId = peerIdByRole['alice'];
+  final bobPeerId = peerIdByRole['bob'];
+  final charliePeerId = peerIdByRole['charlie'];
+  if (alicePeerId == null || bobPeerId == null || charliePeerId == null) {
+    failures.add('UP-001: alice/bob/charlie peer ids are required');
+    return;
+  }
+
+  final allMembers = <String>{alicePeerId, bobPeerId, charliePeerId};
+  final remainingAfterRemove = <String>{alicePeerId, bobPeerId};
+
+  bool sameMembers(Object? value, Set<String> expected) {
+    final members = _stringList(value).toSet();
+    return members.length == expected.length && members.containsAll(expected);
+  }
+
+  void requireBase(String role, Map<String, dynamic>? proof) {
+    if (proof == null) {
+      failures.add('$role: missing UP-001 membership/config sync proof fields');
+      return;
+    }
+    if (_stringValue(proof['rowId']) != 'UP-001') {
+      failures.add('$role: $proofName.rowId must be UP-001');
+    }
+    for (final field in const <String>[
+      'nativeValidatorCoveredByHost',
+      'liveThreePartyProof',
+      'groupConfigStateHashObserved',
+      'finalDbConfigUiConverged',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  requireBase('alice', aliceProof);
+  if (aliceProof != null) {
+    for (final field in const <String>[
+      'createSnapshotMatched',
+      'addSnapshotMatched',
+      'removeSnapshotMatched',
+      'readdSnapshotMatched',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+
+    final snapshots = {
+      for (final snapshot in _mapList(aliceProof['operationSnapshots']))
+        _stringValue(snapshot['operation']) ?? '': snapshot,
+    };
+    final expectedByOperation = <String, Set<String>>{
+      'create': allMembers,
+      'add': allMembers,
+      'remove': remainingAfterRemove,
+      'readd': allMembers,
+    };
+    for (final entry in expectedByOperation.entries) {
+      final snapshot = snapshots[entry.key];
+      if (snapshot == null) {
+        failures.add('alice: $proofName missing ${entry.key} snapshot');
+        continue;
+      }
+      for (final field in const <String>[
+        'dbMemberPeerIds',
+        'configMemberPeerIds',
+        'uiMemberPeerIds',
+      ]) {
+        if (!sameMembers(snapshot[field], entry.value)) {
+          failures.add(
+            'alice: $proofName ${entry.key} $field does not match expected membership',
+          );
+        }
+      }
+    }
+  }
+
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  requireBase('bob', bobProof);
+  if (bobProof != null) {
+    for (final field in const <String>[
+      'observedRemovalSnapshot',
+      'observedReaddSnapshot',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+  }
+
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  requireBase('charlie', charlieProof);
+  if (charlieProof != null) {
+    for (final field in const <String>[
+      'observedSelfRemovalDuringRemoval',
+      'observedReaddSnapshot',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
     }
   }
 }

@@ -5433,6 +5433,27 @@ void main() {
       expect(verdict.detail, contains('private_readd_current verdicts valid'));
     });
 
+    test(
+      'UP-001 rejects private_readd_current without membership/config sync proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[0] = Map<String, dynamic>.from(missingProof[0])
+          ..remove('up001MembershipConfigSyncProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('alice: missing UP-001 membership/config sync proof fields'),
+        );
+      },
+    );
+
     test('accepts private_readd_current RA-015 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_readd_current',
@@ -20139,6 +20160,81 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'receivedCharliePostReaddMessage': true,
           'finalEpoch': 2,
         },
+        'up001MembershipConfigSyncProof': <String, Object?>{
+          'rowId': 'UP-001',
+          'role': 'alice',
+          'nativeValidatorCoveredByHost': true,
+          'liveThreePartyProof': true,
+          'groupConfigStateHashObserved': true,
+          'finalDbConfigUiConverged': true,
+          'createSnapshotMatched': true,
+          'addSnapshotMatched': true,
+          'removeSnapshotMatched': true,
+          'readdSnapshotMatched': true,
+          'finalEpoch': 2,
+          'operationSnapshots': <Map<String, Object?>>[
+            <String, Object?>{
+              'operation': 'create',
+              'dbMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+              'configMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+              'uiMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+            },
+            <String, Object?>{
+              'operation': 'add',
+              'dbMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+              'configMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+              'uiMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+            },
+            <String, Object?>{
+              'operation': 'remove',
+              'dbMemberPeerIds': <String>['alice-peer', 'bob-peer'],
+              'configMemberPeerIds': <String>['alice-peer', 'bob-peer'],
+              'uiMemberPeerIds': <String>['alice-peer', 'bob-peer'],
+            },
+            <String, Object?>{
+              'operation': 'readd',
+              'dbMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+              'configMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+              'uiMemberPeerIds': <String>[
+                'alice-peer',
+                'bob-peer',
+                'charlie-peer',
+              ],
+            },
+          ],
+        },
         'pl004QuoteReaddLiveProof': <String, Object?>{
           'rowId': 'PL-004',
           'quoteBoundary': 'post_readd_live',
@@ -20395,6 +20491,17 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'receivedCharliePostReaddMessage': true,
           'finalEpoch': 2,
         },
+        'up001MembershipConfigSyncProof': <String, Object?>{
+          'rowId': 'UP-001',
+          'role': 'bob',
+          'nativeValidatorCoveredByHost': true,
+          'liveThreePartyProof': true,
+          'groupConfigStateHashObserved': true,
+          'finalDbConfigUiConverged': true,
+          'observedRemovalSnapshot': true,
+          'observedReaddSnapshot': true,
+          'finalEpoch': 2,
+        },
         'pl004QuoteReaddLiveProof': <String, Object?>{
           'rowId': 'PL-004',
           'quoteBoundary': 'post_readd_live',
@@ -20640,6 +20747,17 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'postReaddPublishAccepted': true,
           'receivedAlicePostReaddMessage': true,
           'receivedBobPostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'up001MembershipConfigSyncProof': <String, Object?>{
+          'rowId': 'UP-001',
+          'role': 'charlie',
+          'nativeValidatorCoveredByHost': true,
+          'liveThreePartyProof': true,
+          'groupConfigStateHashObserved': true,
+          'finalDbConfigUiConverged': true,
+          'observedSelfRemovalDuringRemoval': true,
+          'observedReaddSnapshot': true,
           'finalEpoch': 2,
         },
         'pl004QuoteReaddLiveProof': <String, Object?>{

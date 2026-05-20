@@ -42,6 +42,7 @@ import '../../../features/contacts/domain/repositories/fake_contact_repository.d
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/group_test_user.dart';
+import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 
 void main() {
@@ -8464,6 +8465,149 @@ void main() {
             )
             .toList(growable: false);
         expect(charliePostRemovalTexts, isEmpty);
+      },
+    );
+
+    test(
+      'UP-001 create add remove and re-add keep DB and bridge groupConfig snapshots aligned',
+      () async {
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:create': {
+              'ok': true,
+              'groupId': 'grp-up001-sync',
+              'topicName': 'topic-grp-up001-sync',
+              'groupKey': 'grp-up001-key',
+              'keyEpoch': 1,
+            },
+          },
+        );
+        final groupRepo = InMemoryGroupRepository();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        final identity = IdentityModel(
+          peerId: 'peer-admin',
+          publicKey: 'pk-admin',
+          privateKey: 'sk-admin',
+          mnemonic12:
+              'word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12',
+          mlKemPublicKey: 'mlkem-admin',
+          username: 'Admin',
+          createdAt: DateTime.utc(2026, 5, 13).toIso8601String(),
+          updatedAt: DateTime.utc(2026, 5, 13).toIso8601String(),
+        );
+
+        final created = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: identity,
+          selectedContacts: [
+            ContactModel(
+              peerId: 'peer-bob',
+              publicKey: 'pk-bob',
+              rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+              username: 'Bob',
+              signature: 'sig-bob',
+              scannedAt: DateTime.utc(2026, 5, 13).toIso8601String(),
+              mlKemPublicKey: 'mlkem-bob',
+            ),
+          ],
+          type: GroupType.chat,
+          name: 'UP-001 Sync',
+        );
+        expect(created.group.id, 'grp-up001-sync');
+
+        Future<void> expectDbAndLatestConfig(
+          Set<String> expectedPeerIds,
+        ) async {
+          final members = await groupRepo.getMembers(created.group.id);
+          expect(
+            members.map((member) => member.peerId).toSet(),
+            expectedPeerIds,
+          );
+
+          final payload = bridge.sentMessages
+              .map((message) => jsonDecode(message) as Map<String, dynamic>)
+              .where((message) => message['cmd'] == 'group:updateConfig')
+              .map((message) => message['payload'] as Map<String, dynamic>)
+              .last;
+          expect(payload['groupId'], created.group.id);
+          final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+          expect(
+            isGroupConfigStateHashValid(
+              groupId: created.group.id,
+              groupConfig: groupConfig,
+            ),
+            isTrue,
+          );
+          final configPeerIds = (groupConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'] as String)
+              .toSet();
+          expect(configPeerIds, expectedPeerIds);
+        }
+
+        await expectDbAndLatestConfig({'peer-admin', 'peer-bob'});
+
+        final charlie = GroupMember(
+          groupId: created.group.id,
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie',
+          joinedAt: DateTime.utc(2026, 5, 13, 12),
+        );
+        await addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: created.group.id,
+          newMember: charlie,
+          selfPeerId: identity.peerId,
+        );
+        await expectDbAndLatestConfig({
+          'peer-admin',
+          'peer-bob',
+          'peer-charlie',
+        });
+
+        await removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: created.group.id,
+          memberPeerId: 'peer-charlie',
+          selfPeerId: identity.peerId,
+          eventAt: DateTime.utc(2026, 5, 13, 13),
+        );
+        await expectDbAndLatestConfig({'peer-admin', 'peer-bob'});
+
+        await addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: created.group.id,
+          newMember: GroupMember(
+            groupId: created.group.id,
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            role: MemberRole.writer,
+            publicKey: 'pk-charlie',
+            mlKemPublicKey: 'mlkem-charlie',
+            joinedAt: DateTime.utc(2026, 5, 13, 14),
+          ),
+          selfPeerId: identity.peerId,
+        );
+        await expectDbAndLatestConfig({
+          'peer-admin',
+          'peer-bob',
+          'peer-charlie',
+        });
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(4),
+        );
       },
     );
 
