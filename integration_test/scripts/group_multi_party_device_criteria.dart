@@ -3163,6 +3163,11 @@ void _validateScenarioProofFields({
       failures: failures,
     );
     _validatePl004QuoteReaddLiveProof(byRole: byRole, failures: failures);
+    _validatePl007ReaddMediaProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     _validateRa002OnlineSubscribedReaddProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
@@ -14018,6 +14023,240 @@ void _validateMl009RapidReaddProof({
   if (charlieEpoch != null) epochs.add(charlieEpoch);
   if (epochs.length > 1) {
     failures.add('alice/bob/charlie: ML-009 finalEpoch mismatch');
+  }
+}
+
+void _validatePl007ReaddMediaProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'pl007ReaddMediaProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  final expectedAlicePeerId = peerIdByRole['alice'];
+  final expectedBobPeerId = peerIdByRole['bob'];
+  final expectedCharliePeerId = peerIdByRole['charlie'];
+  final expectedRemovedBlobId = _stringValue(
+    aliceProof?['removedWindowMediaBlobId'],
+  );
+  final expectedPostReaddBlobId = _stringValue(
+    aliceProof?['postReaddMediaBlobId'],
+  );
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'PL-007') {
+      failures.add('$role: $proofName.rowId must be PL-007');
+    }
+  }
+
+  void requireMessageKeys(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['removedWindowMessageKey']) !=
+        'aliceDuringCharlieRemoval') {
+      failures.add(
+        '$role: $proofName.removedWindowMessageKey must be aliceDuringCharlieRemoval',
+      );
+    }
+    if (_stringValue(proof['postReaddMessageKey']) !=
+        'aliceAfterImmediateReadd') {
+      failures.add(
+        '$role: $proofName.postReaddMessageKey must be aliceAfterImmediateReadd',
+      );
+    }
+  }
+
+  void requireBlobIds(String role, Map<String, dynamic> proof) {
+    final removedBlobId = _stringValue(proof['removedWindowMediaBlobId']);
+    final postReaddBlobId = _stringValue(proof['postReaddMediaBlobId']);
+    if (removedBlobId == null || removedBlobId.isEmpty) {
+      failures.add('$role: $proofName.removedWindowMediaBlobId is required');
+    }
+    if (postReaddBlobId == null || postReaddBlobId.isEmpty) {
+      failures.add('$role: $proofName.postReaddMediaBlobId is required');
+    }
+    if (removedBlobId != null &&
+        postReaddBlobId != null &&
+        removedBlobId == postReaddBlobId) {
+      failures.add(
+        '$role: $proofName removed-window and post-readd media blob ids must differ',
+      );
+    }
+    if (expectedRemovedBlobId != null &&
+        expectedRemovedBlobId.isNotEmpty &&
+        removedBlobId != expectedRemovedBlobId) {
+      failures.add(
+        '$role: $proofName.removedWindowMediaBlobId must match Alice removed-window media',
+      );
+    }
+    if (expectedPostReaddBlobId != null &&
+        expectedPostReaddBlobId.isNotEmpty &&
+        postReaddBlobId != expectedPostReaddBlobId) {
+      failures.add(
+        '$role: $proofName.postReaddMediaBlobId must match Alice post-readd media',
+      );
+    }
+  }
+
+  void requireFinalEpoch(String role, Map<String, dynamic> proof) {
+    final epoch = _intValue(proof['finalEpoch']);
+    if (epoch == null || epoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing PL-007 re-add media proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    requireBlobIds('alice', aliceProof);
+    requireMessageKeys('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'readdedCharlie',
+      'removedWindowSentWhileCharlieRemoved',
+      'postReaddMediaSentAfterReadd',
+      'removedWindowMediaSentAtCurrentEpoch',
+      'postReaddMediaSentAtCurrentEpoch',
+      'removedWindowAllowedPeersExcludeCharlie',
+      'removedWindowAllowedPeersIncludeActive',
+      'postReaddAllowedPeersIncludeAll',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    if (expectedCharliePeerId != null &&
+        removedPeerId != expectedCharliePeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+    final removedAllowedPeers = _stringList(
+      aliceProof['removedWindowAllowedPeers'],
+    ).toSet();
+    if (expectedAlicePeerId != null &&
+        !removedAllowedPeers.contains(expectedAlicePeerId)) {
+      failures.add('alice: $proofName.removedWindowAllowedPeers missing Alice');
+    }
+    if (expectedBobPeerId != null &&
+        !removedAllowedPeers.contains(expectedBobPeerId)) {
+      failures.add('alice: $proofName.removedWindowAllowedPeers missing Bob');
+    }
+    if (expectedCharliePeerId != null &&
+        removedAllowedPeers.contains(expectedCharliePeerId)) {
+      failures.add(
+        'alice: $proofName.removedWindowAllowedPeers must exclude Charlie',
+      );
+    }
+    if (_intValue(aliceProof['removedWindowAllowedPeersCount']) != 2) {
+      failures.add(
+        'alice: $proofName.removedWindowAllowedPeersCount must be 2',
+      );
+    }
+    final postAllowedPeers = _stringList(
+      aliceProof['postReaddAllowedPeers'],
+    ).toSet();
+    for (final entry in <String, String?>{
+      'Alice': expectedAlicePeerId,
+      'Bob': expectedBobPeerId,
+      'Charlie': expectedCharliePeerId,
+    }.entries) {
+      final peerId = entry.value;
+      if (peerId != null && !postAllowedPeers.contains(peerId)) {
+        failures.add(
+          'alice: $proofName.postReaddAllowedPeers missing ${entry.key}',
+        );
+      }
+    }
+    if (_intValue(aliceProof['postReaddAllowedPeersCount']) != 3) {
+      failures.add('alice: $proofName.postReaddAllowedPeersCount must be 3');
+    }
+    requireFinalEpoch('alice', aliceProof);
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing PL-007 re-add media proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    requireBlobIds('bob', bobProof);
+    requireMessageKeys('bob', bobProof);
+    for (final field in const <String>[
+      'retainedActiveMembershipDuringRemovedWindow',
+      'removedWindowMediaMessageReceived',
+      'removedWindowMediaDownloaded',
+      'removedWindowMediaPersisted',
+      'postReaddMediaMessageReceived',
+      'postReaddMediaDownloaded',
+      'postReaddMediaPersisted',
+      'postReaddMediaDecrypted',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireFinalEpoch('bob', bobProof);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing PL-007 re-add media proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    requireBlobIds('charlie', charlieProof);
+    requireMessageKeys('charlie', charlieProof);
+    for (final field in const <String>[
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+      'removedWindowDirectDownloadAttempted',
+      'removedWindowDirectDownloadDenied',
+      'noRemovedWindowMediaPlaintext',
+      'postReaddMediaMessageReceived',
+      'postReaddMediaDownloaded',
+      'postReaddMediaPersisted',
+      'postReaddMediaDecrypted',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    _requireFalseProof(
+      role: 'charlie',
+      proofName: proofName,
+      proof: charlieProof,
+      field: 'removedWindowDirectDownloadOk',
+      failures: failures,
+    );
+    for (final field in const <String>[
+      'removedWindowMediaMessageCount',
+      'removedWindowMediaRowsBeforeReadd',
+      'removedWindowMediaRowsAfterReadd',
+      'removedWindowPendingDownloadsBeforeReadd',
+      'pendingDownloadsAfterPostReadd',
+      'removedWindowDirectDownloadOutputBytes',
+    ]) {
+      if (_intValue(charlieProof[field]) != 0) {
+        failures.add('charlie: $proofName.$field must be 0');
+      }
+    }
+    if (_intValue(charlieProof['postReaddMediaRows']) != 1) {
+      failures.add('charlie: $proofName.postReaddMediaRows must be 1');
+    }
+    final postReaddEpoch = _intValue(charlieProof['postReaddMediaEpoch']);
+    if (postReaddEpoch == null || postReaddEpoch < 2) {
+      failures.add('charlie: $proofName.postReaddMediaEpoch must be >= 2');
+    }
+    requireFinalEpoch('charlie', charlieProof);
   }
 }
 
