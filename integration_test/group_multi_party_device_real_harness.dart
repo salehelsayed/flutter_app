@@ -3212,6 +3212,49 @@ Map<String, dynamic> _pl009ReactionRoundtripProof({
   };
 }
 
+Map<String, dynamic> _pl011ReaddReactionProof({
+  required String targetMessageId,
+  required Map<String, dynamic> reaction,
+  required Map<String, dynamic> observation,
+  required bool aliceObservedSignal,
+  required bool bobObservedSignal,
+  required bool readdedBeforeReaction,
+  required bool targetVisibleBeforeReaction,
+  required bool postReaddReactionAtCurrentEpoch,
+  required int finalEpoch,
+  required List<String> memberPeerIds,
+  required String alicePeerId,
+  required String bobPeerId,
+  required String charliePeerId,
+  int? removedWindowPlaintextCount,
+}) {
+  return <String, dynamic>{
+    'rowId': 'PL-011',
+    'activeRoles': const <String>['alice', 'bob', 'charlie'],
+    'readdedRole': 'charlie',
+    'reactorRole': 'charlie',
+    'targetMessageId': targetMessageId,
+    'reactionEmoji': reaction['emoji'],
+    'reactionOutcome': reaction['outcome'],
+    'reactionAccepted': reaction['accepted'] == true,
+    'observedByRole': _role,
+    'receivedViaGroupReactionStream': observation['streamReceived'] == true,
+    'appliedOnceToTarget': observation['appliedOnceToTarget'] == true,
+    'persistedReactionCount': observation['persistedReactionCount'],
+    'readdedBeforeReaction': readdedBeforeReaction,
+    'targetVisibleBeforeReaction': targetVisibleBeforeReaction,
+    'postReaddReactionAtCurrentEpoch': postReaddReactionAtCurrentEpoch,
+    'memberListIncludesAliceBob':
+        memberPeerIds.contains(alicePeerId) &&
+        memberPeerIds.contains(bobPeerId),
+    'memberListIncludesCharlie': memberPeerIds.contains(charliePeerId),
+    'removedWindowPlaintextCount': ?removedWindowPlaintextCount,
+    'aliceObservedSignal': aliceObservedSignal,
+    'bobObservedSignal': bobObservedSignal,
+    'finalEpoch': finalEpoch,
+  };
+}
+
 Future<void> _runPl009ReactionAlice(
   GroupMultiDeviceTestStack stack,
   Map<String, Map<String, dynamic>> identities,
@@ -17935,6 +17978,37 @@ Future<void> _runGm006Alice(
     _signalName('charlie_received_aliceAfterImmediateReadd.json'),
   );
 
+  Map<String, dynamic>? pl011CharlieReaction;
+  Map<String, dynamic>? pl011ReactionObservation;
+  if (isMl007) {
+    final targetMessageId = afterSent['messageId'] as String;
+    final reactionChangeFuture = stack.groupListener.groupReactionChangeStream
+        .firstWhere(
+          (change) =>
+              change.messageId == targetMessageId &&
+              change.senderPeerId == charliePeerId,
+        );
+    writeSharedText(_signalName('alice_pl011_reaction_receiver_ready'), 'ok');
+    pl011CharlieReaction = await waitForSharedJson(
+      _signalName('charlie_reaction_charlieOnAliceAfterReadd.json'),
+    );
+    pl011ReactionObservation = await _waitForReactionChangeAndStorage(
+      stack: stack,
+      changeFuture: reactionChangeFuture,
+      key: 'charlieOnAliceAfterReadd',
+      messageId: targetMessageId,
+      reactorPeerId: charliePeerId,
+      emoji: pl011CharlieReaction['emoji'] as String,
+    );
+    writeSharedText(
+      _signalName('alice_observed_charlieOnAliceAfterReadd'),
+      'ok',
+    );
+    await waitForSharedSignal(
+      _signalName('bob_observed_charlieOnAliceAfterReadd'),
+    );
+  }
+
   Map<String, dynamic>? afterRestartSent;
   if (isMl007) {
     await waitForSharedSignal(
@@ -18123,6 +18197,24 @@ Future<void> _runGm006Alice(
               pl007PostReaddMediaUpload?.$2['allowedPeersCount'],
           'finalEpoch': finalEpoch,
         },
+      if (isMl007)
+        'pl011ReaddReactionProof': _pl011ReaddReactionProof(
+          targetMessageId: afterSent['messageId'] as String,
+          reaction: pl011CharlieReaction!,
+          observation: pl011ReactionObservation!,
+          aliceObservedSignal: true,
+          bobObservedSignal: true,
+          readdedBeforeReaction: memberPeerIds.contains(charliePeerId),
+          targetVisibleBeforeReaction:
+              (afterSent['keyEpoch'] as int?) == finalEpoch && finalEpoch >= 2,
+          postReaddReactionAtCurrentEpoch:
+              (afterSent['keyEpoch'] as int?) == finalEpoch && finalEpoch >= 2,
+          finalEpoch: finalEpoch,
+          memberPeerIds: memberPeerIds,
+          alicePeerId: stack.identity.peerId,
+          bobPeerId: identities['bob']!['peerId'] as String,
+          charliePeerId: charliePeerId,
+        ),
       if (isMl007)
         'ra002OnlineSubscribedReaddProof': <String, dynamic>{
           'rowId': 'RA-002',
@@ -18431,6 +18523,34 @@ Future<void> _runGm006Bob(
     );
   }
 
+  Map<String, dynamic>? pl011CharlieReaction;
+  Map<String, dynamic>? pl011ReactionObservation;
+  if (isMl007) {
+    final targetMessageId = afterReceived['messageId'] as String;
+    final reactionChangeFuture = stack.groupListener.groupReactionChangeStream
+        .firstWhere(
+          (change) =>
+              change.messageId == targetMessageId &&
+              change.senderPeerId == charliePeerId,
+        );
+    writeSharedText(_signalName('bob_pl011_reaction_receiver_ready'), 'ok');
+    pl011CharlieReaction = await waitForSharedJson(
+      _signalName('charlie_reaction_charlieOnAliceAfterReadd.json'),
+    );
+    pl011ReactionObservation = await _waitForReactionChangeAndStorage(
+      stack: stack,
+      changeFuture: reactionChangeFuture,
+      key: 'charlieOnAliceAfterReadd',
+      messageId: targetMessageId,
+      reactorPeerId: charliePeerId,
+      emoji: pl011CharlieReaction['emoji'] as String,
+    );
+    writeSharedText(_signalName('bob_observed_charlieOnAliceAfterReadd'), 'ok');
+    await waitForSharedSignal(
+      _signalName('alice_observed_charlieOnAliceAfterReadd'),
+    );
+  }
+
   Map<String, dynamic>? afterRestartReceived;
   if (isMl007) {
     final afterRestartSent = await waitForSharedJson(
@@ -18618,6 +18738,26 @@ Future<void> _runGm006Bob(
               pl007PostReaddAttachments.single.localPath != null,
           'finalEpoch': finalEpoch,
         },
+      if (isMl007)
+        'pl011ReaddReactionProof': _pl011ReaddReactionProof(
+          targetMessageId: afterReceived['messageId'] as String,
+          reaction: pl011CharlieReaction!,
+          observation: pl011ReactionObservation!,
+          aliceObservedSignal: true,
+          bobObservedSignal: true,
+          readdedBeforeReaction: memberPeerIds.contains(charliePeerId),
+          targetVisibleBeforeReaction:
+              (afterReceived['keyEpoch'] as int?) == finalEpoch &&
+              finalEpoch >= 2,
+          postReaddReactionAtCurrentEpoch:
+              (afterReceived['keyEpoch'] as int?) == finalEpoch &&
+              finalEpoch >= 2,
+          finalEpoch: finalEpoch,
+          memberPeerIds: memberPeerIds,
+          alicePeerId: identities['alice']!['peerId'] as String,
+          bobPeerId: stack.identity.peerId,
+          charliePeerId: charliePeerId,
+        ),
       if (isMl007)
         'ra002OnlineSubscribedReaddProof': <String, dynamic>{
           'rowId': 'RA-002',
@@ -19071,6 +19211,36 @@ Future<void> _runGm006Charlie(
     );
   }
 
+  Map<String, dynamic>? pl011CharlieReaction;
+  Map<String, dynamic>? pl011ReactionObservation;
+  if (isMl007) {
+    await waitForSharedSignal(
+      _signalName('alice_pl011_reaction_receiver_ready'),
+    );
+    await waitForSharedSignal(_signalName('bob_pl011_reaction_receiver_ready'));
+    pl011CharlieReaction = await _sendProofReaction(
+      stack: stack,
+      groupId: groupId,
+      messageId: afterReceived['messageId'] as String,
+      key: 'charlieOnAliceAfterReadd',
+      emoji: '✅',
+    );
+    pl011ReactionObservation = await _reactionStorageProof(
+      stack: stack,
+      key: 'charlieOnAliceAfterReadd',
+      messageId: afterReceived['messageId'] as String,
+      reactorPeerId: stack.identity.peerId,
+      emoji: pl011CharlieReaction['emoji'] as String,
+      streamReceived: false,
+    );
+    await waitForSharedSignal(
+      _signalName('alice_observed_charlieOnAliceAfterReadd'),
+    );
+    await waitForSharedSignal(
+      _signalName('bob_observed_charlieOnAliceAfterReadd'),
+    );
+  }
+
   var restartPreservedCurrentGroupKeyConfig = false;
   Map<String, dynamic>? afterRestartReceived;
   if (isMl007) {
@@ -19345,6 +19515,31 @@ Future<void> _runGm006Charlie(
           'postReaddMediaEpoch': afterReceivedEpoch,
           'finalEpoch': finalEpoch,
         },
+      if (isMl007)
+        'pl011ReaddReactionProof': _pl011ReaddReactionProof(
+          targetMessageId: afterReceived['messageId'] as String,
+          reaction: pl011CharlieReaction!,
+          observation: pl011ReactionObservation!,
+          aliceObservedSignal: true,
+          bobObservedSignal: true,
+          readdedBeforeReaction: memberPeerIds.contains(charliePeerId),
+          targetVisibleBeforeReaction:
+              afterReceivedEpoch != null &&
+              afterReceivedEpoch == finalEpoch &&
+              finalEpoch >= 2,
+          postReaddReactionAtCurrentEpoch:
+              afterReceivedEpoch != null &&
+              afterReceivedEpoch == finalEpoch &&
+              finalEpoch >= 2,
+          finalEpoch: finalEpoch,
+          memberPeerIds: memberPeerIds,
+          alicePeerId: alicePeerId,
+          bobPeerId: bobPeerId,
+          charliePeerId: charliePeerId,
+          removedWindowPlaintextCount:
+              removedWindowPlaintextBeforeReadd +
+              removedWindowPlaintextAfterReadd,
+        ),
       if (isMl007)
         'ra002OnlineSubscribedReaddProof': <String, dynamic>{
           'rowId': 'RA-002',

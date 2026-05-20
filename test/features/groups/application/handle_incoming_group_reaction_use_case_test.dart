@@ -159,6 +159,81 @@ void main() {
     },
   );
 
+  test(
+    'PL-011 re-added sender reaction applies once after current membership update',
+    () async {
+      final readdAt = DateTime.utc(2026, 5, 13, 12);
+      await groupRepo.removeMember('group-1', 'peer-sender');
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-sender',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-current',
+          mlKemPublicKey: 'mlkem-current',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-current',
+              transportPeerId: 'transport-current',
+              deviceSigningPublicKey: 'pk-current',
+              mlKemPublicKey: 'mlkem-current',
+              keyPackageId: 'kp-current',
+            ),
+          ],
+          joinedAt: readdAt,
+        ),
+      );
+
+      final first = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        transportPeerId: 'transport-current',
+        senderDeviceId: 'device-current',
+        reactionJson: makeReactionJson(
+          id: 'pl011-r-1',
+          messageId: 'pl011-post-readd-target',
+          emoji: '✅',
+          senderPeerId: 'peer-sender',
+          timestamp: '2026-05-13T12:01:00.000Z',
+        ),
+      );
+      final duplicate = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        transportPeerId: 'transport-current',
+        senderDeviceId: 'device-current',
+        reactionJson: makeReactionJson(
+          id: 'pl011-r-1',
+          messageId: 'pl011-post-readd-target',
+          emoji: '✅',
+          senderPeerId: 'peer-sender',
+          timestamp: '2026-05-13T12:01:00.000Z',
+        ),
+      );
+
+      expect(first.$1, HandleGroupReactionResult.success);
+      expect(duplicate.$1, HandleGroupReactionResult.success);
+      expect(first.$2?.type, ReactionChangeType.upserted);
+      expect(first.$2?.messageId, 'pl011-post-readd-target');
+      expect(first.$2?.reaction?.senderPeerId, 'peer-sender');
+      expect(first.$2?.reaction?.emoji, '✅');
+
+      final targetReactions = await reactionRepo.getReactionsForMessage(
+        'pl011-post-readd-target',
+      );
+      expect(targetReactions, hasLength(1));
+      expect(targetReactions.single.id, 'pl011-r-1');
+      expect(targetReactions.single.senderPeerId, 'peer-sender');
+      expect(targetReactions.single.emoji, '✅');
+      expect(reactionRepo.saveReactionCallCount, 2);
+    },
+  );
+
   test('replaces prior emoji from same sender', () async {
     // First reaction: 👍
     await handleIncomingGroupReaction(
