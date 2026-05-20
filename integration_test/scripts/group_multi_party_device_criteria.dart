@@ -3210,6 +3210,7 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validatePl011ReaddReactionProof(byRole: byRole, failures: failures);
     _validateRa002OnlineSubscribedReaddProof(
       byRole: byRole,
       peerIdByRole: peerIdByRole,
@@ -4827,6 +4828,126 @@ void _validatePl010RemovedReactionProof({
           '$role: PL-010 rejected app-peer attempt must not store a local reaction',
         );
       }
+    }
+  }
+}
+
+void _validatePl011ReaddReactionProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  const proofName = 'pl011ReaddReactionProof';
+
+  Map<String, dynamic>? sentEntry(String role, String key) {
+    final entries = _mapList(
+      byRole[role]?['sentMessages'],
+    ).where((entry) => _stringValue(entry['key']) == key).toList();
+    return entries.length == 1 ? entries.single : null;
+  }
+
+  Map<String, dynamic>? receivedEntry(String role, String key) {
+    final entries = _mapList(
+      byRole[role]?['receivedMessages'],
+    ).where((entry) => _stringValue(entry['key']) == key).toList();
+    return entries.length == 1 ? entries.single : null;
+  }
+
+  final target = sentEntry('alice', 'aliceAfterImmediateReadd');
+  final targetMessageId = _stringValue(target?['messageId']);
+  if (targetMessageId == null || targetMessageId.isEmpty) {
+    failures.add('alice: missing PL-011 aliceAfterImmediateReadd target');
+  }
+  final targetEpoch = _intValue(target?['keyEpoch']);
+  if (targetEpoch == null || targetEpoch < 2) {
+    failures.add('alice: PL-011 target must be sent at current re-add epoch');
+  }
+
+  final charlieReceivedTarget = receivedEntry(
+    'charlie',
+    'aliceAfterImmediateReadd',
+  );
+  if (targetMessageId != null &&
+      _stringValue(charlieReceivedTarget?['messageId']) != targetMessageId) {
+    failures.add(
+      'charlie: PL-011 reaction target must be visible before reaction',
+    );
+  }
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?[proofName]);
+    if (proof == null) {
+      failures.add('$role: missing PL-011 re-add reaction proof fields');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'PL-011') {
+      failures.add('$role: $proofName.rowId must be PL-011');
+    }
+    final activeRoles = _stringList(proof['activeRoles']).toSet();
+    for (final expectedRole in const <String>['alice', 'bob', 'charlie']) {
+      if (!activeRoles.contains(expectedRole)) {
+        failures.add('$role: $proofName.activeRoles missing $expectedRole');
+      }
+    }
+    if (_stringValue(proof['readdedRole']) != 'charlie' ||
+        _stringValue(proof['reactorRole']) != 'charlie') {
+      failures.add('$role: PL-011 re-added/reactor role must be charlie');
+    }
+    if (targetMessageId != null &&
+        _stringValue(proof['targetMessageId']) != targetMessageId) {
+      failures.add('$role: $proofName targetMessageId mismatch');
+    }
+    if (_stringValue(proof['reactionEmoji']) == null ||
+        _stringValue(proof['reactionEmoji'])!.isEmpty) {
+      failures.add('$role: $proofName missing reactionEmoji');
+    }
+    if (_stringValue(proof['reactionOutcome']) != 'success' ||
+        proof['reactionAccepted'] != true) {
+      failures.add('$role: PL-011 Charlie reaction must publish successfully');
+    }
+    if (_stringValue(proof['observedByRole']) != role) {
+      failures.add('$role: $proofName observedByRole mismatch');
+    }
+    if (proof['appliedOnceToTarget'] != true ||
+        _intValue(proof['persistedReactionCount']) != 1) {
+      failures.add(
+        '$role: PL-011 reaction must apply exactly once to the target message',
+      );
+    }
+    for (final field in const <String>[
+      'readdedBeforeReaction',
+      'targetVisibleBeforeReaction',
+      'postReaddReactionAtCurrentEpoch',
+      'memberListIncludesAliceBob',
+      'memberListIncludesCharlie',
+      'aliceObservedSignal',
+      'bobObservedSignal',
+    ]) {
+      _requireTrueProof(
+        role: role,
+        proofName: proofName,
+        proof: proof,
+        field: field,
+        failures: failures,
+      );
+    }
+    if ((role == 'alice' || role == 'bob') &&
+        proof['receivedViaGroupReactionStream'] != true) {
+      failures.add(
+        '$role: PL-011 reaction must arrive through group reaction stream',
+      );
+    }
+    if (role == 'charlie') {
+      if (proof['receivedViaGroupReactionStream'] == true) {
+        failures.add('$role: PL-011 local send proof must not claim stream');
+      }
+      final plaintextCount = _intValue(proof['removedWindowPlaintextCount']);
+      if (plaintextCount != null && plaintextCount != 0) {
+        failures.add('$role: $proofName.removedWindowPlaintextCount must be 0');
+      }
+    }
+    final finalEpoch = _intValue(proof['finalEpoch']);
+    if (finalEpoch == null || finalEpoch < 2) {
+      failures.add('$role: $proofName.finalEpoch must be >= 2');
     }
   }
 }

@@ -201,6 +201,127 @@ void main() {
     },
   );
 
+  test(
+    'PL-011 re-added member with current key publishes reaction and stores once',
+    () async {
+      final now = DateTime.now().toUtc();
+      const charliePeerId = 'peer-charlie';
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie-old',
+          mlKemPublicKey: 'mlkem-charlie-old',
+          joinedAt: now.subtract(const Duration(minutes: 5)),
+        ),
+      );
+      await groupRepo.removeMember('group-1', charliePeerId);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 1,
+          encryptedKey: 'group-key-1',
+          createdAt: now,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: charliePeerId,
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie-current',
+          mlKemPublicKey: 'mlkem-charlie-current',
+          devices: const [
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-charlie-current',
+              transportPeerId: 'transport-charlie-current',
+              deviceSigningPublicKey: 'pk-charlie-current',
+              mlKemPublicKey: 'mlkem-charlie-current',
+              keyPackageId: 'kp-charlie-current',
+            ),
+          ],
+          joinedAt: now.add(const Duration(minutes: 1)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'pl011-target',
+          groupId: 'group-1',
+          senderPeerId: 'peer-1',
+          senderUsername: 'Alice',
+          text: 'PL-011 post-readd visible target',
+          timestamp: now.add(const Duration(minutes: 2)),
+          keyGeneration: 1,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: now.add(const Duration(minutes: 2)),
+        ),
+      );
+
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'pl011-target',
+        emoji: '✅',
+        senderPeerId: charliePeerId,
+        senderPublicKey: 'pk-charlie-current',
+        senderPrivateKey: 'sk-charlie-current',
+      );
+
+      expect(result, SendGroupReactionResult.success);
+      expect(reaction, isNotNull);
+      expect(reaction!.messageId, 'pl011-target');
+      expect(reaction.senderPeerId, charliePeerId);
+      expect(reaction.emoji, '✅');
+
+      final publishCommands = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:publishReaction')
+          .toList(growable: false);
+      expect(publishCommands, hasLength(1));
+      final payload = publishCommands.single['payload'] as Map<String, dynamic>;
+      expect(payload['groupId'], 'group-1');
+      expect(payload['senderPeerId'], charliePeerId);
+      expect(payload['senderDeviceId'], 'device-charlie-current');
+      expect(payload['senderTransportPeerId'], 'transport-charlie-current');
+      expect(payload['senderDevicePublicKey'], 'pk-charlie-current');
+      expect(payload['senderKeyPackageId'], 'kp-charlie-current');
+      final reactionPayload =
+          jsonDecode(payload['reactionPayload'] as String)
+              as Map<String, dynamic>;
+      expect(reactionPayload['messageId'], 'pl011-target');
+      expect(reactionPayload['senderPeerId'], charliePeerId);
+      expect(reactionPayload['emoji'], '✅');
+      expect(reactionPayload['action'], 'add');
+
+      final stored = await reactionRepo.getReactionsForMessage('pl011-target');
+      expect(stored, hasLength(1));
+      expect(stored.single.id, reaction.id);
+      expect(stored.single.senderPeerId, charliePeerId);
+      expect(stored.single.emoji, '✅');
+      expect(reactionRepo.saveReactionCallCount, 1);
+
+      await pumpEventQueue();
+      final entry = await reactionReplayOutboxRepo.getEntry(reaction.id);
+      expect(entry, isNotNull);
+      expect(entry!.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+      final envelope = _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload);
+      expect(envelope['payloadType'], 'group_reaction');
+      expect(envelope['keyEpoch'], 1);
+      expect(envelope['senderPeerId'], charliePeerId);
+      expect(envelope['senderDeviceId'], 'device-charlie-current');
+      expect(envelope['senderTransportPeerId'], 'transport-charlie-current');
+      expect(envelope['senderKeyPackageId'], 'kp-charlie-current');
+    },
+  );
+
   test('announcement member can react', () async {
     final announcementGroup = GroupModel(
       id: 'group-ann',

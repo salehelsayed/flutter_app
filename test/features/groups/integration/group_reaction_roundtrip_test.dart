@@ -293,6 +293,138 @@ void main() {
   );
 
   test(
+    'PL-011 re-added member reaction reaches Alice and Bob exactly once',
+    () async {
+      final alice = GroupTestUser.create(
+        peerId: 'peer-alice',
+        username: 'Alice',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'peer-bob',
+        username: 'Bob',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      final charlie = GroupTestUser.create(
+        peerId: 'peer-charlie',
+        username: 'Charlie',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      addTearDown(() {
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      });
+
+      const groupId = 'group-pl011-readd-reaction';
+      final group = await alice.createGroup(groupId: groupId, name: 'Chat');
+      await alice.addMember(groupId: groupId, invitee: bob);
+      await alice.addMember(groupId: groupId, invitee: charlie);
+      for (final user in [alice, bob, charlie]) {
+        await user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'group-key-1',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+      }
+
+      alice.start();
+      bob.start();
+      charlie.start();
+
+      await alice.removeMember(
+        groupId: group.id,
+        memberPeerId: charlie.peerId,
+        memberUsername: charlie.username,
+      );
+      await pump(const Duration(milliseconds: 150));
+      expect(await alice.groupRepo.getMember(group.id, charlie.peerId), isNull);
+      expect(await bob.groupRepo.getMember(group.id, charlie.peerId), isNull);
+
+      await alice.addMember(groupId: group.id, invitee: charlie);
+      await alice.broadcastMemberAdded(groupId: group.id, newMember: charlie);
+      for (final user in [alice, bob, charlie]) {
+        await user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 2,
+            encryptedKey: 'group-key-2',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+      }
+      await pump(const Duration(milliseconds: 150));
+      for (final user in [alice, bob, charlie]) {
+        final member = await user.groupRepo.getMember(group.id, charlie.peerId);
+        expect(member, isNotNull, reason: user.peerId);
+        final latestKey = await user.groupRepo.getLatestKey(group.id);
+        expect(latestKey?.keyGeneration, 2, reason: user.peerId);
+      }
+
+      final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+        groupId: group.id,
+        text: 'PL-011 post-readd target message',
+      );
+      expect(sendResult, SendGroupMessageResult.success);
+      expect(sentMessage, isNotNull);
+      expect(sentMessage!.keyGeneration, 2);
+
+      await pump();
+      final bobMessages = await bob.loadGroupMessages(group.id);
+      final charlieMessages = await charlie.loadGroupMessages(group.id);
+      final bobTarget = bobMessages.singleWhere(
+        (message) => message.id == sentMessage.id,
+      );
+      final charlieTarget = charlieMessages.singleWhere(
+        (message) => message.id == sentMessage.id,
+      );
+      expect(bobTarget.keyGeneration, 2);
+      expect(charlieTarget.keyGeneration, 2);
+
+      final aliceReactionFuture =
+          alice.groupMessageListener.groupReactionChangeStream.first;
+      final bobReactionFuture =
+          bob.groupMessageListener.groupReactionChangeStream.first;
+
+      final (reactionResult, reaction) = await charlie
+          .sendGroupReactionViaBridge(
+            groupId: group.id,
+            messageId: charlieTarget.id,
+            emoji: '✅',
+          );
+      expect(reactionResult, SendGroupReactionResult.success);
+      expect(reaction, isNotNull);
+
+      final aliceChange = await aliceReactionFuture;
+      final bobChange = await bobReactionFuture;
+      expect(aliceChange.messageId, sentMessage.id);
+      expect(bobChange.messageId, sentMessage.id);
+      expect(aliceChange.senderPeerId, charlie.peerId);
+      expect(bobChange.senderPeerId, charlie.peerId);
+      expect(aliceChange.reaction?.emoji, '✅');
+      expect(bobChange.reaction?.emoji, '✅');
+
+      for (final user in [alice, bob, charlie]) {
+        final reactions = await user.reactionRepo!.getReactionsForMessage(
+          sentMessage.id,
+        );
+        expect(reactions, hasLength(1), reason: user.peerId);
+        expect(reactions.single.senderPeerId, charlie.peerId);
+        expect(reactions.single.emoji, '✅');
+      }
+
+      expect(network.reactionPublishCallCount, 1);
+      expect(network.totalReactionDeliveries, 2);
+    },
+  );
+
+  test(
     'dissolved chat group blocks later reaction send and does not roundtrip',
     () async {
       final admin = GroupTestUser.create(

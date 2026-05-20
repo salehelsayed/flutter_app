@@ -5186,6 +5186,99 @@ void main() {
     });
 
     test(
+      'PL-011 accepts private_readd_current re-added reaction proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateReaddCurrentVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains('private_readd_current verdicts valid'),
+        );
+      },
+    );
+
+    test('PL-011 rejects missing re-added reaction proof fields', () {
+      final missingProof = _validPrivateReaddCurrentVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('pl011ReaddReactionProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing PL-011 re-add reaction proof fields'),
+      );
+    });
+
+    test('PL-011 rejects missing receiver stream evidence', () {
+      final missingStream = _validPrivateReaddCurrentVerdicts();
+      missingStream[1] = _withPl011ProofOverrides(
+        missingStream[1],
+        const <String, Object?>{'receivedViaGroupReactionStream': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingStream,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: PL-011 reaction must arrive through group reaction stream',
+        ),
+      );
+    });
+
+    test('PL-011 rejects reaction before current re-add target is visible', () {
+      final staleTarget = _validPrivateReaddCurrentVerdicts();
+      final alice = Map<String, dynamic>.from(staleTarget[0]);
+      final sent = (alice['sentMessages'] as List)
+          .map((entry) => Map<String, Object?>.from(entry as Map))
+          .toList(growable: true);
+      final targetIndex = sent.indexWhere(
+        (entry) => entry['key'] == 'aliceAfterImmediateReadd',
+      );
+      sent[targetIndex] = {...sent[targetIndex], 'keyEpoch': 1};
+      staleTarget[0] = {...alice, 'sentMessages': sent};
+      staleTarget[2] =
+          _withPl011ProofOverrides(staleTarget[2], const <String, Object?>{
+            'targetVisibleBeforeReaction': false,
+            'postReaddReactionAtCurrentEpoch': false,
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: staleTarget,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: PL-011 target must be sent at current re-add epoch'),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl011ReaddReactionProof.targetVisibleBeforeReaction must be true',
+        ),
+      );
+    });
+
+    test(
       'accepts private_readd_current RA-006 delayed old key proof verdicts',
       () {
         final verdict = evaluateGroupMultiPartyVerdicts(
@@ -20002,6 +20095,28 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'postReaddAllowedPeersCount': 3,
           'finalEpoch': 2,
         },
+        'pl011ReaddReactionProof': <String, Object?>{
+          'rowId': 'PL-011',
+          'activeRoles': <String>['alice', 'bob', 'charlie'],
+          'readdedRole': 'charlie',
+          'reactorRole': 'charlie',
+          'targetMessageId': 'ml007-a-after',
+          'reactionEmoji': '✅',
+          'reactionOutcome': 'success',
+          'reactionAccepted': true,
+          'observedByRole': 'alice',
+          'receivedViaGroupReactionStream': true,
+          'appliedOnceToTarget': true,
+          'persistedReactionCount': 1,
+          'readdedBeforeReaction': true,
+          'targetVisibleBeforeReaction': true,
+          'postReaddReactionAtCurrentEpoch': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'aliceObservedSignal': true,
+          'bobObservedSignal': true,
+          'finalEpoch': 2,
+        },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
           'rowId': 'RA-002',
           'removedCharlieWhileOnline': true,
@@ -20225,6 +20340,28 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'postReaddMediaDownloaded': true,
           'postReaddMediaPersisted': true,
           'postReaddMediaDecrypted': true,
+          'finalEpoch': 2,
+        },
+        'pl011ReaddReactionProof': <String, Object?>{
+          'rowId': 'PL-011',
+          'activeRoles': <String>['alice', 'bob', 'charlie'],
+          'readdedRole': 'charlie',
+          'reactorRole': 'charlie',
+          'targetMessageId': 'ml007-a-after',
+          'reactionEmoji': '✅',
+          'reactionOutcome': 'success',
+          'reactionAccepted': true,
+          'observedByRole': 'bob',
+          'receivedViaGroupReactionStream': true,
+          'appliedOnceToTarget': true,
+          'persistedReactionCount': 1,
+          'readdedBeforeReaction': true,
+          'targetVisibleBeforeReaction': true,
+          'postReaddReactionAtCurrentEpoch': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'aliceObservedSignal': true,
+          'bobObservedSignal': true,
           'finalEpoch': 2,
         },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
@@ -20461,6 +20598,29 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'postReaddMediaEpoch': 2,
           'finalEpoch': 2,
         },
+        'pl011ReaddReactionProof': <String, Object?>{
+          'rowId': 'PL-011',
+          'activeRoles': <String>['alice', 'bob', 'charlie'],
+          'readdedRole': 'charlie',
+          'reactorRole': 'charlie',
+          'targetMessageId': 'ml007-a-after',
+          'reactionEmoji': '✅',
+          'reactionOutcome': 'success',
+          'reactionAccepted': true,
+          'observedByRole': 'charlie',
+          'receivedViaGroupReactionStream': false,
+          'appliedOnceToTarget': true,
+          'persistedReactionCount': 1,
+          'readdedBeforeReaction': true,
+          'targetVisibleBeforeReaction': true,
+          'postReaddReactionAtCurrentEpoch': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowPlaintextCount': 0,
+          'aliceObservedSignal': true,
+          'bobObservedSignal': true,
+          'finalEpoch': 2,
+        },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
           'rowId': 'RA-002',
           'onlineBeforeRemoval': true,
@@ -20636,6 +20796,19 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
       },
     ),
   ];
+}
+
+Map<String, dynamic> _withPl011ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'pl011ReaddReactionProof': <String, Object?>{
+      ...Map<String, Object?>.from(verdict['pl011ReaddReactionProof'] as Map),
+      ...overrides,
+    },
+  };
 }
 
 List<Map<String, dynamic>> _validPrivateReaddActiveMembersVerdicts() {
