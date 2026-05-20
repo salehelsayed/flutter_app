@@ -124,6 +124,7 @@ const _rolesByScenario = <String, List<String>>{
   'ir015': <String>['alice', 'bob', 'charlie'],
   'ir016': <String>['alice', 'bob', 'charlie'],
   'pl002': <String>['alice', 'bob', 'charlie'],
+  'pl012': <String>['alice', 'bob', 'charlie'],
   'private_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
   'private_removed_reaction_rejected': <String>['alice', 'bob', 'charlie'],
   'private_abc_create': <String>['alice', 'bob', 'charlie'],
@@ -25390,6 +25391,271 @@ Future<void> _runPl002Receiver(
   );
 }
 
+const _pl012MediaVariantsKey = 'alicePl012MediaVariants';
+const _pl012ImageContentHash =
+    '1111111111111111111111111111111111111111111111111111111111111111';
+const _pl012GifContentHash =
+    '2222222222222222222222222222222222222222222222222222222222222222';
+const _pl012FileContentHash =
+    '3333333333333333333333333333333333333333333333333333333333333333';
+const _pl012VideoContentHash =
+    '4444444444444444444444444444444444444444444444444444444444444444';
+const _pl012VoiceContentHash =
+    '5555555555555555555555555555555555555555555555555555555555555555';
+
+String _pl012Text() => 'PL-012 schema variants $_runId';
+
+List<MediaAttachment> _pl012MediaAttachments({required String messageId}) {
+  const createdAt = '2026-05-16T03:04:00.000Z';
+  return <MediaAttachment>[
+    MediaAttachment(
+      id: 'pl012-image-$_runId',
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: 8192,
+      mediaType: 'image',
+      width: 800,
+      height: 600,
+      localPath: '/tmp/pl012-image.jpg',
+      downloadStatus: 'done',
+      contentHash: _pl012ImageContentHash,
+      encryptionKeyBase64: 'key-pl012-image',
+      encryptionNonce: 'nonce-pl012-image',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      createdAt: createdAt,
+    ),
+    MediaAttachment(
+      id: 'pl012-gif-$_runId',
+      messageId: messageId,
+      mime: 'image/gif',
+      size: 4096,
+      mediaType: 'image',
+      width: 320,
+      height: 240,
+      localPath: '/tmp/pl012-gif.gif',
+      downloadStatus: 'done',
+      contentHash: _pl012GifContentHash,
+      encryptionKeyBase64: 'key-pl012-gif',
+      encryptionNonce: 'nonce-pl012-gif',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      createdAt: createdAt,
+    ),
+    MediaAttachment(
+      id: 'pl012-file-$_runId',
+      messageId: messageId,
+      mime: 'application/octet-stream',
+      size: 2048,
+      mediaType: 'file',
+      localPath: '/tmp/pl012-file.bin',
+      downloadStatus: 'done',
+      contentHash: _pl012FileContentHash,
+      encryptionKeyBase64: 'key-pl012-file',
+      encryptionNonce: 'nonce-pl012-file',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      createdAt: createdAt,
+    ),
+    MediaAttachment(
+      id: 'pl012-video-$_runId',
+      messageId: messageId,
+      mime: 'video/mp4',
+      size: 32768,
+      mediaType: 'video',
+      width: 1280,
+      height: 720,
+      durationMs: 12000,
+      localPath: '/tmp/pl012-video.mp4',
+      downloadStatus: 'done',
+      contentHash: _pl012VideoContentHash,
+      encryptionKeyBase64: 'key-pl012-video',
+      encryptionNonce: 'nonce-pl012-video',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      createdAt: createdAt,
+    ),
+    MediaAttachment(
+      id: 'pl012-voice-$_runId',
+      messageId: messageId,
+      mime: 'audio/mp4',
+      size: 6144,
+      mediaType: 'audio',
+      durationMs: 3300,
+      waveform: const <double>[0.1, 0.4, 0.2],
+      localPath: '/tmp/pl012-voice.m4a',
+      downloadStatus: 'done',
+      contentHash: _pl012VoiceContentHash,
+      encryptionKeyBase64: 'key-pl012-voice',
+      encryptionNonce: 'nonce-pl012-voice',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      createdAt: createdAt,
+    ),
+  ];
+}
+
+int? _pl012Int(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value);
+  return null;
+}
+
+String? _pl012String(Object? value) => value?.toString().trim();
+
+bool _pl012ReceivedMediaOk(Map<String, dynamic> entry) {
+  if (entry['text'] != _pl012Text()) return false;
+  final media = entry['media'] ?? entry['mediaAttachments'];
+  if (media is! List || media.length != 5) return false;
+  final attachments = media
+      .whereType<Map>()
+      .map((attachment) => Map<String, dynamic>.from(attachment))
+      .toList(growable: false);
+
+  bool hasVariant({
+    required String mime,
+    required String mediaType,
+    int? width,
+    int? height,
+    int? durationMs,
+    bool requireWaveform = false,
+  }) {
+    return attachments.any((attachment) {
+      final waveform = attachment['waveform'];
+      return _pl012String(attachment['mime']) == mime &&
+          _pl012String(attachment['mediaType']) == mediaType &&
+          (width == null || _pl012Int(attachment['width']) == width) &&
+          (height == null || _pl012Int(attachment['height']) == height) &&
+          (durationMs == null ||
+              _pl012Int(attachment['durationMs']) == durationMs) &&
+          (!requireWaveform || (waveform is List && waveform.length == 3)) &&
+          (_pl012String(attachment['contentHash'])?.isNotEmpty ?? false) &&
+          (attachment['hasEncryptionMetadata'] == true ||
+              ((_pl012String(attachment['encryptionKeyBase64'])?.isNotEmpty ??
+                      false) &&
+                  (_pl012String(attachment['encryptionNonce'])?.isNotEmpty ??
+                      false))) &&
+          _pl012String(attachment['encryptionScheme']) ==
+              kMediaAttachmentEncryptionSchemeBlobAesGcmV1;
+    });
+  }
+
+  return hasVariant(
+        mime: 'image/jpeg',
+        mediaType: 'image',
+        width: 800,
+        height: 600,
+      ) &&
+      hasVariant(
+        mime: 'image/gif',
+        mediaType: 'image',
+        width: 320,
+        height: 240,
+      ) &&
+      hasVariant(mime: 'application/octet-stream', mediaType: 'file') &&
+      hasVariant(
+        mime: 'video/mp4',
+        mediaType: 'video',
+        width: 1280,
+        height: 720,
+        durationMs: 12000,
+      ) &&
+      hasVariant(
+        mime: 'audio/mp4',
+        mediaType: 'audio',
+        durationMs: 3300,
+        requireWaveform: true,
+      );
+}
+
+Future<void> _runPl012Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'PL-012 Media Schema',
+  );
+  writeSharedJson(_signalName('group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+
+  await waitForSharedSignal(_signalName('bob_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+
+  final messageId =
+      'gmp_${_runId}_${_scenario}_${_pl012MediaVariantsKey}_$_role';
+  final sent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: _pl012MediaVariantsKey,
+    text: _pl012Text(),
+    timestamp: DateTime.utc(2026, 5, 16, 3, 4),
+    mediaAttachments: _pl012MediaAttachments(messageId: messageId),
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_$_pl012MediaVariantsKey.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_$_pl012MediaVariantsKey.json'),
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[sent],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'pl012MediaSchemaProof': <String, dynamic>{
+        'rowId': 'PL-012',
+        'acceptedVariantMessage': sent['accepted'] == true,
+        'mediaDescriptorPublished': _pl012ReceivedMediaOk(sent),
+        'bobReceiptSignalObserved': true,
+        'charlieReceiptSignalObserved': true,
+        'mediaCount': sent['mediaCount'] ?? sent['mediaAttachmentCount'],
+      },
+    },
+  );
+}
+
+Future<void> _runPl012Receiver(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('${_role}_group_joined'), 'ok');
+
+  final sent = await waitForSharedJson(
+    _signalName('alice_sent_$_pl012MediaVariantsKey.json'),
+  );
+  final received = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: _pl012MediaVariantsKey,
+    text: _pl012Text(),
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: <Map<String, dynamic>>[received],
+    extra: <String, dynamic>{
+      'pl012MediaSchemaProof': <String, dynamic>{
+        'rowId': 'PL-012',
+        'receivedVisibleMessageOnce': received['persistedCount'] == 1,
+        'matchedMessageId': received['messageId'] == sent['messageId'],
+        'mediaDescriptorPersisted': _pl012ReceivedMediaOk(received),
+        'mediaCount':
+            received['mediaCount'] ?? received['mediaAttachmentCount'],
+      },
+    },
+  );
+}
+
 Future<String> _ml012ConfigHash(
   GroupMultiDeviceTestStack stack,
   String groupId,
@@ -36401,6 +36667,15 @@ Future<void> _runScenarioRole() async {
         await _runPl002Alice(stack, identities);
       } else {
         await _runPl002Receiver(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'pl012') {
+      if (_role == 'alice') {
+        await _runPl012Alice(stack, identities);
+      } else {
+        await _runPl012Receiver(stack, identities);
       }
       return;
     }
