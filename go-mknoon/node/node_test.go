@@ -2667,6 +2667,148 @@ func TestEventDispatcher_CoalescesAddressesUpdatedAndRelayState(t *testing.T) {
 	}
 }
 
+func TestPL008EventDispatcherCoalescesMediaProgressWithoutDroppingGroupMessages(t *testing.T) {
+	const (
+		queueCapacity = 8
+		progressCount = 30
+		messageCount  = 6
+	)
+
+	collector := &testEventCollector{}
+	firstCallbackEntered := make(chan struct{})
+	releaseFirstCallback := make(chan struct{})
+	var firstCallbackOnce sync.Once
+
+	release := sync.OnceFunc(func() {
+		close(releaseFirstCallback)
+	})
+
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			firstCallbackOnce.Do(func() {
+				close(firstCallbackEntered)
+				<-releaseFirstCallback
+			})
+			collector.OnEvent(jsonStr)
+		},
+	}
+
+	d := NewEventDispatcher(cb, queueCapacity)
+	defer d.Stop()
+	defer release()
+
+	d.Emit("media:upload_progress", map[string]interface{}{
+		"id":         "pl008-upload",
+		"sentBytes":  0,
+		"totalBytes": progressCount * 100,
+	})
+
+	select {
+	case <-firstCallbackEntered:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher callback did not enter the gated delivery path")
+	}
+
+	for i := 1; i <= progressCount; i++ {
+		d.Emit("media:upload_progress", map[string]interface{}{
+			"id":         "pl008-upload",
+			"sentBytes":  i * 100,
+			"totalBytes": progressCount * 100,
+		})
+		if i%5 == 0 {
+			sequence := (i / 5) - 1
+			d.Emit("group_message:received", map[string]interface{}{
+				"groupId":   "group-pl008",
+				"messageId": fmt.Sprintf("pl008-message-%d", sequence),
+				"sequence":  sequence,
+				"text":      fmt.Sprintf("message during progress %d", sequence),
+			})
+		}
+	}
+
+	release()
+
+	type collectedEvent struct {
+		name string
+		data map[string]interface{}
+	}
+	decodeSnapshot := func() []collectedEvent {
+		rawEvents := collector.snapshot()
+		events := make([]collectedEvent, 0, len(rawEvents))
+		for _, raw := range rawEvents {
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				t.Fatalf("unmarshal collected event %q: %v", raw, err)
+			}
+			name, _ := payload["event"].(string)
+			data, _ := payload["data"].(map[string]interface{})
+			events = append(events, collectedEvent{name: name, data: data})
+		}
+		return events
+	}
+
+	var events []collectedEvent
+	var groupMessages []collectedEvent
+	var progressEvents []collectedEvent
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		events = decodeSnapshot()
+		groupMessages = groupMessages[:0]
+		progressEvents = progressEvents[:0]
+
+		for _, ev := range events {
+			switch ev.name {
+			case "group_message:received":
+				groupMessages = append(groupMessages, ev)
+			case "media:upload_progress":
+				progressEvents = append(progressEvents, ev)
+			}
+		}
+
+		if len(groupMessages) == messageCount && len(progressEvents) >= 2 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if len(groupMessages) != messageCount {
+		t.Fatalf("delivered group_message:received count = %d, want %d; events = %#v", len(groupMessages), messageCount, events)
+	}
+	if len(progressEvents) >= progressCount {
+		t.Fatalf("media progress events were not coalesced: delivered %d of %d", len(progressEvents), progressCount)
+	}
+
+	for i, ev := range groupMessages {
+		sequence, ok := ev.data["sequence"].(float64)
+		if !ok {
+			t.Fatalf("group message %d sequence = %v (%T), want JSON number", i, ev.data["sequence"], ev.data["sequence"])
+		}
+		if got := int(sequence); got != i {
+			t.Fatalf("group message FIFO sequence at index %d = %d, want %d", i, got, i)
+		}
+		wantMessageID := fmt.Sprintf("pl008-message-%d", i)
+		if got := ev.data["messageId"]; got != wantMessageID {
+			t.Fatalf("group message %d messageId = %v, want %s", i, got, wantMessageID)
+		}
+	}
+
+	latestProgress := progressEvents[len(progressEvents)-1].data
+	if got := latestProgress["id"]; got != "pl008-upload" {
+		t.Fatalf("latest progress id = %v, want pl008-upload", got)
+	}
+	if got := latestProgress["sentBytes"]; got != float64(progressCount*100) {
+		t.Fatalf("latest progress sentBytes = %v, want %d", got, progressCount*100)
+	}
+
+	_, coalesced, dropped := d.Diagnostics()
+	if coalesced == 0 {
+		t.Fatal("dispatcher coalesced count = 0, want media progress coalescing")
+	}
+	if dropped != 0 {
+		t.Fatalf("dispatcher dropped = %d, want 0", dropped)
+	}
+}
+
 func TestEventDispatcher_PreservesMessageEvents(t *testing.T) {
 	var deliveredEvents []string
 	var mu sync.Mutex

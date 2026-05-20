@@ -1278,6 +1278,65 @@ void main() {
     );
 
     test(
+      'PL-008 bridge routes group messages while media progress events arrive',
+      () async {
+        final progressEvents = <Map<String, dynamic>>[];
+        final progressSub = mediaUploadProgressStream.listen(
+          progressEvents.add,
+        );
+        addTearDown(progressSub.cancel);
+
+        final groupEvents = <Map<String, dynamic>>[];
+        client.onGroupMessageReceived = groupEvents.add;
+
+        for (var i = 0; i < 20; i++) {
+          client.debugHandleEventForTest(
+            jsonEncode({
+              'event': 'media:upload_progress',
+              'data': {
+                'id': 'pl008-upload',
+                'sentBytes': i * 512,
+                'totalBytes': 20 * 512,
+                'toPeerId': 'peer-pl008',
+              },
+            }),
+          );
+
+          if (i == 4 || i == 11 || i == 17) {
+            final sequence = groupEvents.length;
+            client.debugHandleEventForTest(
+              jsonEncode({
+                'event': 'group_message:received',
+                'data': {
+                  'groupId': 'group-pl008',
+                  'messageId': 'pl008-message-$sequence',
+                  'senderId': 'peer-pl008-sender',
+                  'keyEpoch': 1,
+                  'payload': {'text': 'message during progress $sequence'},
+                },
+              }),
+            );
+          }
+        }
+
+        expect(progressEvents, hasLength(20));
+        expect(progressEvents.last['id'], 'pl008-upload');
+        expect(progressEvents.last['sentBytes'], 19 * 512);
+        expect(groupEvents, hasLength(3));
+        expect(groupEvents.map((event) => event['messageId']).toList(), [
+          'pl008-message-0',
+          'pl008-message-1',
+          'pl008-message-2',
+        ]);
+        expect(groupEvents.map((event) => event['payload']['text']).toList(), [
+          'message during progress 0',
+          'message during progress 1',
+          'message during progress 2',
+        ]);
+      },
+    );
+
+    test(
       'GO-004 group decryption failure diagnostic reaches repair stream without message callback',
       () async {
         var groupMessageCalls = 0;
