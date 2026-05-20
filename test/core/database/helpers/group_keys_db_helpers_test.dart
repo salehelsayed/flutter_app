@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
+import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 
 void main() {
@@ -14,6 +15,7 @@ void main() {
   setUp(() async {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runGroupMessagesTablesMigration(db);
+    await runGroupKeyRotationDraftsMigration(db);
   });
 
   tearDown(() async {
@@ -53,14 +55,14 @@ void main() {
 
     test('returns the highest generation key', () async {
       await dbInsertGroupKey(db, makeKeyRow(keyGeneration: 1));
-      await dbInsertGroupKey(db, makeKeyRow(
-        keyGeneration: 3,
-        encryptedKey: 'key-gen3',
-      ));
-      await dbInsertGroupKey(db, makeKeyRow(
-        keyGeneration: 2,
-        encryptedKey: 'key-gen2',
-      ));
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(keyGeneration: 3, encryptedKey: 'key-gen3'),
+      );
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(keyGeneration: 2, encryptedKey: 'key-gen2'),
+      );
 
       final result = await dbLoadLatestGroupKey(db, 'group-1');
       expect(result, isNotNull);
@@ -77,10 +79,10 @@ void main() {
 
     test('returns the key for the given generation', () async {
       await dbInsertGroupKey(db, makeKeyRow(keyGeneration: 1));
-      await dbInsertGroupKey(db, makeKeyRow(
-        keyGeneration: 2,
-        encryptedKey: 'key-gen2',
-      ));
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(keyGeneration: 2, encryptedKey: 'key-gen2'),
+      );
 
       final result = await dbLoadGroupKeyByGeneration(db, 'group-1', 2);
       expect(result, isNotNull);
@@ -106,10 +108,10 @@ void main() {
     test('deletes all keys for a group', () async {
       await dbInsertGroupKey(db, makeKeyRow(keyGeneration: 1));
       await dbInsertGroupKey(db, makeKeyRow(keyGeneration: 2));
-      await dbInsertGroupKey(db, makeKeyRow(
-        groupId: 'group-2',
-        keyGeneration: 1,
-      ));
+      await dbInsertGroupKey(
+        db,
+        makeKeyRow(groupId: 'group-2', keyGeneration: 1),
+      );
 
       await dbDeleteAllGroupKeys(db, 'group-1');
 
@@ -117,6 +119,51 @@ void main() {
       final g2Keys = await dbLoadAllGroupKeys(db, 'group-2');
       expect(g1Keys, isEmpty);
       expect(g2Keys.length, 1);
+    });
+  });
+
+  group('pending group-key rotations', () {
+    test('upserts loads and deletes one rotation draft per group', () async {
+      await dbUpsertPendingGroupKeyRotation(
+        db,
+        makeKeyRow(keyGeneration: 2, encryptedKey: 'draft-key-2'),
+      );
+      await dbUpsertPendingGroupKeyRotation(
+        db,
+        makeKeyRow(keyGeneration: 3, encryptedKey: 'draft-key-3'),
+      );
+
+      final loaded = await dbLoadPendingGroupKeyRotation(db, 'group-1');
+      expect(loaded, isNotNull);
+      expect(loaded!['key_generation'], 3);
+      expect(loaded['encrypted_key'], 'draft-key-3');
+      expect(await dbLoadLatestGroupKey(db, 'group-1'), isNull);
+
+      await dbDeletePendingGroupKeyRotation(db, 'group-1', 2);
+      expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNotNull);
+
+      await dbDeletePendingGroupKeyRotation(db, 'group-1', 3);
+      expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNull);
+    });
+
+    test('deletes all rotation drafts for one group only', () async {
+      await dbUpsertPendingGroupKeyRotation(
+        db,
+        makeKeyRow(groupId: 'group-1', keyGeneration: 2),
+      );
+      await dbUpsertPendingGroupKeyRotation(
+        db,
+        makeKeyRow(
+          groupId: 'group-2',
+          keyGeneration: 2,
+          encryptedKey: 'group-2-draft',
+        ),
+      );
+
+      await dbDeletePendingGroupKeyRotations(db, 'group-1');
+
+      expect(await dbLoadPendingGroupKeyRotation(db, 'group-1'), isNull);
+      expect(await dbLoadPendingGroupKeyRotation(db, 'group-2'), isNotNull);
     });
   });
 }

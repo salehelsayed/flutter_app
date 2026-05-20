@@ -5,11 +5,15 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 /// In-memory [GroupRepository] for integration tests.
 class InMemoryGroupRepository
-    implements GroupRepository, RemovedGroupMemberSnapshotRepository {
+    implements
+        GroupRepository,
+        RemovedGroupMemberSnapshotRepository,
+        GroupKeyRotationDraftRepository {
   final Map<String, GroupModel> _groups = {};
   final Map<String, Map<String, GroupMember>> _members = {};
   final Map<String, Map<String, GroupMember>> _removedMemberSnapshots = {};
   final Map<String, List<GroupKeyInfo>> _keys = {};
+  final Map<String, GroupKeyInfo> _pendingKeyRotations = {};
 
   // --- Groups ---
 
@@ -166,6 +170,33 @@ class InMemoryGroupRepository
   @override
   Future<void> removeAllKeys(String groupId) async {
     _keys.remove(groupId);
+    _pendingKeyRotations.remove(groupId);
+  }
+
+  @override
+  Future<void> savePendingKeyRotation(GroupKeyInfo key) async {
+    _pendingKeyRotations[key.groupId] = key;
+  }
+
+  @override
+  Future<GroupKeyInfo?> getPendingKeyRotation(String groupId) async {
+    return _pendingKeyRotations[groupId];
+  }
+
+  @override
+  Future<void> clearPendingKeyRotation(
+    String groupId,
+    int keyGeneration,
+  ) async {
+    final pending = _pendingKeyRotations[groupId];
+    if (pending?.keyGeneration == keyGeneration) {
+      _pendingKeyRotations.remove(groupId);
+    }
+  }
+
+  @override
+  Future<void> clearPendingKeyRotations(String groupId) async {
+    _pendingKeyRotations.remove(groupId);
   }
 
   int get groupCount => _groups.length;

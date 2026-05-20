@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
@@ -1203,6 +1204,71 @@ void main() {
         await expectParticipantTimeline(alice);
         await expectParticipantTimeline(bob);
         await expectParticipantTimeline(charlie);
+      },
+    );
+
+    test(
+      'PL-003 empty text without media creates no local or remote ghost row',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'pl003-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'pl003-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-pl003-empty-no-media';
+        const messageId = 'pl003-empty-no-media';
+        await alice.createGroup(groupId: groupId, name: 'PL-003 Empty');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        for (final user in [alice, bob]) {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 1,
+              encryptedKey: 'pl003-k1',
+              createdAt: DateTime.utc(2026, 5, 13, 20, 45),
+            ),
+          );
+        }
+
+        alice.start();
+        bob.start();
+
+        final (result, message) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: ' \n\t ',
+          messageId: messageId,
+        );
+        await pump();
+
+        expect(result.name, 'error');
+        expect(message, isNull);
+        expect(await alice.msgRepo.getMessage(messageId), isNull);
+        expect(await bob.msgRepo.getMessage(messageId), isNull);
+        expect(
+          (await alice.loadGroupMessages(
+            groupId,
+          )).where((row) => row.id == messageId),
+          isEmpty,
+        );
+        expect(
+          (await bob.loadGroupMessages(
+            groupId,
+          )).where((row) => row.id == messageId),
+          isEmpty,
+        );
+        expect(network.publishCount, 0);
+        expect(alice.bridge.sentMessages, isEmpty);
+        expect(alice.bridge.commandLog, isEmpty);
       },
     );
 
@@ -8704,6 +8770,398 @@ void main() {
     );
 
     test(
+      'NW-014 deterministic network chaos run maintains model invariants',
+      () async {
+        const seed = 14014;
+        final random = Random(seed);
+        final alice = GroupTestUser.create(
+          peerId: 'nw014-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'nw014-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'nw014-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        final dana = GroupTestUser.create(
+          peerId: 'nw014-dana-peer',
+          username: 'Dana',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+          dana.dispose();
+        });
+
+        const groupId = 'group-nw014-chaos-model';
+        final createdAt = DateTime.utc(2026, 5, 13, 21, 40);
+        final allUsers = <GroupTestUser>[alice, bob, charlie, dana];
+        final usersByPeerId = {for (final user in allUsers) user.peerId: user};
+        final activePeerIds = <String>{
+          alice.peerId,
+          bob.peerId,
+          charlie.peerId,
+          dana.peerId,
+        };
+        final expectedVisibleIdsByPeerId = <String, Set<String>>{
+          for (final user in allUsers) user.peerId: <String>{},
+        };
+        final allNw014MessageIds = <String>{};
+        var logicalStep = 0;
+        var epoch = 1;
+
+        Future<void> saveKeyFor(
+          Iterable<GroupTestUser> users,
+          int keyEpoch,
+        ) async {
+          for (final user in users) {
+            await user.groupRepo.saveKey(
+              GroupKeyInfo(
+                groupId: groupId,
+                keyGeneration: keyEpoch,
+                encryptedKey: 'nw014-chaos-key-$keyEpoch',
+                createdAt: createdAt.add(Duration(minutes: keyEpoch)),
+              ),
+            );
+          }
+        }
+
+        Future<void> copyAliceStateTo(
+          Iterable<GroupTestUser> users, {
+          required int keyEpoch,
+        }) async {
+          final group = await alice.groupRepo.getGroup(groupId);
+          final members = await alice.groupRepo.getMembers(groupId);
+          expect(group, isNotNull);
+          for (final user in users) {
+            await user.groupRepo.saveGroup(
+              group!.copyWith(
+                myRole: user.peerId == alice.peerId
+                    ? GroupRole.admin
+                    : GroupRole.member,
+              ),
+            );
+            for (final member in members) {
+              await user.groupRepo.saveMember(member);
+            }
+          }
+          await saveKeyFor(users, keyEpoch);
+        }
+
+        Future<void> expectIncomingOnce({
+          required GroupTestUser recipient,
+          required String messageId,
+          required String text,
+          required GroupTestUser sender,
+          required int keyEpoch,
+        }) async {
+          final matches = (await recipient.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == messageId).toList();
+          expect(
+            matches,
+            hasLength(1),
+            reason:
+                '${recipient.username} should eventually persist $messageId once',
+          );
+          final message = matches.single;
+          expect(message.isIncoming, isTrue, reason: recipient.username);
+          expect(message.text, text, reason: recipient.username);
+          expect(
+            message.senderPeerId,
+            sender.peerId,
+            reason: recipient.username,
+          );
+          expect(message.keyGeneration, keyEpoch, reason: recipient.username);
+        }
+
+        Future<void> expectOutgoingOnce({
+          required GroupTestUser sender,
+          required String messageId,
+          required String text,
+          required int keyEpoch,
+        }) async {
+          final matches = (await sender.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == messageId).toList();
+          expect(matches, hasLength(1), reason: sender.username);
+          expect(matches.single.isIncoming, isFalse, reason: sender.username);
+          expect(matches.single.text, text, reason: sender.username);
+          expect(
+            matches.single.keyGeneration,
+            keyEpoch,
+            reason: sender.username,
+          );
+        }
+
+        Future<void> expectAbsent({
+          required GroupTestUser user,
+          required String messageId,
+        }) async {
+          final ids = (await user.loadGroupMessages(
+            groupId,
+          )).map((message) => message.id).toSet();
+          expect(
+            ids,
+            isNot(contains(messageId)),
+            reason: '${user.username} must not persist inactive $messageId',
+          );
+        }
+
+        Future<void> sendAndConverge({
+          required String step,
+          required GroupTestUser sender,
+          required String chaosMode,
+          GroupTestUser? target,
+        }) async {
+          logicalStep++;
+          final timestamp = createdAt.add(Duration(minutes: logicalStep));
+          final messageId = 'nw014-$step-${sender.peerId}';
+          final text = 'NW-014 seed $seed $step from ${sender.username}';
+          final recipients = activePeerIds
+              .where((peerId) => peerId != sender.peerId)
+              .map((peerId) => usersByPeerId[peerId]!)
+              .toList(growable: false);
+          final inactiveUsers = allUsers
+              .where((user) => !activePeerIds.contains(user.peerId))
+              .toList(growable: false);
+
+          allNw014MessageIds.add(messageId);
+          expectedVisibleIdsByPeerId[sender.peerId]!.add(messageId);
+          for (final recipient in recipients) {
+            expectedVisibleIdsByPeerId[recipient.peerId]!.add(messageId);
+          }
+
+          if (chaosMode == 'held') {
+            network.holdDeliveriesFor(target!.deviceId);
+          } else if (chaosMode == 'reconnectReplay') {
+            target!.unsubscribeFromGroup(groupId);
+          } else if (chaosMode == 'duplicate') {
+            network.duplicateOnDeliver = true;
+          } else if (chaosMode == 'delay') {
+            network.deliveryDelay = Duration(
+              milliseconds: 1 + random.nextInt(3),
+            );
+          }
+
+          final send = await sender.sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: text,
+            messageId: messageId,
+            timestamp: timestamp,
+          );
+          expect(send.$1.name, 'success');
+          expect(send.$2, isNotNull);
+          expect(send.$2!.keyGeneration, epoch);
+          await pump();
+
+          if (chaosMode == 'held') {
+            await expectAbsent(user: target!, messageId: messageId);
+            await network.releaseHeldDeliveriesFor(
+              target.deviceId,
+              reverse: random.nextBool(),
+            );
+          } else if (chaosMode == 'reconnectReplay') {
+            await expectAbsent(user: target!, messageId: messageId);
+            target.subscribeToGroup(groupId);
+            network.duplicateOnDeliver = true;
+            await network.publish(groupId, sender.peerId, <String, dynamic>{
+              'groupId': groupId,
+              'senderId': sender.peerId,
+              'senderUsername': sender.username,
+              'keyEpoch': epoch,
+              'text': text,
+              'timestamp': timestamp.toIso8601String(),
+              'messageId': messageId,
+            }, senderDeviceId: sender.deviceId);
+          }
+          network.deliveryDelay = null;
+          network.duplicateOnDeliver = false;
+          await pump();
+
+          await expectOutgoingOnce(
+            sender: sender,
+            messageId: messageId,
+            text: text,
+            keyEpoch: epoch,
+          );
+          for (final recipient in recipients) {
+            await expectIncomingOnce(
+              recipient: recipient,
+              messageId: messageId,
+              text: text,
+              sender: sender,
+              keyEpoch: epoch,
+            );
+          }
+          for (final inactive in inactiveUsers) {
+            await expectAbsent(user: inactive, messageId: messageId);
+          }
+        }
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'NW-014 Chaos Model',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: dana,
+          joinedAt: createdAt.add(const Duration(minutes: 3)),
+        );
+        await copyAliceStateTo(allUsers, keyEpoch: epoch);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+        dana.start();
+
+        await sendAndConverge(
+          step: 'baseline-delay',
+          sender: alice,
+          chaosMode: 'delay',
+        );
+        await sendAndConverge(
+          step: 'held-charlie-duplicate',
+          sender: bob,
+          chaosMode: 'held',
+          target: charlie,
+        );
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: charlie.peerId,
+          memberUsername: charlie.username,
+          removedAt: createdAt.add(const Duration(minutes: 10)),
+        );
+        activePeerIds.remove(charlie.peerId);
+        await pump();
+        epoch++;
+        await saveKeyFor([alice, bob, dana], epoch);
+        await sendAndConverge(
+          step: 'charlie-removed-drop-bob-replay',
+          sender: dana,
+          chaosMode: 'reconnectReplay',
+          target: bob,
+        );
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 15)),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: charlie,
+          eventAt: createdAt.add(const Duration(minutes: 15)),
+        );
+        activePeerIds.add(charlie.peerId);
+        await pump();
+        epoch++;
+        await copyAliceStateTo(allUsers, keyEpoch: epoch);
+        await sendAndConverge(
+          step: 'charlie-readded-duplicate',
+          sender: charlie,
+          chaosMode: 'duplicate',
+        );
+
+        await alice.removeMember(
+          groupId: groupId,
+          memberPeerId: dana.peerId,
+          memberUsername: dana.username,
+          removedAt: createdAt.add(const Duration(minutes: 20)),
+        );
+        activePeerIds.remove(dana.peerId);
+        await pump();
+        epoch++;
+        await saveKeyFor([alice, bob, charlie], epoch);
+        await sendAndConverge(
+          step: 'dana-removed-held-alice',
+          sender: bob,
+          chaosMode: 'held',
+          target: alice,
+        );
+
+        await alice.addMember(
+          groupId: groupId,
+          invitee: dana,
+          joinedAt: createdAt.add(const Duration(minutes: 25)),
+        );
+        await alice.broadcastMemberAdded(
+          groupId: groupId,
+          newMember: dana,
+          eventAt: createdAt.add(const Duration(minutes: 25)),
+        );
+        activePeerIds.add(dana.peerId);
+        await pump();
+        epoch++;
+        await copyAliceStateTo(allUsers, keyEpoch: epoch);
+        await sendAndConverge(
+          step: 'dana-readded-drop-dana-replay',
+          sender: alice,
+          chaosMode: 'reconnectReplay',
+          target: dana,
+        );
+
+        for (final user in allUsers) {
+          final memberPeerIds = (await user.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId).toSet();
+          expect(memberPeerIds, activePeerIds, reason: user.username);
+          final key = await user.groupRepo.getLatestKey(groupId);
+          expect(key, isNotNull, reason: user.username);
+          expect(key!.keyGeneration, epoch, reason: user.username);
+
+          final visibleIds = (await user.loadGroupMessages(groupId))
+              .where((message) => allNw014MessageIds.contains(message.id))
+              .map((message) => message.id)
+              .toList(growable: false);
+          expect(
+            visibleIds.toSet(),
+            expectedVisibleIdsByPeerId[user.peerId],
+            reason: '${user.username} final NW-014 visibility model',
+          );
+          for (final messageId in visibleIds.toSet()) {
+            expect(
+              visibleIds.where((id) => id == messageId),
+              hasLength(1),
+              reason: '${user.username} duplicate NW-014 $messageId',
+            );
+          }
+        }
+
+        expect(epoch, 5);
+        expect(allNw014MessageIds, hasLength(6));
+        expect(
+          network.deliveryRecords
+              .where(
+                (record) => allNw014MessageIds.contains(record['messageId']),
+              )
+              .isNotEmpty,
+          isTrue,
+        );
+      },
+    );
+
+    test(
       'KE-010 key-before-config does not authorize pre-config plaintext',
       () async {
         final flowEvents = <Map<String, dynamic>>[];
@@ -9334,6 +9792,234 @@ void main() {
         alice.dispose();
         bob.dispose();
         charlie.dispose();
+      },
+    );
+
+    test(
+      'NW-015 manual peer dial and disconnect commands preserve group topic state',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'nw015-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'nw015-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'nw015-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-nw015-manual-peer-commands';
+        const keyEpoch = 3;
+        final createdAt = DateTime.utc(2026, 5, 13, 22, 5);
+        final users = [alice, bob, charlie];
+        final expectedPeerIds = {alice.peerId, bob.peerId, charlie.peerId};
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'NW-015 Manual Peer Commands',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+
+        final finalGroup = (await alice.groupRepo.getGroup(groupId))!;
+        final finalMembers = await alice.groupRepo.getMembers(groupId);
+        Future<void> saveConvergedState(
+          GroupTestUser user,
+          GroupRole role,
+        ) async {
+          await user.groupRepo.saveGroup(finalGroup.copyWith(myRole: role));
+          for (final member in finalMembers) {
+            await user.groupRepo.saveMember(member);
+          }
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: keyEpoch,
+              encryptedKey: 'nw015-stable-key',
+              createdAt: createdAt.add(const Duration(minutes: keyEpoch)),
+            ),
+          );
+        }
+
+        await Future.wait([
+          saveConvergedState(alice, GroupRole.admin),
+          saveConvergedState(bob, GroupRole.member),
+          saveConvergedState(charlie, GroupRole.member),
+        ]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        Future<Set<String>> memberIds(GroupTestUser user) async =>
+            (await user.groupRepo.getMembers(
+              groupId,
+            )).map((member) => member.peerId).toSet();
+
+        Future<void> expectStableGroupState(String label) async {
+          expect(
+            network.getSubscribers(groupId).toSet(),
+            expectedPeerIds,
+            reason: '$label topic subscribers',
+          );
+          for (final user in users) {
+            expect(await memberIds(user), expectedPeerIds, reason: label);
+            final group = await user.groupRepo.getGroup(groupId);
+            expect(group, isNotNull, reason: '${user.username} $label');
+            expect(group!.topicName, finalGroup.topicName);
+            final key = await user.groupRepo.getLatestKey(groupId);
+            expect(key, isNotNull, reason: '${user.username} $label');
+            expect(key!.keyGeneration, keyEpoch, reason: user.username);
+          }
+        }
+
+        await expectStableGroupState('before manual commands');
+
+        alice.bridge.responses['peer:dial'] = {'ok': true, 'connected': true};
+        alice.bridge.responses['peer:disconnect'] = {
+          'ok': true,
+          'disconnected': true,
+        };
+        final commandStart = alice.bridge.commandLog.length;
+
+        final bobDial = await callP2PPeerDial(
+          alice.bridge,
+          peerId: bob.peerId,
+          addresses: const ['/ip4/127.0.0.1/tcp/4015'],
+          timeoutMs: 250,
+        );
+        expect(bobDial['ok'], isTrue);
+        expect(bobDial['connected'], isTrue);
+        final bobDisconnect = await callP2PPeerDisconnect(
+          alice.bridge,
+          peerId: bob.peerId,
+        );
+        expect(bobDisconnect['ok'], isTrue);
+        expect(bobDisconnect['disconnected'], isTrue);
+
+        final charlieDial = await callP2PPeerDial(
+          alice.bridge,
+          peerId: charlie.peerId,
+          addresses: const ['/ip4/127.0.0.1/tcp/4016'],
+          timeoutMs: 250,
+        );
+        expect(charlieDial['ok'], isTrue);
+        final charlieDisconnect = await callP2PPeerDisconnect(
+          alice.bridge,
+          peerId: charlie.peerId,
+        );
+        expect(charlieDisconnect['ok'], isTrue);
+
+        expect(alice.bridge.commandLog.skip(commandStart).toList(), [
+          'peer:dial',
+          'peer:disconnect',
+          'peer:dial',
+          'peer:disconnect',
+        ]);
+        await expectStableGroupState('after manual commands');
+
+        final aliceSend = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'NW-015 after manual Bob/Charlie peer commands',
+          messageId: 'nw015-after-manual-commands',
+          timestamp: createdAt.add(const Duration(minutes: 10)),
+        );
+        expect(aliceSend.$1.name, 'success');
+        expect(aliceSend.$2, isNotNull);
+        expect(aliceSend.$2!.keyGeneration, keyEpoch);
+        await pump();
+
+        final bobSend = await bob.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'NW-015 Bob sends after Alice manual disconnect',
+          messageId: 'nw015-bob-after-manual-disconnect',
+          timestamp: createdAt.add(const Duration(minutes: 11)),
+        );
+        expect(bobSend.$1.name, 'success');
+        expect(bobSend.$2, isNotNull);
+        expect(bobSend.$2!.keyGeneration, keyEpoch);
+        await pump();
+
+        Future<void> expectMessageOnce({
+          required GroupTestUser user,
+          required String messageId,
+          required String text,
+          required String senderPeerId,
+          required bool incoming,
+        }) async {
+          final matches = (await user.loadGroupMessages(
+            groupId,
+          )).where((message) => message.id == messageId).toList();
+          expect(matches, hasLength(1), reason: '${user.username} $messageId');
+          expect(matches.single.text, text);
+          expect(matches.single.senderPeerId, senderPeerId);
+          expect(matches.single.isIncoming, incoming);
+          expect(matches.single.keyGeneration, keyEpoch);
+        }
+
+        await expectMessageOnce(
+          user: alice,
+          messageId: 'nw015-after-manual-commands',
+          text: 'NW-015 after manual Bob/Charlie peer commands',
+          senderPeerId: alice.peerId,
+          incoming: false,
+        );
+        await expectMessageOnce(
+          user: bob,
+          messageId: 'nw015-after-manual-commands',
+          text: 'NW-015 after manual Bob/Charlie peer commands',
+          senderPeerId: alice.peerId,
+          incoming: true,
+        );
+        await expectMessageOnce(
+          user: charlie,
+          messageId: 'nw015-after-manual-commands',
+          text: 'NW-015 after manual Bob/Charlie peer commands',
+          senderPeerId: alice.peerId,
+          incoming: true,
+        );
+        await expectMessageOnce(
+          user: alice,
+          messageId: 'nw015-bob-after-manual-disconnect',
+          text: 'NW-015 Bob sends after Alice manual disconnect',
+          senderPeerId: bob.peerId,
+          incoming: true,
+        );
+        await expectMessageOnce(
+          user: bob,
+          messageId: 'nw015-bob-after-manual-disconnect',
+          text: 'NW-015 Bob sends after Alice manual disconnect',
+          senderPeerId: bob.peerId,
+          incoming: false,
+        );
+        await expectMessageOnce(
+          user: charlie,
+          messageId: 'nw015-bob-after-manual-disconnect',
+          text: 'NW-015 Bob sends after Alice manual disconnect',
+          senderPeerId: bob.peerId,
+          incoming: true,
+        );
+        await expectStableGroupState('after post-command sends');
       },
     );
 
@@ -9981,6 +10667,179 @@ void main() {
 
         await expectReceivedFinalEpoch(bob);
         await expectReceivedFinalEpoch(charlie);
+      },
+    );
+
+    test(
+      'NW-013 stop-start retry reuses pending rotation key and preserves fake-network delivery',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'nw013-alice-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'nw013-bob-peer',
+          username: 'Bob',
+          network: network,
+        );
+        final charlie = GroupTestUser.create(
+          peerId: 'nw013-charlie-peer',
+          username: 'Charlie',
+          network: network,
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+          charlie.dispose();
+        });
+
+        const groupId = 'group-nw013-rotation-restart';
+        const epochOneKey = 'nw013-shared-key-1';
+        const firstGeneratedKey = 'nw013-generated-key-a';
+        const secondGeneratedKey = 'nw013-generated-key-b';
+        final createdAt = DateTime.utc(2026, 5, 13, 8, 13);
+
+        await alice.createGroup(
+          groupId: groupId,
+          name: 'NW-013 Fake Network',
+          createdAt: createdAt,
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: bob,
+          joinedAt: createdAt.add(const Duration(minutes: 1)),
+        );
+        await alice.addMember(
+          groupId: groupId,
+          invitee: charlie,
+          joinedAt: createdAt.add(const Duration(minutes: 2)),
+        );
+
+        Future<void> saveKey(
+          GroupTestUser user,
+          int generation,
+          String key,
+        ) async {
+          await user.groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: generation,
+              encryptedKey: key,
+              createdAt: createdAt.add(Duration(minutes: generation)),
+            ),
+          );
+        }
+
+        await Future.wait([
+          saveKey(alice, 1, epochOneKey),
+          saveKey(bob, 1, epochOneKey),
+          saveKey(charlie, 1, epochOneKey),
+        ]);
+
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': firstGeneratedKey,
+          'keyEpoch': 2,
+        };
+        alice.bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'nw013-key-rotated',
+          'topicPeers': 2,
+        };
+
+        final capturedPayloads = <Map<String, dynamic>>[];
+        final firstAttempt = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          distributionAttemptCount: 1,
+          sendP2PMessage: (transportPeerId, message) async {
+            capturedPayloads.add(_decodeDirectKeyUpdatePayload(message));
+            return transportPeerId == bob.deviceId;
+          },
+        );
+
+        expect(firstAttempt, isNull);
+        expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+        expect(await alice.groupRepo.getKeyByGeneration(groupId, 2), isNull);
+        final pendingDraft = await alice.groupRepo.getPendingKeyRotation(
+          groupId,
+        );
+        expect(pendingDraft, isNotNull);
+        expect(pendingDraft!.keyGeneration, 2);
+        expect(pendingDraft.encryptedKey, firstGeneratedKey);
+
+        alice.bridge.commandLog.clear();
+        alice.bridge.sentMessages.clear();
+        alice.bridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': secondGeneratedKey,
+          'keyEpoch': 2,
+        };
+
+        final retry = await rotateAndDistributeGroupKey(
+          bridge: alice.bridge,
+          groupRepo: alice.groupRepo,
+          groupId: groupId,
+          selfPeerId: alice.peerId,
+          senderPublicKey: alice.publicKey,
+          senderPrivateKey: alice.privateKey,
+          senderUsername: alice.username,
+          sourceDeviceId: alice.deviceId,
+          sendP2PMessage: (transportPeerId, message) async {
+            capturedPayloads.add(_decodeDirectKeyUpdatePayload(message));
+            return true;
+          },
+        );
+
+        expect(retry, isNotNull);
+        expect(retry!.keyGeneration, 2);
+        expect(retry.encryptedKey, firstGeneratedKey);
+        expect(
+          alice.bridge.commandLog,
+          isNot(contains('group:generateNextKey')),
+        );
+        _expectNoSameEpochDifferentKeys(capturedPayloads);
+        expect(await alice.groupRepo.getPendingKeyRotation(groupId), isNull);
+
+        await Future.wait([
+          saveKey(bob, retry.keyGeneration, retry.encryptedKey),
+          saveKey(charlie, retry.keyGeneration, retry.encryptedKey),
+        ]);
+
+        alice.start();
+        bob.start();
+        charlie.start();
+
+        final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: 'NW-013 post-retry epoch',
+          messageId: 'nw013-post-retry-message',
+          timestamp: createdAt.add(const Duration(minutes: 4)),
+        );
+        expect(sendResult.name, 'success');
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.keyGeneration, 2);
+        await pump();
+
+        Future<void> expectDelivered(GroupTestUser recipient) async {
+          final delivered = (await recipient.loadGroupMessages(groupId))
+              .where((message) => message.id == 'nw013-post-retry-message')
+              .toList();
+          expect(delivered, hasLength(1), reason: recipient.username);
+          expect(delivered.single.isIncoming, isTrue);
+          expect(delivered.single.keyGeneration, 2);
+          expect(delivered.single.text, 'NW-013 post-retry epoch');
+        }
+
+        await expectDelivered(bob);
+        await expectDelivered(charlie);
       },
     );
 

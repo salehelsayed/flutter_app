@@ -35,12 +35,14 @@ void main() {
           'de017',
           'ir001',
           'ir015',
+          'pl002',
           'private_abc_create',
           'private_online_add',
           'private_offline_readd',
           'private_readd_current',
           'private_readd_active_members',
           'private_readd_alternating_churn',
+          'private_network_chaos_invariants',
           'private_rotated_device_readd',
           'private_same_user_multi_device_readd',
           'private_readd_cycles',
@@ -194,6 +196,8 @@ void main() {
       expect(scenarioRequirement('ir015').requiredDeviceCount, 3);
       expect(scenarioRequirement('ir016').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('ir016').requiredDeviceCount, 3);
+      expect(scenarioRequirement('pl002').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('pl002').requiredDeviceCount, 3);
       expect(scenarioRequirement('gm002').roles, [
         'alice',
         'bob',
@@ -265,6 +269,18 @@ void main() {
       expect(
         scenarioRequirement(
           'private_readd_alternating_churn',
+        ).requiredDeviceCount,
+        4,
+      );
+      expect(scenarioRequirement('private_network_chaos_invariants').roles, [
+        'alice',
+        'bob',
+        'charlie',
+        'dana',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_network_chaos_invariants',
         ).requiredDeviceCount,
         4,
       );
@@ -1148,6 +1164,63 @@ void main() {
         rejected.detail,
         contains(
           'bob: ir016RetentionCutoffProof.expiredVisibleCount must be 0',
+        ),
+      );
+    });
+
+    test('PL-002 accepts valid media-only empty-text verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'pl002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPl002Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('pl002 verdicts valid'));
+    });
+
+    test('PL-002 rejects missing recipient media descriptor proof', () {
+      final missingMedia = _validPl002Verdicts();
+      final bobReceived = List<Map<String, Object?>>.from(
+        missingMedia[1]['receivedMessages'] as List,
+      );
+      bobReceived[0] = {...bobReceived[0], 'media': <Map<String, Object?>>[]};
+      missingMedia[1] = {...missingMedia[1], 'receivedMessages': bobReceived};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'pl002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingMedia,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: pl002MediaOnlyProof received media-only descriptor mismatch',
+        ),
+      );
+    });
+
+    test('PL-002 rejects non-empty text in media-only proof', () {
+      final wrongText = _validPl002Verdicts();
+      final aliceSent = List<Map<String, Object?>>.from(
+        wrongText[0]['sentMessages'] as List,
+      );
+      aliceSent[0] = {...aliceSent[0], 'text': 'not media only'};
+      wrongText[0] = {...wrongText[0], 'sentMessages': aliceSent};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'pl002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongText,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: pl002MediaOnlyProof sent media-only descriptor mismatch',
         ),
       );
     });
@@ -4635,6 +4708,53 @@ void main() {
     });
 
     test(
+      'accepts private_readd_current PL-004 quote re-add proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateReaddCurrentVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_readd_current verdicts valid'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current PL-004 quote id mismatch', () {
+      final mismatched = _validPrivateReaddCurrentVerdicts();
+      final charlie = Map<String, dynamic>.from(mismatched[2]);
+      final received = (charlie['receivedMessages'] as List)
+          .map((entry) => Map<String, Object?>.from(entry as Map))
+          .toList(growable: true);
+      final quoteIndex = received.indexWhere(
+        (entry) => entry['key'] == 'bobAfterReaddCurrent',
+      );
+      received[quoteIndex] = {
+        ...received[quoteIndex],
+        'quotedMessageId': 'wrong-parent',
+      };
+      mismatched[2] = {...charlie, 'receivedMessages': received};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: mismatched,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl004QuoteReaddLiveProof received quote did not reference Alice post-readd target',
+        ),
+      );
+    });
+
+    test(
       'accepts private_readd_current RA-006 delayed old key proof verdicts',
       () {
         final verdict = evaluateGroupMultiPartyVerdicts(
@@ -5254,6 +5374,61 @@ void main() {
       );
       expect(divergentRejected.detail, contains('finalEpoch must be >= 13'));
     });
+
+    test('NW-014 accepts private_network_chaos_invariants proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_network_chaos_invariants',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateNetworkChaosInvariantVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_network_chaos_invariants verdicts valid'),
+      );
+    });
+
+    test('NW-014 rejects weak churn proof without chaos invariant fields', () {
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_network_chaos_invariants',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddAlternatingChurnVerdicts(),
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('missing NW-014 chaos invariant proof fields'),
+      );
+    });
+
+    test(
+      'NW-014 rejects wrong seed or missing fake-network proof requirement',
+      () {
+        final wrongSeed = _validPrivateNetworkChaosInvariantVerdicts();
+        wrongSeed[0] = _withNw014ProofOverrides(
+          wrongSeed[0],
+          const <String, Object?>{
+            'fixedSeed': 7,
+            'fakeNetworkChaosProofRequired': false,
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_network_chaos_invariants',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: wrongSeed,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('fixedSeed must be 14014'));
+        expect(
+          rejected.detail,
+          contains('fakeNetworkChaosProofRequired must be true'),
+        );
+      },
+    );
 
     test('accepts private_readd_cycles ML-008 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
@@ -19051,6 +19226,7 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'bob after readd current',
           'bob-peer',
           keyEpoch: 2,
+          quotedMessageId: 'ml007-a-after',
         ),
       ],
       persistedMessageCounts: const <String, int>{
@@ -19068,6 +19244,17 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'sentAlicePostReaddMessage': true,
           'receivedBobPostReaddMessage': true,
           'receivedCharliePostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'pl004QuoteReaddLiveProof': <String, Object?>{
+          'rowId': 'PL-004',
+          'quoteBoundary': 'post_readd_live',
+          'quoteSenderRole': 'bob',
+          'readdedCharlieBeforeQuote': true,
+          'quoteTargetMessageId': 'ml007-a-after',
+          'receivedQuotedMessageId': 'ml007-a-after',
+          'receivedQuotedPostReaddLive': true,
+          'quoteTargetVisibleBeforeQuotedDelivery': true,
           'finalEpoch': 2,
         },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
@@ -19216,6 +19403,7 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'outcome': 'success',
           'senderPeerId': 'bob-peer',
           'keyEpoch': 2,
+          'quotedMessageId': 'ml007-a-after',
         },
       ],
       receivedMessages: <Map<String, Object?>>[
@@ -19262,6 +19450,17 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'sentBobPostReaddMessage': true,
           'receivedAlicePostReaddMessage': true,
           'receivedCharliePostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'pl004QuoteReaddLiveProof': <String, Object?>{
+          'rowId': 'PL-004',
+          'quoteBoundary': 'post_readd_live',
+          'quoteSenderRole': 'bob',
+          'observedCharlieReaddedBeforeQuote': true,
+          'quoteTargetMessageId': 'ml007-a-after',
+          'sentQuotedMessageId': 'ml007-a-after',
+          'sentQuotedPostReaddLive': true,
+          'quoteTargetVisibleBeforeSend': true,
           'finalEpoch': 2,
         },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
@@ -19439,6 +19638,7 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'bob after readd current',
           'bob-peer',
           keyEpoch: 2,
+          quotedMessageId: 'ml007-a-after',
         ),
       ],
       persistedMessageCounts: const <String, int>{
@@ -19456,6 +19656,18 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'postReaddPublishAccepted': true,
           'receivedAlicePostReaddMessage': true,
           'receivedBobPostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'pl004QuoteReaddLiveProof': <String, Object?>{
+          'rowId': 'PL-004',
+          'quoteBoundary': 'post_readd_live',
+          'quoteSenderRole': 'bob',
+          'readdedBeforeQuotedDelivery': true,
+          'quoteTargetMessageId': 'ml007-a-after',
+          'receivedQuotedMessageId': 'ml007-a-after',
+          'receivedQuotedPostReaddLive': true,
+          'quoteTargetVisibleBeforeQuotedDelivery': true,
+          'removedWindowPlaintextCount': 0,
           'finalEpoch': 2,
         },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
@@ -26539,6 +26751,46 @@ Map<String, dynamic> _withRa018ProofOverrides(
   };
 }
 
+List<Map<String, dynamic>> _validPrivateNetworkChaosInvariantVerdicts() {
+  return _validPrivateReaddAlternatingChurnVerdicts()
+      .map((verdict) {
+        final raProof = Map<String, Object?>.from(
+          verdict['ra018AlternatingChurnProof'] as Map,
+        );
+        final nw014Proof = <String, Object?>{
+          ...raProof,
+          'rowId': 'NW-014',
+          'scenario': 'private_network_chaos_invariants',
+          'appPeerPlatform': 'ios_26_2_core_simulator',
+          'chaosProofSource': 'app_peer_core_simulator_churn_invariant_subset',
+          'fixedSeed': 14014,
+          'modelInvariant': 'active_entitled_exactly_once',
+          'messageOperationCount': 12,
+          'membershipOperationCount': 12,
+          'fakeNetworkChaosProofRequired': true,
+        };
+        return <String, dynamic>{
+          ...verdict,
+          'scenario': 'private_network_chaos_invariants',
+          'nw014ChaosInvariantProof': nw014Proof,
+        };
+      })
+      .toList(growable: false);
+}
+
+Map<String, dynamic> _withNw014ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw014ChaosInvariantProof': <String, Object?>{
+      ...Map<String, Object?>.from(verdict['nw014ChaosInvariantProof'] as Map),
+      ...overrides,
+    },
+  };
+}
+
 List<Map<String, dynamic>> _validGm035Verdicts() {
   const proofName = 'gm035ZeroPeerReaddFirstSendProof';
   const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
@@ -26680,6 +26932,111 @@ List<Map<String, Object?>> _mapListForTest(Object? value) {
       .toList(growable: false);
 }
 
+List<Map<String, dynamic>> _validPl002Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const groupId = 'pl002-group';
+  const key = 'alicePl002MediaOnly';
+  const messageId = 'pl002-media-only-message';
+  const media = <String, Object?>{
+    'id': 'pl002-voice',
+    'mime': 'audio/mp4',
+    'mediaType': 'audio',
+    'durationMs': 2200,
+    'size': 4096,
+  };
+  const sent = <String, Object?>{
+    'key': key,
+    'messageId': messageId,
+    'groupId': groupId,
+    'text': '',
+    'outcome': 'success',
+    'senderPeerId': 'alice-peer',
+    'keyEpoch': 1,
+    'timestamp': '2026-05-14T18:04:00.000Z',
+    'mediaCount': 1,
+    'media': <Map<String, Object?>>[media],
+  };
+
+  Map<String, Object?> received({required bool live}) {
+    return <String, Object?>{
+      ..._received(
+        key,
+        messageId,
+        '',
+        'alice-peer',
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-14T18:04:00.000Z',
+        liveOnly: live,
+        usedOfflineDrain: false,
+      ),
+      'persistedCount': 1,
+      'mediaCount': 1,
+      'media': <Map<String, Object?>>[media],
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'pl002',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      sentMessages: const <Map<String, Object?>>[sent],
+      extra: const <String, Object?>{
+        'pl002MediaOnlyProof': <String, Object?>{
+          'rowId': 'PL-002',
+          'acceptedMediaOnly': true,
+          'emptyTextPreserved': true,
+          'mediaDescriptorPublished': true,
+          'bobReceiptSignalObserved': true,
+          'charlieReceiptSignalObserved': true,
+          'mediaCount': 1,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'pl002',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[received(live: true)],
+      persistedMessageCounts: const <String, int>{key: 1},
+      extra: const <String, Object?>{
+        'pl002MediaOnlyProof': <String, Object?>{
+          'rowId': 'PL-002',
+          'receivedVisibleMessageOnce': true,
+          'matchedMessageId': true,
+          'emptyTextPreserved': true,
+          'mediaDescriptorPersisted': true,
+          'mediaCount': 1,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'pl002',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[received(live: true)],
+      persistedMessageCounts: const <String, int>{key: 1},
+      extra: const <String, Object?>{
+        'pl002MediaOnlyProof': <String, Object?>{
+          'rowId': 'PL-002',
+          'receivedVisibleMessageOnce': true,
+          'matchedMessageId': true,
+          'emptyTextPreserved': true,
+          'mediaDescriptorPersisted': true,
+          'mediaCount': 1,
+        },
+      },
+    ),
+  ];
+}
+
 Map<String, dynamic> _baseVerdict({
   required String scenario,
   required String role,
@@ -26715,6 +27072,7 @@ Map<String, Object?> _received(
   String? groupId,
   int? keyEpoch,
   String? timestamp,
+  String? quotedMessageId,
   bool? liveOnly,
   bool? usedOfflineDrain,
 }) {
@@ -26726,6 +27084,9 @@ Map<String, Object?> _received(
     'senderPeerId': senderPeerId,
     ...?keyEpoch == null ? null : <String, Object?>{'keyEpoch': keyEpoch},
     ...?timestamp == null ? null : <String, Object?>{'timestamp': timestamp},
+    ...?quotedMessageId == null
+        ? null
+        : <String, Object?>{'quotedMessageId': quotedMessageId},
     'isIncoming': true,
     ...?liveOnly == null ? null : <String, Object?>{'liveOnly': liveOnly},
     ...?usedOfflineDrain == null

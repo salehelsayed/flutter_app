@@ -2071,7 +2071,32 @@ func TestGroupPublish_EmptyTextAndNoMedia_Fails(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestPL003GroupPublishEmptyTextAndNoMediaFailsInvalidInput(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupPublish(`{
+		"groupId": "g1",
+		"text": " \n\t ",
+		"senderPeerId": "peer1",
+		"senderPublicKey": "pk1",
+		"senderPrivateKey": "sk1",
+		"senderUsername": "Alice"
+	}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+	if msg, _ := m["errorMessage"].(string); !strings.Contains(msg, "either text or media is required") {
+		t.Fatalf("errorMessage = %q, want no-content validation", msg)
+	}
+}
+
 func TestGroupPublish_MediaOnly_AcceptsEmptyText(t *testing.T) {
+	assertGroupPublishMediaOnlyAcceptsEmptyText(t)
+}
+
+func TestPL002GroupPublishMediaOnlyAcceptsEmptyText(t *testing.T) {
+	assertGroupPublishMediaOnlyAcceptsEmptyText(t)
+}
+
+func assertGroupPublishMediaOnlyAcceptsEmptyText(t *testing.T) {
 	withSingletonNode(t)
 	// GroupPublish will fail at PublishGroupMessage (no real group), but it
 	// must pass input validation when text is empty but media is present.

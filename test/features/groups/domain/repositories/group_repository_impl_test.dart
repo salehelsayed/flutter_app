@@ -12,6 +12,7 @@ import 'package:flutter_app/core/database/migrations/053_groups_backlog_retentio
 import 'package:flutter_app/core/database/migrations/057_group_member_permissions.dart';
 import 'package:flutter_app/core/database/migrations/062_group_member_device_identities.dart';
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
+import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -45,6 +46,7 @@ void main() {
     await runGroupMemberPermissionsMigration(db);
     await runGroupMemberDeviceIdentitiesMigration(db);
     await runRemovedGroupMemberSnapshotsMigration(db);
+    await runGroupKeyRotationDraftsMigration(db);
     groupKeyStore = FakeSecureKeyStore();
     sharedPushKeyStore = FakeSecureKeyStore();
 
@@ -83,6 +85,14 @@ void main() {
             groupId,
             minKeyGenerationToKeep,
           ),
+      dbUpsertPendingGroupKeyRotation: (row) =>
+          dbUpsertPendingGroupKeyRotation(db, row),
+      dbLoadPendingGroupKeyRotation: (groupId) =>
+          dbLoadPendingGroupKeyRotation(db, groupId),
+      dbDeletePendingGroupKeyRotation: (groupId, keyGeneration) =>
+          dbDeletePendingGroupKeyRotation(db, groupId, keyGeneration),
+      dbDeletePendingGroupKeyRotations: (groupId) =>
+          dbDeletePendingGroupKeyRotations(db, groupId),
       groupKeyStore: groupKeyStore,
       pushSharedKeyStore: sharedPushKeyStore,
     );
@@ -127,11 +137,15 @@ void main() {
     );
   }
 
-  GroupKeyInfo makeKey({String groupId = 'group-1', int keyGeneration = 1}) {
+  GroupKeyInfo makeKey({
+    String groupId = 'group-1',
+    int keyGeneration = 1,
+    String? encryptedKey,
+  }) {
     return GroupKeyInfo(
       groupId: groupId,
       keyGeneration: keyGeneration,
-      encryptedKey: 'base64-key-$keyGeneration',
+      encryptedKey: encryptedKey ?? 'base64-key-$keyGeneration',
       createdAt: now,
     );
   }
@@ -593,6 +607,43 @@ void main() {
       expect(key!.keyGeneration, 1);
       expect(key.encryptedKey, 'base64-key-1');
     });
+
+    test(
+      'NW-013 pending rotation draft round-trips without becoming latest key',
+      () async {
+        await repo.saveKey(makeKey(keyGeneration: 1));
+        await repo.savePendingKeyRotation(
+          makeKey(keyGeneration: 2, encryptedKey: 'draft-key-2'),
+        );
+
+        final latest = await repo.getLatestKey('group-1');
+        final pending = await repo.getPendingKeyRotation('group-1');
+        final rawDrafts = await db.query('group_key_rotation_drafts');
+
+        expect(latest, isNotNull);
+        expect(latest!.keyGeneration, 1);
+        expect(pending, isNotNull);
+        expect(pending!.keyGeneration, 2);
+        expect(pending.encryptedKey, 'draft-key-2');
+        expect(await repo.getKeyByGeneration('group-1', 2), isNull);
+        expect(rawDrafts.single['encrypted_key'], isA<String>());
+        expect(
+          isSecureStoreReference(rawDrafts.single['encrypted_key'] as String),
+          isTrue,
+        );
+
+        await repo.saveKey(
+          makeKey(keyGeneration: 2, encryptedKey: 'draft-key-2'),
+        );
+        await repo.clearPendingKeyRotation('group-1', 2);
+
+        expect(await repo.getPendingKeyRotation('group-1'), isNull);
+        final promoted = await repo.getLatestKey('group-1');
+        expect(promoted, isNotNull);
+        expect(promoted!.keyGeneration, 2);
+        expect(promoted.encryptedKey, 'draft-key-2');
+      },
+    );
 
     test(
       'saveKey prunes obsolete generations from DB and shared push storage',

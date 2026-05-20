@@ -91,6 +91,7 @@ import 'package:flutter_app/core/database/migrations/066_group_sync_receipts.dar
 import 'package:flutter_app/core/database/migrations/067_group_invite_delivery_attempts.dart';
 import 'package:flutter_app/core/database/migrations/068_removed_group_member_snapshots.dart';
 import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
+import 'package:flutter_app/core/database/migrations/070_group_key_rotation_drafts.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
@@ -306,7 +307,7 @@ void main() async {
   final db = await openEncryptedDatabase(
     secureKeyStore: secureKeyStore,
     dbName: 'identity.db',
-    version: 69,
+    version: 70,
     onCreate: (db, version) async {
       await runIdentityTableMigration(db);
       await runMessagesTableMigration(db);
@@ -377,6 +378,7 @@ void main() async {
       await runGroupInviteDeliveryAttemptsMigration(db);
       await runRemovedGroupMemberSnapshotsMigration(db);
       await runGroupMessageLocalDeletionsMigration(db);
+      await runGroupKeyRotationDraftsMigration(db);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
       if (oldVersion < 2) {
@@ -580,6 +582,9 @@ void main() async {
       }
       if (oldVersion < 69) {
         await runGroupMessageLocalDeletionsMigration(db);
+      }
+      if (oldVersion < 70) {
+        await runGroupKeyRotationDraftsMigration(db);
       }
     },
   );
@@ -936,6 +941,14 @@ void main() async {
     dbLoadAllGroupKeys: (groupId) => dbLoadAllGroupKeys(db, groupId),
     dbDeleteGroupKeysBeforeGeneration: (groupId, minKeyGenerationToKeep) =>
         dbDeleteGroupKeysBeforeGeneration(db, groupId, minKeyGenerationToKeep),
+    dbUpsertPendingGroupKeyRotation: (row) =>
+        dbUpsertPendingGroupKeyRotation(db, row),
+    dbLoadPendingGroupKeyRotation: (groupId) =>
+        dbLoadPendingGroupKeyRotation(db, groupId),
+    dbDeletePendingGroupKeyRotation: (groupId, keyGeneration) =>
+        dbDeletePendingGroupKeyRotation(db, groupId, keyGeneration),
+    dbDeletePendingGroupKeyRotations: (groupId) =>
+        dbDeletePendingGroupKeyRotations(db, groupId),
     groupKeyStore: secureKeyStore,
     pushSharedKeyStore: sharedPushKeyStore,
   );

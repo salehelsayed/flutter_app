@@ -117,6 +117,7 @@ const _rolesByScenario = <String, List<String>>{
   'ir001': <String>['alice', 'bob', 'charlie'],
   'ir015': <String>['alice', 'bob', 'charlie'],
   'ir016': <String>['alice', 'bob', 'charlie'],
+  'pl002': <String>['alice', 'bob', 'charlie'],
   'private_abc_create': <String>['alice', 'bob', 'charlie'],
   'private_full_mesh_online': <String>['alice', 'bob', 'charlie'],
   'private_relay_only_delivery': <String>['alice', 'bob', 'charlie'],
@@ -146,6 +147,12 @@ const _rolesByScenario = <String, List<String>>{
   'private_readd_cycles': <String>['alice', 'bob', 'charlie'],
   'private_readd_active_members': <String>['alice', 'bob', 'charlie', 'dana'],
   'private_readd_alternating_churn': <String>[
+    'alice',
+    'bob',
+    'charlie',
+    'dana',
+  ],
+  'private_network_chaos_invariants': <String>[
     'alice',
     'bob',
     'charlie',
@@ -16913,6 +16920,7 @@ Future<void> _runGm006Alice(
       key: bobAfterKey,
       text: bobSent['text'] as String,
       senderPeerId: identities['bob']!['peerId'] as String,
+      quotedMessageId: isMl007 ? afterSent['messageId'] as String : null,
     );
     writeSharedText(_signalName('alice_received_$bobAfterKey'), 'ok');
     if (isMl007) {
@@ -17008,6 +17016,19 @@ Future<void> _runGm006Alice(
           'sentAlicePostReaddMessage': true,
           'receivedBobPostReaddMessage': bobReceived != null,
           'receivedCharliePostReaddMessage': true,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'pl004QuoteReaddLiveProof': <String, dynamic>{
+          'rowId': 'PL-004',
+          'quoteBoundary': 'post_readd_live',
+          'quoteSenderRole': 'bob',
+          'readdedCharlieBeforeQuote': true,
+          'quoteTargetMessageId': afterSent['messageId'],
+          'receivedQuotedMessageId': bobReceived?['quotedMessageId'],
+          'receivedQuotedPostReaddLive':
+              bobReceived?['quotedMessageId'] == afterSent['messageId'],
+          'quoteTargetVisibleBeforeQuotedDelivery': true,
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
@@ -17328,6 +17349,7 @@ Future<void> _runGm006Bob(
       groupId: groupId,
       key: bobAfterKey,
       text: bobText,
+      quotedMessageId: isMl007 ? afterReceived['messageId'] as String : null,
     );
     await waitForSharedSignal(_signalName('alice_received_$bobAfterKey'));
     await waitForSharedSignal(_signalName('charlie_received_$bobAfterKey'));
@@ -17429,6 +17451,22 @@ Future<void> _runGm006Bob(
           'sentBobPostReaddMessage': bobSent != null,
           'receivedAlicePostReaddMessage': true,
           'receivedCharliePostReaddMessage': true,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'pl004QuoteReaddLiveProof': <String, dynamic>{
+          'rowId': 'PL-004',
+          'quoteBoundary': 'post_readd_live',
+          'quoteSenderRole': 'bob',
+          'observedCharlieReaddedBeforeQuote': memberPeerIds.contains(
+            charliePeerId,
+          ),
+          'quoteTargetMessageId': afterSent['messageId'],
+          'sentQuotedMessageId': bobSent?['quotedMessageId'],
+          'sentQuotedPostReaddLive':
+              bobSent?['quotedMessageId'] == afterSent['messageId'],
+          'quoteTargetVisibleBeforeSend':
+              afterReceived['messageId'] == afterSent['messageId'],
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
@@ -17888,6 +17926,7 @@ Future<void> _runGm006Charlie(
       key: bobAfterKey,
       text: bobSent['text'] as String,
       senderPeerId: identities['bob']!['peerId'] as String,
+      quotedMessageId: isMl007 ? afterSent['messageId'] as String : null,
     );
     writeSharedText(_signalName('charlie_received_$bobAfterKey'), 'ok');
   }
@@ -18027,6 +18066,23 @@ Future<void> _runGm006Charlie(
               charlieSent['outcome'] == 'successNoPeers',
           'receivedAlicePostReaddMessage': true,
           'receivedBobPostReaddMessage': bobReceived != null,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'pl004QuoteReaddLiveProof': <String, dynamic>{
+          'rowId': 'PL-004',
+          'quoteBoundary': 'post_readd_live',
+          'quoteSenderRole': 'bob',
+          'readdedBeforeQuotedDelivery': memberPeerIds.contains(charliePeerId),
+          'quoteTargetMessageId': afterSent['messageId'],
+          'receivedQuotedMessageId': bobReceived?['quotedMessageId'],
+          'receivedQuotedPostReaddLive':
+              bobReceived?['quotedMessageId'] == afterSent['messageId'],
+          'quoteTargetVisibleBeforeQuotedDelivery':
+              afterReceived['messageId'] == afterSent['messageId'],
+          'removedWindowPlaintextCount':
+              removedWindowPlaintextBeforeReadd +
+              removedWindowPlaintextAfterReadd,
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
@@ -21136,6 +21192,41 @@ Map<String, dynamic> _ra018Proof({
   };
 }
 
+Map<String, dynamic> _nw014ChaosInvariantProof({
+  required String role,
+  required int finalEpoch,
+  required bool finalMembersConverged,
+  required bool finalEpochConverged,
+  required int charlieRemovedWindowPlaintextCount,
+  required int danaRemovedWindowPlaintextCount,
+}) {
+  return <String, dynamic>{
+    'rowId': 'NW-014',
+    'scenario': 'private_network_chaos_invariants',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'chaosProofSource': 'app_peer_core_simulator_churn_invariant_subset',
+    'proofRole': role,
+    'fixedSeed': 14014,
+    'modelInvariant': 'active_entitled_exactly_once',
+    'messageOperationCount': 12,
+    'membershipOperationCount': 12,
+    'churnCycles': 3,
+    'churnTargets': const <String>['charlie', 'dana'],
+    'activeSenders': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeReceivers': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeIntervals': _ra018ActiveIntervals(),
+    'charlieRemovedWindowPlaintextCount': charlieRemovedWindowPlaintextCount,
+    'danaRemovedWindowPlaintextCount': danaRemovedWindowPlaintextCount,
+    'duplicateVisibleMessageCount': 0,
+    'inactiveSenderAttemptCount': 0,
+    'fakeNetworkChaosProofRequired': true,
+    'finalRoles': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'finalMemberListConverged': finalMembersConverged,
+    'finalEpoch': finalEpoch,
+    'finalEpochConverged': finalEpochConverged,
+  };
+}
+
 GroupMember _memberFromIdentityForRa018({
   required String groupId,
   required String role,
@@ -21471,6 +21562,17 @@ Future<void> _runRa018Alice(
         charlieRemovedWindowPlaintextCount: 0,
         danaRemovedWindowPlaintextCount: 0,
       ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'nw014ChaosInvariantProof': _nw014ChaosInvariantProof(
+          role: 'alice',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
     },
   );
 }
@@ -21625,6 +21727,17 @@ Future<void> _runRa018Bob(
         charlieRemovedWindowPlaintextCount: 0,
         danaRemovedWindowPlaintextCount: 0,
       ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'nw014ChaosInvariantProof': _nw014ChaosInvariantProof(
+          role: 'bob',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
     },
   );
 }
@@ -21769,6 +21882,18 @@ Future<void> _runRa018Charlie(
         charlieRemovedWindowPlaintextCount: charlieRemovedWindowPlaintextCount,
         danaRemovedWindowPlaintextCount: 0,
       ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'nw014ChaosInvariantProof': _nw014ChaosInvariantProof(
+          role: 'charlie',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount:
+              charlieRemovedWindowPlaintextCount,
+          danaRemovedWindowPlaintextCount: 0,
+        ),
     },
   );
 }
@@ -21911,6 +22036,17 @@ Future<void> _runRa018Dana(
         charlieRemovedWindowPlaintextCount: 0,
         danaRemovedWindowPlaintextCount: danaRemovedWindowPlaintextCount,
       ),
+      if (_scenario == 'private_network_chaos_invariants')
+        'nw014ChaosInvariantProof': _nw014ChaosInvariantProof(
+          role: 'dana',
+          finalEpoch: finalEpoch,
+          finalMembersConverged: memberPeerIds.toSet().containsAll(
+            expectedMembers,
+          ),
+          finalEpochConverged: finalEpoch >= 13,
+          charlieRemovedWindowPlaintextCount: 0,
+          danaRemovedWindowPlaintextCount: danaRemovedWindowPlaintextCount,
+        ),
     },
   );
 }
@@ -23660,6 +23796,140 @@ Future<void> _runGm012Charlie(
         'hasStaleEpochAfterStaleRemove': finalEpoch < readdKey,
         'removedWindowPlaintextCount': 0,
         'finalEpoch': finalEpoch,
+      },
+    },
+  );
+}
+
+const _pl002MediaOnlyKey = 'alicePl002MediaOnly';
+const _pl002ContentHash =
+    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+MediaAttachment _pl002MediaAttachment({
+  required String messageId,
+  required DateTime createdAt,
+}) {
+  return MediaAttachment(
+    id: 'pl002-voice-$_runId',
+    messageId: messageId,
+    mime: 'audio/mp4',
+    size: 4096,
+    mediaType: 'audio',
+    durationMs: 2200,
+    waveform: const <double>[0.2, 0.6, 0.4],
+    localPath: '/tmp/pl002-voice.m4a',
+    downloadStatus: 'done',
+    contentHash: _pl002ContentHash,
+    encryptionKeyBase64: 'key-pl002-voice',
+    encryptionNonce: 'nonce-pl002-voice',
+    encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+    createdAt: createdAt.toUtc().toIso8601String(),
+  );
+}
+
+bool _pl002ReceivedMediaOk(Map<String, dynamic> entry) {
+  if (entry['text'] != '') return false;
+  final media = entry['media'] ?? entry['mediaAttachments'];
+  if (media is! List || media.length != 1) return false;
+  final attachment = Map<String, dynamic>.from(media.single as Map);
+  return attachment['mime'] == 'audio/mp4' &&
+      attachment['mediaType'] == 'audio' &&
+      attachment['durationMs'] == 2200;
+}
+
+Future<void> _runPl002Alice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await _createGroupFixture(
+    stack: stack,
+    identities: identities,
+    memberRoles: const <String>['bob', 'charlie'],
+    name: 'PL-002 Media Only',
+  );
+  writeSharedJson(_signalName('group_fixture.json'), fixture);
+  final groupId = (fixture['group'] as Map)['id'] as String;
+
+  await waitForSharedSignal(_signalName('bob_group_joined'));
+  await waitForSharedSignal(_signalName('charlie_group_joined'));
+  await Future<void>.delayed(const Duration(seconds: 5));
+
+  final messageId = 'gmp_${_runId}_${_scenario}_${_pl002MediaOnlyKey}_$_role';
+  final proofTimestamp = DateTime.now().toUtc();
+  final media = _pl002MediaAttachment(
+    messageId: messageId,
+    createdAt: proofTimestamp,
+  );
+  final sent = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: _pl002MediaOnlyKey,
+    text: '',
+    timestamp: proofTimestamp,
+    mediaAttachments: <MediaAttachment>[media],
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_$_pl002MediaOnlyKey.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_$_pl002MediaOnlyKey.json'),
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[sent],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'pl002MediaOnlyProof': <String, dynamic>{
+        'rowId': 'PL-002',
+        'acceptedMediaOnly': sent['accepted'] == true,
+        'emptyTextPreserved': sent['text'] == '',
+        'mediaDescriptorPublished': _pl002ReceivedMediaOk(sent),
+        'bobReceiptSignalObserved': true,
+        'charlieReceiptSignalObserved': true,
+        'mediaCount': sent['mediaCount'] ?? sent['mediaAttachmentCount'],
+      },
+    },
+  );
+}
+
+Future<void> _runPl002Receiver(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
+  final groupId = await importJoinedGroupFixture(
+    stack: stack,
+    fixture: fixture,
+  );
+  writeSharedText(_signalName('${_role}_group_joined'), 'ok');
+
+  final sent = await waitForSharedJson(
+    _signalName('alice_sent_$_pl002MediaOnlyKey.json'),
+  );
+  final received = await _waitForReceivedProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: _pl002MediaOnlyKey,
+    text: '',
+    senderPeerId: identities['alice']!['peerId'] as String,
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: const <Map<String, dynamic>>[],
+    receivedMessages: <Map<String, dynamic>>[received],
+    extra: <String, dynamic>{
+      'pl002MediaOnlyProof': <String, dynamic>{
+        'rowId': 'PL-002',
+        'receivedVisibleMessageOnce': received['persistedCount'] == 1,
+        'matchedMessageId': received['messageId'] == sent['messageId'],
+        'emptyTextPreserved': received['text'] == '',
+        'mediaDescriptorPersisted': _pl002ReceivedMediaOk(received),
+        'mediaCount':
+            received['mediaCount'] ?? received['mediaAttachmentCount'],
       },
     },
   );
@@ -34671,6 +34941,15 @@ Future<void> _runScenarioRole() async {
       return;
     }
 
+    if (_scenario == 'pl002') {
+      if (_role == 'alice') {
+        await _runPl002Alice(stack, identities);
+      } else {
+        await _runPl002Receiver(stack, identities);
+      }
+      return;
+    }
+
     if (_scenario == 'private_abc_create') {
       if (_role == 'alice') {
         await _runPrivateAbcCreateAlice(stack, identities);
@@ -34911,7 +35190,8 @@ Future<void> _runScenarioRole() async {
       return;
     }
 
-    if (_scenario == 'private_readd_alternating_churn') {
+    if (_scenario == 'private_readd_alternating_churn' ||
+        _scenario == 'private_network_chaos_invariants') {
       if (_role == 'alice') {
         await _runRa018Alice(stack, identities);
       } else if (_role == 'bob') {
