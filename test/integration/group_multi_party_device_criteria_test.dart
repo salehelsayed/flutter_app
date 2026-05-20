@@ -720,6 +720,81 @@ void main() {
       );
     });
 
+    test('PL-010 accepts removed reaction rejection verdicts', () {
+      expect(scenarioRequirement('private_removed_reaction_rejected').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_removed_reaction_rejected',
+        ).requiredDeviceCount,
+        3,
+      );
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_reaction_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateRemovedReactionRejectedVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_removed_reaction_rejected verdicts valid'),
+      );
+    });
+
+    test('PL-010 rejects visible reaction mutation on remaining member', () {
+      final verdicts = _validPrivateRemovedReactionRejectedVerdicts();
+      verdicts[1] = _withPl010ProofOverrides(
+        verdicts[1],
+        const <String, Object?>{
+          'visibleStateUnchanged': false,
+          'visibleReactionCountForTarget': 1,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_reaction_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: PL-010 removed reaction must not mutate visible reactions',
+        ),
+      );
+    });
+
+    test('PL-010 rejects accepted app-peer reaction after removal', () {
+      final verdicts = _validPrivateRemovedReactionRejectedVerdicts();
+      verdicts[2] =
+          _withPl010ProofOverrides(verdicts[2], const <String, Object?>{
+            'reactionOutcome': 'success',
+            'reactionAccepted': true,
+            'reactionRejectedOrIgnored': true,
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_removed_reaction_rejected',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: PL-010 Charlie app-peer reaction must be rejected after removal',
+        ),
+      );
+    });
+
     test('accepts valid GM-001 A/B/C receiver persistence verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm001',
@@ -18079,6 +18154,137 @@ Map<String, dynamic> _withPl009ProofOverrides(
       ...Map<String, Object?>.from(
         verdict['pl009ReactionRoundtripProof'] as Map,
       ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateRemovedReactionRejectedVerdicts() {
+  const scenario = 'private_removed_reaction_rejected';
+  const groupId = 'group-pl010';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const activeMembers = <String>[alicePeerId, bobPeerId];
+  const targetMessage = <String, Object?>{
+    'key': 'aliceReactionTargetBeforeRemoval',
+    'messageId': 'msg-pl010-target',
+    'groupId': groupId,
+    'text': 'PL-010 Alice pre-removal target',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-13T00:00:00.000Z',
+    'accepted': true,
+  };
+
+  Map<String, Object?> proofFor(
+    String role, {
+    bool removedMemberExcluded = false,
+    bool selfRemovedOrExcluded = false,
+  }) {
+    return <String, Object?>{
+      'rowId': 'PL-010',
+      'activeRoles': const <String>['alice', 'bob'],
+      'removedRole': 'charlie',
+      'reactorRole': 'charlie',
+      'targetMessageId': 'msg-pl010-target',
+      'reactionEmoji': '🔥',
+      'reactionOutcome': 'notMember',
+      'reactionAccepted': false,
+      'reactionRejectedOrIgnored': true,
+      'observedByRole': role,
+      'oldLocalMessageRetained': true,
+      'removedMemberExcluded': removedMemberExcluded,
+      'selfRemovedOrExcluded': selfRemovedOrExcluded,
+      'visibleReactionCountForRemovedMember': 0,
+      'visibleReactionCountForTarget': 0,
+      'visibleStateUnchanged': true,
+      'localReactionCountAfterAttempt': 0,
+      'aliceObservedNoMutationSignal': true,
+      'bobObservedNoMutationSignal': true,
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[targetMessage],
+      extra: <String, Object?>{
+        'pl010RemovedReactionProof': proofFor(
+          'alice',
+          removedMemberExcluded: true,
+        ),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceReactionTargetBeforeRemoval',
+          'msg-pl010-target',
+          'PL-010 Alice pre-removal target',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceReactionTargetBeforeRemoval': 1,
+      },
+      extra: <String, Object?>{
+        'pl010RemovedReactionProof': proofFor(
+          'bob',
+          removedMemberExcluded: true,
+        ),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      keyEpoch: 0,
+      memberPeerIds: activeMembers,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceReactionTargetBeforeRemoval',
+          'msg-pl010-target',
+          'PL-010 Alice pre-removal target',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceReactionTargetBeforeRemoval': 1,
+      },
+      extra: <String, Object?>{
+        'pl010RemovedReactionProof': proofFor(
+          'charlie',
+          selfRemovedOrExcluded: true,
+        ),
+      },
+    ),
+  ];
+}
+
+Map<String, dynamic> _withPl010ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'pl010RemovedReactionProof': <String, Object?>{
+      ...Map<String, Object?>.from(verdict['pl010RemovedReactionProof'] as Map),
       ...overrides,
     },
   };

@@ -198,6 +198,101 @@ void main() {
   );
 
   test(
+    'PL-010 removed member reaction is ignored by Alice and Bob without visible mutation',
+    () async {
+      final alice = GroupTestUser.create(
+        peerId: 'peer-alice',
+        username: 'Alice',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'peer-bob',
+        username: 'Bob',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      final charlie = GroupTestUser.create(
+        peerId: 'peer-charlie',
+        username: 'Charlie',
+        network: network,
+        reactionRepo: FakeReactionRepository(),
+      );
+      addTearDown(() {
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      });
+
+      const groupId = 'group-pl010-removed-reaction';
+      final group = await alice.createGroup(groupId: groupId, name: 'Chat');
+      await alice.addMember(groupId: groupId, invitee: bob);
+      await alice.addMember(groupId: groupId, invitee: charlie);
+      for (final user in [alice, bob, charlie]) {
+        await user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'group-key-1',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+      }
+
+      alice.start();
+      bob.start();
+      charlie.start();
+
+      final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
+        groupId: group.id,
+        text: 'PL-010 target message',
+      );
+      expect(sendResult, SendGroupMessageResult.success);
+      expect(sentMessage, isNotNull);
+
+      await pump();
+      final charlieMessages = await charlie.loadGroupMessages(group.id);
+      expect(charlieMessages, hasLength(1));
+      expect(charlieMessages.single.id, sentMessage!.id);
+
+      charlie.groupMessageListener.stop();
+      await alice.removeMember(
+        groupId: group.id,
+        memberPeerId: charlie.peerId,
+        memberUsername: charlie.username,
+      );
+      await pump();
+      expect(await alice.groupRepo.getMember(group.id, charlie.peerId), isNull);
+      expect(await bob.groupRepo.getMember(group.id, charlie.peerId), isNull);
+
+      final (reactionResult, reaction) = await charlie
+          .sendGroupReactionViaBridge(
+            groupId: group.id,
+            messageId: sentMessage.id,
+            emoji: '🔥',
+          );
+      expect(reactionResult, SendGroupReactionResult.success);
+      expect(reaction, isNotNull);
+
+      await pump(const Duration(milliseconds: 150));
+      expect(
+        await alice.reactionRepo!.getReactionsForMessage(sentMessage.id),
+        isEmpty,
+      );
+      expect(
+        await bob.reactionRepo!.getReactionsForMessage(sentMessage.id),
+        isEmpty,
+      );
+      expect(
+        await charlie.reactionRepo!.getReactionsForMessage(sentMessage.id),
+        hasLength(1),
+      );
+      expect(network.reactionPublishCallCount, 1);
+      expect(network.totalReactionDeliveries, 2);
+    },
+  );
+
+  test(
     'dissolved chat group blocks later reaction send and does not roundtrip',
     () async {
       final admin = GroupTestUser.create(

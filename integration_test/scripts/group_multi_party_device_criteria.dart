@@ -65,6 +65,11 @@ const _privateReactionRoundtripRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_reaction_roundtrip',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _privateRemovedReactionRejectedRequirement =
+    GroupMultiPartyScenarioRequirement(
+      scenario: 'private_removed_reaction_rejected',
+      roles: <String>['alice', 'bob', 'charlie'],
+    );
 const _privateFullMeshOnlineRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_full_mesh_online',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -446,6 +451,8 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'pl002': _pl002Requirement,
   'private_abc_create': _privateAbcCreateRequirement,
   'private_reaction_roundtrip': _privateReactionRoundtripRequirement,
+  'private_removed_reaction_rejected':
+      _privateRemovedReactionRejectedRequirement,
   'private_full_mesh_online': _privateFullMeshOnlineRequirement,
   'private_relay_only_delivery': _privateRelayOnlyDeliveryRequirement,
   'private_partition_readd_heal': _privatePartitionReaddHealRequirement,
@@ -703,6 +710,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
             requirement.scenario == 'private_offline_remove' ||
             requirement.scenario ==
                 'private_background_resume_group_delivery' ||
+            requirement.scenario == 'private_removed_reaction_rejected' ||
             requirement.scenario == 'gm009' ||
             requirement.scenario == 'gm011' ||
             requirement.scenario == 'gm013' ||
@@ -755,6 +763,7 @@ GroupMultiPartyCriterion evaluateGroupMultiPartyVerdicts({
         requirement.scenario == 'private_online_remove' ||
         requirement.scenario == 'private_offline_remove' ||
         requirement.scenario == 'private_background_resume_group_delivery' ||
+        requirement.scenario == 'private_removed_reaction_rejected' ||
         requirement.scenario == 'gm009' ||
         requirement.scenario == 'gm011' ||
         requirement.scenario == 'gm013' ||
@@ -1683,6 +1692,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
           key: 'aliceReactionTarget',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
+    case 'private_removed_reaction_rejected':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceReactionTargetBeforeRemoval',
           senderRole: 'alice',
           receiverRoles: <String>['bob', 'charlie'],
         ),
@@ -2769,6 +2786,14 @@ void _validateScenarioProofFields({
   }
   if (scenario == 'private_reaction_roundtrip') {
     _validatePl009ReactionRoundtripProof(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_removed_reaction_rejected') {
+    _validatePl010RemovedReactionProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     return;
   }
   if (scenario == 'private_full_mesh_online') {
@@ -4688,6 +4713,120 @@ void _validatePl009ReactionRoundtripProof({
       failures.add(
         '$role: PL-009 must prove Alice and Charlie observed Bob reaction',
       );
+    }
+  }
+}
+
+void _validatePl010RemovedReactionProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  final aliceSent = _mapList(byRole['alice']?['sentMessages'])
+      .where(
+        (entry) =>
+            _stringValue(entry['key']) == 'aliceReactionTargetBeforeRemoval',
+      )
+      .toList(growable: false);
+  final targetMessageId = aliceSent.length == 1
+      ? _stringValue(aliceSent.single['messageId'])
+      : null;
+  if (targetMessageId == null || targetMessageId.isEmpty) {
+    failures.add(
+      'alice: missing PL-010 aliceReactionTargetBeforeRemoval sent message',
+    );
+  }
+
+  final charliePeerId = peerIdByRole['charlie'];
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['pl010RemovedReactionProof']);
+    if (proof == null) {
+      failures.add('$role: missing pl010RemovedReactionProof');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'PL-010') {
+      failures.add('$role: pl010RemovedReactionProof.rowId must be PL-010');
+    }
+    final activeRoles = _stringList(proof['activeRoles']).toSet();
+    for (final expectedRole in const <String>['alice', 'bob']) {
+      if (!activeRoles.contains(expectedRole)) {
+        failures.add(
+          '$role: pl010RemovedReactionProof.activeRoles missing $expectedRole',
+        );
+      }
+    }
+    if (activeRoles.contains('charlie')) {
+      failures.add(
+        '$role: pl010RemovedReactionProof.activeRoles must exclude charlie',
+      );
+    }
+    if (_stringValue(proof['removedRole']) != 'charlie' ||
+        _stringValue(proof['reactorRole']) != 'charlie') {
+      failures.add('$role: PL-010 removed/reactor role must both be charlie');
+    }
+    if (targetMessageId != null &&
+        _stringValue(proof['targetMessageId']) != targetMessageId) {
+      failures.add('$role: pl010RemovedReactionProof targetMessageId mismatch');
+    }
+    if (_stringValue(proof['reactionEmoji']) == null ||
+        _stringValue(proof['reactionEmoji'])!.isEmpty) {
+      failures.add('$role: pl010RemovedReactionProof missing reactionEmoji');
+    }
+    if (_stringValue(proof['observedByRole']) != role) {
+      failures.add('$role: pl010RemovedReactionProof observedByRole mismatch');
+    }
+    if (proof['oldLocalMessageRetained'] != true) {
+      failures.add('$role: PL-010 must prove Charlie retained the old target');
+    }
+    if (proof['reactionRejectedOrIgnored'] != true) {
+      failures.add(
+        '$role: PL-010 reaction must be rejected locally or ignored remotely',
+      );
+    }
+    if (proof['aliceObservedNoMutationSignal'] != true ||
+        proof['bobObservedNoMutationSignal'] != true) {
+      failures.add(
+        '$role: PL-010 must prove Alice and Bob observed no reaction mutation',
+      );
+    }
+
+    if (role == 'alice' || role == 'bob') {
+      if (proof['removedMemberExcluded'] != true) {
+        failures.add('$role: PL-010 must exclude Charlie before observation');
+      }
+      final memberPeerIds = _stringList(byRole[role]?['memberPeerIds']);
+      if (charliePeerId != null && memberPeerIds.contains(charliePeerId)) {
+        failures.add('$role: PL-010 memberPeerIds still contain Charlie');
+      }
+      if (proof['visibleStateUnchanged'] != true ||
+          _intValue(proof['visibleReactionCountForRemovedMember']) != 0 ||
+          _intValue(proof['visibleReactionCountForTarget']) != 0) {
+        failures.add(
+          '$role: PL-010 removed reaction must not mutate visible reactions',
+        );
+      }
+    } else {
+      final outcome = _stringValue(proof['reactionOutcome']);
+      const allowedRejectedOutcomes = <String>{
+        'notMember',
+        'groupNotFound',
+        'groupDissolved',
+        'publishFailed',
+      };
+      if (proof['selfRemovedOrExcluded'] != true) {
+        failures.add('$role: PL-010 Charlie must be locally removed/excluded');
+      }
+      if (proof['reactionAccepted'] == true ||
+          !allowedRejectedOutcomes.contains(outcome)) {
+        failures.add(
+          '$role: PL-010 Charlie app-peer reaction must be rejected after removal',
+        );
+      }
+      if (_intValue(proof['localReactionCountAfterAttempt']) != 0) {
+        failures.add(
+          '$role: PL-010 rejected app-peer attempt must not store a local reaction',
+        );
+      }
     }
   }
 }
