@@ -125,6 +125,7 @@ const _rolesByScenario = <String, List<String>>{
   'ir016': <String>['alice', 'bob', 'charlie'],
   'pl002': <String>['alice', 'bob', 'charlie'],
   'private_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
+  'private_removed_reaction_rejected': <String>['alice', 'bob', 'charlie'],
   'private_abc_create': <String>['alice', 'bob', 'charlie'],
   'private_full_mesh_online': <String>['alice', 'bob', 'charlie'],
   'private_relay_only_delivery': <String>['alice', 'bob', 'charlie'],
@@ -3415,6 +3416,372 @@ Future<void> _runPl009ReactionInvitee(
           observation: observation,
           aliceObservedSignal: true,
           charlieObservedSignal: true,
+        ),
+      },
+    );
+  } finally {
+    inviteListener.dispose();
+  }
+}
+
+Future<Map<String, dynamic>> _sendReactionAttemptProof({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String messageId,
+  required String key,
+  required String emoji,
+}) async {
+  final stopwatch = Stopwatch()..start();
+  final result = await sendGroupReaction(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    msgRepo: stack.groupMsgRepo,
+    reactionRepo: stack.reactionRepo,
+    reactionReplayOutboxRepo: stack.reactionReplayOutboxRepo,
+    groupId: groupId,
+    messageId: messageId,
+    emoji: emoji,
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+  );
+  stopwatch.stop();
+
+  final localReactions = await stack.reactionRepo.getReactionsForMessage(
+    messageId,
+  );
+  final matchingLocalReactions = localReactions
+      .where(
+        (reaction) =>
+            reaction.senderPeerId == stack.identity.peerId &&
+            reaction.emoji == emoji,
+      )
+      .toList(growable: false);
+  final reaction = result.$2;
+  final attempt = <String, dynamic>{
+    'key': key,
+    'groupId': groupId,
+    'messageId': messageId,
+    'outcome': result.$1.name,
+    'senderPeerId': stack.identity.peerId,
+    'emoji': emoji,
+    if (reaction != null) 'reactionId': reaction.id,
+    if (reaction != null) 'timestamp': reaction.timestamp,
+    'sendMs': stopwatch.elapsedMilliseconds,
+    'accepted': result.$1 == SendGroupReactionResult.success,
+    'localReactionCountAfterAttempt': matchingLocalReactions.length,
+  };
+  return attempt;
+}
+
+Future<Map<String, dynamic>> _reactionAbsenceProof({
+  required GroupMultiDeviceTestStack stack,
+  required String key,
+  required String messageId,
+  required String reactorPeerId,
+  required String emoji,
+  Duration settle = const Duration(seconds: 5),
+}) async {
+  await Future<void>.delayed(settle);
+  final reactions = await stack.reactionRepo.getReactionsForMessage(messageId);
+  final matches = reactions
+      .where(
+        (reaction) =>
+            reaction.senderPeerId == reactorPeerId && reaction.emoji == emoji,
+      )
+      .toList(growable: false);
+  final proof = <String, dynamic>{
+    'key': key,
+    'messageId': messageId,
+    'reactorPeerId': reactorPeerId,
+    'emoji': emoji,
+    'visibleReactionCountForRemovedMember': matches.length,
+    'visibleReactionCountForTarget': reactions.length,
+    'visibleStateUnchanged': matches.isEmpty && reactions.isEmpty,
+  };
+  writeSharedJson(_signalName('${_role}_reaction_absent_$key.json'), proof);
+  return proof;
+}
+
+Map<String, dynamic> _pl010RemovedReactionProof({
+  required String targetMessageId,
+  required Map<String, dynamic> attempt,
+  required Map<String, dynamic> observation,
+  required bool oldLocalMessageRetained,
+  required bool aliceObservedNoMutation,
+  required bool bobObservedNoMutation,
+  bool? removedMemberExcluded,
+  bool? selfRemovedOrExcluded,
+}) {
+  final reactionAccepted = attempt['accepted'] == true;
+  final remoteIgnored =
+      observation['visibleReactionCountForRemovedMember'] == 0 &&
+      observation['visibleStateUnchanged'] == true;
+  return <String, dynamic>{
+    'rowId': 'PL-010',
+    'activeRoles': const <String>['alice', 'bob'],
+    'removedRole': 'charlie',
+    'reactorRole': 'charlie',
+    'targetMessageId': targetMessageId,
+    'reactionEmoji': attempt['emoji'],
+    'reactionOutcome': attempt['outcome'],
+    'reactionAccepted': reactionAccepted,
+    'reactionRejectedOrIgnored': !reactionAccepted || remoteIgnored,
+    'observedByRole': _role,
+    'oldLocalMessageRetained': oldLocalMessageRetained,
+    'removedMemberExcluded': ?removedMemberExcluded,
+    'selfRemovedOrExcluded': ?selfRemovedOrExcluded,
+    'visibleReactionCountForRemovedMember':
+        observation['visibleReactionCountForRemovedMember'],
+    'visibleReactionCountForTarget':
+        observation['visibleReactionCountForTarget'],
+    'visibleStateUnchanged': observation['visibleStateUnchanged'] == true,
+    'localReactionCountAfterAttempt': attempt['localReactionCountAfterAttempt'],
+    'aliceObservedNoMutationSignal': aliceObservedNoMutation,
+    'bobObservedNoMutationSignal': bobObservedNoMutation,
+  };
+}
+
+Future<void> _runPl010RemovedReactionAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  await waitForSharedSignal(_signalName('bob_pl010_invite_listener_ready'));
+  await waitForSharedSignal(_signalName('charlie_pl010_invite_listener_ready'));
+
+  final (groupId, createProof) = await _createMl001PrivateAbcGroup(
+    stack: stack,
+    identities: identities,
+  );
+  await waitForSharedSignal(_signalName('bob_pl010_invite_accepted'));
+  await waitForSharedSignal(_signalName('charlie_pl010_invite_accepted'));
+  await _waitForTimelineTexts(
+    stack: stack,
+    groupId: groupId,
+    texts: const <String>[
+      'GM Bob joined the group',
+      'GM Charlie joined the group',
+    ],
+  );
+
+  final target = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceReactionTargetBeforeRemoval',
+    text: 'PL-010 Alice pre-removal reaction target $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceReactionTargetBeforeRemoval.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceReactionTargetBeforeRemoval.json'),
+  );
+
+  final charliePeerId = identities['charlie']!['peerId'] as String;
+  await _removeCharlieAndPublish(
+    stack: stack,
+    groupId: groupId,
+    charlieIdentity: identities['charlie']!,
+  );
+  final removedMemberExcluded =
+      await stack.groupRepo.getMember(groupId, charliePeerId) == null;
+  writeSharedText(_signalName('alice_pl010_removed_charlie'), 'ok');
+  await waitForSharedSignal(_signalName('bob_pl010_removed_charlie'));
+  await waitForSharedSignal(_signalName('charlie_pl010_self_removed'));
+
+  final attempt = await waitForSharedJson(
+    _signalName('charlie_reaction_attempt_charlieRemovedOnAliceTarget.json'),
+  );
+  final observation = await _reactionAbsenceProof(
+    stack: stack,
+    key: 'charlieRemovedOnAliceTarget',
+    messageId: target['messageId'] as String,
+    reactorPeerId: charliePeerId,
+    emoji: attempt['emoji'] as String,
+  );
+  writeSharedText(
+    _signalName('alice_pl010_observed_no_removed_reaction'),
+    'ok',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_pl010_observed_no_removed_reaction'),
+  );
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[target],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'ml001CreateInviteProof': _ml001AliceProof(
+        createProof: createProof,
+        bobAcceptedSignal: true,
+        charlieAcceptedSignal: true,
+        readableJoinTimelineObserved: true,
+      ),
+      'pl010RemovedReactionProof': _pl010RemovedReactionProof(
+        targetMessageId: target['messageId'] as String,
+        attempt: attempt,
+        observation: observation,
+        oldLocalMessageRetained: attempt['oldLocalMessageRetained'] == true,
+        removedMemberExcluded: removedMemberExcluded,
+        aliceObservedNoMutation: true,
+        bobObservedNoMutation: true,
+      ),
+    },
+  );
+}
+
+Future<void> _runPl010RemovedReactionInvitee(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = _buildGroupInviteListener(
+    stack: stack,
+    pendingInviteRepo: pendingInviteRepo,
+  );
+  inviteListener.start();
+  try {
+    writeSharedText(_signalName('${_role}_pl010_invite_listener_ready'), 'ok');
+    final invite = await _waitForMl001PendingInvite(
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final (acceptResult, acceptedGroup) = await acceptPendingGroupInvite(
+      pendingInviteRepo: pendingInviteRepo,
+      groupRepo: stack.groupRepo,
+      contactRepo: stack.contactRepo,
+      msgRepo: stack.groupMsgRepo,
+      bridge: stack.bridge,
+      groupId: invite.groupId,
+      groupMessageListener: stack.groupListener,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      ownDeviceId: stack.p2pService.currentState.peerId,
+      ownTransportPeerId: stack.p2pService.currentState.peerId,
+      ownMlKemPublicKey: stack.identity.mlKemPublicKey,
+    );
+    expect(acceptResult, AcceptPendingGroupInviteResult.success);
+    expect(acceptedGroup, isNotNull);
+    writeSharedText(_signalName('${_role}_pl010_invite_accepted'), 'ok');
+
+    final target = await waitForSharedJson(
+      _signalName('alice_sent_aliceReactionTargetBeforeRemoval.json'),
+    );
+    final received = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: invite.groupId,
+      key: 'aliceReactionTargetBeforeRemoval',
+      text: target['text'] as String,
+      senderPeerId: identities['alice']!['peerId'] as String,
+    );
+    final messageId = target['messageId'] as String;
+    final charliePeerId = identities['charlie']!['peerId'] as String;
+
+    if (_role == 'bob') {
+      await waitForSharedSignal(_signalName('alice_pl010_removed_charlie'));
+      await _waitForMemberExclusion(
+        stack: stack,
+        groupId: invite.groupId,
+        removedPeerId: charliePeerId,
+      );
+      writeSharedText(_signalName('bob_pl010_removed_charlie'), 'ok');
+      final attempt = await waitForSharedJson(
+        _signalName(
+          'charlie_reaction_attempt_charlieRemovedOnAliceTarget.json',
+        ),
+      );
+      final observation = await _reactionAbsenceProof(
+        stack: stack,
+        key: 'charlieRemovedOnAliceTarget',
+        messageId: messageId,
+        reactorPeerId: charliePeerId,
+        emoji: attempt['emoji'] as String,
+      );
+      writeSharedText(
+        _signalName('bob_pl010_observed_no_removed_reaction'),
+        'ok',
+      );
+      await waitForSharedSignal(
+        _signalName('alice_pl010_observed_no_removed_reaction'),
+      );
+      await _writeVerdict(
+        stack: stack,
+        groupId: invite.groupId,
+        sentMessages: const <Map<String, dynamic>>[],
+        receivedMessages: <Map<String, dynamic>>[received],
+        extra: <String, dynamic>{
+          'pl010RemovedReactionProof': _pl010RemovedReactionProof(
+            targetMessageId: messageId,
+            attempt: attempt,
+            observation: observation,
+            oldLocalMessageRetained: attempt['oldLocalMessageRetained'] == true,
+            removedMemberExcluded: true,
+            aliceObservedNoMutation: true,
+            bobObservedNoMutation: true,
+          ),
+        },
+      );
+      return;
+    }
+
+    await _waitForSelfRemovalOrRetainedExclusion(
+      stack: stack,
+      groupId: invite.groupId,
+    );
+    final localTarget = await stack.groupMsgRepo.getMessage(messageId);
+    final selfRemoved =
+        await stack.groupRepo.getMember(
+          invite.groupId,
+          stack.identity.peerId,
+        ) ==
+        null;
+    writeSharedText(_signalName('charlie_pl010_self_removed'), 'ok');
+    await waitForSharedSignal(_signalName('bob_pl010_removed_charlie'));
+
+    final attempt = await _sendReactionAttemptProof(
+      stack: stack,
+      groupId: invite.groupId,
+      messageId: messageId,
+      key: 'charlieRemovedOnAliceTarget',
+      emoji: '🔥',
+    );
+    attempt['oldLocalMessageRetained'] = localTarget != null;
+    writeSharedJson(
+      _signalName('charlie_reaction_attempt_charlieRemovedOnAliceTarget.json'),
+      attempt,
+    );
+    await waitForSharedSignal(
+      _signalName('alice_pl010_observed_no_removed_reaction'),
+    );
+    await waitForSharedSignal(
+      _signalName('bob_pl010_observed_no_removed_reaction'),
+    );
+
+    await _writeVerdict(
+      stack: stack,
+      groupId: invite.groupId,
+      sentMessages: const <Map<String, dynamic>>[],
+      receivedMessages: <Map<String, dynamic>>[received],
+      extra: <String, dynamic>{
+        'pl010RemovedReactionProof': _pl010RemovedReactionProof(
+          targetMessageId: messageId,
+          attempt: attempt,
+          observation: <String, dynamic>{
+            'visibleReactionCountForRemovedMember': 0,
+            'visibleReactionCountForTarget':
+                attempt['localReactionCountAfterAttempt'],
+            'visibleStateUnchanged':
+                !((attempt['accepted'] == true) &&
+                    (attempt['localReactionCountAfterAttempt'] as int? ?? 0) >
+                        0),
+          },
+          oldLocalMessageRetained: localTarget != null,
+          selfRemovedOrExcluded: selfRemoved,
+          aliceObservedNoMutation: true,
+          bobObservedNoMutation: true,
         ),
       },
     );
@@ -35857,6 +36224,15 @@ Future<void> _runScenarioRole() async {
         await _runPl009ReactionAlice(stack, identities);
       } else {
         await _runPl009ReactionInvitee(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_removed_reaction_rejected') {
+      if (_role == 'alice') {
+        await _runPl010RemovedReactionAlice(stack, identities);
+      } else {
+        await _runPl010RemovedReactionInvitee(stack, identities);
       }
       return;
     }

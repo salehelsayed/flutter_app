@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -117,6 +118,44 @@ void main() {
       expect(targetReactions.single.senderPeerId, 'peer-sender');
       expect(targetReactions.single.emoji, '🔥');
       expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    },
+  );
+
+  test(
+    'PL-010 removed sender reaction is ignored without mutating visible state',
+    () async {
+      const existing = MessageReaction(
+        id: 'pl010-existing',
+        messageId: 'pl010-target',
+        emoji: '✅',
+        senderPeerId: 'peer-active',
+        timestamp: '2026-05-13T00:00:00.000Z',
+        createdAt: '2026-05-13T00:00:00.000Z',
+      );
+      await reactionRepo.saveReaction(existing);
+      await groupRepo.removeMember('group-1', 'peer-sender');
+
+      final (result, change) = await handleIncomingGroupReaction(
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        groupId: 'group-1',
+        senderId: 'peer-sender',
+        reactionJson: makeReactionJson(
+          id: 'pl010-removed',
+          messageId: 'pl010-target',
+          emoji: '🔥',
+          senderPeerId: 'peer-sender',
+        ),
+      );
+
+      expect(result, HandleGroupReactionResult.unknownSender);
+      expect(change, isNull);
+      final targetReactions = await reactionRepo.getReactionsForMessage(
+        'pl010-target',
+      );
+      expect(targetReactions, [existing]);
+      expect(reactionRepo.saveReactionCallCount, 1);
+      expect(reactionRepo.removeReactionCallCount, 0);
     },
   );
 

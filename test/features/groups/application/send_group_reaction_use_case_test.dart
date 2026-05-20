@@ -172,6 +172,35 @@ void main() {
     },
   );
 
+  test(
+    'PL-010 removed member reaction send is rejected without publish or local mutation',
+    () async {
+      await groupRepo.removeMember('group-1', 'peer-1');
+
+      final sentBefore = bridge.sentMessages.length;
+      final (result, reaction) = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '🔥',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+
+      expect(result, SendGroupReactionResult.notMember);
+      expect(reaction, isNull);
+      expect(bridge.sentMessages.length, sentBefore);
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+      expect(reactionRepo.saveReactionCallCount, 0);
+      expect(reactionReplayOutboxRepo.entries, isEmpty);
+    },
+  );
+
   test('announcement member can react', () async {
     final announcementGroup = GroupModel(
       id: 'group-ann',
