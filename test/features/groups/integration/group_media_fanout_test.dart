@@ -159,6 +159,39 @@ void main() {
 
   Future<void> pump() => Future.delayed(const Duration(milliseconds: 50));
 
+  void expectNoFragmentsInJson(Object? value, Iterable<String> fragments) {
+    final raw = jsonEncode(value);
+    for (final fragment in fragments) {
+      expect(raw, isNot(contains(fragment)));
+    }
+  }
+
+  void expectNoForbiddenKeys(
+    Object? value,
+    Set<String> forbiddenKeys, {
+    String path = r'$',
+  }) {
+    if (value is Map) {
+      for (final entry in value.entries) {
+        final key = entry.key.toString();
+        expect(
+          forbiddenKeys,
+          isNot(contains(key)),
+          reason: 'forbidden key $key found at $path',
+        );
+        expectNoForbiddenKeys(entry.value, forbiddenKeys, path: '$path.$key');
+      }
+      return;
+    }
+    if (value is Iterable) {
+      var index = 0;
+      for (final item in value) {
+        expectNoForbiddenKeys(item, forbiddenKeys, path: '$path[$index]');
+        index++;
+      }
+    }
+  }
+
   MediaAttachment attachment({
     required String id,
     required String mime,
@@ -889,6 +922,127 @@ void main() {
         expect(
           bobBridge.commandLog.where((cmd) => cmd == 'media:download'),
           hasLength(2),
+        );
+      },
+    );
+
+    test(
+      'PL-014 fake-network media fanout keeps relay records and download metadata free of group secrets',
+      () async {
+        final alice = GroupTestUser.create(
+          peerId: 'alice-pl014-media-peer',
+          username: 'Alice',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'bob-pl014-media-peer',
+          username: 'Bob',
+          network: network,
+          bridge: _DownloadWritingBridge(),
+          mediaFileManager: _ScopedMediaFileManager('bob-pl014-media'),
+        );
+        addTearDown(() {
+          alice.dispose();
+          bob.dispose();
+        });
+
+        const groupId = 'group-pl014-media-privacy';
+        await alice.createGroup(groupId: groupId, name: 'PL014 Media Privacy');
+        await alice.addMember(groupId: groupId, invitee: bob);
+        await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+        await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+
+        alice.start();
+        bob.start();
+        await pump();
+
+        const protectedPlaintext = 'PL014 fake network plaintext alpha';
+        const groupKey = 'test-group-key-1';
+        final senderPrivateKey = alice.privateKey;
+        const blobKey = 'key-blob-pl014-fake-network';
+        const blobNonce = 'nonce-blob-pl014-fake-network';
+        const forbiddenMetadataKeys = {
+          'groupKey',
+          'group_key',
+          'plaintext',
+          'plainText',
+          'secretKey',
+          'secret_key',
+          'privateKey',
+          'senderPrivateKey',
+        };
+        final protectedFragments = [
+          protectedPlaintext,
+          groupKey,
+          senderPrivateKey,
+        ];
+        final relayProtectedFragments = [
+          ...protectedFragments,
+          blobKey,
+          blobNonce,
+        ];
+        final media = attachment(
+          id: 'blob-pl014-fake-network',
+          mime: 'image/jpeg',
+          size: 4,
+        ).copyWith(encryptionKeyBase64: blobKey, encryptionNonce: blobNonce);
+
+        final (result, sentMessage) = await alice.sendGroupMessageViaBridge(
+          groupId: groupId,
+          text: protectedPlaintext,
+          messageId: 'msg-pl014-fake-network',
+          mediaAttachments: [media],
+        );
+        expect(result, group_send.SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+
+        await waitForDownloads(user: bob, expectedCount: 1);
+        await waitForDownloadedAttachments(
+          user: bob,
+          groupId: groupId,
+          messageTexts: const [protectedPlaintext],
+        );
+
+        final publishRaw = alice.bridge.sentMessages.lastWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishRaw) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final publishMedia = publishPayload['media'] as List<dynamic>;
+        expectNoFragmentsInJson(publishMedia, protectedFragments);
+        expectNoForbiddenKeys(publishMedia, forbiddenMetadataKeys);
+
+        final bobDownloads = bob.bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'media:download')
+            .toList(growable: false);
+        expect(bobDownloads, hasLength(1));
+        expectNoFragmentsInJson(bobDownloads, relayProtectedFragments);
+        expectNoForbiddenKeys(bobDownloads, forbiddenMetadataKeys);
+
+        expect(network.deliveryRecords, hasLength(1));
+        expectNoFragmentsInJson(
+          network.deliveryRecords,
+          relayProtectedFragments,
+        );
+        expectNoForbiddenKeys(network.deliveryRecords, forbiddenMetadataKeys);
+
+        final incoming = (await bob.loadGroupMessages(
+          groupId,
+        )).where((message) => message.isIncoming).single;
+        final attachments = await bob.mediaAttachmentRepo
+            .getAttachmentsForMessage(incoming.id);
+        expect(attachments, hasLength(1));
+        expectNoFragmentsInJson(
+          attachments.map((attachment) => attachment.toJson()).toList(),
+          protectedFragments,
+        );
+        expectNoForbiddenKeys(
+          attachments.map((attachment) => attachment.toJson()).toList(),
+          forbiddenMetadataKeys,
         );
       },
     );
