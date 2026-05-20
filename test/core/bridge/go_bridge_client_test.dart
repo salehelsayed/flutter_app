@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -7,17 +8,83 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late GoBridgeClient client;
   MethodCall? lastCall;
+  const goBridgeEventChannelName = 'com.mknoon/go_bridge_events';
+  const goBridgeEventCodec = StandardMethodCodec();
 
   /// Default mock handler: records the call and returns a success JSON string.
   String? defaultHandler(MethodCall call) {
     lastCall = call;
     return jsonEncode({'ok': true});
+  }
+
+  void installMockGoBridgeEventChannel({List<String>? calls}) {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    messenger.setMockMessageHandler(goBridgeEventChannelName, (message) async {
+      final call = goBridgeEventCodec.decodeMethodCall(message!);
+      expect(call.method, anyOf('listen', 'cancel'));
+      calls?.add(call.method);
+      return goBridgeEventCodec.encodeSuccessEnvelope(null);
+    });
+
+    addTearDown(() async {
+      client.dispose();
+      await Future<void>.delayed(Duration.zero);
+      messenger.setMockMessageHandler(goBridgeEventChannelName, null);
+    });
+  }
+
+  Future<void> sendMockGoBridgeEvent(String eventJson) async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    await messenger.handlePlatformMessage(
+      goBridgeEventChannelName,
+      goBridgeEventCodec.encodeSuccessEnvelope(eventJson),
+      (_) {},
+    );
+  }
+
+  Future<void> sendMockGoBridgeEventError(String message) async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    await messenger.handlePlatformMessage(
+      goBridgeEventChannelName,
+      goBridgeEventCodec.encodeErrorEnvelope(
+        code: 'DE019_EVENT_STREAM_ERROR',
+        message: message,
+      ),
+      (_) {},
+    );
+  }
+
+  Future<void> closeMockGoBridgeEventChannel() async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    await messenger.handlePlatformMessage(
+      goBridgeEventChannelName,
+      null,
+      (_) {},
+    );
+  }
+
+  Future<void> waitForCondition(
+    bool Function() condition, {
+    required String description,
+  }) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 1));
+    while (DateTime.now().isBefore(deadline)) {
+      if (condition()) return;
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    fail('Timed out waiting for $description');
   }
 
   setUp(() {
@@ -160,6 +227,70 @@ void main() {
     });
 
     test(
+      'BB-007 callGroupJoinWithConfig forwards exact full config payload to groupJoinTopic',
+      () async {
+        final groupConfig = <String, dynamic>{
+          'name': 'BB-007 Exact Invite Group',
+          'groupType': 'chat',
+          'description': 'Full-config MethodChannel round-trip proof',
+          'createdBy': '12D3KooWBB007Admin',
+          'createdAt': '2026-05-10T20:00:00.000Z',
+          'stateHash': 'bb007-state-hash',
+          'members': [
+            {
+              'peerId': '12D3KooWBB007Admin',
+              'username': 'Admin',
+              'role': 'admin',
+              'publicKey': 'bb007AdminPubKey64',
+              'mlKemPublicKey': 'bb007AdminMlKemPub64',
+              'devices': [
+                {
+                  'deviceId': 'admin-phone',
+                  'deviceSigningPublicKey': 'bb007AdminDevicePub64',
+                  'mlKemPublicKey': 'bb007AdminDeviceMlKem64',
+                },
+              ],
+            },
+            {
+              'peerId': '12D3KooWBB007Invitee',
+              'username': 'Invitee',
+              'role': 'writer',
+              'publicKey': 'bb007InviteePubKey64',
+              'mlKemPublicKey': 'bb007InviteeMlKemPub64',
+              'devices': [
+                {
+                  'deviceId': 'invitee-phone',
+                  'deviceSigningPublicKey': 'bb007InviteeDevicePub64',
+                  'mlKemPublicKey': 'bb007InviteeDeviceMlKem64',
+                },
+              ],
+            },
+          ],
+        };
+
+        await callGroupJoinWithConfig(
+          client,
+          groupId: 'grp-bb007-method-channel',
+          groupConfig: groupConfig,
+          groupKey: 'bb007FullGroupKey==',
+          keyEpoch: 7,
+        );
+
+        expect(lastCall, isNotNull);
+        expect(lastCall!.method, 'groupJoinTopic');
+        expect(lastCall!.arguments, isA<String>());
+
+        final payload =
+            jsonDecode(lastCall!.arguments as String) as Map<String, dynamic>;
+        expect(payload['groupId'], 'grp-bb007-method-channel');
+        expect(payload['groupConfig'], equals(groupConfig));
+        expect(payload['groupKey'], 'bb007FullGroupKey==');
+        expect(payload['keyEpoch'], 7);
+        expect(payload, isNot(contains('topicName')));
+      },
+    );
+
+    test(
       'history repair helper routes typed payload and parses response',
       () async {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -209,6 +340,159 @@ void main() {
         expect(payload['limit'], 7);
         expect(result.rangeHash, 'range-hash');
         expect(result.messages, hasLength(1));
+      },
+    );
+
+    test(
+      'IR-011 history repair helper normalizes request identity and surfaces invalid input',
+      () async {
+        final requests = <Map<String, dynamic>>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                final payload =
+                    jsonDecode(call.arguments as String)
+                        as Map<String, dynamic>;
+                requests.add(payload);
+                final missingField = switch (payload) {
+                  {'groupId': ''} => 'groupId',
+                  {'gapId': ''} => 'gapId',
+                  {'sourcePeerId': ''} => 'sourcePeerId',
+                  _ => null,
+                };
+                if (missingField != null) {
+                  return jsonEncode({
+                    'ok': false,
+                    'errorCode': 'INVALID_INPUT',
+                    'errorMessage': 'missing $missingField',
+                  });
+                }
+                return jsonEncode({
+                  'ok': true,
+                  'groupId': payload['groupId'],
+                  'gapId': payload['gapId'],
+                  'sourcePeerId': payload['sourcePeerId'],
+                  'rangeHash': payload['expectedRangeHash'],
+                  'headMessageId': payload['expectedHeadMessageId'],
+                  'messages': [
+                    {
+                      'from': 'peer-source',
+                      'message': '{"messageId":"ir011-repaired"}',
+                      'timestamp': '2026-05-01T12:00:00.000Z',
+                    },
+                  ],
+                });
+              },
+            );
+
+        final result = await callGroupHistoryRepairRange(
+          client,
+          gap: GroupInboxHistoryGap.fromMap({
+            'groupId': ' group-1 ',
+            'gapId': ' gap-1 ',
+            'missingAfterMessageId': ' msg-before ',
+            'missingBeforeMessageId': ' msg-after ',
+            'expectedRangeHash': ' range-hash ',
+            'expectedHeadMessageId': ' msg-after ',
+            'candidateSourcePeerIds': [' peer-source '],
+          }),
+          sourcePeerId: 'peer-source',
+          limit: 7,
+        );
+
+        expect(lastCall!.method, 'groupHistoryRepairRange');
+        expect(requests.last['groupId'], 'group-1');
+        expect(requests.last['gapId'], 'gap-1');
+        expect(requests.last['sourcePeerId'], 'peer-source');
+        expect(requests.last['missingAfterMessageId'], 'msg-before');
+        expect(requests.last['missingBeforeMessageId'], 'msg-after');
+        expect(requests.last['expectedRangeHash'], 'range-hash');
+        expect(requests.last['expectedHeadMessageId'], 'msg-after');
+        expect(requests.last['limit'], 7);
+        expect(result.groupId, 'group-1');
+        expect(result.gapId, 'gap-1');
+        expect(result.sourcePeerId, 'peer-source');
+        expect(result.rangeHash, 'range-hash');
+        expect(result.messages, hasLength(1));
+
+        Future<void> expectInvalidInput({
+          required GroupInboxHistoryGap gap,
+          required String sourcePeerId,
+        }) async {
+          await expectLater(
+            callGroupHistoryRepairRange(
+              client,
+              gap: gap,
+              sourcePeerId: sourcePeerId,
+              limit: 7,
+            ),
+            throwsA(
+              isA<BridgeCommandException>().having(
+                (error) => error.errorCode,
+                'errorCode',
+                'INVALID_INPUT',
+              ),
+            ),
+          );
+        }
+
+        await expectInvalidInput(
+          gap: const GroupInboxHistoryGap(
+            groupId: '',
+            gapId: 'gap-1',
+            missingAfterMessageId: 'msg-before',
+            missingBeforeMessageId: 'msg-after',
+            expectedRangeHash: 'range-hash',
+            expectedHeadMessageId: 'msg-after',
+            candidateSourcePeerIds: ['peer-source'],
+          ),
+          sourcePeerId: 'peer-source',
+        );
+        await expectInvalidInput(
+          gap: const GroupInboxHistoryGap(
+            groupId: 'group-1',
+            gapId: '',
+            missingAfterMessageId: 'msg-before',
+            missingBeforeMessageId: 'msg-after',
+            expectedRangeHash: 'range-hash',
+            expectedHeadMessageId: 'msg-after',
+            candidateSourcePeerIds: ['peer-source'],
+          ),
+          sourcePeerId: 'peer-source',
+        );
+        await expectInvalidInput(
+          gap: const GroupInboxHistoryGap(
+            groupId: 'group-1',
+            gapId: 'gap-1',
+            missingAfterMessageId: 'msg-before',
+            missingBeforeMessageId: 'msg-after',
+            expectedRangeHash: 'range-hash',
+            expectedHeadMessageId: 'msg-after',
+            candidateSourcePeerIds: ['peer-source'],
+          ),
+          sourcePeerId: '',
+        );
+
+        expect(requests.map((payload) => payload['groupId']).toList(), [
+          'group-1',
+          '',
+          'group-1',
+          'group-1',
+        ]);
+        expect(requests.map((payload) => payload['gapId']).toList(), [
+          'gap-1',
+          'gap-1',
+          '',
+          'gap-1',
+        ]);
+        expect(requests.map((payload) => payload['sourcePeerId']).toList(), [
+          'peer-source',
+          'peer-source',
+          'peer-source',
+          '',
+        ]);
       },
     );
   });
@@ -425,6 +709,213 @@ void main() {
     );
   });
 
+  group('BB-014 private group helper command map', () {
+    const helperCommandMethods = <String, String>{
+      'group:create': 'groupCreate',
+      'group:join': 'groupJoinTopic',
+      'group:acknowledgeRecovery': 'groupAcknowledgeRecovery',
+      'group:leave': 'groupLeaveTopic',
+      'group:publish': 'groupPublish',
+      'group:publishReaction': 'groupPublishReaction',
+      'group:updateConfig': 'groupUpdateConfig',
+      'group:generateNextKey': 'groupGenerateNextKey',
+      'group:updateKey': 'groupUpdateKey',
+      'group:inboxStore': 'groupInboxStore',
+      'group:inboxRetrieve': 'groupInboxRetrieve',
+      'group:inboxRetrieveCursor': 'groupInboxRetrieveCursor',
+      'group:historyRepairRange': 'groupHistoryRepairRange',
+      'group.keygen': 'generateGroupKey',
+      'group.encrypt': 'groupEncryptMessage',
+      'group.decrypt': 'groupDecryptMessage',
+    };
+    const noPayloadHelperCommands = <String>{
+      'group:acknowledgeRecovery',
+      'group.keygen',
+    };
+
+    test(
+      'BB-014 helper private-group commands route through GoBridge map',
+      () async {
+        for (final entry in helperCommandMethods.entries) {
+          lastCall = null;
+          final payload = {
+            'bb014Command': entry.key,
+            'sentinel': 'routes-through-method-channel',
+          };
+          final response = await client.send(
+            jsonEncode({'cmd': entry.key, 'payload': payload}),
+          );
+          final decoded = jsonDecode(response) as Map<String, dynamic>;
+
+          expect(decoded['ok'], isTrue, reason: entry.key);
+          expect(decoded['errorCode'], isNot('UNKNOWN_COMMAND'));
+          expect(lastCall, isNotNull, reason: entry.key);
+          expect(lastCall!.method, entry.value, reason: entry.key);
+
+          if (noPayloadHelperCommands.contains(entry.key)) {
+            expect(lastCall!.arguments, isNull, reason: entry.key);
+          } else {
+            expect(lastCall!.arguments, isA<String>(), reason: entry.key);
+            final passedPayload =
+                jsonDecode(lastCall!.arguments as String)
+                    as Map<String, dynamic>;
+            expect(passedPayload, equals(payload), reason: entry.key);
+          }
+        }
+      },
+    );
+
+    test(
+      'BB-014 missing native private-group helper commands return MISSING_PLUGIN',
+      () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(
+              const MethodChannel('com.mknoon/go_bridge'),
+              (MethodCall call) async {
+                lastCall = call;
+                throw MissingPluginException(
+                  'No implementation found for ${call.method}',
+                );
+              },
+            );
+
+        for (final entry in helperCommandMethods.entries) {
+          lastCall = null;
+          final response = await client.send(
+            jsonEncode({
+              'cmd': entry.key,
+              'payload': {'bb014Command': entry.key},
+            }),
+          );
+          final decoded = jsonDecode(response) as Map<String, dynamic>;
+
+          expect(decoded['ok'], isFalse, reason: entry.key);
+          expect(decoded['errorCode'], 'MISSING_PLUGIN', reason: entry.key);
+          expect(decoded['errorCode'], isNot('UNKNOWN_COMMAND'));
+          expect(decoded['errorMessage'], contains(entry.key));
+          expect(decoded['errorMessage'], contains(entry.value));
+          expect(decoded['errorMessage'], contains('Rebuild the app'));
+          expect(lastCall, isNotNull, reason: entry.key);
+          expect(lastCall!.method, entry.value, reason: entry.key);
+        }
+      },
+    );
+  });
+
+  group('BB-015 private group native response failures', () {
+    const privateGroupCommandMethods = <String, String>{
+      'group:create': 'groupCreate',
+      'group:join': 'groupJoinTopic',
+      'group:acknowledgeRecovery': 'groupAcknowledgeRecovery',
+      'group:leave': 'groupLeaveTopic',
+      'group:publish': 'groupPublish',
+      'group:publishReaction': 'groupPublishReaction',
+      'group:updateConfig': 'groupUpdateConfig',
+      'group:generateNextKey': 'groupGenerateNextKey',
+      'group:updateKey': 'groupUpdateKey',
+      'group:inboxStore': 'groupInboxStore',
+      'group:inboxRetrieve': 'groupInboxRetrieve',
+      'group:inboxRetrieveCursor': 'groupInboxRetrieveCursor',
+      'group:historyRepairRange': 'groupHistoryRepairRange',
+      'group.keygen': 'generateGroupKey',
+      'group.encrypt': 'groupEncryptMessage',
+      'group.decrypt': 'groupDecryptMessage',
+    };
+
+    Future<void> exerciseNativeFailure({
+      required String label,
+      required String expectedErrorCode,
+      required Future<String?> Function(MethodCall call) handler,
+    }) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('com.mknoon/go_bridge'),
+            (MethodCall call) async {
+              lastCall = call;
+              return handler(call);
+            },
+          );
+
+      for (final entry in privateGroupCommandMethods.entries) {
+        lastCall = null;
+        final response = await client.send(
+          jsonEncode({
+            'cmd': entry.key,
+            'payload': {
+              'groupId': 'bb015-group',
+              'groupKey': 'bb015-request-secret',
+            },
+          }),
+        );
+        final decoded = jsonDecode(response) as Map<String, dynamic>;
+
+        expect(decoded['ok'], isFalse, reason: '$label ${entry.key}');
+        expect(
+          decoded['errorCode'],
+          expectedErrorCode,
+          reason: '$label ${entry.key}',
+        );
+        expect(lastCall, isNotNull, reason: '$label ${entry.key}');
+        expect(lastCall!.method, entry.value, reason: '$label ${entry.key}');
+
+        final encoded = jsonEncode(decoded);
+        expect(encoded, isNot(contains('bb015-request-secret')));
+        expect(encoded, isNot(contains('bb015-native-secret')));
+        expect(encoded, isNot(contains('/ip4/10.15.0.1')));
+        expect(encoded, isNot(contains('not-json')));
+      }
+    }
+
+    test(
+      'BB-015 private group native response failures are structured and sanitized',
+      () async {
+        await exerciseNativeFailure(
+          label: 'null',
+          expectedErrorCode: 'NULL_RESPONSE',
+          handler: (call) async => null,
+        );
+        await exerciseNativeFailure(
+          label: 'missing-plugin',
+          expectedErrorCode: 'MISSING_PLUGIN',
+          handler: (call) async {
+            throw MissingPluginException(
+              'No implementation found for ${call.method}',
+            );
+          },
+        );
+        await exerciseNativeFailure(
+          label: 'platform',
+          expectedErrorCode: 'PLATFORM_ERROR',
+          handler: (call) async {
+            throw PlatformException(
+              code: 'GROUP_ERROR',
+              message:
+                  'group failed groupKey=bb015-native-secret '
+                  '/ip4/10.15.0.1/tcp/4001/p2p/12D3KooWBB015',
+            );
+          },
+        );
+        await exerciseNativeFailure(
+          label: 'malformed',
+          expectedErrorCode: 'MALFORMED_RESPONSE',
+          handler: (call) async =>
+              'not-json groupKey=bb015-native-secret /ip4/10.15.0.1',
+        );
+        await exerciseNativeFailure(
+          label: 'ok-false',
+          expectedErrorCode: 'GROUP_ERROR',
+          handler: (call) async => jsonEncode({
+            'ok': false,
+            'errorCode': 'GROUP_ERROR',
+            'errorMessage':
+                'native rejected groupKey=bb015-native-secret '
+                '/ip4/10.15.0.1/tcp/4001/p2p/12D3KooWBB015',
+          }),
+        );
+      },
+    );
+  });
+
   group('push event routing', () {
     test('timeout:fired push event is forwarded with the raw event name', () {
       flowEventLoggingEnabled = true;
@@ -514,6 +1005,250 @@ void main() {
       expect(received!['watchdogRestartCount'], equals(2));
       expect(received!['needsGroupRecovery'], isTrue);
     });
+
+    test(
+      'DE-009 group message callback survives reinitialize and receives event once',
+      () async {
+        installMockGoBridgeEventChannel();
+        final received = <Map<String, dynamic>>[];
+        client.onGroupMessageReceived = received.add;
+
+        await client.initialize();
+        await client.reinitialize();
+
+        expect(client.isInitialized, isTrue);
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-de009',
+              'messageId': 'message-de009',
+              'senderId': 'peer-de009',
+              'keyEpoch': 1,
+              'payload': {'text': 'after reinitialize'},
+            },
+          }),
+        );
+
+        expect(received, hasLength(1));
+        expect(received.single['groupId'], 'group-de009');
+        expect(received.single['messageId'], 'message-de009');
+        expect(received.single['senderId'], 'peer-de009');
+        expect(received.single['keyEpoch'], 1);
+        expect(
+          received.single['payload'],
+          containsPair('text', 'after reinitialize'),
+        );
+      },
+    );
+
+    test(
+      'DE-018 unknown group event is ignored without blocking known callbacks',
+      () {
+        final debugLogs = <String>[];
+        debugPrint = (String? message, {int? wrapWidth}) {
+          if (message != null) {
+            debugLogs.add(message);
+          }
+        };
+
+        final receivedMessages = <Map<String, dynamic>>[];
+        final receivedReactions = <Map<String, dynamic>>[];
+        client.onGroupMessageReceived = receivedMessages.add;
+        client.onGroupReactionReceived = receivedReactions.add;
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group:future_protocol_probe',
+            'data': {
+              'groupId': 'group-de018',
+              'messageId': 'unknown-de018',
+              'protocolVersion': 99,
+            },
+          }),
+        );
+
+        expect(receivedMessages, isEmpty);
+        expect(receivedReactions, isEmpty);
+        expect(
+          debugLogs,
+          contains(
+            '[GoBridgeClient] Unknown push event: group:future_protocol_probe',
+          ),
+        );
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-de018',
+              'messageId': 'message-de018',
+              'senderId': 'peer-de018',
+              'keyEpoch': 1,
+              'payload': {'text': 'known message after unknown event'},
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_reaction:received',
+            'data': {
+              'groupId': 'group-de018',
+              'messageId': 'message-de018',
+              'reactionId': 'reaction-de018',
+              'reactorPeerId': 'peer-de018-reactor',
+              'emoji': 'ok',
+            },
+          }),
+        );
+
+        expect(receivedMessages, hasLength(1));
+        expect(receivedMessages.single['groupId'], 'group-de018');
+        expect(receivedMessages.single['messageId'], 'message-de018');
+        expect(
+          receivedMessages.single['payload'],
+          containsPair('text', 'known message after unknown event'),
+        );
+        expect(receivedReactions, hasLength(1));
+        expect(receivedReactions.single['groupId'], 'group-de018');
+        expect(receivedReactions.single['messageId'], 'message-de018');
+        expect(receivedReactions.single['reactionId'], 'reaction-de018');
+      },
+    );
+
+    test(
+      'DE-019 EventChannel error emits diagnostics, recovers, and preserves group callback',
+      () async {
+        final eventChannelCalls = <String>[];
+        final flowEvents = <Map<String, dynamic>>[];
+        installMockGoBridgeEventChannel(calls: eventChannelCalls);
+        debugSetFlowEventSink(flowEvents.add);
+
+        final received = Completer<Map<String, dynamic>>();
+        client.onGroupMessageReceived = (payload) {
+          if (!received.isCompleted) {
+            received.complete(payload);
+          }
+        };
+
+        await client.initialize();
+        expect(client.isInitialized, isTrue);
+        expect(
+          eventChannelCalls.where((call) => call == 'listen'),
+          hasLength(1),
+        );
+
+        await sendMockGoBridgeEventError('event stream down secretKey=hidden');
+        await waitForCondition(
+          () => eventChannelCalls.where((call) => call == 'listen').length >= 2,
+          description: 'EventChannel error recovery listen',
+        );
+
+        expect(client.isInitialized, isTrue);
+        expect(eventChannelCalls, contains('cancel'));
+        expect(
+          flowEvents.map((event) => event['event']),
+          containsAllInOrder([
+            'GO_BRIDGE_EVENT_STREAM_ERROR',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_REQUESTED',
+            'GO_BRIDGE_REINIT_START',
+            'GO_BRIDGE_INIT_SUCCESS',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_SUCCESS',
+          ]),
+        );
+        final errorEvent = flowEvents.firstWhere(
+          (event) => event['event'] == 'GO_BRIDGE_EVENT_STREAM_ERROR',
+        );
+        expect(jsonEncode(errorEvent), isNot(contains('secretKey=hidden')));
+
+        await sendMockGoBridgeEvent(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-de019-error',
+              'messageId': 'message-de019-error',
+              'senderId': 'peer-de019',
+              'keyEpoch': 1,
+              'payload': {'text': 'after error recovery'},
+            },
+          }),
+        );
+
+        final payload = await received.future.timeout(
+          const Duration(seconds: 1),
+        );
+        expect(payload['groupId'], 'group-de019-error');
+        expect(payload['messageId'], 'message-de019-error');
+        expect(
+          payload['payload'],
+          containsPair('text', 'after error recovery'),
+        );
+      },
+    );
+
+    test(
+      'DE-019 EventChannel done emits diagnostics, recovers, and preserves group callback',
+      () async {
+        final eventChannelCalls = <String>[];
+        final flowEvents = <Map<String, dynamic>>[];
+        installMockGoBridgeEventChannel(calls: eventChannelCalls);
+        debugSetFlowEventSink(flowEvents.add);
+
+        final received = Completer<Map<String, dynamic>>();
+        client.onGroupMessageReceived = (payload) {
+          if (!received.isCompleted) {
+            received.complete(payload);
+          }
+        };
+
+        await client.initialize();
+        expect(client.isInitialized, isTrue);
+        expect(
+          eventChannelCalls.where((call) => call == 'listen'),
+          hasLength(1),
+        );
+
+        await closeMockGoBridgeEventChannel();
+        await waitForCondition(
+          () => eventChannelCalls.where((call) => call == 'listen').length >= 2,
+          description: 'EventChannel done recovery listen',
+        );
+
+        expect(client.isInitialized, isTrue);
+        expect(eventChannelCalls, contains('cancel'));
+        expect(
+          flowEvents.map((event) => event['event']),
+          containsAllInOrder([
+            'GO_BRIDGE_EVENT_STREAM_DONE',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_REQUESTED',
+            'GO_BRIDGE_REINIT_START',
+            'GO_BRIDGE_INIT_SUCCESS',
+            'GO_BRIDGE_EVENT_STREAM_RECOVERY_SUCCESS',
+          ]),
+        );
+
+        await sendMockGoBridgeEvent(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-de019-done',
+              'messageId': 'message-de019-done',
+              'senderId': 'peer-de019',
+              'keyEpoch': 1,
+              'payload': {'text': 'after done recovery'},
+            },
+          }),
+        );
+
+        final payload = await received.future.timeout(
+          const Duration(seconds: 1),
+        );
+        expect(payload['groupId'], 'group-de019-done');
+        expect(payload['messageId'], 'message-de019-done');
+        expect(payload['payload'], containsPair('text', 'after done recovery'));
+      },
+    );
 
     test(
       'media:upload_progress push event forwards to upload stream',
@@ -766,11 +1501,13 @@ void main() {
     );
 
     test(
-      'group payload parse failure push event reaches diagnostics stream without invoking group message callback',
+      'DE-015 payload parse diagnostic does not poison later group message callback',
       () async {
         var groupMessageCalls = 0;
-        client.onGroupMessageReceived = (_) {
+        Map<String, dynamic>? validMessage;
+        client.onGroupMessageReceived = (payload) {
           groupMessageCalls++;
+          validMessage = payload;
         };
 
         final eventFuture = groupDiagnosticEventStream.first.timeout(
@@ -794,12 +1531,32 @@ void main() {
         expect(received['senderId'], 'peer-3');
         expect(received['envelopeType'], 'group_message');
         expect(groupMessageCalls, 0);
+
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-parse',
+              'senderId': 'peer-3',
+              'messageId': 'de015-valid-after-parse-failure',
+              'keyEpoch': 1,
+              'text': 'DE-015 valid after parse failure',
+            },
+          }),
+        );
+
+        expect(groupMessageCalls, 1);
+        expect(validMessage?['groupId'], 'group-parse');
+        expect(validMessage?['messageId'], 'de015-valid-after-parse-failure');
+        expect(validMessage?['text'], 'DE-015 valid after parse failure');
       },
     );
 
     test(
-      'group validation reject push event reaches diagnostics stream without invoking group message callback',
+      'DE-016 validation reject diagnostic reaches safe logs without group message callback',
       () async {
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
         var groupMessageCalls = 0;
         client.onGroupMessageReceived = (_) {
           groupMessageCalls++;
@@ -836,6 +1593,22 @@ void main() {
         expect(received.containsKey('groupId'), isFalse);
         expect(received.containsKey('senderId'), isFalse);
         expect(groupMessageCalls, 0);
+
+        final validationFlow = flowEvents.where(
+          (event) => event['event'] == 'GROUP_VALIDATION_REJECTED',
+        );
+        expect(validationFlow, hasLength(1));
+        final details =
+            validationFlow.single['details'] as Map<String, dynamic>;
+        expect(details['reason'], 'bad_signature_or_epoch');
+        expect(details['groupHash'], '123456789abc');
+        expect(details['senderHash'], 'abcdef123456');
+        expect(details['transportPeerHash'], '456789abcdef');
+        expect(details['localPeerHash'], 'fedcba987654');
+        expect(details['envelopeType'], 'group_message');
+        expect(details['keyEpoch'], 2);
+        expect(details.containsKey('groupId'), isFalse);
+        expect(details.containsKey('senderId'), isFalse);
       },
     );
 
@@ -874,6 +1647,46 @@ void main() {
         expect(received['keyEpoch'], 4);
         expect(received['recipientPeerId'], '[redacted]');
         expect(groupMessageCalls, 0);
+      },
+    );
+
+    test(
+      'DE-020 large group payload does not starve later group callback',
+      () async {
+        final received = <Map<String, dynamic>>[];
+        client.onGroupMessageReceived = received.add;
+
+        final largeText = 'L' * maxMessageLength;
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-de020',
+              'senderId': 'peer-de020',
+              'messageId': 'de020-large',
+              'keyEpoch': 1,
+              'text': largeText,
+            },
+          }),
+        );
+        client.debugHandleEventForTest(
+          jsonEncode({
+            'event': 'group_message:received',
+            'data': {
+              'groupId': 'group-de020',
+              'senderId': 'peer-de020',
+              'messageId': 'de020-normal',
+              'keyEpoch': 1,
+              'text': 'DE-020 normal follow-up',
+            },
+          }),
+        );
+
+        expect(received, hasLength(2));
+        expect(received[0]['messageId'], 'de020-large');
+        expect((received[0]['text'] as String).length, maxMessageLength);
+        expect(received[1]['messageId'], 'de020-normal');
+        expect(received[1]['text'], 'DE-020 normal follow-up');
       },
     );
 

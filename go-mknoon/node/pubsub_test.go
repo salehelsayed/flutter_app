@@ -269,6 +269,110 @@ func TestFilterDiscoveredGroupMembers_AllowsAllWhenMemberSetEmpty(t *testing.T) 
 	}
 }
 
+func TestNW005RendezvousRediscoveryUsesCurrentMembershipOnly(t *testing.T) {
+	selfID, err := peer.Decode("12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN")
+	if err != nil {
+		t.Fatalf("decode self peer: %v", err)
+	}
+	bobID, err := peer.Decode("12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g")
+	if err != nil {
+		t.Fatalf("decode bob peer: %v", err)
+	}
+	staleCharlieID, err := peer.Decode("12D3KooWRby3kFPcEJBxLFasMBr1Y5sTpBLTpfhCoVkdCquN4CY1")
+	if err != nil {
+		t.Fatalf("decode stale charlie peer: %v", err)
+	}
+	currentCharlieID, err := peer.Decode("12D3KooWL8hWR1wU8YEWzsXTH8LuN2n7FBbUMPSu1tfQZyxkPp2v")
+	if err != nil {
+		t.Fatalf("decode current charlie peer: %v", err)
+	}
+	unknownDanaID, err := peer.Decode("12D3KooWC5qe3PPm2x8nCGx3kkM1Q2VdGs14Q6gttxyPjdJawVSK")
+	if err != nil {
+		t.Fatalf("decode unknown dana peer: %v", err)
+	}
+
+	// After Charlie is removed, rendezvous may still return Charlie's old
+	// transport peer plus a fresh unknown peer. Only current configured members
+	// remain eligible for discovery use.
+	allowedAfterRemoval := map[peer.ID]struct{}{
+		bobID: {},
+	}
+	afterRemoval := []peer.AddrInfo{
+		{ID: selfID},
+		{ID: bobID},
+		{ID: staleCharlieID},
+		{ID: unknownDanaID},
+	}
+	newPeers := filterDiscoveredPeers(afterRemoval, selfID, map[peer.ID]struct{}{})
+	filtered, ignored := filterDiscoveredGroupMembers(newPeers, allowedAfterRemoval)
+	if len(filtered) != 1 || filtered[0].ID != bobID {
+		t.Fatalf("after removal expected only Bob eligible, got %#v", filtered)
+	}
+	if ignored != 2 {
+		t.Fatalf("after removal expected stale Charlie and unknown Dana ignored, got %d", ignored)
+	}
+
+	// After Charlie is re-added with current device material, stale Charlie and
+	// unknown Dana remain discovery-only noise. Already visible Bob is skipped
+	// before member filtering; current Charlie is the only new peer to dial/use.
+	allowedAfterReadd := map[peer.ID]struct{}{
+		bobID:            {},
+		currentCharlieID: {},
+	}
+	afterReadd := []peer.AddrInfo{
+		{ID: bobID},
+		{ID: staleCharlieID},
+		{ID: currentCharlieID},
+		{ID: unknownDanaID},
+	}
+	topicPeers := map[peer.ID]struct{}{
+		bobID: {},
+	}
+	newPeers = filterDiscoveredPeers(afterReadd, selfID, topicPeers)
+	filtered, ignored = filterDiscoveredGroupMembers(newPeers, allowedAfterReadd)
+	if len(filtered) != 1 || filtered[0].ID != currentCharlieID {
+		t.Fatalf("after readd expected only current Charlie eligible, got %#v", filtered)
+	}
+	if ignored != 2 {
+		t.Fatalf("after readd expected stale Charlie and unknown Dana ignored, got %d", ignored)
+	}
+}
+
+func TestNW008DuplicateConnectionPathsDedupedBeforeGroupDial(t *testing.T) {
+	directA, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/41001")
+	if err != nil {
+		t.Fatalf("direct addr A: %v", err)
+	}
+	directB, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/41002")
+	if err != nil {
+		t.Fatalf("direct addr B: %v", err)
+	}
+	relayCircuit, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/41003/p2p-circuit")
+	if err != nil {
+		t.Fatalf("relay circuit addr: %v", err)
+	}
+
+	got := dedupeDirectMultiaddrs([]ma.Multiaddr{
+		directA,
+		directA,
+		relayCircuit,
+		directB,
+		directB,
+	})
+
+	if len(got) != 2 {
+		t.Fatalf("expected two unique direct addresses before dial, got %d: %v", len(got), multiaddrsToStrings(got))
+	}
+	if got[0].String() != directA.String() || got[1].String() != directB.String() {
+		t.Fatalf("dedupeDirectMultiaddrs order/result = %v, want [%s %s]", multiaddrsToStrings(got), directA, directB)
+	}
+	for _, addr := range got {
+		if isRelayCircuitAddr(addr) {
+			t.Fatalf("relay circuit addr survived direct duplicate filtering: %s", addr)
+		}
+	}
+}
+
 // --- Topic name tests ---
 
 func TestGroupTopicName(t *testing.T) {
@@ -655,6 +759,7 @@ func TestPublishGroupMessage_BuildsCorrectEnvelope(t *testing.T) {
 func TestBuildGroupMessageExtra_PreservesQuotedMessageId(t *testing.T) {
 	opts := map[string]interface{}{
 		"quotedMessageId": "parent-msg-1",
+		"timestamp":       "2026-05-12T14:36:16.419641Z",
 		"media": []map[string]interface{}{
 			{"id": "blob-1", "mime": "image/jpeg"},
 		},
@@ -671,8 +776,31 @@ func TestBuildGroupMessageExtra_PreservesQuotedMessageId(t *testing.T) {
 	if _, ok := extra["media"]; !ok {
 		t.Fatal("expected media in extra")
 	}
+	if _, ok := extra["timestamp"]; ok {
+		t.Fatal("timestamp should be payload metadata, not copied into extra")
+	}
 	if _, ok := opts["messageId"]; ok {
 		t.Fatal("buildGroupMessageExtra should not mutate the input opts map")
+	}
+}
+
+func TestResolveGroupPublishTimestamp_UsesProvidedTimestamp(t *testing.T) {
+	got, err := resolveGroupPublishTimestamp(map[string]interface{}{
+		"timestamp": "2026-05-12T14:36:16.419641Z",
+	})
+	if err != nil {
+		t.Fatalf("resolveGroupPublishTimestamp: %v", err)
+	}
+	if got != "2026-05-12T14:36:16.419641Z" {
+		t.Fatalf("timestamp = %q, want provided value", got)
+	}
+}
+
+func TestResolveGroupPublishTimestamp_RejectsInvalidTimestamp(t *testing.T) {
+	if _, err := resolveGroupPublishTimestamp(map[string]interface{}{
+		"timestamp": "not-a-timestamp",
+	}); err == nil {
+		t.Fatal("expected invalid timestamp error")
 	}
 }
 
@@ -4554,6 +4682,110 @@ func TestGroupTopicValidator_RejectsRemovedMemberAfterConfigUpdate(t *testing.T)
 	_ = privB64A // suppress unused
 }
 
+func TestBB016GroupConfigMetadataFieldsSurviveSerializationAndUpdate(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	groupId := "bb016-metadata-config"
+	initialConfig := &GroupConfig{
+		Name:              "BB-016 Initial",
+		GroupType:         GroupTypeChat,
+		Description:       "Initial bridge description",
+		AvatarBlobId:      "avatar-initial",
+		AvatarMime:        "image/png",
+		MetadataUpdatedAt: "2026-05-15T09:42:00Z",
+		ConfigVersion:     "2026-05-15T09:42:00Z",
+		StateHash:         "bb016-initial-state-hash",
+		Members: []GroupMember{
+			{PeerId: "peer-admin", Role: GroupRoleAdmin, PublicKey: "pk-admin"},
+		},
+		CreatedBy: "peer-admin",
+		CreatedAt: "2026-05-15T09:00:00Z",
+	}
+	keyInfo := &GroupKeyInfo{Key: "bb016-key", KeyEpoch: 1}
+
+	if err := n.JoinGroupTopic(groupId, initialConfig, keyInfo); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	encoded, err := json.Marshal(initialConfig)
+	if err != nil {
+		t.Fatalf("marshal initial config: %v", err)
+	}
+	var decoded GroupConfig
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal initial config: %v", err)
+	}
+	if decoded.Description != initialConfig.Description ||
+		decoded.AvatarBlobId != initialConfig.AvatarBlobId ||
+		decoded.AvatarMime != initialConfig.AvatarMime ||
+		decoded.MetadataUpdatedAt != initialConfig.MetadataUpdatedAt ||
+		decoded.ConfigVersion != initialConfig.ConfigVersion ||
+		decoded.StateHash != initialConfig.StateHash {
+		t.Fatalf("metadata drift after JSON round-trip: %#v", decoded)
+	}
+
+	updatedConfig := &GroupConfig{
+		Name:              "BB-016 Updated",
+		GroupType:         GroupTypeChat,
+		Description:       "Updated bridge description",
+		AvatarBlobId:      "avatar-updated",
+		AvatarMime:        "image/jpeg",
+		MetadataUpdatedAt: "2026-05-15T10:42:00Z",
+		ConfigVersion:     "2026-05-15T10:42:00Z",
+		StateHash:         "bb016-updated-state-hash",
+		Members: []GroupMember{
+			{PeerId: "peer-admin", Role: GroupRoleAdmin, PublicKey: "pk-admin"},
+			{PeerId: "peer-writer", Role: GroupRoleWriter, PublicKey: "pk-writer"},
+		},
+		CreatedBy: "peer-admin",
+		CreatedAt: "2026-05-15T09:00:00Z",
+	}
+	n.UpdateGroupConfig(groupId, updatedConfig)
+	updatedConfig.Description = "caller mutated description"
+	updatedConfig.AvatarBlobId = "caller-mutated-avatar"
+	updatedConfig.StateHash = "caller-mutated-state-hash"
+
+	n.mu.RLock()
+	storedConfig := n.groupConfigs[groupId]
+	n.mu.RUnlock()
+
+	if storedConfig == nil {
+		t.Fatal("stored config should not be nil")
+	}
+	if storedConfig.Description != "Updated bridge description" {
+		t.Fatalf("Description = %q", storedConfig.Description)
+	}
+	if storedConfig.AvatarBlobId != "avatar-updated" {
+		t.Fatalf("AvatarBlobId = %q", storedConfig.AvatarBlobId)
+	}
+	if storedConfig.AvatarMime != "image/jpeg" {
+		t.Fatalf("AvatarMime = %q", storedConfig.AvatarMime)
+	}
+	if storedConfig.MetadataUpdatedAt != "2026-05-15T10:42:00Z" {
+		t.Fatalf("MetadataUpdatedAt = %q", storedConfig.MetadataUpdatedAt)
+	}
+	if storedConfig.ConfigVersion != "2026-05-15T10:42:00Z" {
+		t.Fatalf("ConfigVersion = %q", storedConfig.ConfigVersion)
+	}
+	if storedConfig.StateHash != "bb016-updated-state-hash" {
+		t.Fatalf("StateHash = %q", storedConfig.StateHash)
+	}
+	if len(storedConfig.Members) != 2 {
+		t.Fatalf("Members length = %d, want 2", len(storedConfig.Members))
+	}
+}
+
 // Test 1.3: UpdateGroupConfig replaces config atomically.
 func TestUpdateGroupConfig_ReplacesConfigAtomically(t *testing.T) {
 	hexKey := generateTestKey(t)
@@ -5355,6 +5587,264 @@ func TestJoinGroupTopic_DuplicateJoinPreservesExistingState(t *testing.T) {
 	}
 	if currentDiscoveryCtxLen != initialDiscoveryCtxLen {
 		t.Fatalf("groupDiscoveryCtx length changed from %d to %d", initialDiscoveryCtxLen, currentDiscoveryCtxLen)
+	}
+}
+
+func TestRefreshJoinedGroupStateIfNewerUpdatesConfigAndKeyAtomically(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	_, senderPubB64 := generateEd25519KeyPair(t)
+	firstGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate first group key: %v", err)
+	}
+	secondGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate second group key: %v", err)
+	}
+	sameEpochGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate same epoch group key: %v", err)
+	}
+	olderEpochGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate older epoch group key: %v", err)
+	}
+
+	groupId := "bb-008-refresh-helper"
+	initialConfig := &GroupConfig{
+		Name:      "BB-008 initial config",
+		GroupType: GroupTypeAnnouncement,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleWriter, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-10T21:20:00Z",
+	}
+	initialKey := &GroupKeyInfo{Key: firstGroupKey, KeyEpoch: 1}
+	if err := n.JoinGroupTopic(groupId, initialConfig, initialKey); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	n.mu.RLock()
+	initialTopic := n.groupTopics[groupId]
+	initialSub := n.groupSubs[groupId]
+	initialSubCtxLen := len(n.groupSubCtx)
+	initialDiscoveryCtxLen := len(n.groupDiscoveryCtx)
+	n.mu.RUnlock()
+
+	refreshedConfig := &GroupConfig{
+		Name:      "BB-008 refreshed config",
+		GroupType: GroupTypeAnnouncement,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-10T21:21:00Z",
+	}
+	refreshed, err := n.RefreshJoinedGroupStateIfNewer(
+		groupId,
+		refreshedConfig,
+		&GroupKeyInfo{Key: secondGroupKey, KeyEpoch: 2},
+	)
+	if err != nil {
+		t.Fatalf("RefreshJoinedGroupStateIfNewer newer epoch: %v", err)
+	}
+	if !refreshed {
+		t.Fatal("RefreshJoinedGroupStateIfNewer newer epoch returned refreshed=false")
+	}
+
+	n.mu.RLock()
+	currentTopic := n.groupTopics[groupId]
+	currentSub := n.groupSubs[groupId]
+	currentConfig := n.groupConfigs[groupId]
+	currentKey := n.groupKeys[groupId]
+	currentSubCtxLen := len(n.groupSubCtx)
+	currentDiscoveryCtxLen := len(n.groupDiscoveryCtx)
+	n.mu.RUnlock()
+
+	if currentTopic != initialTopic {
+		t.Fatal("refresh replaced the existing topic")
+	}
+	if currentSub != initialSub {
+		t.Fatal("refresh replaced the existing subscription")
+	}
+	if currentSubCtxLen != initialSubCtxLen {
+		t.Fatalf("groupSubCtx length changed from %d to %d", initialSubCtxLen, currentSubCtxLen)
+	}
+	if currentDiscoveryCtxLen != initialDiscoveryCtxLen {
+		t.Fatalf("groupDiscoveryCtx length changed from %d to %d", initialDiscoveryCtxLen, currentDiscoveryCtxLen)
+	}
+	if currentConfig == nil || currentConfig.Name != refreshedConfig.Name || currentConfig.Members[0].Role != GroupRoleAdmin {
+		t.Fatalf("stored config = %#v, want refreshed admin config", currentConfig)
+	}
+	if currentConfig == refreshedConfig {
+		t.Fatal("stored config should snapshot refreshed config, not reuse caller pointer")
+	}
+	if currentKey == nil {
+		t.Fatal("stored key is nil after refresh")
+	}
+	if currentKey.Key != secondGroupKey || currentKey.KeyEpoch != 2 {
+		t.Fatalf("stored key = (%q,%d), want (%q,2)", currentKey.Key, currentKey.KeyEpoch, secondGroupKey)
+	}
+	if currentKey.PrevKey != firstGroupKey || currentKey.PrevKeyEpoch != 1 || currentKey.GraceDeadline.IsZero() {
+		t.Fatalf("previous key grace = (%q,%d,%v), want first key epoch 1 with deadline", currentKey.PrevKey, currentKey.PrevKeyEpoch, currentKey.GraceDeadline)
+	}
+
+	sameEpochConfig := &GroupConfig{
+		Name:      "BB-008 same epoch should not replace",
+		GroupType: GroupTypeAnnouncement,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleWriter, PublicKey: senderPubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-10T21:22:00Z",
+	}
+	refreshed, err = n.RefreshJoinedGroupStateIfNewer(
+		groupId,
+		sameEpochConfig,
+		&GroupKeyInfo{Key: sameEpochGroupKey, KeyEpoch: 2},
+	)
+	if err != nil {
+		t.Fatalf("RefreshJoinedGroupStateIfNewer same epoch: %v", err)
+	}
+	if refreshed {
+		t.Fatal("RefreshJoinedGroupStateIfNewer same epoch returned refreshed=true")
+	}
+
+	refreshed, err = n.RefreshJoinedGroupStateIfNewer(
+		groupId,
+		sameEpochConfig,
+		&GroupKeyInfo{Key: olderEpochGroupKey, KeyEpoch: 1},
+	)
+	if err != nil {
+		t.Fatalf("RefreshJoinedGroupStateIfNewer older epoch: %v", err)
+	}
+	if refreshed {
+		t.Fatal("RefreshJoinedGroupStateIfNewer older epoch returned refreshed=true")
+	}
+
+	n.mu.RLock()
+	finalConfig := n.groupConfigs[groupId]
+	finalKey := n.groupKeys[groupId]
+	n.mu.RUnlock()
+
+	if finalConfig == nil || finalConfig.Name != refreshedConfig.Name || finalConfig.Members[0].Role != GroupRoleAdmin {
+		t.Fatalf("final config = %#v, want refreshed admin config preserved", finalConfig)
+	}
+	if finalKey == nil || finalKey.Key != secondGroupKey || finalKey.KeyEpoch != 2 {
+		t.Fatalf("final key = %#v, want epoch 2 second key preserved", finalKey)
+	}
+}
+
+func TestRA015RefreshJoinedGroupStateReaddConfigAndKeyConverge(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	_, alicePubB64 := generateEd25519KeyPair(t)
+	_, bobPubB64 := generateEd25519KeyPair(t)
+	_, charliePubB64 := generateEd25519KeyPair(t)
+	firstGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate first group key: %v", err)
+	}
+	secondGroupKey, err := mcrypto.GenerateGroupKey()
+	if err != nil {
+		t.Fatalf("generate second group key: %v", err)
+	}
+
+	groupId := "ra015-readd-refresh-helper"
+	charliePeerId := "ra015-charlie-peer"
+	initialConfig := &GroupConfig{
+		Name:      "RA-015 before re-add",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: "ra015-bob-peer", Role: GroupRoleWriter, PublicKey: bobPubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-13T05:40:00Z",
+	}
+	if err := n.JoinGroupTopic(groupId, initialConfig, &GroupKeyInfo{
+		Key:      firstGroupKey,
+		KeyEpoch: 1,
+	}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	n.mu.RLock()
+	initialTopic := n.groupTopics[groupId]
+	initialSub := n.groupSubs[groupId]
+	n.mu.RUnlock()
+
+	readdConfig := &GroupConfig{
+		Name:      "RA-015 after Charlie re-add",
+		GroupType: GroupTypeChat,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: alicePubB64},
+			{PeerId: "ra015-bob-peer", Role: GroupRoleWriter, PublicKey: bobPubB64},
+			{PeerId: charliePeerId, Role: GroupRoleWriter, PublicKey: charliePubB64},
+		},
+		CreatedBy: n.PeerId(),
+		CreatedAt: "2026-05-13T05:41:00Z",
+	}
+	refreshed, err := n.RefreshJoinedGroupStateIfNewer(
+		groupId,
+		readdConfig,
+		&GroupKeyInfo{Key: secondGroupKey, KeyEpoch: 2},
+	)
+	if err != nil {
+		t.Fatalf("RefreshJoinedGroupStateIfNewer RA-015: %v", err)
+	}
+	if !refreshed {
+		t.Fatal("RefreshJoinedGroupStateIfNewer RA-015 returned refreshed=false")
+	}
+
+	n.mu.RLock()
+	currentTopic := n.groupTopics[groupId]
+	currentSub := n.groupSubs[groupId]
+	currentConfig := n.groupConfigs[groupId]
+	currentKey := n.groupKeys[groupId]
+	n.mu.RUnlock()
+
+	if currentTopic != initialTopic {
+		t.Fatal("RA-015 refresh replaced the existing topic")
+	}
+	if currentSub != initialSub {
+		t.Fatal("RA-015 refresh replaced the existing subscription")
+	}
+	if currentConfig == nil || currentConfig.Name != readdConfig.Name {
+		t.Fatalf("stored config = %#v, want re-add config", currentConfig)
+	}
+	if !isAllowedWriter(currentConfig, charliePeerId) {
+		t.Fatal("re-added Charlie is not allowed to write after RA-015 refresh")
+	}
+	if currentKey == nil || currentKey.Key != secondGroupKey || currentKey.KeyEpoch != 2 {
+		t.Fatalf("stored key = %#v, want epoch 2 second key", currentKey)
+	}
+	if currentKey.PrevKey != firstGroupKey || currentKey.PrevKeyEpoch != 1 || currentKey.GraceDeadline.IsZero() {
+		t.Fatalf("previous key grace = (%q,%d,%v), want first key epoch 1 with deadline", currentKey.PrevKey, currentKey.PrevKeyEpoch, currentKey.GraceDeadline)
 	}
 }
 

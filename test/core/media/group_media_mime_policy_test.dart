@@ -21,6 +21,7 @@ void main() {
         'audio/aac': 'audio',
         'audio/mpeg': 'audio',
         'audio/ogg': 'audio',
+        'application/octet-stream': 'file',
       };
 
       for (final entry in expected.entries) {
@@ -40,36 +41,32 @@ void main() {
       }
     });
 
-    test(
-      'rejects missing, wildcard, generic, dangerous, and unsupported MIME',
-      () {
-        const rejected = <String?>[
-          null,
-          '',
-          'not-a-mime',
-          'image/*',
-          '*/jpeg',
-          'image/jpeg; charset=utf-8',
-          'application/octet-stream',
-          'application/pdf',
-          'text/html',
-          'image/svg+xml',
-          'application/zip',
-          'application/x-msdownload',
-          'video/x-matroska',
-          'video/x-msvideo',
-          'audio/x-m4a',
-        ];
+    test('rejects missing, wildcard, dangerous, and unsupported MIME', () {
+      const rejected = <String?>[
+        null,
+        '',
+        'not-a-mime',
+        'image/*',
+        '*/jpeg',
+        'image/jpeg; charset=utf-8',
+        'application/pdf',
+        'text/html',
+        'image/svg+xml',
+        'application/zip',
+        'application/x-msdownload',
+        'video/x-matroska',
+        'video/x-msvideo',
+        'audio/x-m4a',
+      ];
 
-        for (final mime in rejected) {
-          expect(
-            GroupMediaMimePolicy.validateDescriptor(mime: mime).isValid,
-            isFalse,
-            reason: '$mime should be rejected',
-          );
-        }
-      },
-    );
+      for (final mime in rejected) {
+        expect(
+          GroupMediaMimePolicy.validateDescriptor(mime: mime).isValid,
+          isFalse,
+          reason: '$mime should be rejected',
+        );
+      }
+    });
 
     test('rejects mediaType mismatches', () {
       expect(

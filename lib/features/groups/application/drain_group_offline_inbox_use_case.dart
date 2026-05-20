@@ -22,6 +22,19 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 const groupUndecryptablePlaceholderText = 'Message could not be decrypted.';
 const defaultGroupInboxDrainMaxPages = 100;
+const groupInboxSyntheticSinceCursorPrefix = 'mknoon-since-ms:';
+
+class GroupOfflineInboxDrainResult {
+  const GroupOfflineInboxDrainResult({
+    required this.groupCount,
+    required this.errorCount,
+  });
+
+  final int groupCount;
+  final int errorCount;
+
+  bool get isSuccessful => errorCount == 0;
+}
 
 typedef RequestGroupHistoryRepairRange =
     Future<GroupHistoryRepairRangeResult> Function({
@@ -42,7 +55,7 @@ typedef RequestGroupHistoryRepairRange =
 /// If [drainAllPages] is true (default), remaining pages are fetched
 /// in the same call. Callers can set it to false and use
 /// [drainGroupOfflineInboxContinuation] for background continuation.
-Future<void> drainGroupOfflineInbox({
+Future<GroupOfflineInboxDrainResult> drainGroupOfflineInbox({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
@@ -68,7 +81,7 @@ Future<void> drainGroupOfflineInbox({
 
   final groups = await groupRepo.getAllGroups();
 
-  await Future.wait(
+  final groupSucceeded = await Future.wait(
     groups.map((group) async {
       final groupStopwatch = Stopwatch()..start();
       try {
@@ -90,6 +103,7 @@ Future<void> drainGroupOfflineInbox({
           pageSize: pageSize,
           maxPages: maxPages,
         );
+        return true;
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
@@ -113,14 +127,16 @@ Future<void> drainGroupOfflineInbox({
                 : group.id,
           },
         );
+        return false;
       }
     }),
   );
+  final errorCount = groupSucceeded.where((succeeded) => !succeeded).length;
 
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_DRAIN_OFFLINE_INBOX_DONE',
-    details: {'groupCount': groups.length},
+    details: {'groupCount': groups.length, 'errorCount': errorCount},
   );
   emitFlowEvent(
     layer: 'FL',
@@ -132,7 +148,12 @@ Future<void> drainGroupOfflineInbox({
       'groupCount': groups.length,
       'drainAllPages': drainAllPages,
       'pageSize': pageSize,
+      'errorCount': errorCount,
     },
+  );
+  return GroupOfflineInboxDrainResult(
+    groupCount: groups.length,
+    errorCount: errorCount,
   );
 }
 
@@ -261,7 +282,8 @@ Future<void> _drainGroupInbox({
     );
 
     final messages = result.messages;
-    final nextCursor = result.cursor;
+    final relayNextCursor = result.cursor;
+    var maxPageTimestampMs = _maxRelayMessageTimestampMs(messages);
 
     final pageReceipts = <GroupMessageReceipt>[];
     final pageReadMessageIds = <String>[];
@@ -279,6 +301,17 @@ Future<void> _drainGroupInbox({
       Map<String, dynamic> msg, {
       required bool allowUnknownSenderDeferral,
     }) async {
+      if (error is GroupOfflineReplaySignatureException &&
+          error.reason == 'recipient_not_entitled') {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_DRAIN_OFFLINE_INBOX_REPLAY_RECIPIENT_SKIPPED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        return true;
+      }
       final allowDeletedGroupPlaceholder =
           error is GroupOfflineReplaySignatureException &&
           await _isUnknownSenderForDeletedLocalGroup(
@@ -293,6 +326,18 @@ Future<void> _drainGroupInbox({
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_DRAIN_OFFLINE_INBOX_UNKNOWN_SENDER_REPLAY_DEFERRED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        return true;
+      }
+      if (!allowUnknownSenderDeferral &&
+          error is GroupOfflineReplaySignatureException &&
+          _shouldSkipDeferredUnknownSenderReplay(error, msg)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_DRAIN_OFFLINE_INBOX_UNKNOWN_SENDER_REPLAY_SKIPPED',
           details: {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           },
@@ -426,11 +471,20 @@ Future<void> _drainGroupInbox({
       Map<String, dynamic> msg,
     ) async {
       final text = payload['text'] as String? ?? '';
+      final payloadTimestamp = payload['timestamp'] as String?;
       final timestamp =
-          payload['timestamp'] as String? ??
-          DateTime.now().toUtc().toIso8601String();
+          payloadTimestamp ?? DateTime.now().toUtc().toIso8601String();
       final parsedTimestamp = _tryParseUtcTimestamp(timestamp);
       final isSystemPayload = text.startsWith('{"__sys":');
+      final relayTimestampMs = _relayMessageTimestampMs(msg['timestamp']);
+      if (payloadTimestamp != null &&
+          parsedTimestamp != null &&
+          relayTimestampMs == null) {
+        maxPageTimestampMs = _latestTimestampMs(
+          maxPageTimestampMs,
+          parsedTimestamp.millisecondsSinceEpoch,
+        );
+      }
 
       if (!isSystemPayload && parsedTimestamp != null) {
         sawTimestampedRetentionPayload = true;
@@ -587,6 +641,19 @@ Future<void> _drainGroupInbox({
             'quotedMessageId': payload['quotedMessageId'],
           'media': ?media,
         }, rethrowOnError: true);
+        GroupMessage? messageForLocalReceipts;
+        if (listenerWireMessageId != null && listenerWireMessageId.isNotEmpty) {
+          messageForLocalReceipts = await msgRepo.getMessage(
+            listenerWireMessageId,
+          );
+        }
+        if (messageForLocalReceipts != null) {
+          final deliveredReceipts = _receiptsForPersistedInboxMessage(
+            messageForLocalReceipts,
+            localPeerId: selfPeerId,
+          );
+          pageReceipts.addAll(deliveredReceipts);
+        }
         final payloadReceipts = _receiptsFromPayload(
           payload,
           groupId: resolvedGroupId,
@@ -672,7 +739,13 @@ Future<void> _drainGroupInbox({
         if (await shouldSkipPreJoinReplay(msg)) {
           continue;
         }
-        payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
+        payload = await decodeInboxMessage(
+          bridge,
+          groupRepo,
+          msg,
+          groupId,
+          expectedRecipientPeerId: selfPeerId,
+        );
       } catch (e) {
         await handleDecodeError(e, msg, allowUnknownSenderDeferral: true);
         continue;
@@ -688,7 +761,13 @@ Future<void> _drainGroupInbox({
           if (await shouldSkipPreJoinReplay(msg)) {
             continue;
           }
-          payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
+          payload = await decodeInboxMessage(
+            bridge,
+            groupRepo,
+            msg,
+            groupId,
+            expectedRecipientPeerId: selfPeerId,
+          );
         } catch (e) {
           await handleDecodeError(e, msg, allowUnknownSenderDeferral: false);
           continue;
@@ -721,6 +800,11 @@ Future<void> _drainGroupInbox({
     // happened in Phase 1 via the outer msgRepo. This transaction is now
     // bounded to a few small writes, so the lock is held for milliseconds
     // (not seconds), and concurrent readers are not starved.
+    final nextCursor = _durableNextGroupInboxCursor(
+      currentCursor: cursor,
+      relayNextCursor: relayNextCursor,
+      maxTimestampMs: maxPageTimestampMs,
+    );
     await msgRepo.runInboxPageTransaction(
       groupId: groupId,
       nextCursor: nextCursor,
@@ -762,10 +846,10 @@ Future<void> _drainGroupInbox({
 
     totalMessages += messages.length;
     pageCount++;
-    cursor = nextCursor;
 
     // If caller only wants the first page, stop here.
-    if (!drainAllPages && cursor.isNotEmpty) {
+    if (!drainAllPages && relayNextCursor.isNotEmpty) {
+      cursor = relayNextCursor;
       await _persistRetentionState(
         groupRepo: groupRepo,
         groupId: groupId,
@@ -798,6 +882,13 @@ Future<void> _drainGroupInbox({
       );
       return;
     }
+
+    if (relayNextCursor.isEmpty) {
+      cursor = '';
+      break;
+    }
+
+    cursor = relayNextCursor;
 
     if (cursor.isNotEmpty && !seenCursors.add(cursor)) {
       await _persistRetentionState(
@@ -898,6 +989,61 @@ Future<void> _drainGroupInbox({
       'drainAllPages': drainAllPages,
     },
   );
+}
+
+String _durableNextGroupInboxCursor({
+  required String currentCursor,
+  required String relayNextCursor,
+  required int? maxTimestampMs,
+}) {
+  if (relayNextCursor.isNotEmpty) {
+    return relayNextCursor;
+  }
+
+  if (maxTimestampMs != null) {
+    final inclusiveBoundaryMs = maxTimestampMs > 1
+        ? maxTimestampMs - 1
+        : maxTimestampMs;
+    return '$groupInboxSyntheticSinceCursorPrefix$inclusiveBoundaryMs';
+  }
+
+  if (_isSyntheticGroupInboxSinceCursor(currentCursor)) {
+    return currentCursor;
+  }
+
+  return '';
+}
+
+bool _isSyntheticGroupInboxSinceCursor(String cursor) =>
+    cursor.startsWith(groupInboxSyntheticSinceCursorPrefix);
+
+int? _maxRelayMessageTimestampMs(List<Map<String, dynamic>> messages) {
+  int? maxTimestamp;
+  for (final message in messages) {
+    final timestamp = _relayMessageTimestampMs(message['timestamp']);
+    if (timestamp == null) continue;
+    if (maxTimestamp == null || timestamp > maxTimestamp) {
+      maxTimestamp = timestamp;
+    }
+  }
+  return maxTimestamp;
+}
+
+int _latestTimestampMs(int? current, int candidate) {
+  if (current == null || candidate > current) {
+    return candidate;
+  }
+  return current;
+}
+
+int? _relayMessageTimestampMs(Object? value) {
+  if (value is int && value > 0) return value;
+  if (value is num && value > 0) return value.toInt();
+  if (value is String) {
+    final parsed = int.tryParse(value.trim());
+    if (parsed != null && parsed > 0) return parsed;
+  }
+  return null;
 }
 
 Future<void> _repairHistoryGapsFromPage({
@@ -1110,7 +1256,13 @@ Future<List<String>> _applyRepairedHistoryMessages({
   for (final msg in messages) {
     late final Map<String, dynamic> payload;
     try {
-      payload = await decodeInboxMessage(bridge, groupRepo, msg, groupId);
+      payload = await decodeInboxMessage(
+        bridge,
+        groupRepo,
+        msg,
+        groupId,
+        expectedRecipientPeerId: selfPeerId,
+      );
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1233,8 +1385,9 @@ Future<Map<String, dynamic>> decodeInboxMessage(
   Bridge bridge,
   GroupRepository groupRepo,
   Map<String, dynamic> envelope,
-  String fallbackGroupId,
-) async {
+  String fallbackGroupId, {
+  String? expectedRecipientPeerId,
+}) async {
   // If the envelope contains a `message` string, decode it.
   final messageStr = envelope['message'];
   if (messageStr is String && messageStr.isNotEmpty) {
@@ -1259,6 +1412,7 @@ Future<Map<String, dynamic>> decodeInboxMessage(
           groupId: fallbackGroupId,
           envelope: decodedMessage,
           expectedRelayPeerId: envelope['from'] as String?,
+          expectedRecipientPeerId: expectedRecipientPeerId,
         );
 
         if (payloadType == groupOfflineReplayPayloadTypeReaction) {
@@ -1415,6 +1569,13 @@ bool _shouldDeferUnknownSenderReplay(
       replayEnvelope['payloadType'] as String? ??
       groupOfflineReplayPayloadTypeMessage;
   return payloadType == groupOfflineReplayPayloadTypeMessage;
+}
+
+bool _shouldSkipDeferredUnknownSenderReplay(
+  GroupOfflineReplaySignatureException error,
+  Map<String, dynamic> envelope,
+) {
+  return _shouldDeferUnknownSenderReplay(error, envelope);
 }
 
 Map<String, dynamic>? _tryDecodeReplayEnvelope(Object? rawMessage) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +62,10 @@ func assertNotOk(t *testing.T, m map[string]interface{}, expectedCode string) {
 		t.Errorf("expected errorCode=%q, got %q (errorMessage=%v)",
 			expectedCode, code, m["errorMessage"])
 	}
+}
+
+func ptrString(value string) *string {
+	return &value
 }
 
 func writeBridgeTestFrame(t *testing.T, w io.Writer, data []byte) {
@@ -617,25 +622,82 @@ type noopCallback struct{}
 func (noopCallback) OnEvent(string) {}
 
 type recordingBridgeCallback struct {
+	mu     sync.Mutex
 	events []string
 }
 
 func (c *recordingBridgeCallback) OnEvent(jsonString string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.events = append(c.events, jsonString)
+}
+
+func (c *recordingBridgeCallback) eventCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.events)
+}
+
+func (c *recordingBridgeCallback) snapshotEvents() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	events := make([]string, len(c.events))
+	copy(events, c.events)
+	return events
+}
+
+func waitForBridgeEventCount(t *testing.T, callbacks []*recordingBridgeCallback, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		total := 0
+		for _, callback := range callbacks {
+			total += callback.eventCount()
+		}
+		if total >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	counts := make([]int, len(callbacks))
+	for i, callback := range callbacks {
+		counts[i] = callback.eventCount()
+	}
+	t.Fatalf("timed out waiting for %d bridge events, got callback counts %v", want, counts)
+}
+
+func assertGroupMessageEvent(t *testing.T, payload string, messageId string) {
+	t.Helper()
+	var event struct {
+		Event string                 `json:"event"`
+		Data  map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		t.Fatalf("failed to parse event payload %q: %v", payload, err)
+	}
+	if event.Event != "group_message:received" {
+		t.Fatalf("expected group_message:received event, got %q", event.Event)
+	}
+	if event.Data["messageId"] != messageId {
+		t.Fatalf("expected messageId %q, got %v", messageId, event.Data["messageId"])
+	}
 }
 
 // withSingletonNode sets up a singleton for the duration of one test.
 func withSingletonNode(t *testing.T) {
 	t.Helper()
 	nodeMu.Lock()
-	prev := singletonNode
+	prevNode := singletonNode
+	prevAdapter := singletonCallbackAdapter
 	nodeMu.Unlock()
 
 	Initialize(&noopCallback{})
 
 	t.Cleanup(func() {
 		nodeMu.Lock()
-		singletonNode = prev
+		singletonNode = prevNode
+		singletonCallbackAdapter = prevAdapter
 		nodeMu.Unlock()
 	})
 }
@@ -787,13 +849,16 @@ func startNodeJSON(t *testing.T, keyHex string) string {
 func withNilSingleton(t *testing.T) {
 	t.Helper()
 	nodeMu.Lock()
-	prev := singletonNode
+	prevNode := singletonNode
+	prevAdapter := singletonCallbackAdapter
 	singletonNode = nil
+	singletonCallbackAdapter = nil
 	nodeMu.Unlock()
 
 	t.Cleanup(func() {
 		nodeMu.Lock()
-		singletonNode = prev
+		singletonNode = prevNode
+		singletonCallbackAdapter = prevAdapter
 		nodeMu.Unlock()
 	})
 }
@@ -804,8 +869,10 @@ func withNilSingleton(t *testing.T) {
 func withFreshSingletonNode(t *testing.T) {
 	t.Helper()
 	nodeMu.Lock()
-	prev := singletonNode
+	prevNode := singletonNode
+	prevAdapter := singletonCallbackAdapter
 	singletonNode = nil // force Initialize to create a new one
+	singletonCallbackAdapter = nil
 	nodeMu.Unlock()
 
 	Initialize(&noopCallback{})
@@ -813,7 +880,8 @@ func withFreshSingletonNode(t *testing.T) {
 	t.Cleanup(func() {
 		StopNode() // safe even if not started
 		nodeMu.Lock()
-		singletonNode = prev
+		singletonNode = prevNode
+		singletonCallbackAdapter = prevAdapter
 		nodeMu.Unlock()
 	})
 }
@@ -1126,17 +1194,107 @@ func TestNodeStatus_ContainsRelayStateWithoutBreakingLegacyFields(t *testing.T) 
 
 func TestNodeCallbackAdapter_ForwardsRelayStateEventUntouched(t *testing.T) {
 	recorder := &recordingBridgeCallback{}
-	adapter := &nodeCallbackAdapter{cb: recorder}
+	adapter := &nodeCallbackAdapter{}
+	adapter.SetCallback(recorder)
 	payload := `{"event":"relay:state","data":{"relayState":"online","healthyRelayCount":1}}`
 
 	adapter.OnEvent(payload)
 
-	if len(recorder.events) != 1 {
-		t.Fatalf("expected exactly 1 forwarded event, got %d", len(recorder.events))
+	events := recorder.snapshotEvents()
+	if len(events) != 1 {
+		t.Fatalf("expected exactly 1 forwarded event, got %d", len(events))
 	}
-	if recorder.events[0] != payload {
-		t.Fatalf("expected forwarded payload %q, got %q", payload, recorder.events[0])
+	if events[0] != payload {
+		t.Fatalf("expected forwarded payload %q, got %q", payload, events[0])
 	}
+}
+
+func TestNodeCallbackAdapter_SetCallbackSwapsAndDropsNil(t *testing.T) {
+	callbackA := &recordingBridgeCallback{}
+	callbackB := &recordingBridgeCallback{}
+	adapter := &nodeCallbackAdapter{}
+
+	adapter.SetCallback(callbackA)
+	adapter.OnEvent(`{"event":"first"}`)
+	adapter.SetCallback(callbackB)
+	adapter.OnEvent(`{"event":"second"}`)
+	adapter.SetCallback(nil)
+	adapter.OnEvent(`{"event":"third"}`)
+
+	eventsA := callbackA.snapshotEvents()
+	if len(eventsA) != 1 || eventsA[0] != `{"event":"first"}` {
+		t.Fatalf("callback A events = %v, want only first event", eventsA)
+	}
+
+	eventsB := callbackB.snapshotEvents()
+	if len(eventsB) != 1 || eventsB[0] != `{"event":"second"}` {
+		t.Fatalf("callback B events = %v, want only second event", eventsB)
+	}
+}
+
+func TestBB001InitializeUpdatesExistingCallbackForFutureGroupEvents(t *testing.T) {
+	withNilSingleton(t)
+
+	callbackA := &recordingBridgeCallback{}
+	callbackB := &recordingBridgeCallback{}
+
+	Initialize(callbackA)
+	nodeMu.Lock()
+	firstNode := singletonNode
+	adapter := singletonCallbackAdapter
+	nodeMu.Unlock()
+	if firstNode == nil {
+		t.Fatal("expected Initialize to create singleton node")
+	}
+	if adapter == nil {
+		t.Fatal("expected Initialize to create callback adapter")
+	}
+
+	dispatcher := node.NewEventDispatcher(adapter, 10)
+	t.Cleanup(dispatcher.Stop)
+
+	dispatcher.Emit("group_message:received", map[string]interface{}{
+		"groupId":   "group-bb-001",
+		"messageId": "before-reinitialize",
+	})
+	waitForBridgeEventCount(t, []*recordingBridgeCallback{callbackA, callbackB}, 1)
+
+	if got := callbackA.eventCount(); got != 1 {
+		t.Fatalf("expected callback A to receive first event, got %d events", got)
+	}
+	if got := callbackB.eventCount(); got != 0 {
+		t.Fatalf("expected callback B to receive no events before reinitialize, got %d", got)
+	}
+
+	Initialize(callbackB)
+	nodeMu.Lock()
+	secondNode := singletonNode
+	secondAdapter := singletonCallbackAdapter
+	nodeMu.Unlock()
+	if secondNode != firstNode {
+		t.Fatal("expected repeated Initialize to keep the same singleton node")
+	}
+	if secondAdapter != adapter {
+		t.Fatal("expected repeated Initialize to keep the same callback adapter")
+	}
+
+	dispatcher.Emit("group_message:received", map[string]interface{}{
+		"groupId":   "group-bb-001",
+		"messageId": "after-reinitialize",
+	})
+	waitForBridgeEventCount(t, []*recordingBridgeCallback{callbackA, callbackB}, 2)
+
+	eventsA := callbackA.snapshotEvents()
+	if len(eventsA) != 1 {
+		t.Fatalf("expected stale callback A to receive no post-reinitialize event, got %d events: %v", len(eventsA), eventsA)
+	}
+	assertGroupMessageEvent(t, eventsA[0], "before-reinitialize")
+
+	eventsB := callbackB.snapshotEvents()
+	if len(eventsB) != 1 {
+		t.Fatalf("expected latest callback B to receive the post-reinitialize event, got %d events: %v", len(eventsB), eventsB)
+	}
+	assertGroupMessageEvent(t, eventsB[0], "after-reinitialize")
 }
 
 func TestSendMessage_IncludesTransportInResponse(t *testing.T) {
@@ -1543,21 +1701,120 @@ func TestGroupCreate_MissingFields(t *testing.T) {
 	assertNotOk(t, m, "INVALID_INPUT")
 }
 
+func TestGroupCreate_BB003RequiresCompleteCreatorIdentityAndKeyMaterial(t *testing.T) {
+	withSingletonNode(t)
+
+	cases := []struct {
+		name  string
+		field string
+		value *string
+	}{
+		{name: "missing creatorPeerId", field: "creatorPeerId", value: nil},
+		{name: "blank creatorPeerId", field: "creatorPeerId", value: ptrString("  ")},
+		{name: "missing creatorPublicKey", field: "creatorPublicKey", value: nil},
+		{name: "blank creatorPublicKey", field: "creatorPublicKey", value: ptrString("  ")},
+		{name: "missing creatorMlKemPublicKey", field: "creatorMlKemPublicKey", value: nil},
+		{name: "blank creatorMlKemPublicKey", field: "creatorMlKemPublicKey", value: ptrString("  ")},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := map[string]interface{}{
+				"name":                  "BB-003 private group",
+				"groupType":             "chat",
+				"creatorPeerId":         "peer-admin",
+				"creatorPublicKey":      "pk-admin",
+				"creatorMlKemPublicKey": "mlkem-pk-admin",
+			}
+			if tc.value == nil {
+				delete(input, tc.field)
+			} else {
+				input[tc.field] = *tc.value
+			}
+
+			encoded, _ := json.Marshal(input)
+			m := parseJSON(t, GroupCreate(string(encoded)))
+			assertNotOk(t, m, "INVALID_INPUT")
+
+			message, _ := m["errorMessage"].(string)
+			if !strings.Contains(message, "creator material") {
+				t.Fatalf("errorMessage = %q, want explicit creator material error", message)
+			}
+		})
+	}
+}
+
 func TestGroupCreate_GL005RejectsUnsupportedPublicOrOpenGroupTypes(t *testing.T) {
 	withSingletonNode(t)
 
 	for _, groupType := range []string{"public", "private", "broadcast", "discoverable", "openJoin"} {
 		t.Run(groupType, func(t *testing.T) {
 			input, _ := json.Marshal(map[string]interface{}{
-				"name":             "GL-005 unsupported group",
-				"groupType":        groupType,
-				"creatorPeerId":    "peer-admin",
-				"creatorPublicKey": "pk-admin",
+				"name":                  "GL-005 unsupported group",
+				"groupType":             groupType,
+				"creatorPeerId":         "peer-admin",
+				"creatorPublicKey":      "pk-admin",
+				"creatorMlKemPublicKey": "mlkem-pk-admin",
 			})
 
 			result := GroupCreate(string(input))
 			m := parseJSON(t, result)
 			assertNotOk(t, m, "INVALID_INPUT")
+		})
+	}
+}
+
+func TestBB005GroupCreateRejectsUnsupportedTypesWithoutPartialState(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startResult := StartNode(startNodeJSON(t, identity.PrivateKeyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	unsupportedTypes := []string{"public", "private", "broadcast", "discoverable", "openJoin"}
+	for _, groupType := range unsupportedTypes {
+		t.Run("rejects "+groupType, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]interface{}{
+				"name":                  "BB-005 unsupported group",
+				"groupType":             groupType,
+				"creatorPeerId":         identity.PeerId,
+				"creatorPublicKey":      identity.PublicKey,
+				"creatorMlKemPublicKey": "bb005-mlkem-pk-creator",
+			})
+
+			m := parseJSON(t, GroupCreate(string(input)))
+			assertNotOk(t, m, "INVALID_INPUT")
+			if message, _ := m["errorMessage"].(string); !strings.Contains(message, groupType) {
+				t.Fatalf("errorMessage = %q, want unsupported type %q named", message, groupType)
+			}
+
+			for _, key := range []string{"groupId", "topicName", "groupKey", "keyEpoch", "groupConfig"} {
+				if _, exists := m[key]; exists {
+					t.Fatalf("unsupported create response contains partial artifact %q: %#v", key, m[key])
+				}
+			}
+		})
+	}
+
+	for _, groupType := range []string{"chat", "announcement", "qa"} {
+		t.Run("accepts "+groupType, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]interface{}{
+				"name":                  "BB-005 supported " + groupType,
+				"groupType":             groupType,
+				"creatorPeerId":         identity.PeerId,
+				"creatorPublicKey":      identity.PublicKey,
+				"creatorMlKemPublicKey": "bb005-mlkem-pk-creator",
+			})
+
+			m := parseJSON(t, GroupCreate(string(input)))
+			assertOk(t, m)
+			config, ok := m["groupConfig"].(map[string]interface{})
+			if !ok {
+				t.Fatalf("groupConfig = %T, want object", m["groupConfig"])
+			}
+			if got := config["groupType"]; got != groupType {
+				t.Fatalf("groupConfig.groupType = %v, want %s", got, groupType)
+			}
 		})
 	}
 }
@@ -1578,10 +1835,11 @@ func TestSP003GroupCreateGeneratesFreshV4GroupIdsAndKeys(t *testing.T) {
 	seenGroupKeys := make(map[string]struct{}, 8)
 	for i := 0; i < 8; i++ {
 		createInput, _ := json.Marshal(map[string]interface{}{
-			"name":             fmt.Sprintf("SP-003 Random Group %d", i+1),
-			"groupType":        "chat",
-			"creatorPeerId":    creatorPeerId,
-			"creatorPublicKey": creatorPublicKey,
+			"name":                  fmt.Sprintf("SP-003 Random Group %d", i+1),
+			"groupType":             "chat",
+			"creatorPeerId":         creatorPeerId,
+			"creatorPublicKey":      creatorPublicKey,
+			"creatorMlKemPublicKey": "mlkem-pk-creator",
 		})
 		createResult := GroupCreate(string(createInput))
 		createMap := parseJSON(t, createResult)
@@ -1614,6 +1872,142 @@ func TestSP003GroupCreateGeneratesFreshV4GroupIdsAndKeys(t *testing.T) {
 	}
 }
 
+func TestGroupCreate_BB004ReturnsCoherentInitialStateAndAcceptsFirstPublish(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startResult := StartNode(startNodeJSON(t, identity.PrivateKeyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	const creatorMlKemPublicKey = "bb004-mlkem-pk-creator"
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":                  "BB-004 Coherent Create",
+		"groupType":             "chat",
+		"creatorPeerId":         identity.PeerId,
+		"creatorPublicKey":      identity.PublicKey,
+		"creatorMlKemPublicKey": creatorMlKemPublicKey,
+	})
+	createMap := parseJSON(t, GroupCreate(string(createInput)))
+	assertOk(t, createMap)
+
+	groupId, ok := createMap["groupId"].(string)
+	if !ok || !sp003UUIDV4Pattern.MatchString(groupId) {
+		t.Fatalf("groupId = %v, want UUID v4 string", createMap["groupId"])
+	}
+
+	config, ok := createMap["groupConfig"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("groupConfig = %T, want object", createMap["groupConfig"])
+	}
+	if got := config["name"]; got != "BB-004 Coherent Create" {
+		t.Fatalf("groupConfig.name = %v", got)
+	}
+	if got := config["groupType"]; got != "chat" {
+		t.Fatalf("groupConfig.groupType = %v", got)
+	}
+	if got := config["createdBy"]; got != identity.PeerId {
+		t.Fatalf("groupConfig.createdBy = %v, want %s", got, identity.PeerId)
+	}
+	if createdAt, ok := config["createdAt"].(string); !ok || createdAt == "" {
+		t.Fatalf("groupConfig.createdAt = %v, want non-empty string", config["createdAt"])
+	}
+
+	members, ok := config["members"].([]interface{})
+	if !ok || len(members) != 1 {
+		t.Fatalf("groupConfig.members = %#v, want one creator", config["members"])
+	}
+	creator, ok := members[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("groupConfig.members[0] = %T, want object", members[0])
+	}
+	if got := creator["peerId"]; got != identity.PeerId {
+		t.Fatalf("creator.peerId = %v, want %s", got, identity.PeerId)
+	}
+	if got := creator["role"]; got != "admin" {
+		t.Fatalf("creator.role = %v, want admin", got)
+	}
+	if got := creator["publicKey"]; got != identity.PublicKey {
+		t.Fatalf("creator.publicKey = %v, want %s", got, identity.PublicKey)
+	}
+	if got := creator["mlKemPublicKey"]; got != creatorMlKemPublicKey {
+		t.Fatalf("creator.mlKemPublicKey = %v, want %s", got, creatorMlKemPublicKey)
+	}
+
+	groupKey, ok := createMap["groupKey"].(string)
+	if !ok || groupKey == "" {
+		t.Fatalf("groupKey = %v, want non-empty string", createMap["groupKey"])
+	}
+	keyBytes, err := base64.StdEncoding.DecodeString(groupKey)
+	if err != nil {
+		t.Fatalf("decode groupKey: %v", err)
+	}
+	if len(keyBytes) != 32 {
+		t.Fatalf("groupKey decoded length = %d, want 32", len(keyBytes))
+	}
+	if got := createMap["keyEpoch"]; got != float64(1) {
+		t.Fatalf("keyEpoch = %v, want 1", got)
+	}
+
+	expectedTopic := node.GroupTopicPrefix + groupId
+	if topicName, ok := createMap["topicName"].(string); ok && topicName != "" && topicName != expectedTopic {
+		t.Fatalf("topicName = %q, want %q", topicName, expectedTopic)
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "BB-004 first publish after create",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "BB-004 Creator",
+	})
+	publishMap := parseJSON(t, GroupPublish(string(publishInput)))
+	assertOk(t, publishMap)
+
+	messageId, ok := publishMap["messageId"].(string)
+	if !ok || messageId == "" {
+		t.Fatalf("messageId = %v, want non-empty string", publishMap["messageId"])
+	}
+	if _, ok := publishMap["topicPeers"].(float64); !ok {
+		t.Fatalf("topicPeers = %T:%v, want numeric", publishMap["topicPeers"], publishMap["topicPeers"])
+	}
+}
+
+func TestBB016GroupCreatePreservesDescriptionInReturnedConfig(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startResult := StartNode(startNodeJSON(t, identity.PrivateKeyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	const description = "BB-016 metadata description with future-safe config text"
+	createInput, _ := json.Marshal(map[string]interface{}{
+		"name":                  "BB-016 Described Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity.PeerId,
+		"creatorPublicKey":      identity.PublicKey,
+		"creatorMlKemPublicKey": "bb016-mlkem-pk-creator",
+		"description":           description,
+	})
+
+	createMap := parseJSON(t, GroupCreate(string(createInput)))
+	assertOk(t, createMap)
+
+	config, ok := createMap["groupConfig"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("groupConfig = %T, want object", createMap["groupConfig"])
+	}
+	if got := config["description"]; got != description {
+		t.Fatalf("groupConfig.description = %v, want %q", got, description)
+	}
+	if got := config["name"]; got != "BB-016 Described Group" {
+		t.Fatalf("groupConfig.name = %v", got)
+	}
+	if got := config["groupType"]; got != "chat" {
+		t.Fatalf("groupConfig.groupType = %v", got)
+	}
+}
+
 func TestGroupJoinTopic_InvalidJSON(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupJoinTopic("not valid json")
@@ -1624,6 +2018,13 @@ func TestGroupJoinTopic_InvalidJSON(t *testing.T) {
 func TestGroupJoinTopic_MissingFields(t *testing.T) {
 	withSingletonNode(t)
 	result := GroupJoinTopic(`{"groupId": "g1"}`)
+	m := parseJSON(t, result)
+	assertNotOk(t, m, "INVALID_INPUT")
+}
+
+func TestGroupJoinTopic_BB006RejectsLegacyTopicNameOnlyPayload(t *testing.T) {
+	withSingletonNode(t)
+	result := GroupJoinTopic(`{"groupId": "g1", "topicName": "/mknoon/group/g1"}`)
 	m := parseJSON(t, result)
 	assertNotOk(t, m, "INVALID_INPUT")
 }
@@ -1710,10 +2111,11 @@ func TestGroupPublish_ResponseIncludesTopicPeers(t *testing.T) {
 
 	// 2. Create a group (this joins the topic and generates a group key).
 	createInput, _ := json.Marshal(map[string]interface{}{
-		"name":             "Peer Count Test Group",
-		"groupType":        "chat",
-		"creatorPeerId":    identity.PeerId,
-		"creatorPublicKey": identity.PublicKey,
+		"name":                  "Peer Count Test Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity.PeerId,
+		"creatorPublicKey":      identity.PublicKey,
+		"creatorMlKemPublicKey": "mlkem-pk-creator",
 	})
 	createResult := GroupCreate(string(createInput))
 	createMap := parseJSON(t, createResult)
@@ -1939,10 +2341,11 @@ func TestGroupUpdateConfig_WithNewMember(t *testing.T) {
 	identity := genIdentity["identity"].(map[string]interface{})
 
 	createInput, _ := json.Marshal(map[string]interface{}{
-		"name":             "Invite Test Group",
-		"groupType":        "chat",
-		"creatorPeerId":    identity["peerId"].(string),
-		"creatorPublicKey": identity["publicKey"].(string),
+		"name":                  "Invite Test Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity["peerId"].(string),
+		"creatorPublicKey":      identity["publicKey"].(string),
+		"creatorMlKemPublicKey": "mlkem-pk-creator",
 	})
 	createResult := GroupCreate(string(createInput))
 	createMap := parseJSON(t, createResult)
@@ -2025,6 +2428,146 @@ func TestGroupJoinTopic_WithInviteData(t *testing.T) {
 	assertOk(t, joinMap)
 }
 
+func TestGroupJoinTopic_BB007RoundTripsFullConfigAndAcceptsPublish(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  identity.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	startResult := StartNode(string(startInput))
+	assertOk(t, parseJSON(t, startResult))
+
+	keyResult := GenerateGroupKey()
+	keyMap := parseJSON(t, keyResult)
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+
+	inviteConfig := map[string]interface{}{
+		"name":        "BB-007 Invite Group",
+		"groupType":   "chat",
+		"description": "Full-config join payload bridge proof",
+		"members": []map[string]interface{}{
+			{
+				"peerId":         identity.PeerId,
+				"username":       "BB-007 Admin",
+				"role":           "admin",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb007-admin-mlkem",
+			},
+			{
+				"peerId":         "peer-bb007-invitee",
+				"username":       "Invitee",
+				"role":           "writer",
+				"publicKey":      "bb007-invitee-public-key",
+				"mlKemPublicKey": "bb007-invitee-mlkem",
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-10T20:00:00Z",
+	}
+
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     "bb007-bridge-full-config",
+		"groupConfig": inviteConfig,
+		"groupKey":    groupKey,
+		"keyEpoch":    7,
+	})
+	joinMap := parseJSON(t, GroupJoinTopic(string(joinInput)))
+	assertOk(t, joinMap)
+	if _, exists := joinMap["note"]; exists {
+		t.Fatalf("first full-config join returned unexpected note: %v", joinMap["note"])
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          "bb007-bridge-full-config",
+		"text":             "BB-007 publish after full-config join",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "BB-007 Admin",
+	})
+	publishMap := parseJSON(t, GroupPublish(string(publishInput)))
+	assertOk(t, publishMap)
+	if messageId, ok := publishMap["messageId"].(string); !ok || messageId == "" {
+		t.Fatalf("messageId = %v, want non-empty string", publishMap["messageId"])
+	}
+	if _, ok := publishMap["topicPeers"].(float64); !ok {
+		t.Fatalf("topicPeers = %T:%v, want numeric", publishMap["topicPeers"], publishMap["topicPeers"])
+	}
+}
+
+func TestGroupLeaveTopic_BB009RemovesNativeTopicAndBlocksPublish(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startResult := StartNode(startNodeJSON(t, identity.PrivateKeyHex))
+	assertOk(t, parseJSON(t, startResult))
+
+	keyResult := GenerateGroupKey()
+	keyMap := parseJSON(t, keyResult)
+	assertOk(t, keyMap)
+	groupKey := keyMap["groupKey"].(string)
+
+	groupId := "bb009-bridge-leave-removes-native-topic"
+	groupConfig := map[string]interface{}{
+		"name":      "BB-009 Bridge Leave",
+		"groupType": "chat",
+		"members": []map[string]interface{}{
+			{
+				"peerId":         identity.PeerId,
+				"username":       "BB-009 Leaver",
+				"role":           "admin",
+				"publicKey":      identity.PublicKey,
+				"mlKemPublicKey": "bb009-mlkem",
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-10T22:00:00Z",
+	}
+	joinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": groupConfig,
+		"groupKey":    groupKey,
+		"keyEpoch":    1,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(joinInput))))
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+	if n == nil {
+		t.Fatal("singleton node is nil after join")
+	}
+	if keyInfo := n.GetGroupKeyInfo(groupId); keyInfo == nil {
+		t.Fatal("GetGroupKeyInfo returned nil before leave")
+	}
+
+	leaveInput, _ := json.Marshal(map[string]interface{}{
+		"groupId": groupId,
+	})
+	assertOk(t, parseJSON(t, GroupLeaveTopic(string(leaveInput))))
+	if keyInfo := n.GetGroupKeyInfo(groupId); keyInfo != nil {
+		t.Fatalf("GetGroupKeyInfo after GroupLeaveTopic = %#v, want nil", keyInfo)
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "BB-009 publish after leave should fail",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "BB-009 Leaver",
+	})
+	publishMap := parseJSON(t, GroupPublish(string(publishInput)))
+	assertNotOk(t, publishMap, "GROUP_ERROR")
+	if errorMessage, _ := publishMap["errorMessage"].(string); !strings.Contains(errorMessage, "group not joined") {
+		t.Fatalf("GroupPublish after leave errorMessage = %q, want group not joined", errorMessage)
+	}
+}
+
 func TestGroupJoinTopic_AlreadyJoinedIsIdempotent(t *testing.T) {
 	withFreshSingletonNode(t)
 
@@ -2074,12 +2617,338 @@ func TestGroupJoinTopic_AlreadyJoinedIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestGroupJoinTopic_BB008AlreadyJoinedRefreshesNewerKeyAndConfig(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  identity.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+
+	firstKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, firstKeyMap)
+	firstGroupKey := firstKeyMap["groupKey"].(string)
+	secondKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, secondKeyMap)
+	secondGroupKey := secondKeyMap["groupKey"].(string)
+
+	groupId := "bb008-already-joined-refresh"
+	staleConfig := map[string]interface{}{
+		"name":      "BB-008 stale announcement config",
+		"groupType": "announcement",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    identity.PeerId,
+				"username":  "BB-008 writer before refresh",
+				"role":      "writer",
+				"publicKey": identity.PublicKey,
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-10T21:00:00Z",
+	}
+	firstJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": staleConfig,
+		"groupKey":    firstGroupKey,
+		"keyEpoch":    1,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(firstJoinInput))))
+
+	refreshedConfig := map[string]interface{}{
+		"name":      "BB-008 refreshed announcement config",
+		"groupType": "announcement",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    identity.PeerId,
+				"username":  "BB-008 admin after refresh",
+				"role":      "admin",
+				"publicKey": identity.PublicKey,
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-10T21:01:00Z",
+	}
+	secondJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": refreshedConfig,
+		"groupKey":    secondGroupKey,
+		"keyEpoch":    2,
+	})
+	secondJoin := parseJSON(t, GroupJoinTopic(string(secondJoinInput)))
+	assertOk(t, secondJoin)
+	if note, _ := secondJoin["note"].(string); note != "ALREADY_JOINED" {
+		t.Fatalf("second join note = %v, want ALREADY_JOINED", secondJoin["note"])
+	}
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+	if n == nil {
+		t.Fatal("singleton node is nil after started join")
+	}
+	keyInfo := n.GetGroupKeyInfo(groupId)
+	if keyInfo == nil {
+		t.Fatal("GetGroupKeyInfo returned nil after already-joined refresh")
+	}
+	if keyInfo.KeyEpoch != 2 || keyInfo.Key != secondGroupKey {
+		t.Fatalf("stored key = (%q,%d), want refreshed (%q,2)", keyInfo.Key, keyInfo.KeyEpoch, secondGroupKey)
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "BB-008 publish after config refresh",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "BB-008 Admin",
+	})
+	publishMap := parseJSON(t, GroupPublish(string(publishInput)))
+	assertOk(t, publishMap)
+	if messageId, ok := publishMap["messageId"].(string); !ok || messageId == "" {
+		t.Fatalf("messageId = %v, want non-empty string", publishMap["messageId"])
+	}
+	if _, ok := publishMap["topicPeers"].(float64); !ok {
+		t.Fatalf("topicPeers = %T:%v, want numeric", publishMap["topicPeers"], publishMap["topicPeers"])
+	}
+}
+
+func TestRA015GroupJoinTopicAlreadyJoinedReaddRefreshesConfigKeyAndDelivery(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	alice := generateTestIdentityMaterial(t)
+	bob := generateTestIdentityMaterial(t)
+	charlie := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  alice.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+
+	firstKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, firstKeyMap)
+	firstGroupKey := firstKeyMap["groupKey"].(string)
+	secondKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, secondKeyMap)
+	secondGroupKey := secondKeyMap["groupKey"].(string)
+
+	groupId := "ra015-already-joined-readd-refresh"
+	initialConfig := map[string]interface{}{
+		"name":      "RA-015 before re-add",
+		"groupType": "announcement",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    alice.PeerId,
+				"username":  "RA-015 Alice",
+				"role":      "writer",
+				"publicKey": alice.PublicKey,
+			},
+			{
+				"peerId":    bob.PeerId,
+				"username":  "RA-015 Bob",
+				"role":      "writer",
+				"publicKey": bob.PublicKey,
+			},
+		},
+		"createdBy": alice.PeerId,
+		"createdAt": "2026-05-13T05:30:00Z",
+	}
+	firstJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": initialConfig,
+		"groupKey":    firstGroupKey,
+		"keyEpoch":    1,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(firstJoinInput))))
+
+	readdConfig := map[string]interface{}{
+		"name":      "RA-015 after Charlie re-add",
+		"groupType": "announcement",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    alice.PeerId,
+				"username":  "RA-015 Alice",
+				"role":      "admin",
+				"publicKey": alice.PublicKey,
+			},
+			{
+				"peerId":    bob.PeerId,
+				"username":  "RA-015 Bob",
+				"role":      "writer",
+				"publicKey": bob.PublicKey,
+			},
+			{
+				"peerId":    charlie.PeerId,
+				"username":  "RA-015 Charlie re-added",
+				"role":      "writer",
+				"publicKey": charlie.PublicKey,
+			},
+		},
+		"createdBy": alice.PeerId,
+		"createdAt": "2026-05-13T05:31:00Z",
+	}
+	secondJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": readdConfig,
+		"groupKey":    secondGroupKey,
+		"keyEpoch":    2,
+	})
+	secondJoin := parseJSON(t, GroupJoinTopic(string(secondJoinInput)))
+	assertOk(t, secondJoin)
+	if note, _ := secondJoin["note"].(string); note != "ALREADY_JOINED" {
+		t.Fatalf("second join note = %v, want ALREADY_JOINED", secondJoin["note"])
+	}
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+	if n == nil {
+		t.Fatal("singleton node is nil after already-joined re-add refresh")
+	}
+	keyInfo := n.GetGroupKeyInfo(groupId)
+	if keyInfo == nil {
+		t.Fatal("GetGroupKeyInfo returned nil after RA-015 refresh")
+	}
+	if keyInfo.KeyEpoch != 2 || keyInfo.Key != secondGroupKey {
+		t.Fatalf("stored key = (%q,%d), want refreshed (%q,2)", keyInfo.Key, keyInfo.KeyEpoch, secondGroupKey)
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "RA-015 Alice publish after already-joined refresh",
+		"senderPeerId":     alice.PeerId,
+		"senderPublicKey":  alice.PublicKey,
+		"senderPrivateKey": alice.PrivateKey,
+		"senderUsername":   "RA-015 Alice",
+	})
+	publishMap := parseJSON(t, GroupPublish(string(publishInput)))
+	assertOk(t, publishMap)
+	if messageId, ok := publishMap["messageId"].(string); !ok || messageId == "" {
+		t.Fatalf("messageId = %v, want non-empty string", publishMap["messageId"])
+	}
+}
+
+func TestGroupJoinTopic_BB008AlreadyJoinedSameOrOlderEpochDoesNotReplaceCurrentKey(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	identity := generateTestIdentityMaterial(t)
+	startInput, _ := json.Marshal(map[string]interface{}{
+		"privateKeyHex":  identity.PrivateKeyHex,
+		"relayAddresses": []string{},
+		"autoRegister":   false,
+	})
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+
+	initialKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, initialKeyMap)
+	initialGroupKey := initialKeyMap["groupKey"].(string)
+	sameEpochKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, sameEpochKeyMap)
+	sameEpochGroupKey := sameEpochKeyMap["groupKey"].(string)
+	olderEpochKeyMap := parseJSON(t, GenerateGroupKey())
+	assertOk(t, olderEpochKeyMap)
+	olderEpochGroupKey := olderEpochKeyMap["groupKey"].(string)
+
+	groupId := "bb008-same-older-preserve"
+	initialConfig := map[string]interface{}{
+		"name":      "BB-008 preserve original config",
+		"groupType": "announcement",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    identity.PeerId,
+				"username":  "BB-008 writer before duplicate",
+				"role":      "writer",
+				"publicKey": identity.PublicKey,
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-10T21:10:00Z",
+	}
+	firstJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": initialConfig,
+		"groupKey":    initialGroupKey,
+		"keyEpoch":    2,
+	})
+	assertOk(t, parseJSON(t, GroupJoinTopic(string(firstJoinInput))))
+
+	adminConfig := map[string]interface{}{
+		"name":      "BB-008 duplicate must not replace config",
+		"groupType": "announcement",
+		"members": []map[string]interface{}{
+			{
+				"peerId":    identity.PeerId,
+				"username":  "BB-008 admin duplicate",
+				"role":      "admin",
+				"publicKey": identity.PublicKey,
+			},
+		},
+		"createdBy": identity.PeerId,
+		"createdAt": "2026-05-10T21:11:00Z",
+	}
+	sameEpochJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": adminConfig,
+		"groupKey":    sameEpochGroupKey,
+		"keyEpoch":    2,
+	})
+	sameEpochJoin := parseJSON(t, GroupJoinTopic(string(sameEpochJoinInput)))
+	assertOk(t, sameEpochJoin)
+	if note, _ := sameEpochJoin["note"].(string); note != "ALREADY_JOINED" {
+		t.Fatalf("same-epoch join note = %v, want ALREADY_JOINED", sameEpochJoin["note"])
+	}
+
+	olderEpochJoinInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":     groupId,
+		"groupConfig": adminConfig,
+		"groupKey":    olderEpochGroupKey,
+		"keyEpoch":    1,
+	})
+	olderEpochJoin := parseJSON(t, GroupJoinTopic(string(olderEpochJoinInput)))
+	assertOk(t, olderEpochJoin)
+	if note, _ := olderEpochJoin["note"].(string); note != "ALREADY_JOINED" {
+		t.Fatalf("older-epoch join note = %v, want ALREADY_JOINED", olderEpochJoin["note"])
+	}
+
+	nodeMu.Lock()
+	n := singletonNode
+	nodeMu.Unlock()
+	if n == nil {
+		t.Fatal("singleton node is nil after started join")
+	}
+	keyInfo := n.GetGroupKeyInfo(groupId)
+	if keyInfo == nil {
+		t.Fatal("GetGroupKeyInfo returned nil after same/older duplicate joins")
+	}
+	if keyInfo.KeyEpoch != 2 || keyInfo.Key != initialGroupKey {
+		t.Fatalf("stored key = (%q,%d), want original (%q,2)", keyInfo.Key, keyInfo.KeyEpoch, initialGroupKey)
+	}
+
+	publishInput, _ := json.Marshal(map[string]interface{}{
+		"groupId":          groupId,
+		"text":             "BB-008 same epoch must not promote writer",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "BB-008 Writer",
+	})
+	publishMap := parseJSON(t, GroupPublish(string(publishInput)))
+	assertNotOk(t, publishMap, "GROUP_ERROR")
+	if message, _ := publishMap["errorMessage"].(string); !strings.Contains(message, "not allowed to write") {
+		t.Fatalf("publish error = %q, want writer still disallowed", message)
+	}
+}
+
 // ===========================================================================
-// Phase 6: Bridge-level GroupRotateKey for post-invite key distribution
+// Phase 6: Bridge-level legacy GroupRotateKey fails closed
 // ===========================================================================
 
-// Test 6.1: GroupRotateKey increments epoch.
-func TestGroupRotateKey_IncrementsEpoch(t *testing.T) {
+// Test 6.1: GroupRotateKey does not mutate validator key state.
+func TestGroupRotateKey_KE014FailsClosedWithoutMutatingStoredKeyState(t *testing.T) {
 	withFreshSingletonNode(t)
 
 	keyHex := generateTestKeyHex(t)
@@ -2087,16 +2956,16 @@ func TestGroupRotateKey_IncrementsEpoch(t *testing.T) {
 	startResult := StartNode(input)
 	assertOk(t, parseJSON(t, startResult))
 
-	// Create a group (keyEpoch starts at 1).
 	genIdentity := parseJSON(t, GenerateIdentity())
 	assertOk(t, genIdentity)
 	identity := genIdentity["identity"].(map[string]interface{})
 
 	createInput, _ := json.Marshal(map[string]interface{}{
-		"name":             "Key Rotation Group",
-		"groupType":        "chat",
-		"creatorPeerId":    identity["peerId"].(string),
-		"creatorPublicKey": identity["publicKey"].(string),
+		"name":                  "Key Rotation Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity["peerId"].(string),
+		"creatorPublicKey":      identity["publicKey"].(string),
+		"creatorMlKemPublicKey": "mlkem-pk-creator",
 	})
 	createResult := GroupCreate(string(createInput))
 	createMap := parseJSON(t, createResult)
@@ -2104,46 +2973,36 @@ func TestGroupRotateKey_IncrementsEpoch(t *testing.T) {
 
 	groupId := createMap["groupId"].(string)
 
-	// First rotation: epoch should go from 1 to 2.
+	nodeMu.Lock()
+	initialKeyInfo := singletonNode.GetGroupKeyInfo(groupId)
+	nodeMu.Unlock()
+	if initialKeyInfo == nil {
+		t.Fatal("expected stored key info after group create")
+	}
+	initialKey := initialKeyInfo.Key
+	initialEpoch := initialKeyInfo.KeyEpoch
+
 	rotateInput, _ := json.Marshal(map[string]string{"groupId": groupId})
-	rotateResult1 := GroupRotateKey(string(rotateInput))
-	rotateMap1 := parseJSON(t, rotateResult1)
-	assertOk(t, rotateMap1)
-
-	epoch1, ok := rotateMap1["keyEpoch"].(float64)
-	if !ok {
-		t.Fatal("response missing 'keyEpoch'")
+	rotateMap := parseJSON(t, GroupRotateKey(string(rotateInput)))
+	assertNotOk(t, rotateMap, "LEGACY_ROTATE_KEY_UNSUPPORTED")
+	if _, ok := rotateMap["groupKey"]; ok {
+		t.Fatal("legacy rotate response must not include groupKey")
 	}
-	if int(epoch1) != 2 {
-		t.Errorf("expected keyEpoch=2 after first rotation, got %d", int(epoch1))
+	if _, ok := rotateMap["keyEpoch"]; ok {
+		t.Fatal("legacy rotate response must not include keyEpoch")
 	}
 
-	newKey1, ok := rotateMap1["groupKey"].(string)
-	if !ok || newKey1 == "" {
-		t.Fatal("response missing or empty 'groupKey'")
+	nodeMu.Lock()
+	storedAfter := singletonNode.GetGroupKeyInfo(groupId)
+	nodeMu.Unlock()
+	if storedAfter == nil {
+		t.Fatal("expected stored key info after legacy rotate failure")
 	}
-
-	// Second rotation: epoch should go from 2 to 3.
-	rotateResult2 := GroupRotateKey(string(rotateInput))
-	rotateMap2 := parseJSON(t, rotateResult2)
-	assertOk(t, rotateMap2)
-
-	epoch2, ok := rotateMap2["keyEpoch"].(float64)
-	if !ok {
-		t.Fatal("response missing 'keyEpoch'")
+	if storedAfter.Key != initialKey {
+		t.Fatalf("legacy rotate must not mutate current key: got %q want %q", storedAfter.Key, initialKey)
 	}
-	if int(epoch2) != 3 {
-		t.Errorf("expected keyEpoch=3 after second rotation, got %d", int(epoch2))
-	}
-
-	newKey2, ok := rotateMap2["groupKey"].(string)
-	if !ok || newKey2 == "" {
-		t.Fatal("response missing or empty 'groupKey' after second rotation")
-	}
-
-	// Keys should differ between rotations.
-	if newKey1 == newKey2 {
-		t.Error("rotated keys should be different")
+	if storedAfter.KeyEpoch != initialEpoch {
+		t.Fatalf("legacy rotate must not mutate current epoch: got %d want %d", storedAfter.KeyEpoch, initialEpoch)
 	}
 }
 
@@ -2392,10 +3251,11 @@ func TestGroupUpdateKey_UpdatesStoredKey(t *testing.T) {
 	identity := genIdentity["identity"].(map[string]interface{})
 
 	createInput, _ := json.Marshal(map[string]interface{}{
-		"name":             "UpdateKey Test Group",
-		"groupType":        "chat",
-		"creatorPeerId":    identity["peerId"].(string),
-		"creatorPublicKey": identity["publicKey"].(string),
+		"name":                  "UpdateKey Test Group",
+		"groupType":             "chat",
+		"creatorPeerId":         identity["peerId"].(string),
+		"creatorPublicKey":      identity["publicKey"].(string),
+		"creatorMlKemPublicKey": "mlkem-pk-creator",
 	})
 	createResult := GroupCreate(string(createInput))
 	createMap := parseJSON(t, createResult)

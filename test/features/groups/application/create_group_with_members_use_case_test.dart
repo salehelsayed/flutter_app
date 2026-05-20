@@ -208,6 +208,36 @@ class _TrackingInviteDeliveryAttemptRepository
   }
 }
 
+class _PerRecipientInviteP2PService extends FakeP2PService {
+  _PerRecipientInviteP2PService({required this.failingPeerIds})
+    : super(initialState: const NodeState(isStarted: true));
+
+  final Set<String> failingPeerIds;
+  final List<({String peerId, String content})> inboxStoreLog = [];
+
+  @override
+  Future<bool> sendMessage(String peerId, String message) async {
+    sendMessageCallCount++;
+    lastSendMessagePeerId = peerId;
+    lastSendMessageContent = message;
+    sentMessageLog.add((peerId: peerId, content: message));
+    return !failingPeerIds.contains(peerId);
+  }
+
+  @override
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    storeInInboxCallCount++;
+    lastStoreInInboxPeerId = toPeerId;
+    lastStoreInInboxMessage = message;
+    inboxStoreLog.add((peerId: toPeerId, content: message));
+    return !failingPeerIds.contains(toPeerId);
+  }
+}
+
 void main() {
   group('createGroupWithMembers', () {
     late PassthroughCryptoBridge bridge;
@@ -272,6 +302,85 @@ void main() {
       final bob = members.firstWhere((m) => m.peerId == 'peer-bob');
       expect(bob.role, MemberRole.writer);
     });
+
+    test(
+      'ML-010 duplicate selected contacts create one member config entry publish entry and invite',
+      () async {
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice, contactAlice, contactBob],
+          type: GroupType.chat,
+          name: 'ML-010 Group',
+        );
+
+        expect(result.membersAdded, 2);
+        expect(result.invitesSent, 2);
+
+        final members = await groupRepo.getMembers('test-group-id');
+        expect(members.map((member) => member.peerId).toSet(), {
+          'peer-admin',
+          'peer-alice',
+          'peer-bob',
+        });
+        expect(
+          members.where((member) => member.peerId == 'peer-alice'),
+          hasLength(1),
+        );
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:updateConfig',
+        );
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final groupConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        final configMembers = (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(
+          configMembers.where((member) => member['peerId'] == 'peer-alice'),
+          hasLength(1),
+        );
+        expect(configMembers.map((member) => member['peerId']).toSet(), {
+          'peer-admin',
+          'peer-alice',
+          'peer-bob',
+        });
+
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysMsg =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        final publishedMembers = (sysMsg['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>();
+        expect(
+          publishedMembers.where((member) => member['peerId'] == 'peer-alice'),
+          hasLength(1),
+        );
+        expect(publishedMembers.map((member) => member['peerId']).toSet(), {
+          'peer-alice',
+          'peer-bob',
+        });
+
+        expect(p2pService.sentMessageLog, hasLength(2));
+        expect(p2pService.sentMessageLog.map((entry) => entry.peerId).toSet(), {
+          'peer-alice',
+          'peer-bob',
+        });
+      },
+    );
 
     test(
       'persists the creator username and exports it in group config',
@@ -676,6 +785,189 @@ void main() {
       expect(await groupRepo.getLatestKey('test-group-id'), isNull);
     });
 
+    test(
+      'BB-003 rejects missing identity ML-KEM before create or invites',
+      () async {
+        final missingMlKemIdentities = [
+          IdentityModel(
+            peerId: testIdentity.peerId,
+            publicKey: testIdentity.publicKey,
+            privateKey: testIdentity.privateKey,
+            mnemonic12: testIdentity.mnemonic12,
+            username: testIdentity.username,
+            mlKemPublicKey: null,
+            createdAt: testIdentity.createdAt,
+            updatedAt: testIdentity.updatedAt,
+          ),
+          IdentityModel(
+            peerId: testIdentity.peerId,
+            publicKey: testIdentity.publicKey,
+            privateKey: testIdentity.privateKey,
+            mnemonic12: testIdentity.mnemonic12,
+            username: testIdentity.username,
+            mlKemPublicKey: '  ',
+            createdAt: testIdentity.createdAt,
+            updatedAt: testIdentity.updatedAt,
+          ),
+        ];
+
+        for (final identity in missingMlKemIdentities) {
+          bridge = PassthroughCryptoBridge();
+          groupRepo = InMemoryGroupRepository();
+          p2pService = FakeP2PService(
+            initialState: const NodeState(isStarted: true),
+          );
+          bridge.responses['group:create'] = {
+            'ok': true,
+            'groupId': 'bb003-group-id',
+            'topicName': 'topic-bb003-group-id',
+            'groupKey': 'bb003-group-key',
+            'keyEpoch': 1,
+          };
+
+          await expectLater(
+            createGroupWithMembers(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              p2pService: p2pService,
+              identity: identity,
+              selectedContacts: const [],
+              type: GroupType.chat,
+              name: 'BB-003 Group',
+            ),
+            throwsA(isA<ArgumentError>()),
+          );
+
+          expect(bridge.commandLog, isNot(contains('group:create')));
+          expect(await groupRepo.getAllGroups(), isEmpty);
+          expect(await groupRepo.getMembers('bb003-group-id'), isEmpty);
+          expect(await groupRepo.getLatestKey('bb003-group-id'), isNull);
+          expect(p2pService.sentMessageLog, isEmpty);
+        }
+      },
+    );
+
+    test(
+      'ML-004 mixed B/C/D invite failure preserves truthful create roster and invite state',
+      () async {
+        p2pService = _PerRecipientInviteP2PService(
+          failingPeerIds: {'peer-dave'},
+        );
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactBob, contactCharlie, contactDave],
+          type: GroupType.chat,
+          name: 'ML-004 Group',
+          inviteDeliveryAttemptRepo: inviteStatusRepo,
+        );
+
+        expect(result.group.id, 'test-group-id');
+        expect(result.membersAdded, 3);
+        expect(result.invitesSent, 2);
+        expect(result.hasWarnings, isTrue);
+        expect(result.inviteBatchResult, isNotNull);
+        expect(result.inviteBatchResult!.attempts, hasLength(3));
+        expect(result.inviteBatchResult!.successCount, 2);
+        expect(result.inviteBatchResult!.failures, hasLength(1));
+        expect(result.inviteBatchResult!.failures.single.peerId, 'peer-dave');
+        expect(
+          result.inviteBatchResult!.failures.single.result,
+          SendGroupInviteResult.sendFailed,
+        );
+        expect(
+          result.buildCreateWarningMessage(),
+          contains('Dave (delivery failed)'),
+        );
+
+        final members = await groupRepo.getMembers('test-group-id');
+        final memberPeerIds = members.map((m) => m.peerId).toSet();
+        expect(
+          memberPeerIds,
+          equals({'peer-admin', 'peer-bob', 'peer-charlie', 'peer-dave'}),
+        );
+
+        final updateConfigMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:updateConfig',
+        );
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final groupConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        final configPeerIds = (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .map((member) => member['peerId'])
+            .toSet();
+        expect(configPeerIds, memberPeerIds);
+
+        final publishMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final sysMsg =
+            jsonDecode(publishPayload['text'] as String)
+                as Map<String, dynamic>;
+        expect(sysMsg['__sys'], 'members_added');
+        final publishedPeerIds = (sysMsg['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .map((member) => member['peerId'])
+            .toSet();
+        expect(publishedPeerIds, {'peer-bob', 'peer-charlie', 'peer-dave'});
+
+        final invitePeerIds = p2pService.sentMessageLog
+            .map((entry) => entry.peerId)
+            .toSet();
+        expect(invitePeerIds, {'peer-bob', 'peer-charlie', 'peer-dave'});
+        expect(
+          (p2pService as _PerRecipientInviteP2PService).inboxStoreLog
+              .map((entry) => entry.peerId)
+              .toSet(),
+          {'peer-dave'},
+        );
+
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: 'peer-bob',
+          ),
+          GroupInviteDeliveryStatus.sent,
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: 'peer-charlie',
+          ),
+          GroupInviteDeliveryStatus.sent,
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: 'peer-dave',
+          ),
+          GroupInviteDeliveryStatus.needsResend,
+        );
+        final daveAttempt = await inviteStatusRepo.getAttempt(
+          groupId: 'test-group-id',
+          peerId: 'peer-dave',
+        );
+        expect(daveAttempt, isNotNull);
+        expect(daveAttempt!.username, 'Dave');
+        expect(daveAttempt.status, isNot(GroupInviteDeliveryStatus.joined));
+        expect(daveAttempt.lastError, 'send_failed');
+      },
+    );
+
     test('succeeds locally even when P2P invite fails', () async {
       // Make P2P fail
       p2pService.sendMessageResult = false;
@@ -800,6 +1092,89 @@ void main() {
         expect(members.map((member) => member.peerId).toSet(), {'peer-admin'});
         expect(bridge.commandLog, isNot(contains('group:publish')));
         expect(p2pService.sentMessageLog, isEmpty);
+      },
+    );
+
+    test(
+      'ML-014 rolls back all locally inserted create members after config sync failure',
+      () async {
+        bridge.responses['group:updateConfig'] = {
+          'ok': false,
+          'errorCode': 'CONFIG_SYNC_FAILED',
+          'errorMessage': 'bridge rejected config',
+        };
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: p2pService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice, contactBob],
+          type: GroupType.chat,
+          name: 'ML-014 Group',
+          inviteDeliveryAttemptRepo: inviteStatusRepo,
+        );
+
+        expect(result.membersAdded, 0);
+        expect(result.membershipSyncRolledBack, isTrue);
+        expect(result.invitesSent, 0);
+        expect(
+          result.buildCreateWarningMessage(),
+          contains('membership setup could not be synced'),
+        );
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+        final updateConfigMsg = bridge.sentMessages.firstWhere(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:updateConfig',
+        );
+        final updateConfigPayload =
+            (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final groupConfig =
+            updateConfigPayload['groupConfig'] as Map<String, dynamic>;
+        expect(
+          (groupConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'])
+              .toSet(),
+          {'peer-admin', 'peer-alice', 'peer-bob'},
+        );
+
+        final members = await groupRepo.getMembers('test-group-id');
+        expect(members.map((member) => member.peerId).toSet(), {'peer-admin'});
+        expect(
+          await groupRepo.getMember('test-group-id', 'peer-alice'),
+          isNull,
+        );
+        expect(await groupRepo.getMember('test-group-id', 'peer-bob'), isNull);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sentMessageLog, isEmpty);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: 'peer-alice',
+          ),
+          GroupInviteDeliveryStatus.unknown,
+        );
+        expect(
+          await inviteStatusRepo.getStatusForMember(
+            groupId: 'test-group-id',
+            peerId: 'peer-bob',
+          ),
+          GroupInviteDeliveryStatus.unknown,
+        );
+        expect(
+          await inviteStatusRepo.getAttemptsForGroup('test-group-id'),
+          isEmpty,
+        );
       },
     );
 

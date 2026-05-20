@@ -4,9 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_consumption.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
@@ -28,6 +30,7 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
   required String groupId,
   required String? recipientPeerId,
   required Map<String, dynamic> groupConfig,
+  int keyEpoch = 1,
   String? recipientDeviceId,
   String? recipientTransportPeerId,
   String? recipientMlKemPublicKey,
@@ -51,7 +54,7 @@ GroupInviteMembershipFreshnessProof _makeFreshnessProof({
     recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
     inviterPeerId: '12D3KooWAlice',
     inviterPublicKey: 'alicePubKey64',
-    keyEpoch: 1,
+    keyEpoch: keyEpoch,
     groupConfigStateHash: stateHash,
     membershipWatermark: stateHash,
     issuedAt: issuedAt.toUtc(),
@@ -78,6 +81,7 @@ void main() {
     String inviteId = 'invite-1',
     DateTime? receivedAt,
     String? overrideGroupKey,
+    int keyEpoch = 1,
     Map<String, dynamic>? groupConfig,
     GroupInviteReusePolicy reusePolicy = GroupInviteReusePolicy.singleUse,
     String? recipientDeviceId,
@@ -130,7 +134,7 @@ void main() {
             recipientMlKemPublicKey: recipientMlKemPublicKey,
             inviteId: inviteId,
             groupId: 'grp-abc123',
-            keyEpoch: 1,
+            keyEpoch: keyEpoch,
             issuedAt: inviteTimestamp,
             expiresAt: policyExpiresAt,
           )
@@ -139,7 +143,7 @@ void main() {
       id: inviteId,
       groupId: 'grp-abc123',
       groupKey: overrideGroupKey ?? 'base64-key',
-      keyEpoch: 1,
+      keyEpoch: keyEpoch,
       groupConfig: resolvedGroupConfig,
       senderPeerId: '12D3KooWAlice',
       senderUsername: 'Alice',
@@ -157,7 +161,7 @@ void main() {
         assignedRole: 'writer',
         canInviteOthers: false,
         joinMaterialKind: GroupInvitePolicy.inlineGroupKeyKind,
-        keyEpoch: 1,
+        keyEpoch: keyEpoch,
         reusePolicy: reusePolicy,
         welcomeKeyPackageId: welcomeKeyPackage?.packageId,
         welcomeKeyPackagePublicMaterialHash:
@@ -174,6 +178,7 @@ void main() {
         recipientKeyPackageId: recipientKeyPackageId,
         recipientKeyPackagePublicMaterial: recipientKeyPackagePublicMaterial,
         groupConfig: resolvedGroupConfig,
+        keyEpoch: keyEpoch,
         issuedAt: inviteTimestamp,
       ),
     ).withInviteSignature(signature: 'signed-invite-by-alice');
@@ -266,6 +271,7 @@ void main() {
     String senderPeerId = '12D3KooWAlice',
     String senderPublicKey = 'alicePubKey64',
     String senderPrivateKey = 'alicePrivateKey64',
+    List<String>? recipientPeerIds,
   }) async {
     final replayEnvelope = await buildGroupOfflineReplayEnvelope(
       bridge: bridge,
@@ -277,6 +283,7 @@ void main() {
       senderPeerId: senderPeerId,
       senderPublicKey: senderPublicKey,
       senderPrivateKey: senderPrivateKey,
+      recipientPeerIds: recipientPeerIds,
       keyInfo: GroupKeyInfo(
         groupId: 'grp-abc123',
         keyGeneration: 1,
@@ -346,6 +353,107 @@ void main() {
       expect(bridge.commandLog, contains('group:join'));
       expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
     });
+
+    test(
+      'ML-016 valid invited non-contact member is accepted without saving inviter as contact',
+      () async {
+        contactRepo.seed([]);
+        await pendingInviteRepo.savePendingInvite(signedInvite(makeInvite()));
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiverPubKey64',
+          senderPrivateKey: 'receiverPrivKey64',
+          senderUsername: 'Receiver',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(
+          await groupRepo.getMember('grp-abc123', '12D3KooWAlice'),
+          isNotNull,
+        );
+        expect(await contactRepo.contactExists('12D3KooWAlice'), isFalse);
+        expect(contactRepo.addContactCallCount, 0);
+        expect(bridge.commandLog, contains('payload.verify'));
+        expect(bridge.commandLog, contains('group:join'));
+      },
+    );
+
+    test(
+      'ML-003 accept preserves invite config version as membership watermark for hash convergence',
+      () async {
+        final membershipAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 10),
+        );
+        final groupConfig = <String, dynamic>{
+          'name': 'Book Club',
+          'groupType': 'chat',
+          'description': 'A group for book lovers',
+          'members': [
+            {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+            },
+            {
+              'peerId': '12D3KooWReceiver',
+              'username': 'Receiver',
+              'role': 'writer',
+              'publicKey': 'receiverPubKey64',
+              'mlKemPublicKey': 'receiverMlKem64',
+            },
+          ],
+          'createdBy': '12D3KooWAlice',
+          'createdAt': membershipAt
+              .subtract(const Duration(hours: 6))
+              .toIso8601String(),
+          groupConfigVersionField: membershipAt.toIso8601String(),
+        };
+        groupConfig[groupConfigStateHashField] = buildGroupConfigStateHash(
+          groupId: 'grp-abc123',
+          groupConfig: groupConfig,
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            groupConfig: groupConfig,
+            receivedAt: membershipAt.add(const Duration(minutes: 1)),
+          ),
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': const [],
+          'cursor': '',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(group!.lastMembershipEventAt, membershipAt);
+        final members = await groupRepo.getMembers('grp-abc123');
+        expect(
+          buildGroupConfigPayload(group, members)[groupConfigStateHashField],
+          groupConfig[groupConfigStateHashField],
+        );
+      },
+    );
 
     test(
       'accept completes after first inbox page when relay reports more backlog',
@@ -495,6 +603,180 @@ void main() {
         expect(reactions, hasLength(1));
         expect(reactions.single.senderPeerId, '12D3KooWAlice');
         expect(reactions.single.emoji, '👍');
+      },
+    );
+
+    test(
+      'ML-003 accepts offline invite and drains only entitled A/B post-add replay exactly once',
+      () async {
+        final preAddAt = DateTime.now().toUtc().subtract(
+          const Duration(minutes: 10),
+        );
+        final addAt = preAddAt.add(const Duration(minutes: 1));
+        final alicePostAddAt = addAt.add(const Duration(minutes: 1));
+        final bobPostAddAt = addAt.add(const Duration(minutes: 2));
+        final groupConfig = {
+          'name': 'ML-003 Private Group',
+          'groupType': 'chat',
+          'description': 'Offline add proof',
+          'members': [
+            {
+              'peerId': '12D3KooWAlice',
+              'username': 'Alice',
+              'role': 'admin',
+              'publicKey': 'alicePubKey64',
+              'mlKemPublicKey': 'aliceMlKem64',
+            },
+            {
+              'peerId': '12D3KooWBob',
+              'username': 'Bob',
+              'role': 'writer',
+              'publicKey': 'bobPubKey64',
+              'mlKemPublicKey': 'bobMlKem64',
+            },
+            {
+              'peerId': '12D3KooWReceiver',
+              'username': 'Receiver',
+              'role': 'writer',
+              'publicKey': 'receiverPubKey64',
+              'mlKemPublicKey': 'receiverMlKem64',
+            },
+          ],
+          'createdBy': '12D3KooWAlice',
+          'createdAt': preAddAt
+              .subtract(const Duration(minutes: 5))
+              .toIso8601String(),
+        };
+        final listener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => '12D3KooWReceiver',
+        );
+        addTearDown(listener.dispose);
+
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(groupConfig: groupConfig, receivedAt: addAt),
+        );
+
+        final preAdd = await signedReplayInboxMessage(
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          messageId: 'ml003-a-pre-add',
+          recipientPeerIds: const ['12D3KooWBob'],
+          plaintextPayload: {
+            'groupId': 'grp-abc123',
+            'messageId': 'ml003-a-pre-add',
+            'senderId': '12D3KooWAlice',
+            'senderUsername': 'Alice',
+            'keyEpoch': 1,
+            'text': 'ML-003 pre-add control',
+            'timestamp': preAddAt.toIso8601String(),
+          },
+        );
+        final alicePostAdd = await signedReplayInboxMessage(
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          messageId: 'ml003-a-post-add',
+          recipientPeerIds: const ['12D3KooWBob', '12D3KooWReceiver'],
+          plaintextPayload: {
+            'groupId': 'grp-abc123',
+            'messageId': 'ml003-a-post-add',
+            'senderId': '12D3KooWAlice',
+            'senderUsername': 'Alice',
+            'keyEpoch': 1,
+            'text': 'ML-003 Alice post-add replay',
+            'timestamp': alicePostAddAt.toIso8601String(),
+          },
+        );
+        final bobPostAdd = await signedReplayInboxMessage(
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          messageId: 'ml003-b-post-add',
+          senderPeerId: '12D3KooWBob',
+          senderPublicKey: 'bobPubKey64',
+          senderPrivateKey: 'bobPrivateKey64',
+          recipientPeerIds: const ['12D3KooWAlice', '12D3KooWReceiver'],
+          plaintextPayload: {
+            'groupId': 'grp-abc123',
+            'messageId': 'ml003-b-post-add',
+            'senderId': '12D3KooWBob',
+            'senderUsername': 'Bob',
+            'keyEpoch': 1,
+            'text': 'ML-003 Bob post-add replay',
+            'timestamp': bobPostAddAt.toIso8601String(),
+          },
+        );
+        bridge.responses['group:inboxRetrieveCursor'] = {
+          'ok': true,
+          'messages': [
+            preAdd,
+            alicePostAdd,
+            bobPostAdd,
+            alicePostAdd,
+            bobPostAdd,
+          ],
+          'cursor': '',
+        };
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          groupMessageListener: listener,
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiver-public-key',
+          senderPrivateKey: 'receiver-private-key',
+          senderUsername: 'Receiver',
+          drainAcceptedInboxAllPages: true,
+          acceptedInboxPageSize: 2,
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.success);
+        expect(group, isNotNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNotNull);
+        expect(bridge.commandLog, contains('group:join'));
+        expect(bridge.commandLog, contains('group:inboxRetrieveCursor'));
+
+        final joinMessage = bridge.sentMessages.firstWhere((raw) {
+          return (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:join';
+        });
+        final joinPayload =
+            (jsonDecode(joinMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        expect(joinPayload['groupId'], 'grp-abc123');
+        expect(joinPayload['groupKey'], 'base64-key');
+        expect(joinPayload['keyEpoch'], 1);
+        final joinConfig = joinPayload['groupConfig'] as Map<String, dynamic>;
+        expect((joinConfig['members'] as List<dynamic>), hasLength(3));
+
+        Future<List<String>> idsMatching(String messageId) async {
+          return (await msgRepo.getMessagesPage('grp-abc123', limit: 20))
+              .where((message) => message.id == messageId)
+              .map((message) => message.text)
+              .toList(growable: false);
+        }
+
+        expect(await idsMatching('ml003-a-pre-add'), isEmpty);
+        expect(await idsMatching('ml003-a-post-add'), [
+          'ML-003 Alice post-add replay',
+        ]);
+        expect(await idsMatching('ml003-b-post-add'), [
+          'ML-003 Bob post-add replay',
+        ]);
+
+        final messages = await msgRepo.getMessagesPage('grp-abc123', limit: 20);
+        final replayRows = messages
+            .where(
+              (message) =>
+                  message.id == 'ml003-a-post-add' ||
+                  message.id == 'ml003-b-post-add',
+            )
+            .toList(growable: false);
+        expect(replayRows, hasLength(2));
+        expect(replayRows.every((message) => message.isIncoming), isTrue);
       },
     );
 
@@ -732,6 +1014,110 @@ void main() {
     );
 
     test(
+      'KE-008 repair-pending re-add is not active until current epoch key material joins',
+      () async {
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            inviteId: 'ke008-readd-invite',
+            keyEpoch: 2,
+            overrideGroupKey: 'readd-current-epoch-key',
+          ),
+        );
+        bridge.responses['group:join'] = {
+          'ok': false,
+          'errorCode': 'KEY_PACKAGE_DECRYPT_FAILED',
+          'errorMessage': 'delayed current epoch re-add key material',
+        };
+
+        final (pendingResult, pendingGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiverPubKey64',
+          senderPrivateKey: 'receiverPrivKey64',
+          senderUsername: 'Receiver',
+        );
+
+        expect(pendingResult, AcceptPendingGroupInviteResult.repairPending);
+        expect(pendingGroup, isNull);
+        expect(
+          await pendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+          reason: 'the re-add stays explicitly pending while key repair runs',
+        );
+        expect(
+          await groupRepo.getGroup('grp-abc123'),
+          isNull,
+          reason: 'Charlie must not be shown as joined before current key join',
+        );
+        expect(await groupRepo.getMembers('grp-abc123'), isEmpty);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(msgRepo.count, 0);
+        expect(bridge.commandLog, contains('group:join'));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+
+        bridge.responses['group:join'] = {'ok': true};
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'ke008-charlie-post-readd',
+          'topicPeers': 1,
+        };
+        bridge.responses['group:inboxStore'] = {'ok': true};
+
+        final (acceptedResult, acceptedGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiverPubKey64',
+          senderPrivateKey: 'receiverPrivKey64',
+          senderUsername: 'Receiver',
+        );
+
+        expect(acceptedResult, AcceptPendingGroupInviteResult.success);
+        expect(acceptedGroup, isNotNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNotNull);
+        expect(
+          await groupRepo.getMember('grp-abc123', '12D3KooWReceiver'),
+          isNotNull,
+        );
+        final latestKey = await groupRepo.getLatestKey('grp-abc123');
+        expect(latestKey, isNotNull);
+        expect(latestKey!.keyGeneration, 2);
+        expect(latestKey.encryptedKey, 'readd-current-epoch-key');
+
+        final (sendResult, sentMessage) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'grp-abc123',
+          text: 'KE-008 Charlie post-readd send',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiverPubKey64',
+          senderPrivateKey: 'receiverPrivKey64',
+          senderUsername: 'Receiver',
+          messageId: 'ke008-charlie-post-readd',
+        );
+
+        expect(sendResult, SendGroupMessageResult.success);
+        expect(sentMessage, isNotNull);
+        expect(sentMessage!.keyGeneration, 2);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(2),
+        );
+      },
+    );
+
+    test(
       'IJ001 invalid pending policy stays pending for repair without state or join',
       () async {
         final validInvite = makeInvite();
@@ -909,6 +1295,94 @@ void main() {
     );
 
     test(
+      'ML-018 decline expiry and cancellation stop accept before join state',
+      () async {
+        Future<void> expectNoAcceptedState() async {
+          expect(await groupRepo.getGroup('grp-abc123'), isNull);
+          expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+          expect(bridge.commandLog, isNot(contains('group:join')));
+          expect(msgRepo.count, 0);
+        }
+
+        final declinedAt = DateTime.utc(2026, 4, 29, 12);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: declinedAt),
+        );
+        final declineResult = await declinePendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupId: 'grp-abc123',
+          now: declinedAt,
+        );
+        expect(declineResult, DeclinePendingGroupInviteResult.success);
+        var (acceptResult, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: declinedAt.add(const Duration(minutes: 1)),
+        );
+        expect(acceptResult, AcceptPendingGroupInviteResult.notFound);
+        expect(group, isNull);
+        await expectNoAcceptedState();
+
+        pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        groupRepo = InMemoryGroupRepository();
+        msgRepo = InMemoryGroupMessageRepository();
+        bridge = FakeBridge();
+        final expiredReceivedAt = DateTime.utc(2026, 4, 1, 13);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: expiredReceivedAt),
+        );
+        (acceptResult, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: DateTime.utc(2026, 4, 12, 13),
+        );
+        expect(acceptResult, AcceptPendingGroupInviteResult.expired);
+        expect(group, isNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        await expectNoAcceptedState();
+
+        pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        groupRepo = InMemoryGroupRepository();
+        msgRepo = InMemoryGroupMessageRepository();
+        bridge = FakeBridge();
+        final revokedAt = DateTime.utc(2026, 4, 29, 12);
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(receivedAt: revokedAt),
+        );
+        await pendingInviteRepo.saveRevokedInvite(
+          GroupInviteRevocation(
+            inviteId: 'invite-1',
+            groupId: 'grp-abc123',
+            revokedAt: revokedAt,
+            expiresAt: revokedAt.add(const Duration(days: 7)),
+            revokedBy: '12D3KooWAlice',
+          ),
+        );
+        (acceptResult, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          now: revokedAt.add(const Duration(minutes: 1)),
+        );
+        expect(acceptResult, AcceptPendingGroupInviteResult.revoked);
+        expect(group, isNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        await expectNoAcceptedState();
+      },
+    );
+
+    test(
       'returns alreadyUsed and removes stale pending row without joining',
       () async {
         final consumedAt = DateTime.utc(2026, 4, 29, 12);
@@ -1076,6 +1550,150 @@ void main() {
               ),
             );
           },
+        );
+      },
+    );
+
+    test(
+      'ML-019 KE-016 rejects stale invite against newer local removal and key state',
+      () async {
+        final oldInviteAt = DateTime.utc(2026, 4, 29, 12);
+        final removalAt = oldInviteAt.add(const Duration(minutes: 5));
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'grp-abc123',
+            name: 'Book Club',
+            type: GroupType.chat,
+            topicName: '/mknoon/group/grp-abc123',
+            createdAt: DateTime.utc(2026, 3, 2),
+            createdBy: '12D3KooWAlice',
+            myRole: GroupRole.member,
+            lastMembershipEventAt: removalAt,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'grp-abc123',
+            keyGeneration: 2,
+            encryptedKey: 'newer-key',
+            createdAt: removalAt,
+          ),
+        );
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            inviteId: 'invite-old',
+            receivedAt: oldInviteAt,
+            keyEpoch: 1,
+            overrideGroupKey: 'old-key',
+          ),
+        );
+
+        final (result, group) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          now: removalAt.add(const Duration(minutes: 1)),
+        );
+
+        expect(result, AcceptPendingGroupInviteResult.invalidPayload);
+        expect(group, isNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(
+          await groupRepo.getMember('grp-abc123', '12D3KooWReceiver'),
+          isNull,
+        );
+        expect((await groupRepo.getLatestKey('grp-abc123'))!.keyGeneration, 2);
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(msgRepo.count, 0);
+      },
+    );
+
+    test(
+      'RA-004 revoked old invite cannot create stale membership before current re-add invite succeeds',
+      () async {
+        final oldInviteAt = DateTime.utc(2026, 5, 13, 12);
+        final removalAt = oldInviteAt.add(const Duration(minutes: 5));
+        final currentInviteAt = removalAt.add(const Duration(minutes: 5));
+
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            inviteId: 'invite-ra004-old',
+            receivedAt: oldInviteAt,
+            overrideGroupKey: 'old-key',
+            keyEpoch: 1,
+          ),
+        );
+        await pendingInviteRepo.saveRevokedInvite(
+          GroupInviteRevocation(
+            inviteId: 'invite-ra004-old',
+            groupId: 'grp-abc123',
+            revokedAt: removalAt,
+            expiresAt: removalAt.add(const Duration(days: 7)),
+            revokedBy: '12D3KooWAlice',
+          ),
+        );
+
+        final (oldResult, oldGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          now: removalAt.add(const Duration(minutes: 1)),
+        );
+
+        expect(oldResult, AcceptPendingGroupInviteResult.revoked);
+        expect(oldGroup, isNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        expect(await groupRepo.getGroup('grp-abc123'), isNull);
+        expect(await groupRepo.getLatestKey('grp-abc123'), isNull);
+        expect(
+          await groupRepo.getMember('grp-abc123', '12D3KooWReceiver'),
+          isNull,
+        );
+        expect(bridge.commandLog, isNot(contains('group:join')));
+        expect(msgRepo.count, 0);
+
+        await pendingInviteRepo.savePendingInvite(
+          makeInvite(
+            inviteId: 'invite-ra004-current',
+            receivedAt: currentInviteAt,
+            overrideGroupKey: 'current-key',
+            keyEpoch: 2,
+          ),
+        );
+
+        final (currentResult, currentGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupRepo: groupRepo,
+          contactRepo: contactRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          now: currentInviteAt.add(const Duration(minutes: 1)),
+        );
+
+        expect(currentResult, AcceptPendingGroupInviteResult.success);
+        expect(currentGroup, isNotNull);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        final latestKey = await groupRepo.getLatestKey('grp-abc123');
+        expect(latestKey, isNotNull);
+        expect(latestKey!.keyGeneration, 2);
+        expect(latestKey.encryptedKey, 'current-key');
+        expect(
+          await groupRepo.getMember('grp-abc123', '12D3KooWReceiver'),
+          isNotNull,
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:join'),
+          hasLength(1),
         );
       },
     );
@@ -1589,6 +2207,159 @@ void main() {
           isNotNull,
         );
         expect(await tabletGroupRepo.getGroup('grp-abc123'), isNull);
+      },
+    );
+
+    test(
+      'RA-013 device-bound re-add accept keeps sibling device pending until its own onboarding',
+      () async {
+        final multiDeviceConfig = receiverDeviceBoundConfig();
+        final receiver =
+            (multiDeviceConfig['members'] as List<dynamic>)[1]
+                as Map<String, dynamic>;
+        receiver['devices'] = [
+          {
+            'deviceId': 'receiver-phone',
+            'transportPeerId': 'receiver-phone',
+            'deviceSigningPublicKey': 'receiverPhonePubKey64',
+            'mlKemPublicKey': 'receiverPhoneMlKem64',
+            'keyPackageId': 'receiver-phone-kp',
+            'keyPackagePublicMaterial': 'receiver-phone-kpm',
+            'status': 'active',
+          },
+          {
+            'deviceId': 'receiver-tablet',
+            'transportPeerId': 'receiver-tablet',
+            'deviceSigningPublicKey': 'receiverTabletPubKey64',
+            'mlKemPublicKey': 'receiverTabletMlKem64',
+            'keyPackageId': 'receiver-tablet-kp',
+            'keyPackagePublicMaterial': 'receiver-tablet-kpm',
+            'status': 'active',
+          },
+        ];
+
+        final phonePendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        final tabletPendingInviteRepo = InMemoryPendingGroupInviteRepository();
+        final wrongDevicePendingInviteRepo =
+            InMemoryPendingGroupInviteRepository();
+        final phoneGroupRepo = InMemoryGroupRepository();
+        final tabletGroupRepo = InMemoryGroupRepository();
+        final wrongDeviceGroupRepo = InMemoryGroupRepository();
+        final phoneMsgRepo = InMemoryGroupMessageRepository();
+        final tabletMsgRepo = InMemoryGroupMessageRepository();
+        final wrongDeviceMsgRepo = InMemoryGroupMessageRepository();
+
+        final phoneInvite = makeInvite(
+          inviteId: 'ra013-phone-invite',
+          groupConfig: multiDeviceConfig,
+          recipientDeviceId: 'receiver-phone',
+          recipientTransportPeerId: 'receiver-phone',
+          recipientMlKemPublicKey: 'receiverPhoneMlKem64',
+          recipientKeyPackageId: 'receiver-phone-kp',
+          recipientKeyPackagePublicMaterial: 'receiver-phone-kpm',
+        );
+        final tabletInvite = makeInvite(
+          inviteId: 'ra013-tablet-invite',
+          groupConfig: multiDeviceConfig,
+          recipientDeviceId: 'receiver-tablet',
+          recipientTransportPeerId: 'receiver-tablet',
+          recipientMlKemPublicKey: 'receiverTabletMlKem64',
+          recipientKeyPackageId: 'receiver-tablet-kp',
+          recipientKeyPackagePublicMaterial: 'receiver-tablet-kpm',
+        );
+
+        await phonePendingInviteRepo.savePendingInvite(phoneInvite);
+        await tabletPendingInviteRepo.savePendingInvite(tabletInvite);
+        await wrongDevicePendingInviteRepo.savePendingInvite(phoneInvite);
+
+        final (phoneResult, phoneGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: phonePendingInviteRepo,
+          groupRepo: phoneGroupRepo,
+          contactRepo: contactRepo,
+          msgRepo: phoneMsgRepo,
+          bridge: FakeBridge(),
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiverPhonePubKey64',
+          senderPrivateKey: 'receiverPhonePrivKey64',
+          senderUsername: 'Receiver',
+          ownDeviceId: 'receiver-phone',
+          ownTransportPeerId: 'receiver-phone',
+          ownMlKemPublicKey: 'receiverPhoneMlKem64',
+          ownKeyPackageId: 'receiver-phone-kp',
+          ownKeyPackagePublicMaterial: 'receiver-phone-kpm',
+        );
+
+        expect(phoneResult, AcceptPendingGroupInviteResult.success);
+        expect(phoneGroup, isNotNull);
+        expect(
+          await phonePendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNull,
+        );
+        expect(
+          await tabletPendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNotNull,
+        );
+        expect(await tabletGroupRepo.getGroup('grp-abc123'), isNull);
+
+        final phoneMember = await phoneGroupRepo.getMember(
+          'grp-abc123',
+          '12D3KooWReceiver',
+        );
+        expect(
+          phoneMember!.devices.map((device) => device.deviceId),
+          unorderedEquals(['receiver-phone', 'receiver-tablet']),
+        );
+
+        final (
+          wrongDeviceResult,
+          wrongDeviceGroup,
+        ) = await acceptPendingGroupInvite(
+          pendingInviteRepo: wrongDevicePendingInviteRepo,
+          groupRepo: wrongDeviceGroupRepo,
+          contactRepo: contactRepo,
+          msgRepo: wrongDeviceMsgRepo,
+          bridge: FakeBridge(),
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiverTabletPubKey64',
+          senderPrivateKey: 'receiverTabletPrivKey64',
+          senderUsername: 'Receiver',
+          ownDeviceId: 'receiver-tablet',
+          ownTransportPeerId: 'receiver-tablet',
+          ownMlKemPublicKey: 'receiverTabletMlKem64',
+          ownKeyPackageId: 'receiver-tablet-kp',
+          ownKeyPackagePublicMaterial: 'receiver-tablet-kpm',
+        );
+
+        expect(wrongDeviceResult, AcceptPendingGroupInviteResult.wrongIdentity);
+        expect(wrongDeviceGroup, isNull);
+        expect(await wrongDeviceGroupRepo.getGroup('grp-abc123'), isNull);
+
+        final (tabletResult, tabletGroup) = await acceptPendingGroupInvite(
+          pendingInviteRepo: tabletPendingInviteRepo,
+          groupRepo: tabletGroupRepo,
+          contactRepo: contactRepo,
+          msgRepo: tabletMsgRepo,
+          bridge: FakeBridge(),
+          groupId: 'grp-abc123',
+          senderPeerId: '12D3KooWReceiver',
+          senderPublicKey: 'receiverTabletPubKey64',
+          senderPrivateKey: 'receiverTabletPrivKey64',
+          senderUsername: 'Receiver',
+          ownDeviceId: 'receiver-tablet',
+          ownTransportPeerId: 'receiver-tablet',
+          ownMlKemPublicKey: 'receiverTabletMlKem64',
+          ownKeyPackageId: 'receiver-tablet-kp',
+          ownKeyPackagePublicMaterial: 'receiver-tablet-kpm',
+        );
+
+        expect(tabletResult, AcceptPendingGroupInviteResult.success);
+        expect(tabletGroup, isNotNull);
+        expect(
+          await tabletPendingInviteRepo.getPendingInvite('grp-abc123'),
+          isNull,
+        );
       },
     );
   });

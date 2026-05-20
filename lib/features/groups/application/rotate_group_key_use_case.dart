@@ -4,10 +4,10 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
-/// Rotates the encryption key for a group.
+/// Legacy group key rotation entry point.
 ///
-/// Calls the bridge to generate a new key, saves it to the repository,
-/// and returns the new [GroupKeyInfo].
+/// This path cannot own durable key distribution, so it fails closed before a
+/// generated key can be saved. New callers must use `rotateAndDistributeGroupKey`.
 Future<GroupKeyInfo> rotateGroupKey({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -21,20 +21,17 @@ Future<GroupKeyInfo> rotateGroupKey({
     },
   );
 
-  // 1. Call bridge to rotate the key
   final result = await callGroupRotateKey(bridge, groupId);
   if (result['ok'] != true) {
     throw Exception(
-      result['errorMessage'] ?? 'Failed to rotate group key',
+      result['errorMessage']?.toString() ?? 'Failed to rotate group key',
     );
   }
 
-  // 2. Parse result
   final newKeyGeneration = result['keyGeneration'] as int? ?? 1;
   final newEncryptedKey = result['encryptedKey'] as String? ?? '';
   final now = DateTime.now().toUtc();
 
-  // 3. Save new key to repo
   final keyInfo = GroupKeyInfo(
     groupId: groupId,
     keyGeneration: newKeyGeneration,

@@ -1,12 +1,14 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1642,6 +1644,80 @@ func TestReconnectRelays_WatchdogRestart_ReRegistersPersonalNamespace(t *testing
 	}
 }
 
+func TestNW004RefreshRelaySessionPreservesJoinedGroupTopicState(t *testing.T) {
+	hexKey := generateTestKey(t)
+
+	n := NewNode()
+	_, err := n.Start(NodeConfig{
+		PrivateKeyHex:  hexKey,
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer n.Stop()
+
+	groupIds := []string{"nw004-relay-reconnect-alpha", "nw004-relay-reconnect-beta"}
+	for idx, groupId := range groupIds {
+		config := testGroupConfig(GroupTypeChat)
+		config.Name = fmt.Sprintf("NW-004 group %d", idx)
+		keyInfo := &GroupKeyInfo{
+			Key:      fmt.Sprintf("nw004-key-%d", idx),
+			KeyEpoch: idx + 1,
+		}
+		if err := n.JoinGroupTopic(groupId, config, keyInfo); err != nil {
+			t.Fatalf("JoinGroupTopic(%s): %v", groupId, err)
+		}
+	}
+
+	n.mu.RLock()
+	pubsubBefore := n.pubsub
+	topicByGroup := map[string]interface{}{}
+	subByGroup := map[string]interface{}{}
+	for _, groupId := range groupIds {
+		topicByGroup[groupId] = n.groupTopics[groupId]
+		subByGroup[groupId] = n.groupSubs[groupId]
+	}
+	n.mu.RUnlock()
+
+	result := n.RefreshRelaySession()
+	if result == nil {
+		t.Fatal("RefreshRelaySession returned nil")
+	}
+
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.pubsub != pubsubBefore {
+		t.Fatal("NW-004 relay reconnect must preserve pubsub instance")
+	}
+	for idx, groupId := range groupIds {
+		if n.groupTopics[groupId] == nil {
+			t.Fatalf("NW-004 group topic %s missing after reconnect", groupId)
+		}
+		if n.groupTopics[groupId] != topicByGroup[groupId] {
+			t.Fatalf("NW-004 group topic %s was replaced during reconnect", groupId)
+		}
+		if n.groupSubs[groupId] == nil {
+			t.Fatalf("NW-004 group subscription %s missing after reconnect", groupId)
+		}
+		if n.groupSubs[groupId] != subByGroup[groupId] {
+			t.Fatalf("NW-004 group subscription %s was replaced during reconnect", groupId)
+		}
+		if n.groupConfigs[groupId] == nil {
+			t.Fatalf("NW-004 group config %s missing after reconnect", groupId)
+		}
+		keyInfo := n.groupKeys[groupId]
+		if keyInfo == nil {
+			t.Fatalf("NW-004 group key %s missing after reconnect", groupId)
+		}
+		if keyInfo.Key != fmt.Sprintf("nw004-key-%d", idx) || keyInfo.KeyEpoch != idx+1 {
+			t.Fatalf("NW-004 group key %s = (%q,%d), want (%q,%d)",
+				groupId, keyInfo.Key, keyInfo.KeyEpoch, fmt.Sprintf("nw004-key-%d", idx), idx+1)
+		}
+	}
+}
+
 func TestGR020ReconnectRelaysPreservesOriginalAutoRegisterSetting(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -2652,6 +2728,361 @@ func TestEventDispatcher_PreservesMessageEvents(t *testing.T) {
 	}
 }
 
+func TestDE010EventDispatcherCallbackPanicDoesNotStopLoopAndLogsFailure(t *testing.T) {
+	var logBuffer bytes.Buffer
+	originalOutput := log.Writer()
+	originalFlags := log.Flags()
+	log.SetOutput(&logBuffer)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(originalOutput)
+		log.SetFlags(originalFlags)
+	}()
+
+	collector := &testEventCollector{}
+	var callbackCalls int32
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			call := atomic.AddInt32(&callbackCalls, 1)
+			if call == 1 {
+				panic("DE-010 injected callback panic")
+			}
+			collector.OnEvent(jsonStr)
+		},
+	}
+
+	d := NewEventDispatcher(cb, 8)
+	defer d.Stop()
+
+	for i, messageID := range []string{
+		"de010-panic",
+		"de010-after-1",
+		"de010-after-2",
+	} {
+		d.Emit("group_message:received", map[string]interface{}{
+			"groupId":   "group-de010",
+			"messageId": messageID,
+			"sequence":  i,
+			"text":      fmt.Sprintf("DE-010 message %d", i),
+		})
+	}
+
+	var rawEvents []string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		rawEvents = collector.snapshot()
+		if len(rawEvents) == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got := atomic.LoadInt32(&callbackCalls); got != 3 {
+		t.Fatalf("callback calls = %d, want 3 so dispatch continued after panic", got)
+	}
+	if len(rawEvents) != 2 {
+		t.Fatalf("delivered events after panic = %d, want 2; events = %#v", len(rawEvents), rawEvents)
+	}
+
+	for i, raw := range rawEvents {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("unmarshal delivered event %d %q: %v", i, raw, err)
+		}
+		if got := payload["event"]; got != "group_message:received" {
+			t.Fatalf("event %d name = %v, want group_message:received", i, got)
+		}
+		data, ok := payload["data"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("event %d data = %v (%T), want object", i, payload["data"], payload["data"])
+		}
+		wantMessageID := fmt.Sprintf("de010-after-%d", i+1)
+		if got := data["messageId"]; got != wantMessageID {
+			t.Fatalf("event %d messageId = %v, want %s", i, got, wantMessageID)
+		}
+		if got := data["sequence"]; got != float64(i+1) {
+			t.Fatalf("event %d sequence = %v, want %d", i, got, i+1)
+		}
+	}
+
+	logOutput := logBuffer.String()
+	if !strings.Contains(logOutput, `Callback panic for event "group_message:received"`) {
+		t.Fatalf("dispatcher log did not record recovered callback panic: %q", logOutput)
+	}
+	if !strings.Contains(logOutput, "DE-010 injected callback panic") {
+		t.Fatalf("dispatcher log did not include panic reason: %q", logOutput)
+	}
+
+	delivered, coalesced, dropped := d.Diagnostics()
+	if delivered != 2 {
+		t.Fatalf("dispatcher delivered = %d, want 2 successful post-panic deliveries", delivered)
+	}
+	if coalesced != 0 {
+		t.Fatalf("dispatcher coalesced = %d, want 0", coalesced)
+	}
+	if dropped != 0 {
+		t.Fatalf("dispatcher dropped = %d, want 0", dropped)
+	}
+	if depth := d.QueueDepth(); depth != 0 {
+		t.Fatalf("dispatcher queue depth = %d, want 0 after post-panic drain", depth)
+	}
+}
+
+func TestDE011EventDispatcherPreservesGroupMessagesBelowCapacityUnderPressure(t *testing.T) {
+	const (
+		queueCapacity = 6
+		messageCount  = 5
+	)
+
+	collector := &testEventCollector{}
+	firstCallbackEntered := make(chan struct{})
+	releaseFirstCallback := make(chan struct{})
+	var firstCallbackOnce sync.Once
+
+	release := sync.OnceFunc(func() {
+		close(releaseFirstCallback)
+	})
+
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			firstCallbackOnce.Do(func() {
+				close(firstCallbackEntered)
+				<-releaseFirstCallback
+			})
+			collector.OnEvent(jsonStr)
+		},
+	}
+
+	d := NewEventDispatcher(cb, queueCapacity)
+	defer d.Stop()
+	defer release()
+
+	d.Emit("addresses:updated", map[string]interface{}{
+		"circuitAddresses": []string{"/p2p/de011-initial"},
+		"listenAddresses":  []string{},
+	})
+
+	select {
+	case <-firstCallbackEntered:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher callback did not enter the gated delivery path")
+	}
+
+	for i := 0; i < messageCount; i++ {
+		d.Emit("group_message:received", map[string]interface{}{
+			"groupId":   "group-de011",
+			"messageId": fmt.Sprintf("de011-message-%d", i),
+			"sequence":  i,
+			"text":      fmt.Sprintf("below-capacity message %d", i),
+		})
+		d.Emit("relay:state", map[string]interface{}{
+			"state": fmt.Sprintf("de011-relay-state-%d", i),
+		})
+		d.Emit("addresses:updated", map[string]interface{}{
+			"circuitAddresses": []string{fmt.Sprintf("/p2p/de011-%d", i)},
+			"listenAddresses":  []string{},
+		})
+	}
+
+	release()
+
+	type collectedEvent struct {
+		name string
+		data map[string]interface{}
+	}
+	decodeSnapshot := func() []collectedEvent {
+		rawEvents := collector.snapshot()
+		events := make([]collectedEvent, 0, len(rawEvents))
+		for _, raw := range rawEvents {
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				t.Fatalf("unmarshal collected event %q: %v", raw, err)
+			}
+			name, _ := payload["event"].(string)
+			data, _ := payload["data"].(map[string]interface{})
+			events = append(events, collectedEvent{name: name, data: data})
+		}
+		return events
+	}
+
+	var events []collectedEvent
+	var groupMessages []collectedEvent
+	var pressure map[string]interface{}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		events = decodeSnapshot()
+		groupMessages = groupMessages[:0]
+		pressure = nil
+
+		for _, ev := range events {
+			switch ev.name {
+			case "group_message:received":
+				groupMessages = append(groupMessages, ev)
+			case dispatcherPressureEvent:
+				pressure = ev.data
+			}
+		}
+
+		if len(groupMessages) == messageCount && pressure != nil {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	if len(groupMessages) != messageCount {
+		t.Fatalf("delivered group_message:received count = %d, want %d; events = %#v", len(groupMessages), messageCount, events)
+	}
+
+	seenSequences := make(map[int]bool, messageCount)
+	for i, ev := range groupMessages {
+		sequence, ok := ev.data["sequence"].(float64)
+		if !ok {
+			t.Fatalf("group message %d sequence = %v (%T), want JSON number", i, ev.data["sequence"], ev.data["sequence"])
+		}
+		gotSequence := int(sequence)
+		if gotSequence != i {
+			t.Fatalf("group message FIFO sequence at index %d = %d, want %d", i, gotSequence, i)
+		}
+		if seenSequences[gotSequence] {
+			t.Fatalf("group message sequence %d delivered more than once", gotSequence)
+		}
+		seenSequences[gotSequence] = true
+
+		wantMessageID := fmt.Sprintf("de011-message-%d", i)
+		if got := ev.data["messageId"]; got != wantMessageID {
+			t.Fatalf("group message %d messageId = %v, want %s", i, got, wantMessageID)
+		}
+	}
+
+	if pressure == nil {
+		t.Fatalf("did not observe %s diagnostic; events = %#v", dispatcherPressureEvent, events)
+	}
+	if got := pressure["state"]; got != "near_overflow" {
+		t.Fatalf("pressure state = %v, want near_overflow", got)
+	}
+	if got := pressure["lastEvent"]; got != "group_message:received" {
+		t.Fatalf("pressure lastEvent = %v, want group_message:received", got)
+	}
+	if got := pressure["maxQueueSize"]; got != float64(queueCapacity) {
+		t.Fatalf("pressure maxQueueSize = %v, want %d", got, queueCapacity)
+	}
+	queueDepth, ok := pressure["queueDepth"].(float64)
+	if !ok {
+		t.Fatalf("pressure queueDepth = %v (%T), want JSON number", pressure["queueDepth"], pressure["queueDepth"])
+	}
+	if queueDepth >= float64(queueCapacity) {
+		t.Fatalf("pressure queueDepth = %v, want below maxQueueSize %d", queueDepth, queueCapacity)
+	}
+
+	for _, ev := range events {
+		if ev.name == dispatcherOverflowEvent {
+			t.Fatalf("unexpected %s diagnostic under below-capacity pressure: %#v", dispatcherOverflowEvent, ev.data)
+		}
+	}
+
+	_, _, dropped := d.Diagnostics()
+	if dropped != 0 {
+		t.Fatalf("dispatcher dropped = %d, want 0", dropped)
+	}
+}
+
+func TestDE020EventDispatcherLargeGroupPayloadDoesNotStarveLaterMessage(t *testing.T) {
+	const productLimitTextSize = 10000
+
+	collector := &testEventCollector{}
+	cb := &recordingEventCallback{
+		onEvent: collector.OnEvent,
+	}
+
+	d := NewEventDispatcher(cb, 4)
+	defer d.Stop()
+
+	largeText := strings.Repeat("L", productLimitTextSize)
+	d.Emit("group_message:received", map[string]interface{}{
+		"groupId":   "group-de020",
+		"messageId": "de020-large",
+		"sequence":  0,
+		"text":      largeText,
+	})
+	d.Emit("group_message:received", map[string]interface{}{
+		"groupId":   "group-de020",
+		"messageId": "de020-normal",
+		"sequence":  1,
+		"text":      "DE-020 normal follow-up",
+	})
+
+	type collectedEvent struct {
+		name string
+		data map[string]interface{}
+	}
+	decodeSnapshot := func() []collectedEvent {
+		rawEvents := collector.snapshot()
+		events := make([]collectedEvent, 0, len(rawEvents))
+		for _, raw := range rawEvents {
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+				t.Fatalf("unmarshal collected event %q: %v", raw, err)
+			}
+			name, _ := payload["event"].(string)
+			data, _ := payload["data"].(map[string]interface{})
+			events = append(events, collectedEvent{name: name, data: data})
+		}
+		return events
+	}
+
+	var groupMessages []collectedEvent
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		groupMessages = groupMessages[:0]
+		for _, ev := range decodeSnapshot() {
+			if ev.name == "group_message:received" {
+				groupMessages = append(groupMessages, ev)
+			}
+		}
+		delivered, _, _ := d.Diagnostics()
+		if len(groupMessages) == 2 && delivered == 2 && d.QueueDepth() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if len(groupMessages) != 2 {
+		t.Fatalf("delivered group_message:received count = %d, want 2", len(groupMessages))
+	}
+
+	wantMessageIDs := []string{"de020-large", "de020-normal"}
+	wantTextLengths := []int{productLimitTextSize, len("DE-020 normal follow-up")}
+	for i, ev := range groupMessages {
+		if got := ev.data["messageId"]; got != wantMessageIDs[i] {
+			t.Fatalf("event %d messageId = %v, want %s", i, got, wantMessageIDs[i])
+		}
+		text, ok := ev.data["text"].(string)
+		if !ok {
+			t.Fatalf("event %d text = %v (%T), want string", i, ev.data["text"], ev.data["text"])
+		}
+		if len(text) != wantTextLengths[i] {
+			t.Fatalf("event %d text length = %d, want %d", i, len(text), wantTextLengths[i])
+		}
+		if got := ev.data["sequence"]; got != float64(i) {
+			t.Fatalf("event %d sequence = %v, want %d", i, got, i)
+		}
+	}
+
+	delivered, coalesced, dropped := d.Diagnostics()
+	if delivered != 2 {
+		t.Fatalf("dispatcher delivered = %d, want 2", delivered)
+	}
+	if coalesced != 0 {
+		t.Fatalf("dispatcher coalesced = %d, want 0", coalesced)
+	}
+	if dropped != 0 {
+		t.Fatalf("dispatcher dropped = %d, want 0", dropped)
+	}
+	if depth := d.QueueDepth(); depth != 0 {
+		t.Fatalf("dispatcher queue depth = %d, want 0 after large-payload drain", depth)
+	}
+}
+
 func TestEventDispatcher_EmitsPressureAndOverflowDiagnostics(t *testing.T) {
 	collector := &testEventCollector{}
 	cb := &recordingEventCallback{
@@ -2700,6 +3131,101 @@ func TestEventDispatcher_EmitsPressureAndOverflowDiagnostics(t *testing.T) {
 	}
 	if got := overflow["lastEvent"]; got != "group_message:received" {
 		t.Fatalf("overflow lastEvent = %v, want group_message:received", got)
+	}
+}
+
+func TestDE012EventDispatcherOverflowDiagnosticIdentifiesDroppedGroupEventForReplayRecovery(t *testing.T) {
+	const queueCapacity = 2
+
+	collector := &testEventCollector{}
+	firstCallbackEntered := make(chan struct{})
+	releaseFirstCallback := make(chan struct{})
+	var firstCallbackOnce sync.Once
+
+	release := sync.OnceFunc(func() {
+		close(releaseFirstCallback)
+	})
+
+	cb := &recordingEventCallback{
+		onEvent: func(jsonStr string) {
+			firstCallbackOnce.Do(func() {
+				close(firstCallbackEntered)
+				<-releaseFirstCallback
+			})
+			collector.OnEvent(jsonStr)
+		},
+	}
+
+	d := NewEventDispatcher(cb, queueCapacity)
+	defer d.Stop()
+	defer release()
+
+	d.Emit("addresses:updated", map[string]interface{}{
+		"circuitAddresses": []string{"/p2p/de012-initial"},
+		"listenAddresses":  []string{},
+	})
+
+	select {
+	case <-firstCallbackEntered:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher callback did not enter the gated delivery path")
+	}
+
+	for i := 0; i < queueCapacity+1; i++ {
+		d.Emit("group_message:received", map[string]interface{}{
+			"groupId":   "group-de012",
+			"messageId": fmt.Sprintf("de012-message-%d", i),
+			"sequence":  i,
+			"text":      fmt.Sprintf("overflow candidate %d", i),
+		})
+	}
+
+	release()
+
+	overflow := waitForCollectedEvent(t, collector, dispatcherOverflowEvent, 3*time.Second)
+	if got := overflow["state"]; got != "overflow" {
+		t.Fatalf("overflow state = %v, want overflow", got)
+	}
+	if got := overflow["lastEvent"]; got != "group_message:received" {
+		t.Fatalf("overflow lastEvent = %v, want group_message:received", got)
+	}
+	if got := overflow["maxQueueSize"]; got != float64(queueCapacity) {
+		t.Fatalf("overflow maxQueueSize = %v, want %d", got, queueCapacity)
+	}
+	if got := overflow["queueDepth"]; got != float64(queueCapacity) {
+		t.Fatalf("overflow queueDepth = %v, want %d", got, queueCapacity)
+	}
+	if got := overflow["droppedCount"]; got == nil || got.(float64) < 1 {
+		t.Fatalf("overflow droppedCount = %v, want >= 1", got)
+	}
+
+	rawEvents := collector.snapshot()
+	deliveredMessages := make(map[string]int)
+	for _, raw := range rawEvents {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("unmarshal collected event %q: %v", raw, err)
+		}
+		if payload["event"] != "group_message:received" {
+			continue
+		}
+		data, _ := payload["data"].(map[string]interface{})
+		messageID, _ := data["messageId"].(string)
+		deliveredMessages[messageID]++
+	}
+
+	if deliveredMessages["de012-message-2"] != 0 {
+		t.Fatalf("overflowed message was delivered live: %#v", deliveredMessages)
+	}
+	for _, messageID := range []string{"de012-message-0", "de012-message-1"} {
+		if deliveredMessages[messageID] != 1 {
+			t.Fatalf("deliveredMessages[%s] = %d, want 1; all = %#v", messageID, deliveredMessages[messageID], deliveredMessages)
+		}
+	}
+
+	_, _, dropped := d.Diagnostics()
+	if dropped < 1 {
+		t.Fatalf("dispatcher dropped = %d, want >= 1", dropped)
 	}
 }
 

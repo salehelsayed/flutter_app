@@ -7,6 +7,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -35,7 +36,7 @@ class PendingMessageRetrier {
   final Future<void> Function()? rejoinGroupTopicsFn;
   final Future<bool> Function()? rejoinGroupTopicsWithRecoveryAckEligibilityFn;
   final Future<void> Function()? acknowledgeGroupRecoveryFn;
-  final Future<void> Function()? drainGroupOfflineInboxFn;
+  final Future<dynamic> Function()? drainGroupOfflineInboxFn;
   final Future<int> Function()? recoverStuckSendingMessagesFn; // Part A
   final Future<int> Function()? retryIncompleteUploadsFn; // Part G -- NEW
   final Future<int> Function()? recoverStuckSendingGroupMessagesFn;
@@ -189,7 +190,7 @@ class PendingMessageRetrier {
     _stopRecurringOnlineTimers();
   }
 
-  Future<void> _runGroupRejoinIfNeeded() async {
+  Future<bool> _runGroupRejoinIfNeeded() async {
     var shouldAcknowledgeRecovery = false;
 
     if (rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
@@ -199,10 +200,27 @@ class PendingMessageRetrier {
       await rejoinGroupTopicsFn!();
     }
 
+    return shouldAcknowledgeRecovery;
+  }
+
+  Future<bool> _runGroupDrainIfNeeded() async {
+    if (drainGroupOfflineInboxFn == null) {
+      return true;
+    }
+
+    final result = await drainGroupOfflineInboxFn!();
+    if (result is GroupOfflineInboxDrainResult) {
+      return result.isSuccessful;
+    }
+    return true;
+  }
+
+  Future<void> _acknowledgeGroupRecoveryIfEligible(
+    bool shouldAcknowledgeRecovery,
+  ) async {
     if (!shouldAcknowledgeRecovery || acknowledgeGroupRecoveryFn == null) {
       return;
     }
-
     try {
       await acknowledgeGroupRecoveryFn!();
     } catch (e) {
@@ -234,10 +252,11 @@ class PendingMessageRetrier {
     _isGroupContinuitySweeping = true;
     try {
       await runWithGroupRecoveryGate(() async {
+        var shouldAcknowledgeRecovery = false;
         if (rejoinGroupTopicsFn != null ||
             rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
           try {
-            await _runGroupRejoinIfNeeded();
+            shouldAcknowledgeRecovery = await _runGroupRejoinIfNeeded();
           } catch (e) {
             emitFlowEvent(
               layer: 'FL',
@@ -247,17 +266,21 @@ class PendingMessageRetrier {
           }
         }
 
-        if (drainGroupOfflineInboxFn != null) {
-          try {
-            await drainGroupOfflineInboxFn!();
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
-              details: {'error': e.toString()},
-            );
-          }
+        var drainSucceeded = true;
+        try {
+          drainSucceeded = await _runGroupDrainIfNeeded();
+        } catch (e) {
+          drainSucceeded = false;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
+            details: {'error': e.toString()},
+          );
         }
+
+        await _acknowledgeGroupRecoveryIfEligible(
+          shouldAcknowledgeRecovery && drainSucceeded,
+        );
       });
     } finally {
       _isGroupContinuitySweeping = false;
@@ -282,21 +305,23 @@ class PendingMessageRetrier {
       // ORDERING CONTRACT:
       //   1. group rejoin topics
       //   2. group drain offline inbox
-      //   3. group recover stuck
-      //   4. group retry incomplete uploads
-      //   5. group retry failed messages
-      //   6. 1:1 recover stuck
-      //   7. 1:1 retry incomplete uploads
-      //   8. 1:1 retry failed messages
-      //   9. 1:1 retry unacked messages
-      //  10. intro retry pending deliveries
-      //  11. group retry failed inbox stores
+      //   3. group acknowledge recovery when rejoin and drain both succeeded
+      //   4. group recover stuck
+      //   5. group retry incomplete uploads
+      //   6. group retry failed messages
+      //   7. 1:1 recover stuck
+      //   8. 1:1 retry incomplete uploads
+      //   9. 1:1 retry failed messages
+      //  10. 1:1 retry unacked messages
+      //  11. intro retry pending deliveries
+      //  12. group retry failed inbox stores
 
       if (groupRecoveryEnabled) {
+        var shouldAcknowledgeRecovery = false;
         if (rejoinGroupTopicsFn != null ||
             rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
           try {
-            await _runGroupRejoinIfNeeded();
+            shouldAcknowledgeRecovery = await _runGroupRejoinIfNeeded();
           } catch (e) {
             emitFlowEvent(
               layer: 'FL',
@@ -306,17 +331,21 @@ class PendingMessageRetrier {
           }
         }
 
-        if (drainGroupOfflineInboxFn != null) {
-          try {
-            await drainGroupOfflineInboxFn!();
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
-              details: {'error': e.toString()},
-            );
-          }
+        var drainSucceeded = true;
+        try {
+          drainSucceeded = await _runGroupDrainIfNeeded();
+        } catch (e) {
+          drainSucceeded = false;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
+            details: {'error': e.toString()},
+          );
         }
+
+        await _acknowledgeGroupRecoveryIfEligible(
+          shouldAcknowledgeRecovery && drainSucceeded,
+        );
 
         if (recoverStuckSendingGroupMessagesFn != null) {
           try {

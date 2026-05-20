@@ -71,6 +71,7 @@ Future<Map<String, dynamic>> _waitForVerdictOrExit({
   required String role,
   required String logPath,
 }) async {
+  final file = File(path);
   final result = await Future.any<Object>([
     _waitForJson(path, timeout: const Duration(minutes: 15)),
     process.exitCode.then<Object>((exitCode) => _ProcessExit(exitCode)),
@@ -79,6 +80,11 @@ Future<Map<String, dynamic>> _waitForVerdictOrExit({
     return result;
   }
   if (result is _ProcessExit) {
+    if (file.existsSync()) {
+      return Map<String, dynamic>.from(
+        jsonDecode(file.readAsStringSync()) as Map,
+      );
+    }
     throw StateError(
       '$role exited with code ${result.exitCode} before writing a verdict; '
       'log=$logPath',
@@ -107,6 +113,8 @@ Future<Process> _startHarnessRole({
   required String relayAddresses,
   String mode = 'proof',
   String? restoreMnemonic,
+  String? restoreIdentityPath,
+  bool reuseExistingIdentity = false,
 }) async {
   final args = <String>[
     if (_isIosDeviceId(deviceId)) ...<String>[
@@ -123,6 +131,10 @@ Future<Process> _startHarnessRole({
     '--dart-define=GROUP_MULTI_PARTY_MODE=$mode',
     if (restoreMnemonic != null && restoreMnemonic.trim().isNotEmpty)
       '--dart-define=GROUP_MULTI_PARTY_RESTORE_MNEMONIC=${restoreMnemonic.trim()}',
+    if (restoreIdentityPath != null && restoreIdentityPath.trim().isNotEmpty)
+      '--dart-define=GROUP_MULTI_PARTY_RESTORE_IDENTITY_PATH=${restoreIdentityPath.trim()}',
+    if (reuseExistingIdentity)
+      '--dart-define=GROUP_MULTI_PARTY_REUSE_EXISTING_IDENTITY=true',
     '--dart-define=E2E_DB_NAME=group_multi_party_${scenario}_${runId}_$role.db',
     '--dart-define=MKNOON_RELAY_ADDRESSES=$relayAddresses',
     '-d',
@@ -136,6 +148,13 @@ Future<Process> _startHarnessRole({
             : arg,
       )
       .join(' ');
+  final isStatefulRelaunch =
+      reuseExistingIdentity ||
+      (restoreMnemonic != null && restoreMnemonic.trim().isNotEmpty) ||
+      (restoreIdentityPath != null && restoreIdentityPath.trim().isNotEmpty);
+  if (!isStatefulRelaunch) {
+    await _uninstallRunnerApp(deviceId, '$scenario/$role');
+  }
   _log('ORCH', 'Launching $scenario/$role: flutter $displayArgs');
   return Process.start('flutter', args);
 }
@@ -177,6 +196,32 @@ Future<void> _terminateRunnerApp(String deviceId, String label) async {
     _log('ORCH', 'Timed out terminating Runner on $label simulator');
   } catch (error) {
     _log('ORCH', 'Failed to terminate Runner on $label simulator: $error');
+  }
+}
+
+Future<void> _uninstallRunnerApp(String deviceId, String label) async {
+  if (!_isIosDeviceId(deviceId)) return;
+  try {
+    final result = await Process.run('xcrun', [
+      'simctl',
+      'uninstall',
+      deviceId,
+      _iosRunnerBundleId,
+    ]).timeout(const Duration(seconds: 20));
+    final stderrText = '${result.stderr}'.trim();
+    if (result.exitCode != 0 &&
+        !stderrText.contains('No such app') &&
+        !stderrText.contains('No such application') &&
+        !stderrText.contains('not installed')) {
+      _log(
+        'ORCH',
+        'Runner uninstall on $label returned ${result.exitCode}: $stderrText',
+      );
+    }
+  } on TimeoutException {
+    _log('ORCH', 'Timed out uninstalling Runner on $label simulator');
+  } catch (error) {
+    _log('ORCH', 'Failed to uninstall Runner on $label simulator: $error');
   }
 }
 
@@ -263,6 +308,82 @@ List<String> _scenariosToRun(String scenario) {
       return const <String>['ge024'];
     case 'gm001':
       return const <String>['gm001'];
+    case 'de002':
+      return const <String>['de002'];
+    case 'de003':
+      return const <String>['de003'];
+    case 'de007':
+      return const <String>['de007'];
+    case 'de017':
+      return const <String>['de017'];
+    case 'ir001':
+      return const <String>['ir001'];
+    case 'ir015':
+      return const <String>['ir015'];
+    case 'ir016':
+      return const <String>['ir016'];
+    case 'private_abc_create':
+      return const <String>['private_abc_create'];
+    case 'private_full_mesh_online':
+      return const <String>['private_full_mesh_online'];
+    case 'private_relay_only_delivery':
+      return const <String>['private_relay_only_delivery'];
+    case 'private_partition_readd_heal':
+      return const <String>['private_partition_readd_heal'];
+    case 'private_relay_reconnect_group_recovery':
+      return const <String>['private_relay_reconnect_group_recovery'];
+    case 'private_peer_disconnect_not_removal':
+      return const <String>['private_peer_disconnect_not_removal'];
+    case 'private_background_resume_group_delivery':
+      return const <String>['private_background_resume_group_delivery'];
+    case 'private_long_offline_epoch_churn':
+      return const <String>['private_long_offline_epoch_churn'];
+    case 'private_online_add':
+      return const <String>['private_online_add'];
+    case 'private_offline_add':
+      return const <String>['private_offline_add'];
+    case 'private_online_remove':
+      return const <String>['private_online_remove'];
+    case 'private_offline_remove':
+      return const <String>['private_offline_remove'];
+    case 'private_offline_readd':
+      return const <String>['private_offline_readd'];
+    case 'private_readd_current':
+      return const <String>['private_readd_current'];
+    case 'private_readd_active_members':
+      return const <String>['private_readd_active_members'];
+    case 'private_readd_alternating_churn':
+      return const <String>['private_readd_alternating_churn'];
+    case 'private_late_leave_readd':
+      return const <String>['private_late_leave_readd'];
+    case 'private_rotated_device_readd':
+      return const <String>['private_rotated_device_readd'];
+    case 'private_same_user_multi_device_readd':
+      return const <String>['private_same_user_multi_device_readd'];
+    case 'private_readd_cycles':
+      return const <String>['private_readd_cycles'];
+    case 'private_rapid_readd':
+      return const <String>['private_rapid_readd'];
+    case 'private_concurrent_admin_membership_edits':
+      return const <String>['private_concurrent_admin_membership_edits'];
+    case 'private_timeline_truth':
+      return const <String>['private_timeline_truth'];
+    case 'private_non_friend_member_delivery':
+      return const <String>['private_non_friend_member_delivery'];
+    case 'private_admin_role_transfer_delivery':
+      return const <String>['private_admin_role_transfer_delivery'];
+    case 'private_history_retention':
+      return const <String>['private_history_retention'];
+    case 'private_invite_terminal_states':
+      return const <String>['private_invite_terminal_states'];
+    case 'private_stale_invite_readd':
+      return const <String>['private_stale_invite_readd'];
+    case 'private_stale_lower_key_update':
+      return const <String>['private_stale_lower_key_update'];
+    case 'private_same_epoch_key_conflict':
+      return const <String>['private_same_epoch_key_conflict'];
+    case 'private_partial_key_distribution':
+      return const <String>['private_partial_key_distribution'];
     case 'gm002':
       return const <String>['gm002'];
     case 'gm003':
@@ -323,7 +444,7 @@ List<String> _scenariosToRun(String scenario) {
       throw ArgumentError.value(
         scenario,
         'scenario',
-        'Expected --scenario ge001, ge002, ge003, ge004, ge005, ge006, ge007, ge008, ge009, ge010, go001, go002, go003, ge011, ge012, ge013, ge014, ge015, ge016, ge020, ge021, ge023, ge024, gm001, gm002, gm003, gm004, gm005, gm006, gm007, gm008, gm009, gm010, gm011, gm012, gm013, gm014, gm015, gm016, gm017, gm018, gm019, gm020, gm021, gm022, gm023, gm024, gm025, gm033, gm034, gm035, or all',
+        'Expected --scenario ge001, ge002, ge003, ge004, ge005, ge006, ge007, ge008, ge009, ge010, go001, go002, go003, ge011, ge012, ge013, ge014, ge015, ge016, ge020, ge021, ge023, ge024, gm001, de002, de003, de007, de017, ir001, ir015, ir016, private_abc_create, private_full_mesh_online, private_relay_only_delivery, private_partition_readd_heal, private_relay_reconnect_group_recovery, private_peer_disconnect_not_removal, private_background_resume_group_delivery, private_long_offline_epoch_churn, private_online_add, private_offline_add, private_online_remove, private_offline_remove, private_offline_readd, private_readd_current, private_readd_active_members, private_readd_alternating_churn, private_late_leave_readd, private_rotated_device_readd, private_same_user_multi_device_readd, private_readd_cycles, private_rapid_readd, private_concurrent_admin_membership_edits, private_timeline_truth, private_non_friend_member_delivery, private_admin_role_transfer_delivery, private_history_retention, private_invite_terminal_states, private_stale_invite_readd, private_stale_lower_key_update, private_same_epoch_key_conflict, private_partial_key_distribution, gm002, gm003, gm004, gm005, gm006, gm007, gm008, gm009, gm010, gm011, gm012, gm013, gm014, gm015, gm016, gm017, gm018, gm019, gm020, gm021, gm022, gm023, gm024, gm025, gm033, gm034, gm035, or all',
       );
   }
 }
@@ -603,12 +724,20 @@ Future<void> _runScenario({
   required List<String> devices,
   required String relayAddresses,
 }) async {
-  if (scenario == 'gm003') {
-    await _runGm003Scenario(devices: devices, relayAddresses: relayAddresses);
+  if (scenario == 'gm003' || scenario == 'private_offline_add') {
+    await _runGm003Scenario(
+      scenario: scenario,
+      devices: devices,
+      relayAddresses: relayAddresses,
+    );
     return;
   }
-  if (scenario == 'gm005') {
-    await _runGm005Scenario(devices: devices, relayAddresses: relayAddresses);
+  if (scenario == 'gm005' || scenario == 'private_offline_remove') {
+    await _runGm005Scenario(
+      scenario: scenario,
+      devices: devices,
+      relayAddresses: relayAddresses,
+    );
     return;
   }
   if (scenario == 'ge006') {
@@ -637,6 +766,18 @@ Future<void> _runScenario({
   }
   if (scenario == 'gm008') {
     await _runGm008Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ir001') {
+    await _runIr001Scenario(devices: devices, relayAddresses: relayAddresses);
+    return;
+  }
+  if (scenario == 'ir015' || scenario == 'ir016') {
+    await _runIr001Scenario(
+      scenario: scenario,
+      devices: devices,
+      relayAddresses: relayAddresses,
+    );
     return;
   }
 
@@ -1298,14 +1439,213 @@ Future<void> _runGm008Scenario({
 }
 
 Future<void> _runGm005Scenario({
+  required String scenario,
   required List<String> devices,
   required String relayAddresses,
 }) {
   return _runOfflineCharlieRelaunchScenario(
-    scenario: 'gm005',
+    scenario: scenario,
     devices: devices,
     relayAddresses: relayAddresses,
   );
+}
+
+Future<void> _runIr001Scenario({
+  String scenario = 'ir001',
+  required List<String> devices,
+  required String relayAddresses,
+}) async {
+  final deviceCheck = evaluateDeviceSelection(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  if (!deviceCheck.ok) {
+    throw ArgumentError(deviceCheck.detail);
+  }
+  final roleDevices = roleDeviceMapForScenario(
+    scenario: scenario,
+    deviceIds: devices,
+  );
+  final roles = scenarioRequirement(scenario).roles;
+  final runId = DateTime.now().millisecondsSinceEpoch.toString();
+  final sharedDir = await Directory.systemTemp.createTemp(
+    'group_multi_party_${scenario}_',
+  );
+  final processes = <String, Process>{};
+  final logs = <String, IOSink>{};
+  final logPaths = <String, String>{};
+
+  _log('ORCH', '$scenario shared dir: ${sharedDir.path}');
+  _log('ORCH', '$scenario run id: $runId');
+  _log('ORCH', '$scenario ${deviceCheck.detail}');
+  final oldStateSignal = scenario == 'ir015'
+      ? 'bob_ir015_old_state_persisted.json'
+      : scenario == 'ir016'
+      ? 'bob_ir016_old_state_persisted.json'
+      : 'bob_ir001_old_state_persisted.json';
+  final offlineSignal = scenario == 'ir015'
+      ? 'bob_ir015_offline'
+      : scenario == 'ir016'
+      ? 'bob_ir016_offline'
+      : 'bob_ir001_offline';
+  final relaunchReadySignal = scenario == 'ir015'
+      ? 'bob_ir015_relaunch_ready'
+      : scenario == 'ir016'
+      ? 'bob_ir016_relaunch_ready'
+      : 'bob_ir001_relaunch_ready';
+  final relaunchReason = scenario == 'ir015'
+      ? 'variant replay backlog'
+      : scenario == 'ir016'
+      ? 'retention cutoff backlog'
+      : 'missed backlog';
+
+  Future<Process> launchRole(
+    String role, {
+    String mode = 'proof',
+    String? restoreMnemonic,
+    String? logLabel,
+  }) async {
+    final label = logLabel ?? role;
+    final logPath = '${sharedDir.path}/$label.log';
+    final logSink = File(logPath).openWrite(mode: FileMode.writeOnlyAppend);
+    logs[label] = logSink;
+    logPaths[label] = logPath;
+    final process = await _startHarnessRole(
+      scenario: scenario,
+      role: role,
+      deviceId: roleDevices[role]!,
+      sharedDir: sharedDir,
+      runId: runId,
+      relayAddresses: relayAddresses,
+      mode: mode,
+      restoreMnemonic: restoreMnemonic,
+    );
+    processes[label] = process;
+    _pipeOutput(process.stdout, label.toUpperCase(), logSink);
+    _pipeOutput(process.stderr, '${label.toUpperCase()}-ERR', logSink);
+    return process;
+  }
+
+  try {
+    for (final role in const <String>['alice', 'charlie']) {
+      await launchRole(role);
+      await _waitForJson(
+        _signalPath(sharedDir, runId, '${role}_identity.json'),
+        timeout: const Duration(minutes: 15),
+      );
+      _log('ORCH', '$scenario/$role identity ready');
+    }
+
+    final bobSeed = await launchRole(
+      'bob',
+      mode: 'seedOffline',
+      logLabel: 'bob_seed',
+    );
+    final bobIdentity = await _waitForJson(
+      _signalPath(sharedDir, runId, 'bob_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    final bobMnemonic = (bobIdentity['mnemonic12'] as String?)?.trim();
+    if (bobMnemonic == null || bobMnemonic.isEmpty) {
+      throw StateError('$scenario Bob seed did not publish a mnemonic');
+    }
+    await _waitForJson(
+      _signalPath(sharedDir, runId, oldStateSignal),
+      timeout: const Duration(minutes: 15),
+    );
+    final seedExit = await bobSeed.exitCode.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        bobSeed.kill();
+        return -1;
+      },
+    );
+    if (seedExit != 0) {
+      throw StateError('$scenario/bob seed flutter process exitCode=$seedExit');
+    }
+    processes.remove('bob_seed');
+    await _terminateRunnerApp(roleDevices['bob']!, '$scenario/bob-seed');
+    File(_signalPath(sharedDir, runId, offlineSignal)).writeAsStringSync('ok');
+    _log('ORCH', '$scenario/bob joined state persisted; Bob offline');
+
+    await _waitForSignal(
+      _signalPath(sharedDir, runId, relaunchReadySignal),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario relaunching Bob after $relaunchReason');
+    await launchRole('bob', restoreMnemonic: bobMnemonic);
+    await _waitForJson(
+      _signalPath(sharedDir, runId, 'bob_identity.json'),
+      timeout: const Duration(minutes: 15),
+    );
+    _log('ORCH', '$scenario/bob reconnect identity ready');
+
+    final verdicts = await Future.wait<Map<String, dynamic>>(
+      roles.map(
+        (role) => _waitForVerdictOrExit(
+          process: processes[role]!,
+          path: _verdictPath(sharedDir, runId, role),
+          role: role,
+          logPath: logPaths[role]!,
+        ),
+      ),
+    );
+
+    final criterion = evaluateGroupMultiPartyVerdicts(
+      scenario: scenario,
+      relayAddresses: relayAddresses,
+      verdicts: verdicts,
+    );
+    File(
+      _signalPath(sharedDir, runId, '${scenario}_orchestrator_verdict.json'),
+    ).writeAsStringSync(
+      jsonEncode(<String, dynamic>{
+        'scenario': scenario,
+        'ok': criterion.ok,
+        'detail': criterion.detail,
+        'sharedDir': sharedDir.path,
+        'roleDevices': roleDevices,
+        'roleVerdicts': {
+          for (final role in roles) role: _verdictPath(sharedDir, runId, role),
+        },
+      }),
+    );
+    if (!criterion.ok) {
+      throw StateError(
+        '$scenario verdict validation failed: ${criterion.detail}',
+      );
+    }
+
+    for (final role in roles) {
+      final exitCode = await processes[role]!.exitCode.timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          processes[role]!.kill();
+          return -1;
+        },
+      );
+      if (exitCode != 0) {
+        throw StateError('$scenario/$role flutter process exitCode=$exitCode');
+      }
+    }
+
+    _log('ORCH', '$scenario proof passed: ${criterion.detail}');
+    _log('ORCH', '$scenario logs and verdicts: ${sharedDir.path}');
+    for (final role in roles) {
+      _log('ORCH', '$role log: ${logPaths[role]}');
+      _log('ORCH', '$role verdict: ${_verdictPath(sharedDir, runId, role)}');
+    }
+  } finally {
+    for (final entry in processes.entries) {
+      await _stopHarnessProcess(entry.value, '$scenario/${entry.key}');
+    }
+    for (final entry in roleDevices.entries) {
+      await _terminateRunnerApp(entry.value, '$scenario/${entry.key}');
+    }
+    for (final sink in logs.values) {
+      await sink.close();
+    }
+  }
 }
 
 Future<void> _runGe006Scenario({
@@ -1685,10 +2025,10 @@ Future<void> _runOfflineCharlieRelaunchScenario({
 }
 
 Future<void> _runGm003Scenario({
+  String scenario = 'gm003',
   required List<String> devices,
   required String relayAddresses,
 }) async {
-  const scenario = 'gm003';
   final deviceCheck = evaluateDeviceSelection(
     scenario: scenario,
     deviceIds: devices,
@@ -1717,6 +2057,7 @@ Future<void> _runGm003Scenario({
     String role, {
     String mode = 'proof',
     String? restoreMnemonic,
+    String? restoreIdentityPath,
     String? logLabel,
   }) async {
     final label = logLabel ?? role;
@@ -1733,6 +2074,7 @@ Future<void> _runGm003Scenario({
       relayAddresses: relayAddresses,
       mode: mode,
       restoreMnemonic: restoreMnemonic,
+      restoreIdentityPath: restoreIdentityPath,
     );
     processes[label] = process;
     _pipeOutput(process.stdout, label.toUpperCase(), logSink);
@@ -1746,14 +2088,16 @@ Future<void> _runGm003Scenario({
       mode: 'identityOnly',
       logLabel: 'dana_preflight',
     );
-    final danaIdentity = await _waitForJson(
+    await _waitForJson(
       _signalPath(sharedDir, runId, 'dana_identity.json'),
       timeout: const Duration(minutes: 15),
     );
-    final danaMnemonic = (danaIdentity['mnemonic12'] as String?)?.trim();
-    if (danaMnemonic == null || danaMnemonic.isEmpty) {
-      throw StateError('gm003 Dana preflight did not publish a mnemonic');
-    }
+    final danaRestoreIdentityPath = _signalPath(
+      sharedDir,
+      runId,
+      'dana_identity_restore.json',
+    );
+    await _waitForJson(danaRestoreIdentityPath);
     final danaPreflightExit = await danaPreflight.exitCode.timeout(
       const Duration(minutes: 5),
       onTimeout: () {
@@ -1763,7 +2107,7 @@ Future<void> _runGm003Scenario({
     );
     if (danaPreflightExit != 0) {
       throw StateError(
-        'gm003/dana preflight flutter process exitCode=$danaPreflightExit',
+        '$scenario/dana preflight flutter process exitCode=$danaPreflightExit',
       );
     }
     processes.remove('dana_preflight');
@@ -1784,9 +2128,9 @@ Future<void> _runGm003Scenario({
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario launching Dana after offline add/post-add send');
-    await launchRole('dana', restoreMnemonic: danaMnemonic);
+    await launchRole('dana', restoreIdentityPath: danaRestoreIdentityPath);
     await _waitForJson(
-      _signalPath(sharedDir, runId, 'dana_identity.json'),
+      _signalPath(sharedDir, runId, 'dana_late_identity.json'),
       timeout: const Duration(minutes: 15),
     );
     _log('ORCH', '$scenario/dana late identity ready');
@@ -1867,7 +2211,7 @@ Future<void> main(List<String> args) async {
   final relayCheck = evaluateRelayConfiguration(relayAddresses);
   final usage =
       'Usage: dart run integration_test/scripts/run_group_multi_party_device_real.dart '
-      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]> [--list-scenarios]';
+      '--scenario ge001|ge002|ge003|ge004|ge005|ge006|ge007|ge008|ge009|ge010|go001|go002|go003|ge011|ge012|ge013|ge014|ge015|ge016|ge020|ge021|ge023|ge024|gm001|de002|de003|de007|de017|ir001|ir015|ir016|private_abc_create|private_full_mesh_online|private_relay_only_delivery|private_partition_readd_heal|private_relay_reconnect_group_recovery|private_peer_disconnect_not_removal|private_background_resume_group_delivery|private_long_offline_epoch_churn|private_online_add|private_offline_add|private_online_remove|private_offline_remove|private_offline_readd|private_readd_current|private_readd_active_members|private_readd_alternating_churn|private_late_leave_readd|private_rotated_device_readd|private_same_user_multi_device_readd|private_readd_cycles|private_rapid_readd|private_concurrent_admin_membership_edits|private_timeline_truth|private_non_friend_member_delivery|private_admin_role_transfer_delivery|private_history_retention|private_invite_terminal_states|private_stale_invite_readd|private_stale_lower_key_update|private_same_epoch_key_conflict|private_partial_key_distribution|gm002|gm003|gm004|gm005|gm006|gm007|gm008|gm009|gm010|gm011|gm012|gm013|gm014|gm015|gm016|gm017|gm018|gm019|gm020|gm021|gm022|gm023|gm024|gm025|gm033|gm034|gm035|all -d <alice,bob,charlie[,dana]> [--list-scenarios]';
 
   if (listScenarios) {
     try {

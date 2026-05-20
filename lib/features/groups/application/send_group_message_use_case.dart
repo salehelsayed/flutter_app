@@ -32,7 +32,8 @@ enum SendGroupMessageResult {
   error,
 
   /// Publish succeeded but 0 peers were connected to the topic.
-  /// The message was stored in the relay inbox as a fallback.
+  /// The message was stored in the relay inbox as a fallback. This is live
+  /// fanout evidence only, not recipient delivered/read receipt evidence.
   /// The returned [GroupMessage] still has status `'sent'` because the
   /// relay inbox accepted custody for offline delivery.
   successNoPeers,
@@ -59,6 +60,37 @@ _loadGroupSendMembership({
       .toSet()
       .toList();
   return (members: members, recipientPeerIds: recipientPeerIds);
+}
+
+String _classifyGroupPublishLiveFanout({
+  required int? topicPeers,
+  required int expectedRecipientCount,
+}) {
+  if (topicPeers == null) return 'legacy_unknown';
+  if (topicPeers <= 0) return 'zero_peers';
+  if (topicPeers < expectedRecipientCount) return 'partial_peers';
+  return 'full_peers';
+}
+
+Map<String, dynamic> _groupPublishFanoutEvidence({
+  required int? topicPeers,
+  required int expectedRecipientCount,
+  required bool? inboxOk,
+}) {
+  final evidence = <String, dynamic>{
+    'expectedRecipientCount': expectedRecipientCount,
+    'liveFanoutState': _classifyGroupPublishLiveFanout(
+      topicPeers: topicPeers,
+      expectedRecipientCount: expectedRecipientCount,
+    ),
+    'inboxStored': inboxOk ?? false,
+    'inboxPending': inboxOk == null,
+    'recipientReceiptClaimed': false,
+  };
+  if (topicPeers != null) {
+    evidence['topicPeers'] = topicPeers;
+  }
+  return evidence;
 }
 
 String _defaultGroupMessageIdFactory() => const Uuid().v4();
@@ -371,7 +403,7 @@ void _finalizeSuccessfulPublishInboxStoreInBackground({
 /// 1. Validates group exists + sender authorized
 /// 2. Pre-persists row with status `'sending'` + wireEnvelope + inboxRetryPayload
 /// 3. Kicks off publish + inbox store concurrently
-/// 4. Reads topicPeers from publish result
+/// 4. Reads topicPeers from publish result as live fanout, not delivery ACK
 /// 5. Applies 4-way result matrix to determine final status
 ///
 /// Go's GroupPublish handles encryption and signing internally,
@@ -521,8 +553,38 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderPeerId: senderPeerId,
     membershipCutoff: membershipCutoff,
   );
+  final sendMembership = await sendMembershipFuture;
+  final members = sendMembership.members;
+  final senderConfigured = members.any(
+    (member) => member.peerId == senderPeerId,
+  );
+  if (!senderConfigured &&
+      (members.isNotEmpty || group.myRole != GroupRole.admin)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_UNAUTHORIZED',
+      details: {'reason': 'sender_not_member'},
+    );
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'sender_not_member'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
   final latestKey = await latestKeyFuture;
-  if (latestKey == null && group.myRole != GroupRole.admin) {
+  if (!senderConfigured && latestKey == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_SEND_MSG_USE_CASE_UNAUTHORIZED',
+      details: {'reason': 'sender_not_member'},
+    );
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'sender_not_member'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  if (latestKey == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_SEND_MSG_USE_CASE_BOOTSTRAP_PENDING',
@@ -537,8 +599,6 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     );
     return (SendGroupMessageResult.error, null);
   }
-  final sendMembership = await sendMembershipFuture;
-  final members = sendMembership.members;
   if (group.type == GroupType.chat && members.isEmpty) {
     emitFlowEvent(
       layer: 'FL',
@@ -574,20 +634,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     emitGroupSendTiming(outcome: 'message_id_collision');
     return (SendGroupMessageResult.error, null);
   }
-  final keyEpoch = latestKey?.keyGeneration ?? 0;
-  if (members.isNotEmpty &&
-      !members.any((member) => member.peerId == senderPeerId)) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_SEND_MSG_USE_CASE_UNAUTHORIZED',
-      details: {'reason': 'sender_not_member'},
-    );
-    emitGroupSendTiming(
-      outcome: 'unauthorized',
-      details: {'reason': 'sender_not_member'},
-    );
-    return (SendGroupMessageResult.unauthorized, null);
-  }
+  final keyEpoch = latestKey.keyGeneration;
   GroupMember? senderMember;
   for (final member in members) {
     if (member.peerId == senderPeerId) {
@@ -626,6 +673,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
 
   final mediaJson = groupMediaAttachments?.map((a) => a.toJson()).toList();
   final recipientPeerIds = sendMembership.recipientPeerIds;
+  final expectedRecipientCount = recipientPeerIds.length;
   // 3b. Build wireEnvelope (plaintext publish params for retry — NO senderPrivateKey)
   final wireEnvelope = jsonEncode({
     'groupId': groupId,
@@ -658,45 +706,35 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   });
   String? replayEnvelope;
   String? inboxRetryPayload;
-  if (latestKey != null) {
-    try {
-      replayEnvelope = await buildGroupOfflineReplayEnvelope(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        groupId: groupId,
-        payloadType: groupOfflineReplayPayloadTypeMessage,
-        plaintext: inboxPayload,
-        senderPeerId: senderPeerId,
-        senderPublicKey: resolvedSenderDevicePublicKey,
-        senderPrivateKey: senderPrivateKey,
-        keyInfo: latestKey,
-        messageId: resolvedMessageId,
-        senderDeviceId: resolvedSenderDeviceId,
-        senderTransportPeerId: resolvedSenderTransportPeerId,
-        senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
-        recipientPeerIds: recipientPeerIds,
-      );
-      inboxRetryPayload = jsonEncode({
-        'groupId': groupId,
-        'message': replayEnvelope,
-        if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
-      });
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_SEND_MSG_REPLAY_ENVELOPE_FAILED',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'error': e.toString(),
-        },
-      );
-    }
-  } else {
+  try {
+    replayEnvelope = await buildGroupOfflineReplayEnvelope(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      payloadType: groupOfflineReplayPayloadTypeMessage,
+      plaintext: inboxPayload,
+      senderPeerId: senderPeerId,
+      senderPublicKey: resolvedSenderDevicePublicKey,
+      senderPrivateKey: senderPrivateKey,
+      keyInfo: latestKey,
+      messageId: resolvedMessageId,
+      senderDeviceId: resolvedSenderDeviceId,
+      senderTransportPeerId: resolvedSenderTransportPeerId,
+      senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
+      recipientPeerIds: recipientPeerIds,
+    );
+    inboxRetryPayload = jsonEncode({
+      'groupId': groupId,
+      'message': replayEnvelope,
+      if (recipientPeerIds.isNotEmpty) 'recipientPeerIds': recipientPeerIds,
+    });
+  } catch (e) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_SEND_MSG_REPLAY_KEY_MISSING',
+      event: 'GROUP_SEND_MSG_REPLAY_ENVELOPE_FAILED',
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'error': e.toString(),
       },
     );
   }
@@ -739,6 +777,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     senderDevicePublicKey: resolvedSenderDevicePublicKey,
     senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
     messageId: resolvedMessageId,
+    timestamp: now,
     quotedMessageId: quotedMessageId,
     media: mediaJson,
   );
@@ -864,7 +903,7 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
     return (SendGroupMessageResult.error, failedMessage);
   }
 
-  // Publish succeeded — read topicPeers
+  // Publish succeeded — read topicPeers as live topic fanout only.
   final topicPeers = publishResult?.containsKey('topicPeers') == true
       ? publishResult!['topicPeers'] as int?
       : null;
@@ -910,6 +949,12 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
             ? resolvedMessageId.substring(0, 8)
             : resolvedMessageId,
         'legacy': true,
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: expectedRecipientCount,
+          inboxOk: resolvedInboxOk,
+        ),
+        'inboxOk': resolvedInboxOk,
       },
     );
     emitGroupSendTiming(
@@ -917,8 +962,11 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
       details: {
         'status': finalMessage.status,
         'legacy': true,
-        'inboxStored': resolvedInboxOk ?? false,
-        'inboxPending': resolvedInboxOk == null,
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: expectedRecipientCount,
+          inboxOk: resolvedInboxOk,
+        ),
       },
     );
     return (SendGroupMessageResult.success, finalMessage);
@@ -964,18 +1012,23 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'messageId': resolvedMessageId.length > 8
             ? resolvedMessageId.substring(0, 8)
             : resolvedMessageId,
-        'topicPeers': topicPeers,
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: expectedRecipientCount,
+          inboxOk: resolvedInboxOk,
+        ),
         'inboxOk': resolvedInboxOk,
-        'inboxPending': resolvedInboxOk == null,
       },
     );
     emitGroupSendTiming(
       outcome: 'success',
       details: {
         'status': finalMessage.status,
-        'topicPeers': topicPeers,
-        'inboxStored': resolvedInboxOk ?? false,
-        'inboxPending': resolvedInboxOk == null,
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: expectedRecipientCount,
+          inboxOk: resolvedInboxOk,
+        ),
       },
     );
     return (SendGroupMessageResult.success, finalMessage);
@@ -1012,18 +1065,22 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
             ? resolvedMessageId.substring(0, 8)
             : resolvedMessageId,
         'status': sentMessage.status,
-        'topicPeers': 0,
-        'inboxStored': true,
-        'inboxPending': false,
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: expectedRecipientCount,
+          inboxOk: true,
+        ),
       },
     );
     emitGroupSendTiming(
       outcome: 'success_no_peers',
       details: {
         'status': sentMessage.status,
-        'topicPeers': 0,
-        'inboxStored': true,
-        'inboxPending': false,
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: expectedRecipientCount,
+          inboxOk: true,
+        ),
       },
     );
     return (SendGroupMessageResult.successNoPeers, sentMessage);
@@ -1039,11 +1096,20 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
         'messageId': resolvedMessageId.length > 8
             ? resolvedMessageId.substring(0, 8)
             : resolvedMessageId,
+        ..._groupPublishFanoutEvidence(
+          topicPeers: topicPeers,
+          expectedRecipientCount: expectedRecipientCount,
+          inboxOk: false,
+        ),
       },
     );
     emitGroupSendTiming(
       outcome: 'zero_peers_inbox_failed',
-      details: {'topicPeers': 0},
+      details: _groupPublishFanoutEvidence(
+        topicPeers: topicPeers,
+        expectedRecipientCount: expectedRecipientCount,
+        inboxOk: false,
+      ),
     );
     return (SendGroupMessageResult.error, failedMessage);
   }

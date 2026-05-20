@@ -815,6 +815,7 @@ func TestGI009GroupInboxRetrieveSendsSinceTimestampRequestShape(t *testing.T) {
 	n.mu.Unlock()
 
 	const sinceTimestamp int64 = 1778633012345
+	const expectedSinceTimestamp int64 = sinceTimestamp - 1
 	messages, err := n.GroupInboxRetrieve("group-gi-009", sinceTimestamp)
 	if err != nil {
 		t.Fatalf("GroupInboxRetrieve: %v", err)
@@ -831,14 +832,78 @@ func TestGI009GroupInboxRetrieveSendsSinceTimestampRequestShape(t *testing.T) {
 		if req.GroupId != "group-gi-009" {
 			t.Fatalf("groupId = %q, want group-gi-009", req.GroupId)
 		}
-		if req.SinceTimestamp != sinceTimestamp {
-			t.Fatalf("sinceTimestamp = %d, want %d", req.SinceTimestamp, sinceTimestamp)
+		if req.SinceTimestamp != expectedSinceTimestamp {
+			t.Fatalf("sinceTimestamp = %d, want %d", req.SinceTimestamp, expectedSinceTimestamp)
 		}
 		if req.Limit != 50 {
 			t.Fatalf("limit = %d, want 50", req.Limit)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for group inbox retrieve request")
+	}
+}
+
+func TestIR003GroupInboxRetrieveUsesInclusiveSinceBoundary(t *testing.T) {
+	const boundaryMs int64 = 1777659516000
+
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan groupInboxRequest, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requestSeen <- req
+		if req.Action != "group_retrieve" ||
+			req.SinceTimestamp != boundaryMs-1 ||
+			req.Cursor != "" ||
+			req.Limit != 50 {
+			_ = writeFrame(s, []byte(`{"status":"ERROR","error":"unexpected IR-003 timestamp request"}`))
+			return
+		}
+		_ = writeFrame(s, []byte(`{
+			"status":"OK",
+			"groupMessages":[
+				{"from":"peer-source","message":"{\"messageId\":\"ir003-boundary\"}","timestamp":1777659516000},
+				{"from":"peer-source","message":"{\"messageId\":\"ir003-adjacent\"}","timestamp":1777659516001}
+			]
+		}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	messages, err := n.GroupInboxRetrieve("group-ir003", boundaryMs)
+	if err != nil {
+		t.Fatalf("GroupInboxRetrieve: %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("retrieved messages = %d, want 2: %#v", len(messages), messages)
+	}
+	if messages[0].Timestamp != boundaryMs || messages[1].Timestamp != boundaryMs+1 {
+		t.Fatalf("unexpected message timestamps: %#v", messages)
+	}
+
+	select {
+	case req := <-requestSeen:
+		if req.SinceTimestamp != boundaryMs-1 {
+			t.Fatalf("sinceTimestamp = %d, want %d", req.SinceTimestamp, boundaryMs-1)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for relay request")
 	}
 }
 
@@ -1205,6 +1270,70 @@ func TestGI027GroupHistoryRepairRangeValidatesRequiredFieldsAndTrimsWhitespace(t
 			tc.mutate(&req)
 			if _, err := NormalizeGroupHistoryRepairRangeRequest(req); err == nil || !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("NormalizeGroupHistoryRepairRangeRequest(%s) error = %v, want %q", tc.name, err, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestIR011GroupHistoryRepairRange_NormalizesAndRejectsIdentity(t *testing.T) {
+	valid := GroupHistoryRepairRangeRequest{
+		GroupId:                " group-1 ",
+		GapId:                  " gap-1 ",
+		SourcePeerId:           " peer-source ",
+		MissingAfterMessageId:  " msg-before ",
+		MissingBeforeMessageId: " msg-after ",
+		ExpectedRangeHash:      " range-hash ",
+		ExpectedHeadMessageId:  " msg-after ",
+	}
+
+	normalized, err := NormalizeGroupHistoryRepairRangeRequest(valid)
+	if err != nil {
+		t.Fatalf("NormalizeGroupHistoryRepairRangeRequest(valid): %v", err)
+	}
+	if normalized.GroupId != "group-1" || normalized.GapId != "gap-1" || normalized.SourcePeerId != "peer-source" {
+		t.Fatalf("expected trimmed identity fields, got %#v", normalized)
+	}
+	if normalized.MissingAfterMessageId != "msg-before" || normalized.MissingBeforeMessageId != "msg-after" {
+		t.Fatalf("expected trimmed gap boundary fields, got %#v", normalized)
+	}
+	if normalized.Limit != 50 {
+		t.Fatalf("expected default limit 50, got %d", normalized.Limit)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*GroupHistoryRepairRangeRequest)
+		want   string
+	}{
+		{
+			name:   "missing group id",
+			mutate: func(req *GroupHistoryRepairRangeRequest) { req.GroupId = " " },
+			want:   "missing groupId",
+		},
+		{
+			name:   "missing gap id",
+			mutate: func(req *GroupHistoryRepairRangeRequest) { req.GapId = " " },
+			want:   "missing gapId",
+		},
+		{
+			name:   "missing source peer id",
+			mutate: func(req *GroupHistoryRepairRangeRequest) { req.SourcePeerId = " " },
+			want:   "missing sourcePeerId",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invalid := valid
+			tc.mutate(&invalid)
+
+			if _, err := NormalizeGroupHistoryRepairRangeRequest(invalid); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q validation error, got %v", tc.want, err)
+			}
+
+			n := NewNode()
+			if _, err := n.GroupHistoryRepairRange(invalid); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q before node/relay use, got %v", tc.want, err)
+			} else if strings.Contains(err.Error(), "node not started") {
+				t.Fatalf("invalid identity reached node-start validation: %v", err)
 			}
 		})
 	}
@@ -1581,6 +1710,202 @@ func TestGI011GroupInboxRetrieveWithCursorResultPreservesMessagesCursorAndHistor
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for cursor retrieve request")
+	}
+}
+
+func TestGroupInboxRetrieveWithCursorResult_RetriesAfterTransientRelayEOF(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestCount := 0
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		if req.Action != "group_retrieve_cursor" {
+			_ = writeFrame(s, []byte(`{"status":"ERROR","error":"unexpected action"}`))
+			return
+		}
+
+		requestCount++
+		if requestCount == 1 {
+			return
+		}
+
+		_ = writeFrame(s, []byte(`{
+			"status":"OK",
+			"groupMessages":[
+				{"from":"peer-source","message":"{\"messageId\":\"msg-after-retry\"}","timestamp":1777659516000}
+			]
+		}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	recoverCalls := 0
+	n.groupInboxRecoverHook = func(err error) error {
+		recoverCalls++
+		if !isTransientGroupInboxRelayStreamError(err) {
+			t.Fatalf("recover hook received non-transient error: %v", err)
+		}
+		return nil
+	}
+
+	page, err := n.GroupInboxRetrieveWithCursorResult("group-1", "", 10)
+	if err != nil {
+		t.Fatalf("GroupInboxRetrieveWithCursorResult: %v", err)
+	}
+	if recoverCalls != 1 {
+		t.Fatalf("recoverCalls = %d, want 1", recoverCalls)
+	}
+	if requestCount != 2 {
+		t.Fatalf("requestCount = %d, want 2", requestCount)
+	}
+	if len(page.Messages) != 1 || page.Messages[0].Message != `{"messageId":"msg-after-retry"}` {
+		t.Fatalf("unexpected page after retry: %#v", page)
+	}
+}
+
+func TestGroupInboxRetrieveWithCursorResult_SyntheticSinceCursorUsesTimestampRetrieve(t *testing.T) {
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan groupInboxRequest, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requestSeen <- req
+		if req.Action != "group_retrieve" ||
+			req.SinceTimestamp != 1777659515999 ||
+			req.Cursor != "" ||
+			req.Limit != 10 {
+			_ = writeFrame(s, []byte(`{"status":"ERROR","error":"unexpected synthetic cursor request"}`))
+			return
+		}
+		_ = writeFrame(s, []byte(`{
+			"status":"OK",
+			"groupMessages":[
+				{"from":"peer-source","message":"{\"messageId\":\"msg-after-synthetic\"}","timestamp":1777659517000}
+			]
+		}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	page, err := n.GroupInboxRetrieveWithCursorResult(
+		"group-1",
+		groupInboxSyntheticSinceCursorPrefix+"1777659516000",
+		10,
+	)
+	if err != nil {
+		t.Fatalf("GroupInboxRetrieveWithCursorResult: %v", err)
+	}
+	if len(page.Messages) != 1 || page.Messages[0].Message != `{"messageId":"msg-after-synthetic"}` {
+		t.Fatalf("unexpected page after synthetic cursor: %#v", page)
+	}
+
+	select {
+	case req := <-requestSeen:
+		if req.Action != "group_retrieve" || req.SinceTimestamp != 1777659515999 {
+			t.Fatalf("unexpected request: %#v", req)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for relay request")
+	}
+}
+
+func TestST004GroupInboxRetrieveSyntheticCursorKeepsInclusiveRelayBoundary(t *testing.T) {
+	const boundaryMs int64 = 1777659516000
+
+	relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	if err != nil {
+		t.Fatalf("start relay host: %v", err)
+	}
+	defer relayHost.Close()
+
+	requestSeen := make(chan groupInboxRequest, 1)
+	relayHost.SetStreamHandler(InboxProtocol, func(s network.Stream) {
+		defer s.Close()
+		reqBytes, err := readFrame(s)
+		if err != nil {
+			return
+		}
+		var req groupInboxRequest
+		if err := json.Unmarshal(reqBytes, &req); err != nil {
+			return
+		}
+		requestSeen <- req
+		if req.Action != "group_retrieve" ||
+			req.SinceTimestamp != boundaryMs-1 ||
+			req.Cursor != "" ||
+			req.Limit != 10 {
+			_ = writeFrame(s, []byte(`{"status":"ERROR","error":"unexpected ST-004 timestamp request"}`))
+			return
+		}
+		_ = writeFrame(s, []byte(`{
+			"status":"OK",
+			"groupMessages":[
+				{"from":"peer-source","message":"{\"messageId\":\"st004-boundary\",\"timestamp\":\"2026-05-01T12:15:00.000Z\"}","timestamp":1777659516000},
+				{"from":"peer-source","message":"{\"messageId\":\"st004-adjacent\",\"timestamp\":\"2026-05-01T11:58:00.000Z\"}","timestamp":1777659516001}
+			]
+		}`))
+	})
+
+	n := startLocalNodeForMultiRelayTest(t)
+	relayAddr := relayHost.Addrs()[0].String() + "/p2p/" + relayHost.ID().String()
+	n.mu.Lock()
+	n.relayAddresses = []string{relayAddr}
+	n.mu.Unlock()
+
+	page, err := n.GroupInboxRetrieveWithCursorResult(
+		"group-st004",
+		groupInboxSyntheticSinceCursorPrefix+"1777659516000",
+		10,
+	)
+	if err != nil {
+		t.Fatalf("GroupInboxRetrieveWithCursorResult: %v", err)
+	}
+	if len(page.Messages) != 2 {
+		t.Fatalf("retrieved messages = %d, want 2: %#v", len(page.Messages), page.Messages)
+	}
+	if page.Messages[0].Timestamp != boundaryMs || page.Messages[1].Timestamp != boundaryMs+1 {
+		t.Fatalf("unexpected message timestamps: %#v", page.Messages)
+	}
+
+	select {
+	case req := <-requestSeen:
+		if req.SinceTimestamp != boundaryMs-1 {
+			t.Fatalf("sinceTimestamp = %d, want %d", req.SinceTimestamp, boundaryMs-1)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for relay request")
 	}
 }
 

@@ -13,12 +13,20 @@ Future<GroupInviteAuthResult> verifyGroupInviteAttestation({
   required ContactRepository contactRepo,
   required Bridge bridge,
   DateTime? validationTime,
+  bool allowMemberSnapshotBootstrap = false,
 }) async {
   final contact = await contactRepo.getContact(payload.senderPeerId);
   if (contact == null) {
-    return GroupInviteAuthResult.unknownSender;
+    if (!allowMemberSnapshotBootstrap) {
+      return GroupInviteAuthResult.unknownSender;
+    }
+  } else if (contact.isBlocked || contact.publicKey.trim().isEmpty) {
+    return GroupInviteAuthResult.invalidPayload;
   }
-  if (contact.isBlocked || contact.publicKey.trim().isEmpty) {
+
+  final trustedInviterPublicKey =
+      contact?.publicKey ?? _bootstrapInviterPublicKey(payload);
+  if (trustedInviterPublicKey == null || trustedInviterPublicKey.isEmpty) {
     return GroupInviteAuthResult.invalidPayload;
   }
 
@@ -29,7 +37,7 @@ Future<GroupInviteAuthResult> verifyGroupInviteAttestation({
 
   final isValid = await callVerifyPayload(
     bridge: bridge,
-    publicKey: contact.publicKey,
+    publicKey: trustedInviterPublicKey,
     data: inviteSignature.signedPayload,
     signature: inviteSignature.signature,
   );
@@ -39,20 +47,34 @@ Future<GroupInviteAuthResult> verifyGroupInviteAttestation({
 
   if (!isInviterAuthorizedBySignedSnapshot(
     payload: payload,
-    trustedInviterPublicKey: contact.publicKey,
+    trustedInviterPublicKey: trustedInviterPublicKey,
   )) {
     return GroupInviteAuthResult.invalidPayload;
   }
 
   if (!isMembershipFreshnessProofValid(
     payload: payload,
-    trustedInviterPublicKey: contact.publicKey,
+    trustedInviterPublicKey: trustedInviterPublicKey,
     validationTime: validationTime ?? DateTime.now().toUtc(),
   )) {
     return GroupInviteAuthResult.invalidPayload;
   }
 
   return GroupInviteAuthResult.authorized;
+}
+
+String? _bootstrapInviterPublicKey(GroupInvitePayload payload) {
+  final proofPublicKey = payload.membershipFreshnessProof?.inviterPublicKey
+      .trim();
+  if (proofPublicKey != null && proofPublicKey.isNotEmpty) {
+    return proofPublicKey;
+  }
+  final member = _findSenderMember(payload);
+  final memberPublicKey = member?['publicKey'];
+  if (memberPublicKey is String && memberPublicKey.trim().isNotEmpty) {
+    return memberPublicKey.trim();
+  }
+  return null;
 }
 
 class GroupInviteMembershipFreshnessBuildResult {

@@ -94,7 +94,9 @@ GroupMessage _makeFailedGroupMessage({
     'text': text,
     'timestamp': timestampIso,
     'messageId': id,
-    if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+    ...quotedMessageId == null
+        ? const <String, Object?>{}
+        : {'quotedMessageId': quotedMessageId},
     if (media.isNotEmpty) 'media': media,
   };
   return GroupMessage(
@@ -115,7 +117,9 @@ GroupMessage _makeFailedGroupMessage({
       'senderPeerId': 'peer-1',
       'senderUsername': 'Alice',
       'messageId': id,
-      if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
+      ...quotedMessageId == null
+          ? const <String, Object?>{}
+          : {'quotedMessageId': quotedMessageId},
       if (media.isNotEmpty) 'media': media,
     }),
     inboxStored: false,
@@ -366,6 +370,26 @@ void main() {
       () async {
         identityRepo.seed(_makeIdentity());
         await groupRepo.saveGroup(_makeGroup());
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-1',
+            username: 'Alice',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-1',
+            joinedAt: DateTime.utc(2026, 1, 15, 12),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-2',
+            joinedAt: DateTime.utc(2026, 1, 15, 12, 1),
+          ),
+        );
         bridge.responses['group:publish'] = {
           'ok': true,
           'messageId': 'msg-zero-owner',
@@ -408,10 +432,100 @@ void main() {
     );
 
     test(
+      'DE-008 retry of timeout-owned failed row reuses message id and clears invisible failed state',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await groupRepo.saveGroup(_makeGroup());
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-1',
+            username: 'Alice',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-1',
+            joinedAt: DateTime.utc(2026, 1, 15, 12),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-2',
+            joinedAt: DateTime.utc(2026, 1, 15, 12, 1),
+          ),
+        );
+        bridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'msg-de008-timeout-owned',
+          'topicPeers': 1,
+        };
+        await msgRepo.saveMessage(
+          _makeFailedGroupMessage(
+            id: 'msg-de008-timeout-owned',
+            text: 'Retry timeout-owned row',
+            timestampIso: '2026-01-15T12:00:00.000Z',
+          ),
+        );
+
+        final count = await retryFailedGroupMessages(
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 1);
+        final saved = await msgRepo.getMessage('msg-de008-timeout-owned');
+        expect(saved, isNotNull);
+        expect(saved!.id, 'msg-de008-timeout-owned');
+        expect(saved.status, 'sent');
+        expect(saved.wireEnvelope, isNull);
+        expect(saved.inboxStored, isTrue);
+        expect(saved.inboxRetryPayload, isNull);
+
+        final page = await msgRepo.getMessagesPage('group-1');
+        expect(page.map((message) => message.id), ['msg-de008-timeout-owned']);
+        expect(page.single.status, 'sent');
+        expect(await msgRepo.getFailedOutgoingMessages(), isEmpty);
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:publish'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((cmd) => cmd == 'group:inboxStore'),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
       'retries a failed text row even when inboxRetryPayload was cleared after inbox success',
       () async {
         identityRepo.seed(_makeIdentity());
         await groupRepo.saveGroup(_makeGroup());
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-1',
+            username: 'Alice',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-1',
+            joinedAt: DateTime.utc(2026, 1, 15, 12),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-2',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-2',
+            joinedAt: DateTime.utc(2026, 1, 15, 12, 1),
+          ),
+        );
         await msgRepo.saveMessage(
           GroupMessage(
             id: 'msg-inbox-ok',

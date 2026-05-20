@@ -251,6 +251,68 @@ void main() {
   });
 
   test(
+    'ML-013 bare writer cannot remove active member or sync config',
+    () async {
+      const groupId = 'group-ml013-remove';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'ML-013 Remove Guard',
+          type: GroupType.chat,
+          topicName: 'group-topic-ml013-remove',
+          createdAt: DateTime.now().toUtc(),
+          createdBy: 'peer-admin',
+          myRole: GroupRole.member,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-b',
+          username: 'Writer',
+          role: MemberRole.writer,
+          publicKey: 'pk-b',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-c',
+          username: 'Target',
+          role: MemberRole.writer,
+          publicKey: 'pk-c',
+          joinedAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      await expectLater(
+        removeGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          memberPeerId: 'peer-c',
+          selfPeerId: 'peer-b',
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(await groupRepo.getMember(groupId, 'peer-c'), isNotNull);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test(
     'allows writer with remove permission override to remove member',
     () async {
       const groupId = 'group-custom-remove';
@@ -568,6 +630,50 @@ void main() {
     expect(memberPeerIds, contains('peer-bystander'));
   });
 
+  test(
+    'ML-005 online remove excludes target from repo and bridge config while preserving remaining members',
+    () async {
+      final eventAt = DateTime.utc(2026, 5, 11, 12, 5);
+      expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+      expect(await groupRepo.getMember('group-1', 'peer-bystander'), isNotNull);
+
+      await removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        eventAt: eventAt,
+      );
+
+      expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNull);
+      final remainingMembers = await groupRepo.getMembers('group-1');
+      expect(remainingMembers.map((member) => member.peerId).toSet(), {
+        'peer-admin',
+        'peer-bystander',
+      });
+
+      expect(bridge.commandLog, equals(['group:updateConfig']));
+      final updateConfigMsg = bridge.sentMessages.firstWhere((m) {
+        final parsed = jsonDecode(m) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final payload =
+          (jsonDecode(updateConfigMsg) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      final memberPeerIds = (groupConfig['members'] as List)
+          .map((m) => (m as Map<String, dynamic>)['peerId'] as String)
+          .toSet();
+
+      expect(memberPeerIds, {'peer-admin', 'peer-bystander'});
+      expect(memberPeerIds, isNot(contains('peer-to-remove')));
+
+      final updatedGroup = await groupRepo.getGroup('group-1');
+      expect(updatedGroup?.lastMembershipEventAt, eventAt);
+    },
+  );
+
   test('groupConfig has correct structure with all required fields', () async {
     await removeGroupMember(
       bridge: bridge,
@@ -627,5 +733,32 @@ void main() {
     final bystander = await groupRepo.getMember('group-1', 'peer-bystander');
     expect(admin, isNotNull);
     expect(bystander, isNotNull);
+  });
+
+  test('ML-005 config sync failure restores removed online member', () async {
+    bridge.responses['group:updateConfig'] = {
+      'ok': false,
+      'errorCode': 'CONFIG_SYNC_FAILED',
+      'errorMessage': 'bridge rejected config',
+    };
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        eventAt: DateTime.utc(2026, 5, 11, 12, 10),
+      ),
+      throwsA(isA<Exception>()),
+    );
+
+    final restored = await groupRepo.getMember('group-1', 'peer-to-remove');
+    expect(restored, isNotNull);
+    expect(restored!.username, 'RemoveMe');
+    expect(await groupRepo.getMember('group-1', 'peer-admin'), isNotNull);
+    expect(await groupRepo.getMember('group-1', 'peer-bystander'), isNotNull);
+    final updatedGroup = await groupRepo.getGroup('group-1');
+    expect(updatedGroup?.lastMembershipEventAt, isNull);
   });
 }

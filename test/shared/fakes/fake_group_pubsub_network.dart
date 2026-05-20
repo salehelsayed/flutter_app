@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 
+enum FakeGroupRouteMode { direct, relayOnly, circuitRouted }
+
 typedef FakeGroupNetworkDelay = Future<void> Function(Duration delay);
 
 /// Routes group messages between peers via topic-based fan-out.
@@ -22,8 +24,12 @@ class FakeGroupPubSubNetwork {
       {};
   final Map<String, StreamController<Map<String, dynamic>>>
   _deviceReactionControllers = {};
+  final Map<String, StreamController<Map<String, dynamic>>>
+  _deviceDiagnosticControllers = {};
   final Set<String> _heldDeliveryDeviceIds = {};
   final Map<String, List<Map<String, dynamic>>> _heldMessageDeliveries = {};
+  final Map<String, FakeGroupRouteMode> _deviceRouteModes = {};
+  final List<Map<String, dynamic>> _deliveryRecords = [];
 
   final int _randomSeed;
   Random _random;
@@ -53,6 +59,26 @@ class FakeGroupPubSubNetwork {
   /// Total deliveries across all subscribers.
   int get totalDeliveries => _totalDeliveries;
   int get totalReactionDeliveries => _totalReactionDeliveries;
+
+  List<Map<String, dynamic>> get deliveryRecords => List.unmodifiable(
+    _deliveryRecords.map((record) => Map<String, dynamic>.unmodifiable(record)),
+  );
+
+  void setRouteMode(String peerOrDeviceId, FakeGroupRouteMode mode) {
+    final deviceIds = _resolveKnownDeliveryIds(peerOrDeviceId);
+    for (final deviceId in deviceIds) {
+      _deviceRouteModes[deviceId] = mode;
+    }
+  }
+
+  FakeGroupRouteMode routeModeFor(String peerOrDeviceId) {
+    final deviceIds = _resolveKnownDeliveryIds(peerOrDeviceId);
+    for (final deviceId in deviceIds) {
+      final mode = _deviceRouteModes[deviceId];
+      if (mode != null) return mode;
+    }
+    return FakeGroupRouteMode.direct;
+  }
 
   /// Total publishes (alias for [publishCallCount]).
   int get publishCount => publishCallCount;
@@ -93,6 +119,71 @@ class FakeGroupPubSubNetwork {
     return controller;
   }
 
+  /// Creates and returns the broadcast diagnostic stream controller for a peer.
+  StreamController<Map<String, dynamic>> registerDiagnosticPeer(
+    String peerId, {
+    String? deviceId,
+  }) {
+    final resolvedDeviceId = deviceId ?? peerId;
+    final controller = StreamController<Map<String, dynamic>>.broadcast();
+    _devicePeerIds[resolvedDeviceId] = peerId;
+    _peerDeviceIds.putIfAbsent(peerId, () => <String>{}).add(resolvedDeviceId);
+    _deviceDiagnosticControllers[resolvedDeviceId] = controller;
+    return controller;
+  }
+
+  int emitPayloadParseFailureDiagnostic({
+    required String receiverPeerOrDeviceId,
+    required String groupId,
+    required String senderPeerId,
+    String envelopeType = 'group_message',
+    String error = 'fake network payload parse failure',
+  }) {
+    var emitted = 0;
+    for (final deviceId in _resolveKnownDeviceIds(receiverPeerOrDeviceId)) {
+      final controller = _deviceDiagnosticControllers[deviceId];
+      if (controller == null || controller.isClosed) continue;
+      controller.add({
+        'event': 'group:payload_parse_failed',
+        'groupId': groupId,
+        'senderId': senderPeerId,
+        'envelopeType': envelopeType,
+        'error': error,
+      });
+      emitted++;
+    }
+    return emitted;
+  }
+
+  int emitValidationRejectedDiagnostic({
+    required String receiverPeerOrDeviceId,
+    required String reason,
+    required String groupHash,
+    required String senderHash,
+    required int keyEpoch,
+    String envelopeType = 'group_message',
+    String? transportPeerHash,
+    String? localPeerHash,
+  }) {
+    var emitted = 0;
+    for (final deviceId in _resolveKnownDeviceIds(receiverPeerOrDeviceId)) {
+      final controller = _deviceDiagnosticControllers[deviceId];
+      if (controller == null || controller.isClosed) continue;
+      controller.add({
+        'event': 'group:validation_rejected',
+        'reason': reason,
+        'groupHash': groupHash,
+        'senderHash': senderHash,
+        'transportPeerHash': ?transportPeerHash,
+        'localPeerHash': ?localPeerHash,
+        'envelopeType': envelopeType,
+        'keyEpoch': keyEpoch,
+      });
+      emitted++;
+    }
+    return emitted;
+  }
+
   /// Removes one registered device or every device for a peer id.
   void unregisterPeer(String peerOrDeviceId) {
     final deviceIds = _resolveDeviceIds(peerOrDeviceId);
@@ -122,6 +213,13 @@ class FakeGroupPubSubNetwork {
         reactionController.close();
       }
 
+      final diagnosticController = _deviceDiagnosticControllers.remove(
+        deviceId,
+      );
+      if (diagnosticController != null && !diagnosticController.isClosed) {
+        diagnosticController.close();
+      }
+
       _heldDeliveryDeviceIds.remove(deviceId);
       _heldMessageDeliveries.remove(deviceId);
     }
@@ -129,7 +227,7 @@ class FakeGroupPubSubNetwork {
 
   /// Holds future message deliveries for one device or all devices of a peer.
   void holdDeliveriesFor(String peerOrDeviceId) {
-    for (final deviceId in _resolveKnownDeviceIds(peerOrDeviceId)) {
+    for (final deviceId in _resolveKnownDeliveryIds(peerOrDeviceId)) {
       _heldDeliveryDeviceIds.add(deviceId);
     }
   }
@@ -139,7 +237,7 @@ class FakeGroupPubSubNetwork {
     String peerOrDeviceId, {
     bool reverse = false,
   }) async {
-    for (final deviceId in _resolveKnownDeviceIds(peerOrDeviceId)) {
+    for (final deviceId in _resolveKnownDeliveryIds(peerOrDeviceId)) {
       _heldDeliveryDeviceIds.remove(deviceId);
       final held = _heldMessageDeliveries.remove(deviceId) ?? const [];
       final deliveries = reverse ? held.reversed : held;
@@ -164,7 +262,7 @@ class FakeGroupPubSubNetwork {
 
   int heldDeliveryCountFor(String peerOrDeviceId) {
     var total = 0;
-    for (final deviceId in _resolveKnownDeviceIds(peerOrDeviceId)) {
+    for (final deviceId in _resolveKnownDeliveryIds(peerOrDeviceId)) {
       total += _heldMessageDeliveries[deviceId]?.length ?? 0;
     }
     return total;
@@ -225,6 +323,28 @@ class FakeGroupPubSubNetwork {
       final deliveredEnvelope = Map<String, dynamic>.from(envelope)
         ..putIfAbsent('senderDeviceId', () => senderDeviceId ?? senderPeerId)
         ..putIfAbsent('transportPeerId', () => senderDeviceId ?? senderPeerId);
+      final senderRouteMode = routeModeFor(senderDeviceId ?? senderPeerId);
+      final receiverRouteMode = routeModeFor(subscriberId);
+      final deliveryRouteKind = _deliveryRouteKind(
+        senderRouteMode,
+        receiverRouteMode,
+      );
+      deliveredEnvelope
+        ..putIfAbsent('senderRouteMode', () => senderRouteMode.name)
+        ..putIfAbsent('receiverRouteMode', () => receiverRouteMode.name)
+        ..putIfAbsent('deliveryRouteKind', () => deliveryRouteKind);
+      _deliveryRecords.add({
+        'groupId': groupId,
+        'senderPeerId': senderPeerId,
+        'senderDeviceId': senderDeviceId ?? senderPeerId,
+        'receiverPeerId': subscriberPeerId,
+        'receiverDeviceId': subscriberId,
+        'senderRouteMode': senderRouteMode.name,
+        'receiverRouteMode': receiverRouteMode.name,
+        'deliveryRouteKind': deliveryRouteKind,
+        'messageId': envelope['messageId'],
+        'payloadGroupId': envelope['groupId'],
+      });
       if (_heldDeliveryDeviceIds.contains(subscriberId)) {
         _heldMessageDeliveries
             .putIfAbsent(subscriberId, () => <Map<String, dynamic>>[])
@@ -316,6 +436,7 @@ class FakeGroupPubSubNetwork {
     _random = Random(_randomSeed);
     _heldDeliveryDeviceIds.clear();
     _heldMessageDeliveries.clear();
+    _deliveryRecords.clear();
   }
 
   Iterable<String> _resolveDeviceIds(String peerOrDeviceId) sync* {
@@ -331,5 +452,27 @@ class FakeGroupPubSubNetwork {
     final deviceIds = _resolveDeviceIds(peerOrDeviceId).toList();
     if (deviceIds.isNotEmpty) return deviceIds;
     return [peerOrDeviceId];
+  }
+
+  List<String> _resolveKnownDeliveryIds(String peerOrDeviceId) {
+    return <String>{
+      peerOrDeviceId,
+      ..._resolveKnownDeviceIds(peerOrDeviceId),
+    }.toList(growable: false);
+  }
+
+  String _deliveryRouteKind(
+    FakeGroupRouteMode senderMode,
+    FakeGroupRouteMode receiverMode,
+  ) {
+    if (senderMode == FakeGroupRouteMode.relayOnly ||
+        receiverMode == FakeGroupRouteMode.relayOnly) {
+      return 'relay_only';
+    }
+    if (senderMode == FakeGroupRouteMode.circuitRouted ||
+        receiverMode == FakeGroupRouteMode.circuitRouted) {
+      return 'circuit_routed';
+    }
+    return 'direct';
   }
 }

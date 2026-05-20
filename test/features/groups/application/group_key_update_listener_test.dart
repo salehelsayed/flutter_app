@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
@@ -25,7 +26,7 @@ void main() {
   late GroupKeyUpdateListener listener;
   late String? mlKemSecretKey;
 
-  ChatMessage _makeMessage(
+  ChatMessage makeMessage(
     String content, {
     String? confirmNonce,
     String from = 'sender-peer',
@@ -45,7 +46,7 @@ void main() {
   /// Builds a valid encrypted envelope whose inner plaintext is a JSON
   /// key-update payload.  Because PassthroughCryptoBridge echoes
   /// ciphertext back as plaintext, we set ciphertext = the key JSON.
-  String _validEnvelope({
+  String validEnvelope({
     String groupId = 'group-1',
     int keyGeneration = 2,
     String encryptedKey = 'base64-key-material',
@@ -79,18 +80,15 @@ void main() {
         );
     final innerJson = jsonEncode({
       'groupId': groupId,
-      if (sourceEventId != null) 'sourceEventId': sourceEventId,
-      if (eventAt != null) 'eventAt': eventAt.toUtc().toIso8601String(),
+      'sourceEventId': ?sourceEventId,
+      'eventAt': ?eventAt?.toUtc().toIso8601String(),
       'sourcePeerId': sourcePeerId,
-      if (sourceDeviceId != null) 'sourceDeviceId': sourceDeviceId,
-      if (sourceTransportPeerId != null)
-        'sourceTransportPeerId': sourceTransportPeerId,
-      if (recipientPeerId != null) 'recipientPeerId': recipientPeerId,
-      if (recipientDeviceId != null) 'recipientDeviceId': recipientDeviceId,
-      if (recipientTransportPeerId != null)
-        'recipientTransportPeerId': recipientTransportPeerId,
-      if (recipientKeyPackageId != null)
-        'recipientKeyPackageId': recipientKeyPackageId,
+      'sourceDeviceId': ?sourceDeviceId,
+      'sourceTransportPeerId': ?sourceTransportPeerId,
+      'recipientPeerId': ?recipientPeerId,
+      'recipientDeviceId': ?recipientDeviceId,
+      'recipientTransportPeerId': ?recipientTransportPeerId,
+      'recipientKeyPackageId': ?recipientKeyPackageId,
       'keyGeneration': keyGeneration,
       'encryptedKey': encryptedKey,
       if (includeSignature) ...{
@@ -98,8 +96,7 @@ void main() {
         'signedPayload': canonicalPayload,
         'signature': signature,
       },
-      if (signedTransitionAudit != null)
-        signedGroupTransitionAuditField: signedTransitionAudit,
+      signedGroupTransitionAuditField: ?signedTransitionAudit,
     });
     return jsonEncode({
       'encrypted': {
@@ -110,7 +107,7 @@ void main() {
     });
   }
 
-  Future<void> _saveMember({
+  Future<void> saveMember({
     required String groupId,
     required String peerId,
     required MemberRole role,
@@ -134,7 +131,7 @@ void main() {
     );
   }
 
-  Future<void> _saveActiveGroup(String groupId) async {
+  Future<void> saveActiveGroup(String groupId) async {
     await groupRepo.saveGroup(
       GroupModel(
         id: groupId,
@@ -146,7 +143,7 @@ void main() {
         myRole: GroupRole.member,
       ),
     );
-    await _saveMember(
+    await saveMember(
       groupId: groupId,
       peerId: 'sender-peer',
       role: MemberRole.admin,
@@ -154,7 +151,7 @@ void main() {
     );
   }
 
-  Future<Map<String, Object?>> _signDirectKeyUpdateAudit({
+  Future<Map<String, Object?>> signDirectKeyUpdateAudit({
     required String groupId,
     required String sourceEventId,
     required DateTime eventAt,
@@ -200,7 +197,7 @@ void main() {
     );
   }
 
-  Map<String, dynamic> _lastGroupOfflineReplayEnvelope(FakeBridge bridge) {
+  Map<String, dynamic> lastGroupOfflineReplayEnvelope(FakeBridge bridge) {
     final inboxMsg = bridge.sentMessages.lastWhere(
       (m) =>
           (jsonDecode(m) as Map<String, dynamic>)['cmd'] == 'group:inboxStore',
@@ -233,7 +230,7 @@ void main() {
   test(
     'PREREQ-SIGNED-COMMIT-AUDIT direct key update retains signature as audit evidence before key save',
     () async {
-      await _saveActiveGroup('group-prereq-direct-key');
+      await saveActiveGroup('group-prereq-direct-key');
       final eventLog = _FakeEventLog();
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -247,7 +244,7 @@ void main() {
 
       final sourceEventId = 'direct-key-audit-1';
       final eventAt = DateTime.utc(2026, 5, 1, 12, 2);
-      final audit = await _signDirectKeyUpdateAudit(
+      final audit = await signDirectKeyUpdateAudit(
         groupId: 'group-prereq-direct-key',
         sourceEventId: sourceEventId,
         eventAt: eventAt,
@@ -256,8 +253,8 @@ void main() {
       );
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-prereq-direct-key',
             keyGeneration: 2,
             encryptedKey: 'key-v2',
@@ -292,8 +289,8 @@ void main() {
           'evil-key',
         );
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-prereq-direct-key',
             keyGeneration: 3,
             encryptedKey: 'evil-key',
@@ -317,7 +314,7 @@ void main() {
   test(
     'PREREQ-SIGNED-COMMIT-AUDIT rejects missing direct key-update audit before side effects when append is wired',
     () async {
-      await _saveActiveGroup('group-prereq-missing-direct-audit');
+      await saveActiveGroup('group-prereq-missing-direct-audit');
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-prereq-missing-direct-audit',
@@ -338,8 +335,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-prereq-missing-direct-audit',
             keyGeneration: 2,
             encryptedKey: 'unaudited-key-v2',
@@ -374,7 +371,7 @@ void main() {
   test(
     'logs key update and rejects tampered replay before replacing key',
     () async {
-      await _saveActiveGroup('group-log');
+      await saveActiveGroup('group-log');
       final eventLog = _FakeEventLog();
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -388,7 +385,7 @@ void main() {
 
       final sourceEventId = 'key-event-1';
       final eventAt = DateTime.utc(2026, 5, 1, 12, 10);
-      final audit = await _signDirectKeyUpdateAudit(
+      final audit = await signDirectKeyUpdateAudit(
         groupId: 'group-log',
         sourceEventId: sourceEventId,
         eventAt: eventAt,
@@ -396,8 +393,8 @@ void main() {
         encryptedKey: 'key-v2',
       );
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-log',
             keyGeneration: 2,
             encryptedKey: 'key-v2',
@@ -424,8 +421,8 @@ void main() {
       );
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-log',
             keyGeneration: 2,
             encryptedKey: 'tampered-key-v2',
@@ -450,7 +447,7 @@ void main() {
   test(
     'exact duplicate key update replay keeps one log entry and final key',
     () async {
-      await _saveActiveGroup('group-exact-replay');
+      await saveActiveGroup('group-exact-replay');
       final eventLog = _FakeEventLog();
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -464,15 +461,15 @@ void main() {
 
       final sourceEventId = 'key-exact-replay-1';
       final eventAt = DateTime.utc(2026, 5, 1, 12, 11);
-      final audit = await _signDirectKeyUpdateAudit(
+      final audit = await signDirectKeyUpdateAudit(
         groupId: 'group-exact-replay',
         sourceEventId: sourceEventId,
         eventAt: eventAt,
         keyGeneration: 2,
         encryptedKey: 'key-v2',
       );
-      final message = _makeMessage(
-        _validEnvelope(
+      final message = makeMessage(
+        validEnvelope(
           groupId: 'group-exact-replay',
           keyGeneration: 2,
           encryptedKey: 'key-v2',
@@ -514,8 +511,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'missing-direct-key-group',
             keyGeneration: 2,
             encryptedKey: 'new-key-for-missing-group',
@@ -570,8 +567,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'dissolved-direct-key-group',
             keyGeneration: 2,
             encryptedKey: 'new-dissolved-key',
@@ -597,10 +594,10 @@ void main() {
   );
 
   test(
-    'RP004 unauthorized direct key update sender is ignored before bridge update, log, or key save',
+    'ML-013 RP004 bare writer direct key update is ignored before bridge update, log, or key save',
     () async {
-      await _saveActiveGroup('group-rp004-direct-auth');
-      await _saveMember(
+      await saveActiveGroup('group-rp004-direct-auth');
+      await saveMember(
         groupId: 'group-rp004-direct-auth',
         peerId: 'peer-writer',
         role: MemberRole.writer,
@@ -625,14 +622,19 @@ void main() {
       );
       listener.start();
 
+      final sourceEventId = 'ml013-writer-key-update';
+      final eventAt = DateTime.utc(2026, 5, 1, 13);
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-rp004-direct-auth',
+            sourcePeerId: 'peer-writer',
             keyGeneration: 2,
             encryptedKey: 'unauthorized-rp004-key',
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
           ),
-          confirmNonce: 'rp004-unauthorized-key-update',
+          confirmNonce: sourceEventId,
           from: 'peer-writer',
         ),
       );
@@ -654,10 +656,71 @@ void main() {
   );
 
   test(
+    'ML-013 removed peer direct key update is ignored before bridge update, log, or key save',
+    () async {
+      await saveActiveGroup('group-ml013-removed-direct-auth');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-ml013-removed-direct-auth',
+          keyGeneration: 1,
+          encryptedKey: 'old-ml013-key',
+          createdAt: DateTime.utc(2026, 4, 5, 12, 1),
+        ),
+      );
+      final eventLog = _FakeEventLog();
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      listener.start();
+
+      final sourceEventId = 'ml013-removed-key-update';
+      final eventAt = DateTime.utc(2026, 5, 1, 13, 1);
+      controller.add(
+        makeMessage(
+          validEnvelope(
+            groupId: 'group-ml013-removed-direct-auth',
+            sourcePeerId: 'peer-removed',
+            keyGeneration: 2,
+            encryptedKey: 'removed-ml013-key',
+            sourceEventId: sourceEventId,
+            eventAt: eventAt,
+          ),
+          confirmNonce: sourceEventId,
+          from: 'peer-removed',
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(eventLog.entries, isEmpty);
+      final latest = await groupRepo.getLatestKey(
+        'group-ml013-removed-direct-auth',
+      );
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 1);
+      expect(latest.encryptedKey, 'old-ml013-key');
+      expect(
+        await groupRepo.getKeyByGeneration(
+          'group-ml013-removed-direct-auth',
+          2,
+        ),
+        isNull,
+      );
+    },
+  );
+
+  test(
     'RP004 rotate-permission sender direct key update is accepted',
     () async {
-      await _saveActiveGroup('group-rp004-rotate-override');
-      await _saveMember(
+      await saveActiveGroup('group-rp004-rotate-override');
+      await saveMember(
         groupId: 'group-rp004-rotate-override',
         peerId: 'peer-rotator',
         role: MemberRole.writer,
@@ -677,7 +740,7 @@ void main() {
 
       final sourceEventId = 'rp004-authorized-key-update';
       final eventAt = DateTime.utc(2026, 5, 1, 12, 12);
-      final audit = await _signDirectKeyUpdateAudit(
+      final audit = await signDirectKeyUpdateAudit(
         groupId: 'group-rp004-rotate-override',
         sourceEventId: sourceEventId,
         eventAt: eventAt,
@@ -687,8 +750,8 @@ void main() {
         encryptedKey: 'authorized-rp004-key',
       );
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-rp004-rotate-override',
             sourcePeerId: 'peer-rotator',
             keyGeneration: 2,
@@ -720,8 +783,8 @@ void main() {
   test(
     'accepts direct key update only from a registered active source device to the local device',
     () async {
-      await _saveActiveGroup('group-device-key');
-      await _saveMember(
+      await saveActiveGroup('group-device-key');
+      await saveMember(
         groupId: 'group-device-key',
         peerId: 'me',
         role: MemberRole.writer,
@@ -736,7 +799,7 @@ void main() {
           ),
         ],
       );
-      await _saveMember(
+      await saveMember(
         groupId: 'group-device-key',
         peerId: 'sender-peer',
         role: MemberRole.admin,
@@ -766,7 +829,7 @@ void main() {
 
       final sourceEventId = 'device-key-event-1';
       final eventAt = DateTime.utc(2026, 5, 1, 12, 13);
-      final audit = await _signDirectKeyUpdateAudit(
+      final audit = await signDirectKeyUpdateAudit(
         groupId: 'group-device-key',
         sourceEventId: sourceEventId,
         eventAt: eventAt,
@@ -781,8 +844,8 @@ void main() {
         encryptedKey: 'device-bound-key-v2',
       );
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-device-key',
             keyGeneration: 2,
             encryptedKey: 'device-bound-key-v2',
@@ -815,8 +878,8 @@ void main() {
   test(
     'rejects direct key update from unbound registered source before key save',
     () async {
-      await _saveActiveGroup('group-unbound-source-key');
-      await _saveMember(
+      await saveActiveGroup('group-unbound-source-key');
+      await saveMember(
         groupId: 'group-unbound-source-key',
         peerId: 'me',
         role: MemberRole.writer,
@@ -829,7 +892,7 @@ void main() {
           ),
         ],
       );
-      await _saveMember(
+      await saveMember(
         groupId: 'group-unbound-source-key',
         peerId: 'sender-peer',
         role: MemberRole.admin,
@@ -857,8 +920,8 @@ void main() {
 
       final eventAt = DateTime.utc(2026, 5, 1, 12, 14);
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-unbound-source-key',
             keyGeneration: 2,
             encryptedKey: 'unbound-source-key-v2',
@@ -888,8 +951,8 @@ void main() {
   test(
     'rejects direct key update for the wrong local recipient device before key save',
     () async {
-      await _saveActiveGroup('group-wrong-recipient-key');
-      await _saveMember(
+      await saveActiveGroup('group-wrong-recipient-key');
+      await saveMember(
         groupId: 'group-wrong-recipient-key',
         peerId: 'me',
         role: MemberRole.writer,
@@ -903,7 +966,7 @@ void main() {
           ),
         ],
       );
-      await _saveMember(
+      await saveMember(
         groupId: 'group-wrong-recipient-key',
         peerId: 'sender-peer',
         role: MemberRole.admin,
@@ -931,8 +994,8 @@ void main() {
 
       final eventAt = DateTime.utc(2026, 5, 1, 12, 15);
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-wrong-recipient-key',
             keyGeneration: 2,
             encryptedKey: 'wrong-recipient-key-v2',
@@ -961,7 +1024,7 @@ void main() {
   test(
     'EK004 rejects unsigned direct key update before bridge update, log, or key save',
     () async {
-      await _saveActiveGroup('group-ek004-unsigned-key');
+      await saveActiveGroup('group-ek004-unsigned-key');
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-ek004-unsigned-key',
@@ -983,8 +1046,8 @@ void main() {
 
       final eventAt = DateTime.utc(2026, 5, 1, 12, 17);
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-ek004-unsigned-key',
             keyGeneration: 2,
             encryptedKey: 'unsigned-ek004-key',
@@ -1016,7 +1079,7 @@ void main() {
   test(
     'EK004 rejects mismatched direct key update signature payload before verify or key save',
     () async {
-      await _saveActiveGroup('group-ek004-mismatch-key');
+      await saveActiveGroup('group-ek004-mismatch-key');
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-ek004-mismatch-key',
@@ -1045,8 +1108,8 @@ void main() {
       final eventAt = DateTime.utc(2026, 5, 1, 12, 18);
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-ek004-mismatch-key',
             keyGeneration: 2,
             encryptedKey: 'mismatched-ek004-key',
@@ -1078,7 +1141,7 @@ void main() {
   test(
     'EK004 rejects invalid direct key update signature before bridge update, log, or key save',
     () async {
-      await _saveActiveGroup('group-ek004-invalid-signature');
+      await saveActiveGroup('group-ek004-invalid-signature');
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-ek004-invalid-signature',
@@ -1101,8 +1164,8 @@ void main() {
 
       final eventAt = DateTime.utc(2026, 5, 1, 12, 16);
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-ek004-invalid-signature',
             keyGeneration: 2,
             encryptedKey: 'invalid-signature-ek004-key',
@@ -1132,13 +1195,216 @@ void main() {
     },
   );
 
+  test(
+    'KE-019 rejects tampered direct key update payloads with diagnostics and keeps current key usable',
+    () async {
+      const groupId = 'group-ke019-direct';
+      const currentEpoch = 1;
+      const currentKey = 'ke019-current-key-1';
+      const signedEpoch = 2;
+      const signedKey = 'ke019-valid-key-2';
+      const originalSender = 'sender-peer';
+      const alternateSender = 'ke019-alternate-admin';
+
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await saveActiveGroup(groupId);
+      await saveMember(
+        groupId: groupId,
+        peerId: 'me',
+        role: MemberRole.writer,
+        username: 'Me',
+      );
+      await saveMember(
+        groupId: groupId,
+        peerId: alternateSender,
+        role: MemberRole.admin,
+        username: 'Alternate Admin',
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: currentEpoch,
+          encryptedKey: currentKey,
+          createdAt: DateTime.utc(2026, 5, 11, 12),
+        ),
+      );
+
+      final eventLog = _FakeEventLog();
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        appendGroupEventLogEntry: eventLog.append,
+        retryPendingGroupKeyRepairs: (request) async {
+          repairCalls.add(request);
+        },
+      );
+      listener.start();
+
+      final signedPayload = canonicalGroupKeyUpdateSignedPayload(
+        groupId: groupId,
+        sourcePeerId: originalSender,
+        keyGeneration: signedEpoch,
+        encryptedKey: signedKey,
+      );
+
+      Future<void> rejectTamperedUpdate({
+        required String variant,
+        required String envelope,
+        required String from,
+        required int tamperedEpoch,
+      }) async {
+        final invalidEventsBefore = flowEvents
+            .where(
+              (event) =>
+                  event['event'] ==
+                  'GROUP_KEY_UPDATE_LISTENER_INVALID_SIGNATURE',
+            )
+            .length;
+        bridge.commandLog.clear();
+
+        controller.add(
+          makeMessage(
+            envelope,
+            from: from,
+            confirmNonce: 'ke019-$variant',
+            timestamp: DateTime.utc(
+              2026,
+              5,
+              11,
+              12,
+              tamperedEpoch,
+            ).toIso8601String(),
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(bridge.commandLog, contains('message.decrypt'), reason: variant);
+        expect(
+          bridge.commandLog,
+          isNot(contains('payload.verify')),
+          reason: variant,
+        );
+        expect(
+          bridge.commandLog,
+          isNot(contains('group:updateKey')),
+          reason: variant,
+        );
+        expect(eventLog.entries, isEmpty, reason: variant);
+        expect(repairCalls, isEmpty, reason: variant);
+
+        final latest = await groupRepo.getLatestKey(groupId);
+        expect(latest, isNotNull, reason: variant);
+        expect(latest!.keyGeneration, currentEpoch, reason: variant);
+        expect(latest.encryptedKey, currentKey, reason: variant);
+        expect(
+          await groupRepo.getKeyByGeneration(groupId, tamperedEpoch),
+          isNull,
+          reason: variant,
+        );
+
+        final invalidEvents = flowEvents
+            .where(
+              (event) =>
+                  event['event'] ==
+                  'GROUP_KEY_UPDATE_LISTENER_INVALID_SIGNATURE',
+            )
+            .toList();
+        expect(invalidEvents, hasLength(invalidEventsBefore + 1));
+        final details = invalidEvents.last['details'] as Map<String, dynamic>;
+        expect(details['reason'], 'signed_payload_mismatch', reason: variant);
+      }
+
+      await rejectTamperedUpdate(
+        variant: 'key-material',
+        from: originalSender,
+        tamperedEpoch: signedEpoch,
+        envelope: validEnvelope(
+          groupId: groupId,
+          keyGeneration: signedEpoch,
+          encryptedKey: 'ke019-tampered-key-2',
+          sourcePeerId: originalSender,
+          sourceEventId: 'ke019-tampered-key-material',
+          eventAt: DateTime.utc(2026, 5, 11, 12, 2),
+          signedPayload: signedPayload,
+        ),
+      );
+
+      await rejectTamperedUpdate(
+        variant: 'epoch',
+        from: originalSender,
+        tamperedEpoch: 7,
+        envelope: validEnvelope(
+          groupId: groupId,
+          keyGeneration: 7,
+          encryptedKey: signedKey,
+          sourcePeerId: originalSender,
+          sourceEventId: 'ke019-tampered-epoch',
+          eventAt: DateTime.utc(2026, 5, 11, 12, 3),
+          signedPayload: signedPayload,
+        ),
+      );
+
+      await rejectTamperedUpdate(
+        variant: 'sender-identity',
+        from: alternateSender,
+        tamperedEpoch: signedEpoch,
+        envelope: validEnvelope(
+          groupId: groupId,
+          keyGeneration: signedEpoch,
+          encryptedKey: signedKey,
+          sourcePeerId: alternateSender,
+          sourceEventId: 'ke019-tampered-source-peer',
+          eventAt: DateTime.utc(2026, 5, 11, 12, 4),
+          signedPayload: signedPayload,
+        ),
+      );
+
+      bridge.commandLog.clear();
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'ke019-post-rejection',
+        'topicPeers': 1,
+      };
+      final msgRepo = InMemoryGroupMessageRepository();
+      final (sendResult, sentMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: 'KE-019 preserved epoch send',
+        senderPeerId: 'me',
+        senderPublicKey: 'pk-me',
+        senderPrivateKey: 'sk-me',
+        senderUsername: 'Me',
+        messageId: 'ke019-post-rejection',
+        timestamp: DateTime.utc(2026, 5, 11, 12, 5),
+      );
+
+      expect(sendResult, SendGroupMessageResult.success);
+      expect(sentMessage, isNotNull);
+      expect(sentMessage!.keyGeneration, currentEpoch);
+      final savedMessage = await msgRepo.getMessage('ke019-post-rejection');
+      expect(savedMessage, isNotNull);
+      expect(savedMessage!.keyGeneration, currentEpoch);
+      final replayEnvelope = lastGroupOfflineReplayEnvelope(bridge);
+      expect(replayEnvelope['keyEpoch'], currentEpoch);
+    },
+  );
+
   test('saves key on successful decrypt', () async {
-    await _saveActiveGroup('group-42');
+    await saveActiveGroup('group-42');
     listener.start();
 
     controller.add(
-      _makeMessage(
-        _validEnvelope(
+      makeMessage(
+        validEnvelope(
           groupId: 'group-42',
           keyGeneration: 3,
           encryptedKey: 'new-key-abc',
@@ -1160,7 +1426,7 @@ void main() {
   });
 
   test('promotes key only after group:updateKey succeeds', () async {
-    await _saveActiveGroup('group-delay');
+    await saveActiveGroup('group-delay');
     final updateCompleter = Completer<String>();
     final delayedBridge = _DelayedUpdateKeyBridge(updateCompleter);
 
@@ -1173,8 +1439,8 @@ void main() {
     delayedListener.start();
 
     controller.add(
-      _makeMessage(
-        _validEnvelope(
+      makeMessage(
+        validEnvelope(
           groupId: 'group-delay',
           keyGeneration: 2,
           encryptedKey: 'pending-key',
@@ -1202,7 +1468,7 @@ void main() {
   test(
     'PREREQ-FUTURE-EPOCH-KEY-REPAIR key arrival retries pending future epoch replay after save',
     () async {
-      await _saveActiveGroup('group-prereq-future-key');
+      await saveActiveGroup('group-prereq-future-key');
       final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -1224,8 +1490,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-prereq-future-key',
             keyGeneration: 2,
             encryptedKey: 'future-key-material',
@@ -1250,7 +1516,7 @@ void main() {
   test(
     'GM-014 delayed key arrival retries Charlie post-readd pending replay exactly once after save',
     () async {
-      await _saveActiveGroup('group-gm014-readd-key');
+      await saveActiveGroup('group-gm014-readd-key');
       final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
       var pendingReplayRetryObserved = false;
       listener.dispose();
@@ -1275,8 +1541,8 @@ void main() {
       );
       listener.start();
 
-      final update = _makeMessage(
-        _validEnvelope(
+      final update = makeMessage(
+        validEnvelope(
           groupId: 'group-gm014-readd-key',
           keyGeneration: 2,
           encryptedKey: 'gm014-readd-key-material',
@@ -1304,7 +1570,7 @@ void main() {
   test(
     'PREREQ-FUTURE-EPOCH-KEY-REPAIR rejected key updates do not trigger pending repair',
     () async {
-      await _saveActiveGroup('group-prereq-reject-key');
+      await saveActiveGroup('group-prereq-reject-key');
       final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
 
       final invalidSignatureBridge = PassthroughCryptoBridge();
@@ -1325,8 +1591,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-prereq-reject-key',
             keyGeneration: 2,
             encryptedKey: 'rejected-key-material',
@@ -1361,8 +1627,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-prereq-reject-key',
             keyGeneration: 3,
             encryptedKey: 'bridge-rejected-key-material',
@@ -1405,7 +1671,7 @@ void main() {
           joinedAt: DateTime.now().toUtc(),
         ),
       );
-      await _saveMember(
+      await saveMember(
         groupId: 'group-pending-send',
         peerId: 'sender-peer',
         role: MemberRole.admin,
@@ -1437,8 +1703,8 @@ void main() {
 
       delayedListener.start();
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-pending-send',
             keyGeneration: 2,
             encryptedKey: 'new-key',
@@ -1475,7 +1741,7 @@ void main() {
       expect(duringResult, SendGroupMessageResult.success);
       expect(duringMessage, isNotNull);
       expect(duringMessage!.keyGeneration, 1);
-      expect(_lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 1);
+      expect(lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 1);
 
       updateCompleter.complete(jsonEncode({'ok': true}));
       await Future<void>.delayed(Duration.zero);
@@ -1503,7 +1769,7 @@ void main() {
       expect(afterResult, SendGroupMessageResult.success);
       expect(afterMessage, isNotNull);
       expect(afterMessage!.keyGeneration, 2);
-      expect(_lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 2);
+      expect(lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 2);
 
       delayedListener.dispose();
     },
@@ -1514,7 +1780,7 @@ void main() {
 
     // Envelope without the 'encrypted' key.
     final content = jsonEncode({'type': 'group_key_update', 'payload': {}});
-    controller.add(_makeMessage(content));
+    controller.add(makeMessage(content));
 
     await Future<void>.delayed(Duration.zero);
 
@@ -1530,7 +1796,7 @@ void main() {
     mlKemSecretKey = null;
     listener.start();
 
-    controller.add(_makeMessage(_validEnvelope()));
+    controller.add(makeMessage(validEnvelope()));
 
     await Future<void>.delayed(Duration.zero);
 
@@ -1559,7 +1825,7 @@ void main() {
 
     failListener.start();
 
-    controller.add(_makeMessage(_validEnvelope()));
+    controller.add(makeMessage(validEnvelope()));
 
     await Future<void>.delayed(Duration.zero);
 
@@ -1574,12 +1840,12 @@ void main() {
   });
 
   test('saves key to DB AND updates Go via group:updateKey', () async {
-    await _saveActiveGroup('group-99');
+    await saveActiveGroup('group-99');
     listener.start();
 
     controller.add(
-      _makeMessage(
-        _validEnvelope(
+      makeMessage(
+        validEnvelope(
           groupId: 'group-99',
           keyGeneration: 5,
           encryptedKey: 'rotated-key-xyz',
@@ -1606,7 +1872,7 @@ void main() {
   test('does not crash on malformed JSON', () async {
     listener.start();
 
-    controller.add(_makeMessage('this is not valid json {{{'));
+    controller.add(makeMessage('this is not valid json {{{'));
 
     await Future<void>.delayed(Duration.zero);
 
@@ -1619,12 +1885,12 @@ void main() {
   test(
     'group:updateKey payload contains correct groupId, groupKey, keyEpoch',
     () async {
-      await _saveActiveGroup('group-77');
+      await saveActiveGroup('group-77');
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-77',
             keyGeneration: 4,
             encryptedKey: 'specific-key-material',
@@ -1650,13 +1916,13 @@ void main() {
   );
 
   test('handles sequential key updates (epoch 2 then epoch 3)', () async {
-    await _saveActiveGroup('group-seq');
+    await saveActiveGroup('group-seq');
     listener.start();
 
     // Send epoch 2
     controller.add(
-      _makeMessage(
-        _validEnvelope(
+      makeMessage(
+        validEnvelope(
           groupId: 'group-seq',
           keyGeneration: 2,
           encryptedKey: 'key-epoch-2',
@@ -1667,8 +1933,8 @@ void main() {
 
     // Send epoch 3
     controller.add(
-      _makeMessage(
-        _validEnvelope(
+      makeMessage(
+        validEnvelope(
           groupId: 'group-seq',
           keyGeneration: 3,
           encryptedKey: 'key-epoch-3',
@@ -1700,7 +1966,7 @@ void main() {
   test(
     'delayed older key update after newer generation does not promote active key',
     () async {
-      await _saveActiveGroup('group-delayed-older');
+      await saveActiveGroup('group-delayed-older');
       final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -1715,8 +1981,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-delayed-older',
             keyGeneration: 3,
             encryptedKey: 'key-epoch-3',
@@ -1726,8 +1992,8 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-delayed-older',
             keyGeneration: 2,
             encryptedKey: 'historical-key-epoch-2',
@@ -1758,9 +2024,112 @@ void main() {
   );
 
   test(
-    'conflicting same-generation key updates keep first accepted material',
+    'RA-006 KE-011 delayed old key after re-add stays historical and current delivery remains on re-add epoch',
     () async {
-      await _saveActiveGroup('group-race');
+      const groupId = 'group-ke011-readd-delayed-old-key';
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await saveActiveGroup(groupId);
+      await saveMember(
+        groupId: groupId,
+        peerId: 'me',
+        role: MemberRole.writer,
+        username: 'Charlie',
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 3,
+          encryptedKey: 'ke011-readd-current-key-3',
+          createdAt: DateTime.utc(2026, 5, 12, 12, 11),
+        ),
+      );
+
+      final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
+      listener.dispose();
+      listener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: bridge,
+        getOwnMlKemSecretKey: () async => mlKemSecretKey,
+        retryPendingGroupKeyRepairs: (request) async {
+          repairCalls.add(request);
+        },
+      );
+      listener.start();
+
+      bridge.commandLog.clear();
+      controller.add(
+        makeMessage(
+          validEnvelope(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'ke011-delayed-old-key-1',
+            sourceEventId: 'ke011-delayed-old-key-after-readd',
+            eventAt: DateTime.utc(2026, 5, 12, 12, 12),
+          ),
+          confirmNonce: 'ke011-delayed-old-key-after-readd',
+          timestamp: DateTime.utc(2026, 5, 12, 12, 12).toIso8601String(),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final latest = await groupRepo.getLatestKey(groupId);
+      expect(latest, isNotNull);
+      expect(latest!.keyGeneration, 3);
+      expect(latest.encryptedKey, 'ke011-readd-current-key-3');
+
+      final historical = await groupRepo.getKeyByGeneration(groupId, 1);
+      expect(historical, isNotNull);
+      expect(historical!.encryptedKey, 'ke011-delayed-old-key-1');
+      expect(bridge.commandLog, contains('message.decrypt'));
+      expect(bridge.commandLog, contains('payload.verify'));
+      expect(bridge.commandLog, isNot(contains('group:updateKey')));
+      expect(repairCalls, isEmpty);
+      expect(
+        flowEvents.any(
+          (event) =>
+              event['event'] ==
+              'GROUP_KEY_UPDATE_LISTENER_HISTORICAL_KEY_SAVED',
+        ),
+        isTrue,
+      );
+
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'ke011-after-stale-send',
+        'topicPeers': 1,
+      };
+      final msgRepo = InMemoryGroupMessageRepository();
+      final (sendResult, sentMessage) = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: 'KE-011 current epoch still usable after stale key',
+        senderPeerId: 'me',
+        senderPublicKey: 'pk-me',
+        senderPrivateKey: 'sk-me',
+        senderUsername: 'Charlie',
+        messageId: 'ke011-after-stale-send',
+        timestamp: DateTime.utc(2026, 5, 12, 12, 13),
+      );
+      expect(sendResult, SendGroupMessageResult.success);
+      expect(sentMessage, isNotNull);
+      expect(sentMessage!.keyGeneration, 3);
+    },
+  );
+
+  test(
+    'KE-005 conflicting same-generation key updates keep first accepted material',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await saveActiveGroup('group-race');
       final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -1775,8 +2144,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-race',
             keyGeneration: 2,
             encryptedKey: 'key-epoch-2a',
@@ -1784,8 +2153,8 @@ void main() {
         ),
       );
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-race',
             keyGeneration: 2,
             encryptedKey: 'key-epoch-2b',
@@ -1811,13 +2180,32 @@ void main() {
       expect(updateKeyCount, 1);
       expect(repairCalls, hasLength(1));
       expect(repairCalls.single.keyEpoch, 2);
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] == 'GROUP_KEY_UPDATE_LISTENER_SAME_EPOCH_CONFLICT',
+        ),
+        hasLength(1),
+      );
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] == 'GROUP_KEY_UPDATE_LISTENER_UPDATE_KEY_FAILED' ||
+              event['event'] == 'GROUP_KEY_UPDATE_LISTENER_HANDLE_ERROR',
+        ),
+        isEmpty,
+      );
     },
   );
 
   test(
-    'duplicate same-generation key update with same material is idempotent',
+    'KE-004 duplicate same-generation key update with same material is idempotent',
     () async {
-      await _saveActiveGroup('group-duplicate-same-generation');
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+
+      await saveActiveGroup('group-duplicate-same-generation');
       final repairCalls = <GroupPendingKeyRepairRetryRequest>[];
       listener.dispose();
       listener = GroupKeyUpdateListener(
@@ -1831,8 +2219,8 @@ void main() {
       );
       listener.start();
 
-      final update = _makeMessage(
-        _validEnvelope(
+      final update = makeMessage(
+        validEnvelope(
           groupId: 'group-duplicate-same-generation',
           keyGeneration: 2,
           encryptedKey: 'key-epoch-2',
@@ -1856,13 +2244,31 @@ void main() {
       expect(updateKeyCount, 1);
       expect(repairCalls, hasLength(1));
       expect(repairCalls.single.keyEpoch, 2);
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+              'GROUP_KEY_UPDATE_LISTENER_DUPLICATE_GENERATION',
+        ),
+        hasLength(1),
+      );
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] ==
+                  'GROUP_KEY_UPDATE_LISTENER_SAME_EPOCH_CONFLICT' ||
+              event['event'] == 'GROUP_KEY_UPDATE_LISTENER_UPDATE_KEY_FAILED' ||
+              event['event'] == 'GROUP_KEY_UPDATE_LISTENER_HANDLE_ERROR',
+        ),
+        isEmpty,
+      );
     },
   );
 
   test(
     'conflicting delayed older key update does not replace historical material',
     () async {
-      await _saveActiveGroup('group-delayed-older-conflict');
+      await saveActiveGroup('group-delayed-older-conflict');
       await groupRepo.saveKey(
         GroupKeyInfo(
           groupId: 'group-delayed-older-conflict',
@@ -1882,8 +2288,8 @@ void main() {
       listener.start();
 
       controller.add(
-        _makeMessage(
-          _validEnvelope(
+        makeMessage(
+          validEnvelope(
             groupId: 'group-delayed-older-conflict',
             keyGeneration: 2,
             encryptedKey: 'conflicting-historical-key-2',
@@ -1909,58 +2315,181 @@ void main() {
     },
   );
 
-  test('group:updateKey bridge failure keeps the old key active', () async {
-    await _saveActiveGroup('group-fail');
-    await groupRepo.saveKey(
-      GroupKeyInfo(
-        groupId: 'group-fail',
-        keyGeneration: 1,
-        encryptedKey: 'old-key',
-        createdAt: DateTime.now().toUtc(),
-      ),
-    );
+  test(
+    'KE-022 group:updateKey bridge failure keeps the old key active, reports diagnostics, and requests recovery',
+    () async {
+      final flowEvents = <Map<String, dynamic>>[];
+      debugSetFlowEventSink(flowEvents.add);
+      addTearDown(() => debugSetFlowEventSink(null));
+      final repairRequests = <GroupKeyRepairRequest>[];
 
-    // Custom bridge that passes decrypt but fails updateKey
-    final failUpdateKeyBridge = _UpdateKeyFailBridge();
-
-    final failListener = GroupKeyUpdateListener(
-      groupKeyUpdateStream: controller.stream,
-      groupRepo: groupRepo,
-      bridge: failUpdateKeyBridge,
-      getOwnMlKemSecretKey: () async => 'my-secret-key',
-    );
-
-    failListener.start();
-
-    controller.add(
-      _makeMessage(
-        _validEnvelope(
+      await saveActiveGroup('group-fail');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
           groupId: 'group-fail',
-          keyGeneration: 2,
-          encryptedKey: 'key-despite-bridge-fail',
+          keyGeneration: 1,
+          encryptedKey: 'old-key',
+          createdAt: DateTime.now().toUtc(),
         ),
-      ),
-    );
+      );
 
-    await Future<void>.delayed(Duration.zero);
+      final failUpdateKeyBridge = _UpdateKeyFailBridge();
 
-    final saved = await groupRepo.getLatestKey('group-fail');
-    expect(saved, isNotNull);
-    expect(saved!.encryptedKey, 'old-key');
-    expect(saved.keyGeneration, 1);
-    expect(await groupRepo.getKeyByGeneration('group-fail', 2), isNull);
+      final failListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: failUpdateKeyBridge,
+        getOwnMlKemSecretKey: () async => 'my-secret-key',
+        requestGroupKeyRepair: repairRequests.add,
+      );
 
-    // Bridge was called for both decrypt and updateKey
-    expect(failUpdateKeyBridge.commandLog, contains('message.decrypt'));
-    expect(failUpdateKeyBridge.commandLog, contains('group:updateKey'));
+      failListener.start();
 
-    failListener.dispose();
-  });
+      controller.add(
+        makeMessage(
+          validEnvelope(
+            groupId: 'group-fail',
+            keyGeneration: 2,
+            encryptedKey: 'key-despite-bridge-fail',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      final saved = await groupRepo.getLatestKey('group-fail');
+      expect(saved, isNotNull);
+      expect(saved!.encryptedKey, 'old-key');
+      expect(saved.keyGeneration, 1);
+      expect(await groupRepo.getKeyByGeneration('group-fail', 2), isNull);
+      expect(repairRequests, hasLength(1));
+      expect(repairRequests.single.groupId, 'group-fail');
+      expect(repairRequests.single.keyEpoch, 2);
+      expect(
+        repairRequests.single.reason,
+        groupKeyRepairReasonKeyUpdateApplyFailed,
+      );
+
+      expect(failUpdateKeyBridge.commandLog, contains('message.decrypt'));
+      expect(failUpdateKeyBridge.commandLog, contains('group:updateKey'));
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] == 'GROUP_KEY_UPDATE_LISTENER_UPDATE_KEY_FAILED',
+        ),
+        hasLength(1),
+      );
+      expect(
+        flowEvents.where(
+          (event) =>
+              event['event'] == 'GROUP_KEY_UPDATE_LISTENER_RECOVERY_REQUESTED',
+        ),
+        hasLength(1),
+      );
+
+      failListener.dispose();
+    },
+  );
+
+  test(
+    'BB-002 group:updateKey NOT_INITIALIZED keeps current key unchanged',
+    () async {
+      await saveActiveGroup('group-bb002-key');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-bb002-key',
+          keyGeneration: 1,
+          encryptedKey: 'old-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final notInitializedBridge = _UpdateKeyFailBridge(
+        errorCode: 'NOT_INITIALIZED',
+      );
+      final notInitializedListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: notInitializedBridge,
+        getOwnMlKemSecretKey: () async => 'my-secret-key',
+      );
+
+      notInitializedListener.start();
+
+      controller.add(
+        makeMessage(
+          validEnvelope(
+            groupId: 'group-bb002-key',
+            keyGeneration: 2,
+            encryptedKey: 'key-before-native-init',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      final saved = await groupRepo.getLatestKey('group-bb002-key');
+      expect(saved, isNotNull);
+      expect(saved!.encryptedKey, 'old-key');
+      expect(saved.keyGeneration, 1);
+      expect(await groupRepo.getKeyByGeneration('group-bb002-key', 2), isNull);
+      expect(notInitializedBridge.commandLog, contains('group:updateKey'));
+
+      notInitializedListener.dispose();
+    },
+  );
+
+  test(
+    'BB-013 group:updateKey timeout does not save or promote the next group key',
+    () async {
+      await saveActiveGroup('group-bb013-key-timeout');
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-bb013-key-timeout',
+          keyGeneration: 1,
+          encryptedKey: 'old-key',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+
+      final timeoutBridge = _UpdateKeyTimeoutBridge();
+      final timeoutListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: controller.stream,
+        groupRepo: groupRepo,
+        bridge: timeoutBridge,
+        getOwnMlKemSecretKey: () async => 'my-secret-key',
+      );
+
+      timeoutListener.start();
+
+      controller.add(
+        makeMessage(
+          validEnvelope(
+            groupId: 'group-bb013-key-timeout',
+            keyGeneration: 2,
+            encryptedKey: 'key-after-timeout',
+          ),
+        ),
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      final saved = await groupRepo.getLatestKey('group-bb013-key-timeout');
+      expect(saved, isNotNull);
+      expect(saved!.encryptedKey, 'old-key');
+      expect(saved.keyGeneration, 1);
+      expect(
+        await groupRepo.getKeyByGeneration('group-bb013-key-timeout', 2),
+        isNull,
+      );
+      expect(timeoutBridge.commandLog, contains('group:updateKey'));
+
+      timeoutListener.dispose();
+    },
+  );
 }
 
-/// A PassthroughCryptoBridge that returns {ok: false} for group:updateKey
-/// but handles encrypt/decrypt normally.
-class _UpdateKeyFailBridge extends PassthroughCryptoBridge {
+class _UpdateKeyTimeoutBridge extends PassthroughCryptoBridge {
   @override
   Future<String> send(String message) async {
     final parsed = jsonDecode(message) as Map<String, dynamic>;
@@ -1971,7 +2500,30 @@ class _UpdateKeyFailBridge extends PassthroughCryptoBridge {
       sentMessages.add(message);
       lastCommand = cmd;
       commandLog.add(cmd!);
-      return jsonEncode({'ok': false, 'errorCode': 'UPDATE_KEY_FAILED'});
+      throw TimeoutException('Simulated group:updateKey timeout');
+    }
+    return super.send(message);
+  }
+}
+
+/// A PassthroughCryptoBridge that returns {ok: false} for group:updateKey
+/// but handles encrypt/decrypt normally.
+class _UpdateKeyFailBridge extends PassthroughCryptoBridge {
+  final String errorCode;
+
+  _UpdateKeyFailBridge({this.errorCode = 'UPDATE_KEY_FAILED'});
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:updateKey') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      return jsonEncode({'ok': false, 'errorCode': errorCode});
     }
     return super.send(message);
   }

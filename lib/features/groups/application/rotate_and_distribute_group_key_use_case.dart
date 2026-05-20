@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -42,231 +43,314 @@ Future<GroupKeyInfo?> rotateAndDistributeGroupKey({
     },
   );
 
-  final group = await groupRepo.getGroup(groupId);
-  if (group == null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_GROUP_NOT_FOUND',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      },
-    );
-    return null;
-  }
+  return _withSerializedGroupRotation<GroupKeyInfo?>(groupId, () async {
+    final group = await groupRepo.getGroup(groupId);
+    if (group == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_GROUP_NOT_FOUND',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return null;
+    }
 
-  final selfMember = await groupRepo.getMember(groupId, selfPeerId);
-  final canRotate = selfMember != null
-      ? selfMember.permissions.allows(
-          GroupMemberPermission.rotateKeys,
-          selfMember.role,
+    final selfMember = await groupRepo.getMember(groupId, selfPeerId);
+    final canRotate = selfMember != null
+        ? selfMember.permissions.allows(
+            GroupMemberPermission.rotateKeys,
+            selfMember.role,
+          )
+        : false;
+    if (!canRotate) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return null;
+    }
+
+    final sourceDevice = _resolveSourceDevice(
+      selfMember: selfMember,
+      senderPublicKey: senderPublicKey,
+      sourceDeviceId: sourceDeviceId,
+    );
+    if (selfMember.devices.isNotEmpty && sourceDevice == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_UNBOUND_SOURCE_DEVICE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return null;
+    }
+
+    GroupKeyInfo? persistedKey;
+    try {
+      persistedKey = await groupRepo.getLatestKey(groupId);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_NO_PERSISTED_KEY',
+        details: {'error': e.toString()},
+      );
+      return null;
+    }
+
+    if (persistedKey == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_NO_PERSISTED_KEY',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        },
+      );
+      return null;
+    }
+
+    try {
+      await callGroupUpdateKey(
+        bridge,
+        groupId: groupId,
+        groupKey: persistedKey.encryptedKey,
+        keyEpoch: persistedKey.keyGeneration,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_RESYNC_ERROR',
+        details: {'error': e.toString()},
+      );
+      return null;
+    }
+
+    final preTransitionStateHash = await buildGroupTransitionStateHash(
+      groupRepo,
+      groupId,
+    );
+    final expectedEpoch = persistedKey.keyGeneration + 1;
+
+    // 1. Generate the next key without updating Go state yet.
+    final generateResult = await callGroupGenerateNextKey(bridge, groupId);
+    if (generateResult['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
+        details: {'errorCode': generateResult['errorCode']},
+      );
+      return null;
+    }
+
+    final newEpoch = generateResult['keyEpoch'] as int;
+    if (newEpoch != expectedEpoch) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_EPOCH_MISMATCH',
+        details: {
+          'persistedEpoch': persistedKey.keyGeneration,
+          'generatedEpoch': newEpoch,
+        },
+      );
+      return null;
+    }
+    final newKey = generateResult['groupKey'] as String;
+    final directKeyUpdateEventAt = DateTime.now().toUtc();
+    final maxDistributionAttempts = distributionAttemptCount < 1
+        ? 1
+        : distributionAttemptCount;
+
+    // 2. Distribute to remaining members via concurrent 1:1 encrypted P2P.
+    final members = await groupRepo.getMembers(groupId);
+    final distributionTargets = members
+        .expand(
+          (member) => member
+              .activeDevicesWithLegacyFallback()
+              .where((device) => device.mlKemPublicKey?.isNotEmpty == true)
+              .where(
+                (device) =>
+                    member.peerId != selfPeerId ||
+                    sourceDevice == null ||
+                    device.deviceId != sourceDevice.deviceId,
+              )
+              .map((device) => (member: member, device: device)),
         )
-      : false;
-  if (!canRotate) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      },
+        .toList(growable: false);
+    final distributionFutures = distributionTargets
+        .map(
+          (target) => _distributeRotatedKeyToDeviceWithRetry(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: groupId,
+            sourcePeerId: selfPeerId,
+            sourceDevice: sourceDevice,
+            senderPublicKey: senderPublicKey,
+            senderPrivateKey: senderPrivateKey,
+            senderUsername: senderUsername,
+            member: target.member,
+            device: target.device,
+            newEpoch: newEpoch,
+            newKey: newKey,
+            eventAt: directKeyUpdateEventAt,
+            preTransitionStateHash: preTransitionStateHash,
+            sendP2PMessage: sendP2PMessage,
+            perRecipientTimeout: perRecipientTimeout,
+            attemptCount: maxDistributionAttempts,
+            retryDelay: distributionRetryDelay,
+          ),
+        )
+        .toList();
+
+    var distributionResults = <bool>[];
+    try {
+      distributionResults =
+          await Future.wait(distributionFutures, eagerError: false).timeout(
+            distributionTimeout,
+            onTimeout: () =>
+                List<bool>.filled(distributionTargets.length, false),
+          );
+    } on Exception catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_DISTRIBUTE_ERROR',
+        details: {'error': e.toString()},
+      );
+      distributionResults = List<bool>.filled(
+        distributionTargets.length,
+        false,
+      );
+    }
+
+    final failedDistributionCount = distributionResults
+        .where((ok) => !ok)
+        .length;
+    if (failedDistributionCount > 0) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_DISTRIBUTION_INCOMPLETE',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'newEpoch': newEpoch,
+          'targetCount': distributionTargets.length,
+          'failedCount': failedDistributionCount,
+        },
+      );
+      return null;
+    }
+
+    // 3. Promote the admin's own validator and local key only after
+    // every required recipient confirms key delivery.
+    try {
+      await callGroupUpdateKey(
+        bridge,
+        groupId: groupId,
+        groupKey: newKey,
+        keyEpoch: newEpoch,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
+        details: {'error': e.toString()},
+      );
+      return null;
+    }
+
+    final keyInfo = GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: newEpoch,
+      encryptedKey: newKey,
+      createdAt: DateTime.now().toUtc(),
     );
-    return null;
-  }
+    await groupRepo.saveKey(keyInfo);
 
-  final sourceDevice = _resolveSourceDevice(
-    selfMember: selfMember,
-    senderPublicKey: senderPublicKey,
-    sourceDeviceId: sourceDeviceId,
-  );
-  if (selfMember.devices.isNotEmpty && sourceDevice == null) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_UNBOUND_SOURCE_DEVICE',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      },
+      event: 'GROUP_ROTATE_KEY_SAVED',
+      details: {'newEpoch': newEpoch},
     );
-    return null;
-  }
 
-  final preTransitionStateHash = await buildGroupTransitionStateHash(
-    groupRepo,
-    groupId,
-  );
+    // 4. Broadcast key_rotated system message after admin promotion.
+    try {
+      final rotatedAt = keyInfo.createdAt.toUtc();
+      final sourceEventId =
+          'key_rotated:$groupId:$selfPeerId:${rotatedAt.microsecondsSinceEpoch}:$newEpoch';
+      final sysPayload = await signGroupSystemTransitionPayload(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        transitionType: 'key_rotated',
+        sourceEventId: sourceEventId,
+        eventAt: rotatedAt,
+        actorPeerId: selfPeerId,
+        actorUsername: senderUsername,
+        actorSigningPublicKey: senderPublicKey,
+        actorPrivateKey: senderPrivateKey,
+        actorDeviceId: sourceDevice?.deviceId,
+        actorTransportPeerId: sourceDevice?.transportPeerId,
+        preTransitionStateHash: preTransitionStateHash,
+        systemPayload: {'__sys': 'key_rotated', 'newKeyEpoch': newEpoch},
+      );
+      final sysMessage = jsonEncode(sysPayload);
 
-  // 1. Generate the next key without updating Go state yet.
-  final generateResult = await callGroupGenerateNextKey(bridge, groupId);
-  if (generateResult['ok'] != true) {
+      await callGroupPublish(
+        bridge,
+        groupId: groupId,
+        text: sysMessage,
+        senderPeerId: selfPeerId,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+        messageId: sourceEventId,
+      );
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_BROADCAST_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
+
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
-      details: {'errorCode': generateResult['errorCode']},
-    );
-    return null;
-  }
-
-  final newEpoch = generateResult['keyEpoch'] as int;
-  final newKey = generateResult['groupKey'] as String;
-  final directKeyUpdateEventAt = DateTime.now().toUtc();
-  final maxDistributionAttempts = distributionAttemptCount < 1
-      ? 1
-      : distributionAttemptCount;
-
-  // 2. Distribute to remaining members via concurrent 1:1 encrypted P2P.
-  final members = await groupRepo.getMembers(groupId);
-  final distributionTargets = members
-      .expand(
-        (member) => member
-            .activeDevicesWithLegacyFallback()
-            .where((device) => device.mlKemPublicKey?.isNotEmpty == true)
-            .where(
-              (device) =>
-                  member.peerId != selfPeerId ||
-                  sourceDevice == null ||
-                  device.deviceId != sourceDevice.deviceId,
-            )
-            .map((device) => (member: member, device: device)),
-      )
-      .toList(growable: false);
-  final distributionFutures = distributionTargets
-      .map(
-        (target) => _distributeRotatedKeyToDeviceWithRetry(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          groupId: groupId,
-          sourcePeerId: selfPeerId,
-          sourceDevice: sourceDevice,
-          senderPublicKey: senderPublicKey,
-          senderPrivateKey: senderPrivateKey,
-          senderUsername: senderUsername,
-          member: target.member,
-          device: target.device,
-          newEpoch: newEpoch,
-          newKey: newKey,
-          eventAt: directKeyUpdateEventAt,
-          preTransitionStateHash: preTransitionStateHash,
-          sendP2PMessage: sendP2PMessage,
-          perRecipientTimeout: perRecipientTimeout,
-          attemptCount: maxDistributionAttempts,
-          retryDelay: distributionRetryDelay,
-        ),
-      )
-      .toList();
-
-  var distributionResults = <bool>[];
-  try {
-    distributionResults =
-        await Future.wait(distributionFutures, eagerError: false).timeout(
-          distributionTimeout,
-          onTimeout: () => List<bool>.filled(distributionTargets.length, false),
-        );
-  } on Exception catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_DISTRIBUTE_ERROR',
-      details: {'error': e.toString()},
-    );
-    distributionResults = List<bool>.filled(distributionTargets.length, false);
-  }
-
-  final failedDistributionCount = distributionResults.where((ok) => !ok).length;
-  if (failedDistributionCount > 0) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_DISTRIBUTION_INCOMPLETE',
+      event: 'GROUP_ROTATE_KEY_DONE',
       details: {
         'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         'newEpoch': newEpoch,
-        'targetCount': distributionTargets.length,
-        'failedCount': failedDistributionCount,
+        'distributedTo': distributionTargets.length,
       },
     );
-    return null;
+
+    return keyInfo;
+  });
+}
+
+final Map<String, Future<void>> _groupRotationQueues = <String, Future<void>>{};
+
+Future<T> _withSerializedGroupRotation<T>(
+  String groupId,
+  Future<T> Function() body,
+) async {
+  final previous = _groupRotationQueues[groupId];
+  final gate = Completer<void>();
+  _groupRotationQueues[groupId] = gate.future;
+
+  if (previous != null) {
+    await previous;
   }
 
-  // 3. Promote the admin's own validator and local key only after
-  // every required recipient confirms key delivery.
   try {
-    await callGroupUpdateKey(
-      bridge,
-      groupId: groupId,
-      groupKey: newKey,
-      keyEpoch: newEpoch,
-    );
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
-      details: {'error': e.toString()},
-    );
-    return null;
+    return await body();
+  } finally {
+    gate.complete();
+    if (identical(_groupRotationQueues[groupId], gate.future)) {
+      _groupRotationQueues.remove(groupId);
+    }
   }
-
-  final keyInfo = GroupKeyInfo(
-    groupId: groupId,
-    keyGeneration: newEpoch,
-    encryptedKey: newKey,
-    createdAt: DateTime.now().toUtc(),
-  );
-  await groupRepo.saveKey(keyInfo);
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_ROTATE_KEY_SAVED',
-    details: {'newEpoch': newEpoch},
-  );
-
-  // 4. Broadcast key_rotated system message after admin promotion.
-  try {
-    final rotatedAt = keyInfo.createdAt.toUtc();
-    final sourceEventId =
-        'key_rotated:$groupId:$selfPeerId:${rotatedAt.microsecondsSinceEpoch}:$newEpoch';
-    final sysPayload = await signGroupSystemTransitionPayload(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      transitionType: 'key_rotated',
-      sourceEventId: sourceEventId,
-      eventAt: rotatedAt,
-      actorPeerId: selfPeerId,
-      actorUsername: senderUsername,
-      actorSigningPublicKey: senderPublicKey,
-      actorPrivateKey: senderPrivateKey,
-      actorDeviceId: sourceDevice?.deviceId,
-      actorTransportPeerId: sourceDevice?.transportPeerId,
-      preTransitionStateHash: preTransitionStateHash,
-      systemPayload: {'__sys': 'key_rotated', 'newKeyEpoch': newEpoch},
-    );
-    final sysMessage = jsonEncode(sysPayload);
-
-    await callGroupPublish(
-      bridge,
-      groupId: groupId,
-      text: sysMessage,
-      senderPeerId: selfPeerId,
-      senderPublicKey: senderPublicKey,
-      senderPrivateKey: senderPrivateKey,
-      senderUsername: senderUsername,
-      messageId: sourceEventId,
-    );
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_BROADCAST_ERROR',
-      details: {'error': e.toString()},
-    );
-  }
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_ROTATE_KEY_DONE',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      'newEpoch': newEpoch,
-      'distributedTo': distributionTargets.length,
-    },
-  );
-
-  return keyInfo;
 }
 
 Future<bool> _distributeRotatedKeyToDeviceWithRetry({

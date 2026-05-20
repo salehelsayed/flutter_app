@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_revocation.dart';
@@ -567,6 +568,33 @@ storeIncomingPendingGroupInvite({
     return (StorePendingGroupInviteResult.alreadyUsed, null);
   }
 
+  final existingInvite = await pendingInviteRepo.getPendingInvite(
+    payload.groupId,
+  );
+  if (existingInvite != null && existingInvite.inviteId != payload.id) {
+    final existingPayload = existingInvite.toPayload();
+    if (existingPayload != null &&
+        _incomingInviteIsStaleComparedToExistingPending(
+          incoming: payload,
+          existing: existingPayload,
+          incomingReceivedAt: effectiveReceivedAt,
+          existingReceivedAt: existingInvite.receivedAt,
+        )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_INVITE_STORE_PENDING_STALE_IGNORED',
+        details: {
+          'groupId': payload.groupId.length > 8
+              ? payload.groupId.substring(0, 8)
+              : payload.groupId,
+          'incomingEpoch': payload.keyEpoch,
+          'existingEpoch': existingPayload.keyEpoch,
+        },
+      );
+      return (StorePendingGroupInviteResult.invalidPayload, null);
+    }
+  }
+
   final existingGroup = await groupRepo.getGroup(payload.groupId);
   if (existingGroup != null) {
     emitFlowEvent(
@@ -598,6 +626,44 @@ storeIncomingPendingGroupInvite({
     },
   );
   return (StorePendingGroupInviteResult.storedPending, invite);
+}
+
+bool _incomingInviteIsStaleComparedToExistingPending({
+  required GroupInvitePayload incoming,
+  required GroupInvitePayload existing,
+  required DateTime incomingReceivedAt,
+  required DateTime existingReceivedAt,
+}) {
+  if (incoming.keyEpoch != existing.keyEpoch) {
+    return incoming.keyEpoch < existing.keyEpoch;
+  }
+
+  final incomingFreshnessAt =
+      incoming.membershipFreshnessProof?.issuedAt.toUtc() ??
+      DateTime.tryParse(incoming.timestamp)?.toUtc() ??
+      incomingReceivedAt.toUtc();
+  final existingFreshnessAt =
+      existing.membershipFreshnessProof?.issuedAt.toUtc() ??
+      DateTime.tryParse(existing.timestamp)?.toUtc() ??
+      existingReceivedAt.toUtc();
+  if (incomingFreshnessAt.isBefore(existingFreshnessAt)) {
+    return true;
+  }
+  if (incomingFreshnessAt.isAfter(existingFreshnessAt)) {
+    return false;
+  }
+
+  final incomingWatermark =
+      incoming.membershipFreshnessProof?.membershipWatermark;
+  final existingWatermark =
+      existing.membershipFreshnessProof?.membershipWatermark;
+  if (incomingWatermark != null &&
+      existingWatermark != null &&
+      incomingWatermark != existingWatermark) {
+    return !incomingReceivedAt.toUtc().isAfter(existingReceivedAt.toUtc());
+  }
+
+  return false;
 }
 
 Future<bool> _hasActiveWelcomeKeyPackageTombstone({
@@ -785,17 +851,24 @@ materializeAcceptedGroupInvitePayload({
     createdBy: createdBy,
     myRole: GroupRole.member,
     lastMetadataEventAt: metadataUpdatedAt,
+    lastMembershipEventAt: _parseGroupConfigVersion(config),
   );
   await groupRepo.saveGroup(groupModel);
 
   // 7. Persist members from config
   final membersList = config['members'] as List<dynamic>? ?? [];
+  final materializedAt = DateTime.now().toUtc();
+  final configVersionAt = _parseGroupConfigVersion(config);
   for (final memberMap in membersList) {
     final m = Map<String, dynamic>.from(memberMap as Map);
     final member = GroupMember.fromConfigMap(
       groupId: payload.groupId,
       map: m,
-      joinedAt: DateTime.now().toUtc(),
+      joinedAt: _acceptedMemberJoinedAt(
+        m,
+        configVersionAt: configVersionAt,
+        materializedAt: materializedAt,
+      ),
     );
     await groupRepo.saveMember(member);
   }
@@ -884,6 +957,29 @@ materializeAcceptedGroupInvitePayload({
     },
   );
   return (HandleGroupInviteResult.success, payload.groupId);
+}
+
+DateTime? _parseGroupConfigVersion(Map<String, dynamic> config) {
+  final raw = config[groupConfigVersionField];
+  if (raw is! String || raw.trim().isEmpty) {
+    return null;
+  }
+  return DateTime.tryParse(raw)?.toUtc();
+}
+
+DateTime _acceptedMemberJoinedAt(
+  Map<String, dynamic> member, {
+  required DateTime? configVersionAt,
+  required DateTime materializedAt,
+}) {
+  final rawJoinedAt = member['joinedAt'] ?? member['joined_at'];
+  if (rawJoinedAt is String && rawJoinedAt.trim().isNotEmpty) {
+    final parsed = DateTime.tryParse(rawJoinedAt)?.toUtc();
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+  return configVersionAt ?? materializedAt;
 }
 
 bool _isRepairableJoinMaterialError(BridgeCommandException error) {

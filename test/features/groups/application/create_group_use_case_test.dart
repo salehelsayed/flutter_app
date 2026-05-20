@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -47,6 +48,27 @@ void _expectNoPublicRouteFields(Object? value, {String path = 'payload'}) {
   }
 }
 
+class _TimeoutCommandBridge extends FakeBridge {
+  final String command;
+
+  _TimeoutCommandBridge(this.command);
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == command) {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      throw TimeoutException('Simulated $command timeout');
+    }
+    return super.send(message);
+  }
+}
+
 void main() {
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -86,6 +108,37 @@ void main() {
     expect(result.id, 'test-group-id');
     expect(result.topicName, '/mknoon/group/test-group-id');
     expect(result.myRole, GroupRole.admin);
+  });
+
+  test('KE-001 create persists initial private group key at epoch 1', () async {
+    const groupId = 'ke001-initial-epoch-group';
+    bridge.responses['group:create'] = {
+      'ok': true,
+      'groupId': groupId,
+      'topicName': '/mknoon/group/$groupId',
+      'groupKey': 'ke001-initial-group-key',
+      'keyEpoch': 1,
+    };
+
+    final result = await createGroup(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      name: 'KE-001 Initial Epoch',
+      type: GroupType.chat,
+      creatorPeerId: 'ke001-alice-peer',
+      creatorPublicKey: 'ke001-alice-public-key',
+      creatorMlKemPublicKey: 'ke001-alice-mlkem-key',
+    );
+
+    expect(result.id, groupId);
+
+    final latestKey = await groupRepo.getLatestKey(groupId);
+    expect(latestKey, isNotNull);
+    expect(latestKey!.keyGeneration, 1);
+    expect(latestKey.encryptedKey, 'ke001-initial-group-key');
+    expect(await groupRepo.getKeyByGeneration(groupId, 1), isNotNull);
+    expect(await groupRepo.getKeyByGeneration(groupId, 0), isNull);
+    expect(await groupRepo.getKeyByGeneration(groupId, 2), isNull);
   });
 
   test(
@@ -153,6 +206,99 @@ void main() {
     );
   });
 
+  test('BB-003 creator identity contract', () async {
+    Future<void> expectRejected({
+      required String creatorPeerId,
+      required String creatorPublicKey,
+      required String creatorMlKemPublicKey,
+      String? creatorPrivateKey,
+      bool appendCreateEvent = false,
+    }) async {
+      bridge = FakeBridge();
+      groupRepo = InMemoryGroupRepository();
+      bridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': 'bb003-group-id',
+        'topicName': '/mknoon/group/bb003-group-id',
+        'groupKey': 'bb003-group-key',
+        'keyEpoch': 1,
+      };
+      final appendedEntries = <Map<String, Object?>>[];
+
+      await expectLater(
+        createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'BB-003 Group',
+          type: GroupType.chat,
+          creatorPeerId: creatorPeerId,
+          creatorPublicKey: creatorPublicKey,
+          creatorMlKemPublicKey: creatorMlKemPublicKey,
+          creatorPrivateKey: creatorPrivateKey,
+          appendGroupEventLogEntry: appendCreateEvent
+              ? ({
+                  required groupId,
+                  required eventType,
+                  required sourcePeerId,
+                  required sourceEventId,
+                  required sourceTimestamp,
+                  required payload,
+                  createdAt,
+                }) async {
+                  final entry = <String, Object?>{
+                    'groupId': groupId,
+                    'eventType': eventType,
+                    'sourcePeerId': sourcePeerId,
+                    'sourceEventId': sourceEventId,
+                    'sourceTimestamp': sourceTimestamp,
+                    'payload': payload,
+                    'createdAt': createdAt,
+                  };
+                  appendedEntries.add(entry);
+                  return entry;
+                }
+              : null,
+        ),
+        throwsA(
+          predicate(
+            (Object error) => error is ArgumentError || error is StateError,
+            'ArgumentError or StateError',
+          ),
+        ),
+      );
+
+      expect(bridge.commandLog, isNot(contains('group:create')));
+      expect(bridge.commandLog, isNot(contains('payload.sign')));
+      expect(await groupRepo.getAllGroups(), isEmpty);
+      expect(await groupRepo.getMembers('bb003-group-id'), isEmpty);
+      expect(await groupRepo.getLatestKey('bb003-group-id'), isNull);
+      expect(appendedEntries, isEmpty);
+    }
+
+    await expectRejected(
+      creatorPeerId: '  ',
+      creatorPublicKey: 'pk-creator',
+      creatorMlKemPublicKey: 'mlkem-pk-creator',
+    );
+    await expectRejected(
+      creatorPeerId: 'peer-creator',
+      creatorPublicKey: '  ',
+      creatorMlKemPublicKey: 'mlkem-pk-creator',
+    );
+    await expectRejected(
+      creatorPeerId: 'peer-creator',
+      creatorPublicKey: 'pk-creator',
+      creatorMlKemPublicKey: '  ',
+    );
+    await expectRejected(
+      creatorPeerId: 'peer-creator',
+      creatorPublicKey: 'pk-creator',
+      creatorMlKemPublicKey: 'mlkem-pk-creator',
+      creatorPrivateKey: '  ',
+      appendCreateEvent: true,
+    );
+  });
+
   test('throws on bridge error', () async {
     bridge.responses['group:create'] = {
       'ok': false,
@@ -173,6 +319,202 @@ void main() {
       throwsA(isA<Exception>()),
     );
   });
+
+  test(
+    'BB-002 group:create NOT_INITIALIZED does not persist group member or key',
+    () async {
+      bridge.responses['group:create'] = {
+        'ok': false,
+        'errorCode': 'NOT_INITIALIZED',
+        'errorMessage': 'native node not initialized',
+      };
+
+      await expectLater(
+        createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'Pre-init Group',
+          type: GroupType.chat,
+          creatorPeerId: 'peer-123',
+          creatorPublicKey: 'pk-123',
+          creatorMlKemPublicKey: 'mlkem-pk-123',
+        ),
+        throwsA(isA<Exception>()),
+      );
+
+      expect(await groupRepo.getAllGroups(), isEmpty);
+      expect(await groupRepo.getMembers('test-group-id'), isEmpty);
+      expect(await groupRepo.getLatestKey('test-group-id'), isNull);
+      expect(bridge.commandLog, contains('group:create'));
+      expect(bridge.commandLog, isNot(contains('group.keygen')));
+    },
+  );
+
+  test(
+    'BB-005 unsupported group type rejection leaves no local group member key or event state',
+    () async {
+      bridge.responses['group:create'] = {
+        'ok': false,
+        'errorCode': 'INVALID_INPUT',
+        'errorMessage': 'unsupported groupType: public',
+      };
+      final appendedEntries = <Map<String, Object?>>[];
+
+      await expectLater(
+        createGroup(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          name: 'BB-005 Unsupported Group',
+          type: GroupType.chat,
+          creatorPeerId: 'peer-bb005-creator',
+          creatorPublicKey: 'pk-bb005-creator',
+          creatorMlKemPublicKey: 'mlkem-pk-bb005-creator',
+          creatorPrivateKey: 'sk-bb005-creator',
+          appendGroupEventLogEntry:
+              ({
+                required groupId,
+                required eventType,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required payload,
+                createdAt,
+              }) async {
+                final entry = <String, Object?>{
+                  'groupId': groupId,
+                  'eventType': eventType,
+                  'sourcePeerId': sourcePeerId,
+                  'sourceEventId': sourceEventId,
+                  'sourceTimestamp': sourceTimestamp,
+                  'payload': payload,
+                  'createdAt': createdAt,
+                };
+                appendedEntries.add(entry);
+                return entry;
+              },
+        ),
+        throwsA(
+          isA<Exception>().having(
+            (error) => error.toString(),
+            'message',
+            contains('unsupported groupType: public'),
+          ),
+        ),
+      );
+
+      expect(await groupRepo.getAllGroups(), isEmpty);
+      expect(await groupRepo.getMembers('bb005-unsupported-group'), isEmpty);
+      expect(await groupRepo.getLatestKey('bb005-unsupported-group'), isNull);
+      expect(appendedEntries, isEmpty);
+      expect(bridge.commandLog, ['group:create']);
+      expect(bridge.commandLog, isNot(contains('group.keygen')));
+      expect(bridge.commandLog, isNot(contains('payload.sign')));
+    },
+  );
+
+  test(
+    'BB-013 group:create timeout does not persist group member or key',
+    () async {
+      final timeoutBridge = _TimeoutCommandBridge('group:create');
+
+      await expectLater(
+        createGroup(
+          bridge: timeoutBridge,
+          groupRepo: groupRepo,
+          name: 'Timeout Group',
+          type: GroupType.chat,
+          creatorPeerId: 'peer-123',
+          creatorPublicKey: 'pk-123',
+          creatorMlKemPublicKey: 'mlkem-pk-123',
+        ),
+        throwsA(isA<Exception>()),
+      );
+
+      expect(await groupRepo.getAllGroups(), isEmpty);
+      expect(await groupRepo.getMembers('test-group-id'), isEmpty);
+      expect(await groupRepo.getLatestKey('test-group-id'), isNull);
+      expect(timeoutBridge.commandLog, ['group:create']);
+      expect(timeoutBridge.commandLog, isNot(contains('group.keygen')));
+    },
+  );
+
+  test(
+    'BB-015 native group:create failures leave no group member key or event state',
+    () async {
+      final failures = <String, Map<String, String>>{
+        'NULL_RESPONSE': {
+          'errorCode': 'NULL_RESPONSE',
+          'errorMessage': 'Native bridge returned null',
+        },
+        'MISSING_PLUGIN': {
+          'errorCode': 'MISSING_PLUGIN',
+          'errorMessage': 'Rebuild the app with the updated native bridge.',
+        },
+        'PLATFORM_ERROR': {
+          'errorCode': 'PLATFORM_ERROR',
+          'errorMessage': 'Platform channel error',
+        },
+        'MALFORMED_RESPONSE': {
+          'errorCode': 'MALFORMED_RESPONSE',
+          'errorMessage': 'Native bridge returned malformed JSON',
+        },
+      };
+
+      for (final failure in failures.entries) {
+        final failureBridge = FakeBridge();
+        final failureRepo = InMemoryGroupRepository();
+        final appendedEntries = <Map<String, Object?>>[];
+        failureBridge.responses['group:create'] = {
+          'ok': false,
+          ...failure.value,
+        };
+
+        await expectLater(
+          createGroup(
+            bridge: failureBridge,
+            groupRepo: failureRepo,
+            name: 'BB-015 ${failure.key}',
+            type: GroupType.chat,
+            creatorPeerId: 'peer-bb015',
+            creatorPublicKey: 'pk-bb015',
+            creatorMlKemPublicKey: 'mlkem-pk-bb015',
+            creatorPrivateKey: 'sk-bb015',
+            appendGroupEventLogEntry:
+                ({
+                  required groupId,
+                  required eventType,
+                  required sourcePeerId,
+                  required sourceEventId,
+                  required sourceTimestamp,
+                  required payload,
+                  createdAt,
+                }) async {
+                  final entry = <String, Object?>{
+                    'groupId': groupId,
+                    'eventType': eventType,
+                    'sourcePeerId': sourcePeerId,
+                    'sourceEventId': sourceEventId,
+                    'sourceTimestamp': sourceTimestamp,
+                    'payload': payload,
+                    'createdAt': createdAt,
+                  };
+                  appendedEntries.add(entry);
+                  return entry;
+                },
+          ),
+          throwsA(isA<Exception>()),
+        );
+
+        expect(await failureRepo.getAllGroups(), isEmpty);
+        expect(await failureRepo.getMembers('test-group-id'), isEmpty);
+        expect(await failureRepo.getLatestKey('test-group-id'), isNull);
+        expect(appendedEntries, isEmpty);
+        expect(failureBridge.commandLog, ['group:create']);
+        expect(failureBridge.commandLog, isNot(contains('group.keygen')));
+        expect(failureBridge.commandLog, isNot(contains('payload.sign')));
+      }
+    },
+  );
 
   test('saves group, member, and key to repo', () async {
     await createGroup(
@@ -201,6 +543,183 @@ void main() {
     expect(key!.encryptedKey, 'test-group-key-base64');
     expect(key.keyGeneration, 1);
   });
+
+  test(
+    'BB-004 stores coherent create state with canonical topic key and creator config',
+    () async {
+      const groupId = 'bb004-created-group-id';
+      const creatorPeerId = 'peer-bb004-creator';
+      const creatorUsername = 'BB-004 Creator';
+      const creatorPublicKey = 'pk-bb004-creator';
+      const creatorMlKemPublicKey = 'mlkem-pk-bb004-creator';
+      const groupKey = 'bb004-created-group-key-base64';
+      final bridgeGroupConfig = <String, dynamic>{
+        'name': 'BB-004 Local Group',
+        'groupType': 'chat',
+        'createdBy': creatorPeerId,
+        'createdAt': '2026-05-10T20:00:00Z',
+        'members': [
+          {
+            'peerId': creatorPeerId,
+            'role': 'admin',
+            'publicKey': creatorPublicKey,
+            'mlKemPublicKey': creatorMlKemPublicKey,
+          },
+        ],
+      };
+
+      bridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': groupId,
+        'groupConfig': bridgeGroupConfig,
+        'groupKey': groupKey,
+        'keyEpoch': 1,
+      };
+
+      final result = await createGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        name: 'BB-004 Local Group',
+        type: GroupType.chat,
+        creatorPeerId: creatorPeerId,
+        creatorPublicKey: creatorPublicKey,
+        creatorMlKemPublicKey: creatorMlKemPublicKey,
+        creatorUsername: creatorUsername,
+      );
+
+      expect(bridge.commandLog, ['group:create']);
+      expect(result.id, groupId);
+      expect(result.topicName, '/mknoon/group/$groupId');
+      expect(result.createdBy, creatorPeerId);
+      expect(result.myRole, GroupRole.admin);
+
+      final savedGroup = await groupRepo.getGroup(groupId);
+      expect(savedGroup, isNotNull);
+      expect(savedGroup!.id, groupId);
+      expect(savedGroup.name, 'BB-004 Local Group');
+      expect(savedGroup.type, GroupType.chat);
+      expect(savedGroup.topicName, '/mknoon/group/$groupId');
+      expect(savedGroup.createdBy, creatorPeerId);
+      expect(savedGroup.myRole, GroupRole.admin);
+
+      final members = await groupRepo.getMembers(groupId);
+      expect(members, hasLength(1));
+      final creatorMember = members.single;
+      expect(creatorMember.peerId, creatorPeerId);
+      expect(creatorMember.username, creatorUsername);
+      expect(creatorMember.role, MemberRole.admin);
+      expect(creatorMember.publicKey, creatorPublicKey);
+      expect(creatorMember.mlKemPublicKey, creatorMlKemPublicKey);
+
+      final latestKey = await groupRepo.getLatestKey(groupId);
+      expect(latestKey, isNotNull);
+      expect(latestKey!.keyGeneration, 1);
+      expect(latestKey.encryptedKey, groupKey);
+      final epochKey = await groupRepo.getKeyByGeneration(groupId, 1);
+      expect(epochKey, isNotNull);
+      expect(epochKey!.encryptedKey, groupKey);
+
+      final createMessage =
+          jsonDecode(bridge.sentMessages.single) as Map<String, dynamic>;
+      expect(createMessage['cmd'], 'group:create');
+      final createPayload = createMessage['payload'] as Map<String, dynamic>;
+      expect(createPayload['name'], 'BB-004 Local Group');
+      expect(createPayload['groupType'], 'chat');
+      expect(createPayload['creatorPeerId'], creatorPeerId);
+      expect(createPayload['creatorPublicKey'], creatorPublicKey);
+      expect(createPayload['creatorMlKemPublicKey'], creatorMlKemPublicKey);
+
+      final localConfig = <String, dynamic>{
+        'name': savedGroup.name,
+        'groupType': savedGroup.type.toValue(),
+        'createdBy': savedGroup.createdBy,
+        'members': [
+          {
+            'peerId': creatorMember.peerId,
+            'role': creatorMember.role.toValue(),
+            'publicKey': creatorMember.publicKey,
+            'mlKemPublicKey': creatorMember.mlKemPublicKey,
+          },
+        ],
+      };
+      expect(localConfig['name'], bridgeGroupConfig['name']);
+      expect(localConfig['groupType'], bridgeGroupConfig['groupType']);
+      expect(localConfig['createdBy'], bridgeGroupConfig['createdBy']);
+
+      final localMembers = localConfig['members'] as List<Map<String, Object?>>;
+      final bridgeMembers = bridgeGroupConfig['members'] as List<Object?>;
+      expect(localMembers, hasLength(bridgeMembers.length));
+      final bridgeCreator = bridgeMembers.single as Map<String, Object?>;
+      final localCreator = localMembers.single;
+      expect(localCreator['peerId'], bridgeCreator['peerId']);
+      expect(localCreator['role'], bridgeCreator['role']);
+      expect(localCreator['publicKey'], bridgeCreator['publicKey']);
+      expect(localCreator['mlKemPublicKey'], bridgeCreator['mlKemPublicKey']);
+    },
+  );
+
+  test(
+    'BB-016 create with description persists and matches bridge config',
+    () async {
+      const groupId = 'bb016-created-group-id';
+      const creatorPeerId = 'peer-bb016-creator';
+      const creatorPublicKey = 'pk-bb016-creator';
+      const creatorMlKemPublicKey = 'mlkem-pk-bb016-creator';
+      const description = 'BB-016 private planning description';
+      final bridgeGroupConfig = <String, dynamic>{
+        'name': 'BB-016 Local Group',
+        'groupType': 'chat',
+        'description': description,
+        'createdBy': creatorPeerId,
+        'createdAt': '2026-05-15T09:42:00Z',
+        'members': [
+          {
+            'peerId': creatorPeerId,
+            'role': 'admin',
+            'publicKey': creatorPublicKey,
+            'mlKemPublicKey': creatorMlKemPublicKey,
+          },
+        ],
+      };
+
+      bridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': groupId,
+        'topicName': '/mknoon/group/$groupId',
+        'groupConfig': bridgeGroupConfig,
+        'groupKey': 'bb016-created-group-key-base64',
+        'keyEpoch': 1,
+      };
+
+      final result = await createGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        name: 'BB-016 Local Group',
+        type: GroupType.chat,
+        creatorPeerId: creatorPeerId,
+        creatorPublicKey: creatorPublicKey,
+        creatorMlKemPublicKey: creatorMlKemPublicKey,
+        description: description,
+      );
+
+      expect(result.id, groupId);
+      expect(result.description, description);
+
+      final createMessage =
+          jsonDecode(bridge.sentMessages.single) as Map<String, dynamic>;
+      final createPayload = createMessage['payload'] as Map<String, dynamic>;
+      expect(createPayload['description'], description);
+      expect(
+        bridgeGroupConfig['description'],
+        createPayload['description'],
+        reason: 'Dart create payload and returned Go config must not drift.',
+      );
+
+      final savedGroup = await groupRepo.getGroup(groupId);
+      expect(savedGroup, isNotNull);
+      expect(savedGroup!.description, description);
+    },
+  );
 
   test(
     'persists creator identity and initial bridge epoch on create',
@@ -246,7 +765,7 @@ void main() {
       expect(savedGroup.name, 'Initial State Group');
       expect(savedGroup.type, GroupType.chat);
       expect(savedGroup.topicName, topicName);
-      expect(savedGroup!.createdBy, creatorPeerId);
+      expect(savedGroup.createdBy, creatorPeerId);
       expect(savedGroup.myRole, GroupRole.admin);
       expect(savedGroup.createdAt, result.createdAt);
 

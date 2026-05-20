@@ -84,6 +84,7 @@ type Node struct {
 	openChatStreamHook                 func(context.Context, host.Host, peer.ID) (network.Stream, error)
 	recoverPeerForSendHook             func(host.Host, peer.ID, string, time.Duration) error
 	joinGroupTopicSubscribeHook        func(*pubsub.Topic) (*pubsub.Subscription, error)
+	groupInboxRecoverHook              func(error) error
 
 	// Personal rendezvous refresh state.
 	personalRendezvousRefreshCancel context.CancelFunc

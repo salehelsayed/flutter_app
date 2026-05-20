@@ -15,6 +15,7 @@ import 'package:flutter_app/features/groups/application/send_group_reaction_use_
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart'
     as group_leave;
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart'
@@ -24,6 +25,7 @@ import 'package:flutter_app/features/groups/application/update_group_member_role
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_repair_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 
 import '../../core/bridge/fake_bridge.dart';
@@ -40,6 +42,9 @@ class GroupTestUser {
   final String username;
   final String publicKey;
   final String privateKey;
+  final String mlKemPublicKey;
+  final String keyPackageId;
+  final String keyPackagePublicMaterial;
   final FakeBridge bridge;
   final InMemoryGroupRepository groupRepo;
   final InMemoryGroupMessageRepository msgRepo;
@@ -58,6 +63,9 @@ class GroupTestUser {
     required this.username,
     required this.publicKey,
     required this.privateKey,
+    required this.mlKemPublicKey,
+    required this.keyPackageId,
+    required this.keyPackagePublicMaterial,
     required this.bridge,
     required this.groupRepo,
     required this.msgRepo,
@@ -79,9 +87,9 @@ class GroupTestUser {
         deviceId: deviceId,
         transportPeerId: deviceId,
         deviceSigningPublicKey: publicKey,
-        mlKemPublicKey: 'mlkem-$deviceId',
-        keyPackageId: 'key-package-$deviceId',
-        keyPackagePublicMaterial: 'key-package-public-$deviceId',
+        mlKemPublicKey: mlKemPublicKey,
+        keyPackageId: keyPackageId,
+        keyPackagePublicMaterial: keyPackagePublicMaterial,
       );
 
   factory GroupTestUser.create({
@@ -89,6 +97,11 @@ class GroupTestUser {
     required String username,
     required FakeGroupPubSubNetwork network,
     String? deviceId,
+    String? publicKey,
+    String? privateKey,
+    String? mlKemPublicKey,
+    String? keyPackageId,
+    String? keyPackagePublicMaterial,
     FakeBridge? bridge,
     MediaFileManager? mediaFileManager,
     ReactionRepository? reactionRepo,
@@ -96,14 +109,29 @@ class GroupTestUser {
     NotificationService? notificationService,
     ActiveConversationTracker? groupConversationTracker,
     AppLifecycleState Function()? getAppLifecycleState,
+    RequestGroupKeyRepair? requestGroupKeyRepair,
+    GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+    Stream<Map<String, dynamic>>? groupDiagnosticEvents,
+    RecoverGroupDispatcherOverflow? recoverFromDispatcherOverflow,
   }) {
     final resolvedDeviceId = deviceId ?? peerId;
+    final resolvedPublicKey = publicKey ?? 'pk-$peerId';
+    final resolvedPrivateKey = privateKey ?? 'sk-$peerId';
+    final resolvedMlKemPublicKey = mlKemPublicKey ?? 'mlkem-$resolvedDeviceId';
+    final resolvedKeyPackageId =
+        keyPackageId ?? 'key-package-$resolvedDeviceId';
+    final resolvedKeyPackagePublicMaterial =
+        keyPackagePublicMaterial ?? 'key-package-public-$resolvedDeviceId';
     final effectiveBridge = bridge ?? FakeBridge();
     final groupRepo = InMemoryGroupRepository();
     final msgRepo = InMemoryGroupMessageRepository();
     final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
     final controller = network.registerPeer(peerId, deviceId: resolvedDeviceId);
     final reactionController = network.registerReactionPeer(
+      peerId,
+      deviceId: resolvedDeviceId,
+    );
+    final diagnosticController = network.registerDiagnosticPeer(
       peerId,
       deviceId: resolvedDeviceId,
     );
@@ -119,14 +147,22 @@ class GroupTestUser {
       groupConversationTracker: groupConversationTracker,
       getAppLifecycleState: getAppLifecycleState,
       reactionRepo: reactionRepo,
+      groupDiagnosticEvents:
+          groupDiagnosticEvents ?? diagnosticController.stream,
+      pendingKeyRepairRepo: pendingKeyRepairRepo,
+      requestGroupKeyRepair: requestGroupKeyRepair,
+      recoverFromDispatcherOverflow: recoverFromDispatcherOverflow,
     );
 
     return GroupTestUser._(
       peerId: peerId,
       deviceId: resolvedDeviceId,
       username: username,
-      publicKey: 'pk-$peerId',
-      privateKey: 'sk-$peerId',
+      publicKey: resolvedPublicKey,
+      privateKey: resolvedPrivateKey,
+      mlKemPublicKey: resolvedMlKemPublicKey,
+      keyPackageId: resolvedKeyPackageId,
+      keyPackagePublicMaterial: resolvedKeyPackagePublicMaterial,
       bridge: effectiveBridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
@@ -227,6 +263,13 @@ class GroupTestUser {
       );
 
       final members = await groupRepo.getMembers(groupId);
+      final activePeerIds = members.map((member) => member.peerId).toSet();
+      final inviteeMembers = await invitee.groupRepo.getMembers(groupId);
+      for (final existingMember in inviteeMembers) {
+        if (!activePeerIds.contains(existingMember.peerId)) {
+          await invitee.groupRepo.removeMember(groupId, existingMember.peerId);
+        }
+      }
       for (final m in members) {
         await invitee.groupRepo.saveMember(m);
       }
@@ -713,7 +756,7 @@ class GroupTestUser {
             'username': newMember.username,
             'role': 'writer',
             'publicKey': newMember.publicKey,
-            'mlKemPublicKey': 'mlkem-${newMember.peerId}',
+            'mlKemPublicKey': newMember.mlKemPublicKey,
             'devices': [newMember.deviceIdentity.toJson()],
           },
       'groupConfig': groupConfig,
@@ -753,6 +796,10 @@ class GroupTestUser {
       peerId,
       deviceId: deviceId,
     );
+    final diagnosticController = network.registerDiagnosticPeer(
+      peerId,
+      deviceId: deviceId,
+    );
     final listener = GroupMessageListener(
       groupRepo: persistedGroupRepo,
       msgRepo: persistedMsgRepo,
@@ -760,6 +807,7 @@ class GroupTestUser {
       getSelfPeerId: () async => peerId,
       mediaAttachmentRepo: persistedMediaRepo,
       reactionRepo: reactionRepo,
+      groupDiagnosticEvents: diagnosticController.stream,
     );
 
     final restarted = GroupTestUser._(
@@ -768,6 +816,9 @@ class GroupTestUser {
       username: username,
       publicKey: publicKey,
       privateKey: privateKey,
+      mlKemPublicKey: mlKemPublicKey,
+      keyPackageId: keyPackageId,
+      keyPackagePublicMaterial: keyPackagePublicMaterial,
       bridge: effectiveBridge,
       groupRepo: persistedGroupRepo,
       msgRepo: persistedMsgRepo,
@@ -823,7 +874,7 @@ class GroupTestUser {
         role: existing?.role ?? role,
         permissions: existing?.permissions ?? permissions,
         publicKey: user.publicKey,
-        mlKemPublicKey: existing?.mlKemPublicKey ?? 'mlkem-${user.peerId}',
+        mlKemPublicKey: user.mlKemPublicKey,
         devices: devicesById.values.toList(growable: false),
         joinedAt: existing?.joinedAt ?? joinedAt,
       ),

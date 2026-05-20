@@ -98,6 +98,45 @@ func TestRelaySession_RequestFailureDoesNotRestartHostImmediately(t *testing.T) 
 	}
 }
 
+func TestNW009RelayProbeFailureKeepsReservationHealth(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-nw009")
+
+	m.OnReservationOpened(pid)
+	if !m.HasReservation() {
+		t.Fatal("expected reservation before relay probe failure")
+	}
+	if m.AggregateState() != AggregateRelayOnline {
+		t.Fatalf("aggregate state before failure = %s, want %s", m.AggregateState(), AggregateRelayOnline)
+	}
+
+	probeErr := fmt.Errorf("NO_RESERVATION: relay probe failed for active member")
+	m.OnRequestFailed(pid, probeErr)
+
+	s := m.GetSession(pid)
+	if s == nil {
+		t.Fatal("expected relay session after probe failure")
+	}
+	if s.State != RelayStateReserved {
+		t.Fatalf("relay probe failure changed state to %s, want %s", s.State, RelayStateReserved)
+	}
+	if s.FailCount != 1 {
+		t.Fatalf("failCount = %d, want 1", s.FailCount)
+	}
+	if s.LastError != probeErr.Error() {
+		t.Fatalf("lastError = %q, want %q", s.LastError, probeErr.Error())
+	}
+	if m.AggregateState() != AggregateRelayOnline {
+		t.Fatalf("aggregate state after failure = %s, want %s", m.AggregateState(), AggregateRelayOnline)
+	}
+	if !m.IsHealthy() || !m.HasReservation() {
+		t.Fatal("relay probe failure must not clear healthy reservation state")
+	}
+	if got := m.HealthyRelayCount(); got != 1 {
+		t.Fatalf("healthy relay count = %d, want 1", got)
+	}
+}
+
 func TestRelaySession_ReportsHealthyWhenReservationAndConnectednessAgree(t *testing.T) {
 	m := NewRelaySessionManager()
 	pid := fakePeerID("relay-1")
@@ -994,6 +1033,42 @@ func TestWatchdog_MarksNeedsGroupRecoveryForFlutter(t *testing.T) {
 	fields := m.StatusFields()
 	if fields["needsGroupRecovery"] != false {
 		t.Errorf("expected needsGroupRecovery=false in status after ack, got %v", fields["needsGroupRecovery"])
+	}
+}
+
+func TestNW004WatchdogRestartSignalsGroupRecoveryUntilFlutterAck(t *testing.T) {
+	m := NewRelaySessionManager()
+	pid := fakePeerID("relay-1")
+
+	m.OnReservationOpened(pid)
+	m.OnReservationEnded(pid)
+	for i := 0; i < WatchdogMaxConsecutiveFailures; i++ {
+		m.OnRefreshFailed(pid, fmt.Errorf("NW-004 refresh failure %d", i))
+	}
+	m.RecordWatchdogRestart()
+
+	if m.AggregateState() != AggregateRelayWatchdogRestart {
+		t.Fatalf("aggregate state = %s, want watchdog_restart", m.AggregateState())
+	}
+	if m.WatchdogRestartCount() != 1 {
+		t.Fatalf("watchdogRestartCount = %d, want 1", m.WatchdogRestartCount())
+	}
+	fields := m.StatusFields()
+	if fields["needsGroupRecovery"] != true {
+		t.Fatalf("needsGroupRecovery status = %v, want true before Flutter repair", fields["needsGroupRecovery"])
+	}
+	if !m.NeedsGroupRecovery() {
+		t.Fatal("needsGroupRecovery should remain true until Flutter ack")
+	}
+
+	m.AcknowledgeGroupRecovery()
+
+	if m.NeedsGroupRecovery() {
+		t.Fatal("needsGroupRecovery should clear only after Flutter ack")
+	}
+	fields = m.StatusFields()
+	if fields["needsGroupRecovery"] != false {
+		t.Fatalf("needsGroupRecovery status = %v, want false after Flutter ack", fields["needsGroupRecovery"])
 	}
 }
 

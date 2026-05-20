@@ -49,6 +49,9 @@ class GoBridgeClient extends Bridge {
   };
 
   bool _initialized = false;
+  bool _disposed = false;
+  bool _intentionalEventStreamCancel = false;
+  bool _eventStreamRecoveryInProgress = false;
   StreamSubscription<dynamic>? _eventSubscription;
 
   @override
@@ -130,6 +133,8 @@ class GoBridgeClient extends Bridge {
   @override
   Future<void> initialize() async {
     if (_initialized) return;
+    _disposed = false;
+    _intentionalEventStreamCancel = false;
 
     emitFlowEvent(
       layer: 'FL',
@@ -141,26 +146,8 @@ class GoBridgeClient extends Bridge {
     debugPrint('[BRIDGE] Subscribing to EventChannel...');
     _eventSubscription = _eventChannel.receiveBroadcastStream().listen(
       _handleEvent,
-      onError: (error) {
-        final safeError = sanitizeDiagnosticText(error);
-        debugPrint('[BRIDGE] EventChannel ERROR: $safeError');
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GO_BRIDGE_EVENT_STREAM_ERROR',
-          details: {'error': safeError},
-        );
-      },
-      onDone: () {
-        debugPrint(
-          '[BRIDGE] ⚠ EventChannel DONE — stream closed! '
-          'No more push events will be received.',
-        );
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GO_BRIDGE_EVENT_STREAM_DONE',
-          details: {},
-        );
-      },
+      onError: (error) => _handleEventStreamFailure('error', error),
+      onDone: () => _handleEventStreamFailure('done', null),
     );
 
     _initialized = true;
@@ -221,7 +208,12 @@ class GoBridgeClient extends Bridge {
     final savedOnGroupReaction = onGroupReactionReceived;
 
     // Cancel existing subscription
-    await _eventSubscription?.cancel();
+    _intentionalEventStreamCancel = true;
+    try {
+      await _eventSubscription?.cancel();
+    } finally {
+      _intentionalEventStreamCancel = false;
+    }
     _eventSubscription = null;
     _initialized = false;
     debugPrint('[BRIDGE] Event subscription cancelled, re-initializing...');
@@ -245,6 +237,8 @@ class GoBridgeClient extends Bridge {
 
   @override
   void dispose() {
+    _disposed = true;
+    _intentionalEventStreamCancel = true;
     _eventSubscription?.cancel();
     _eventSubscription = null;
     _initialized = false;
@@ -296,6 +290,86 @@ class GoBridgeClient extends Bridge {
       if (text is String) 'textLength': text.length,
       if (media is List) 'mediaCount': media.length,
     };
+  }
+
+  void _handleEventStreamFailure(String reason, Object? error) {
+    if (_disposed || _intentionalEventStreamCancel) {
+      debugPrint(
+        '[BRIDGE] EventChannel $reason during intentional cancel; '
+        'recovery skipped.',
+      );
+      return;
+    }
+
+    final safeError = sanitizeDiagnosticText(error);
+    if (reason == 'error') {
+      debugPrint('[BRIDGE] EventChannel ERROR: $safeError');
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_EVENT_STREAM_ERROR',
+        details: {'error': safeError},
+      );
+    } else {
+      debugPrint(
+        '[BRIDGE] EventChannel DONE: stream closed; '
+        'requesting bridge event-stream recovery.',
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_EVENT_STREAM_DONE',
+        details: {},
+      );
+    }
+
+    _initialized = false;
+    logPushDiagnostic(
+      'go_bridge_event_stream_$reason',
+      details: {
+        'recovery': 'requested',
+        if (safeError.isNotEmpty) 'error': safeError,
+      },
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GO_BRIDGE_EVENT_STREAM_RECOVERY_REQUESTED',
+      details: {'reason': reason, if (safeError.isNotEmpty) 'error': safeError},
+    );
+
+    if (_eventStreamRecoveryInProgress) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_EVENT_STREAM_RECOVERY_COALESCED',
+        details: {'reason': reason},
+      );
+      return;
+    }
+
+    unawaited(_recoverEventStream(reason, safeError));
+  }
+
+  Future<void> _recoverEventStream(String reason, String safeError) async {
+    _eventStreamRecoveryInProgress = true;
+    try {
+      await reinitialize();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_EVENT_STREAM_RECOVERY_SUCCESS',
+        details: {'reason': reason},
+      );
+    } catch (error) {
+      _initialized = false;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GO_BRIDGE_EVENT_STREAM_RECOVERY_FAILED',
+        details: {
+          'reason': reason,
+          if (safeError.isNotEmpty) 'eventError': safeError,
+          'error': sanitizeDiagnosticText(error),
+        },
+      );
+    } finally {
+      _eventStreamRecoveryInProgress = false;
+    }
   }
 
   /// Handle push events from the Go layer.
@@ -608,7 +682,14 @@ class GoBridgeClient extends Bridge {
 String _sanitizeBridgeResult(String result) {
   try {
     final decoded = jsonDecode(result);
-    if (decoded is Map<String, dynamic> && decoded['ok'] == false) {
+    if (decoded is! Map<String, dynamic>) {
+      return jsonEncode({
+        'ok': false,
+        'errorCode': 'MALFORMED_RESPONSE',
+        'errorMessage': 'Native bridge returned malformed JSON',
+      });
+    }
+    if (decoded['ok'] == false) {
       final errorMessage = decoded['errorMessage'];
       if (errorMessage is String) {
         return jsonEncode({
@@ -618,7 +699,11 @@ String _sanitizeBridgeResult(String result) {
       }
     }
   } catch (_) {
-    return result;
+    return jsonEncode({
+      'ok': false,
+      'errorCode': 'MALFORMED_RESPONSE',
+      'errorMessage': 'Native bridge returned malformed JSON',
+    });
   }
   return result;
 }

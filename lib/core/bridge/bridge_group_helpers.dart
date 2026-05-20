@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import '../utils/flow_event_emitter.dart';
 import 'bridge.dart';
 
@@ -13,6 +15,13 @@ class BridgeCommandException implements Exception {
   @override
   String toString() =>
       'BridgeCommandException($command: $errorCode${errorMessage != null ? ' — $errorMessage' : ''})';
+}
+
+Duration _debugGroupLeaveDelay = Duration.zero;
+
+@visibleForTesting
+void debugSetGroupLeaveDelayForTest(Duration delay) {
+  _debugGroupLeaveDelay = delay.isNegative ? Duration.zero : delay;
 }
 
 /// Calls the bridge to create a new group on the P2P network.
@@ -43,9 +52,12 @@ Future<Map<String, dynamic>> callGroupCreate(
       'groupType': type,
       'creatorPeerId': creatorPeerId,
       'creatorPublicKey': creatorPublicKey,
-      if (creatorMlKemPublicKey != null)
-        'creatorMlKemPublicKey': creatorMlKemPublicKey,
-      if (description != null) 'description': description,
+      ...?creatorMlKemPublicKey == null
+          ? null
+          : <String, Object?>{'creatorMlKemPublicKey': creatorMlKemPublicKey},
+      ...?description == null
+          ? null
+          : <String, Object?>{'description': description},
     },
   };
 
@@ -77,7 +89,11 @@ Future<Map<String, dynamic>> callGroupCreate(
   }
 }
 
-/// Calls the bridge to join an existing group.
+/// Legacy topic-name-only group joins are not valid private-group onboarding.
+@Deprecated(
+  'Topic-name-only group joins do not carry private group config/key material. '
+  'Use callGroupJoinWithConfig instead.',
+)
 Future<void> callGroupJoin(
   Bridge bridge, {
   required String groupId,
@@ -92,38 +108,17 @@ Future<void> callGroupJoin(
     },
   );
 
-  final request = {
-    'cmd': 'group:join',
-    'payload': {'groupId': groupId, 'topicName': topicName},
-  };
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_JOIN_RESPONSE',
+    details: {'ok': false, 'errorCode': 'LEGACY_JOIN_UNSUPPORTED'},
+  );
 
-  try {
-    final responseJson = await bridge
-        .send(jsonEncode(request))
-        .timeout(timeout);
-    final response = jsonDecode(responseJson) as Map<String, dynamic>;
-
-    if (response['ok'] != true) {
-      throw BridgeCommandException(
-        'group:join',
-        response['errorCode']?.toString() ?? 'UNKNOWN',
-        response['errorMessage']?.toString(),
-      );
-    }
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_FL_BRIDGE_JOIN_RESPONSE',
-      details: {'ok': true},
-    );
-  } on TimeoutException {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_FL_BRIDGE_JOIN_RESPONSE',
-      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
-    );
-    rethrow;
-  }
+  throw BridgeCommandException(
+    'group:join',
+    'LEGACY_JOIN_UNSUPPORTED',
+    'Topic-name-only group joins are unsupported; use full group config, key, and epoch material.',
+  );
 }
 
 /// Calls the bridge to join an existing group with full config.
@@ -174,7 +169,10 @@ Future<void> callGroupJoinWithConfig(
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_FL_BRIDGE_JOIN_CONFIG_RESPONSE',
-      details: {'ok': true},
+      details: {
+        'ok': true,
+        if (response['note'] != null) 'note': response['note'].toString(),
+      },
     );
   } on TimeoutException {
     emitFlowEvent(
@@ -252,6 +250,10 @@ Future<void> callGroupLeave(
   };
 
   try {
+    final debugDelay = _debugGroupLeaveDelay;
+    if (debugDelay > Duration.zero) {
+      await Future<void>.delayed(debugDelay);
+    }
     final responseJson = await bridge
         .send(jsonEncode(request))
         .timeout(timeout);
@@ -301,6 +303,7 @@ Future<Map<String, dynamic>> callGroupPublish(
   String? senderDevicePublicKey,
   String? senderKeyPackageId,
   String? messageId,
+  DateTime? timestamp,
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   Duration timeout = const Duration(seconds: 10),
@@ -311,6 +314,7 @@ Future<Map<String, dynamic>> callGroupPublish(
     details: {
       'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
       'textLength': text.length,
+      'hasTimestamp': timestamp != null,
     },
   );
 
@@ -336,6 +340,9 @@ Future<Map<String, dynamic>> callGroupPublish(
   }
   if (messageId != null && messageId.isNotEmpty) {
     payload['messageId'] = messageId;
+  }
+  if (timestamp != null) {
+    payload['timestamp'] = timestamp.toUtc().toIso8601String();
   }
   if (quotedMessageId != null && quotedMessageId.isNotEmpty) {
     payload['quotedMessageId'] = quotedMessageId;
@@ -551,14 +558,14 @@ Future<Map<String, dynamic>> callGroupGenerateNextKey(
   }
 }
 
-/// Calls the bridge to rotate the group encryption key.
+/// Legacy key rotation is unsupported because this helper cannot own durable
+/// key distribution to active group members.
 ///
-/// Legacy helper retained for older flows. New Section 7 callers should use
-/// [callGroupGenerateNextKey] followed by [callGroupUpdateKey].
+/// Callers must use `rotateAndDistributeGroupKey`, which coordinates
+/// [callGroupGenerateNextKey], member fanout, and [callGroupUpdateKey].
 ///
 /// Returns a map with:
-/// - On success: `{ "ok": true, "groupKey": "base64...", "keyEpoch": N }`
-/// - On error: `{ "ok": false, "errorCode": "...", "errorMessage": "..." }`
+/// - Always: `{ "ok": false, "errorCode": "LEGACY_ROTATE_KEY_UNSUPPORTED", "errorMessage": "..." }`
 Future<Map<String, dynamic>> callGroupRotateKey(
   Bridge bridge,
   String groupId, {
@@ -572,37 +579,18 @@ Future<Map<String, dynamic>> callGroupRotateKey(
     },
   );
 
-  final request = {
-    'cmd': 'group:rotateKey',
-    'payload': {'groupId': groupId},
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_FL_BRIDGE_ROTATE_KEY_RESPONSE',
+    details: {'ok': false, 'errorCode': 'LEGACY_ROTATE_KEY_UNSUPPORTED'},
+  );
+
+  return {
+    'ok': false,
+    'errorCode': 'LEGACY_ROTATE_KEY_UNSUPPORTED',
+    'errorMessage':
+        'Legacy group key rotation is unsupported; use rotateAndDistributeGroupKey.',
   };
-
-  try {
-    final responseJson = await bridge
-        .send(jsonEncode(request))
-        .timeout(timeout);
-    final response = jsonDecode(responseJson) as Map<String, dynamic>;
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_FL_BRIDGE_ROTATE_KEY_RESPONSE',
-      details: {'ok': response['ok']},
-    );
-
-    return response;
-  } on TimeoutException {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_FL_BRIDGE_ROTATE_KEY_RESPONSE',
-      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
-    );
-
-    return {
-      'ok': false,
-      'errorCode': 'BRIDGE_TIMEOUT',
-      'errorMessage': 'Bridge call timed out after ${timeout.inSeconds}s',
-    };
-  }
 }
 
 /// Calls the bridge to update the stored group key without generating a new one.
@@ -888,29 +876,92 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
   String cursor,
   int limit, {
   Duration timeout = const Duration(seconds: 10),
+  int transientRetryAttempts = 3,
+  Duration transientRetryDelay = const Duration(seconds: 1),
 }) async {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_REQUEST',
-    details: {
-      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      'hasCursor': cursor.isNotEmpty,
-      'limit': limit,
-    },
-  );
+  var sameLimitAttempt = 0;
+  var effectiveLimit = limit <= 0 ? 50 : limit;
+  while (true) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_REQUEST',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'hasCursor': cursor.isNotEmpty,
+        'limit': effectiveLimit,
+      },
+    );
 
-  final request = {
-    'cmd': 'group:inboxRetrieveCursor',
-    'payload': {'groupId': groupId, 'cursor': cursor, 'limit': limit},
-  };
+    final request = {
+      'cmd': 'group:inboxRetrieveCursor',
+      'payload': {
+        'groupId': groupId,
+        'cursor': cursor,
+        'limit': effectiveLimit,
+      },
+    };
 
-  try {
-    final responseJson = await bridge
-        .send(jsonEncode(request))
-        .timeout(timeout);
+    final String responseJson;
+    try {
+      responseJson = await bridge.send(jsonEncode(request)).timeout(timeout);
+    } on TimeoutException {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
+        details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+      );
+      rethrow;
+    }
     final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
     if (response['ok'] != true) {
+      final errorCode = response['errorCode']?.toString() ?? 'UNKNOWN';
+      final errorMessage = response['errorMessage']?.toString();
+      if (_isTransientGroupInboxCursorError(errorCode, errorMessage)) {
+        if (effectiveLimit > 1) {
+          final previousLimit = effectiveLimit;
+          effectiveLimit = effectiveLimit ~/ 2;
+          if (effectiveLimit < 1) effectiveLimit = 1;
+          sameLimitAttempt = 0;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_ADAPTIVE_LIMIT_RETRY',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'previousLimit': previousLimit,
+              'retryLimit': effectiveLimit,
+              'errorCode': errorCode,
+            },
+          );
+          await _callRelayReconnectForGroupInboxRetry(
+            bridge,
+            timeout: timeout,
+            groupId: groupId,
+          );
+          await Future<void>.delayed(transientRetryDelay);
+          continue;
+        }
+
+        if (sameLimitAttempt < transientRetryAttempts) {
+          sameLimitAttempt++;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_TRANSIENT_RETRY',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'attempt': sameLimitAttempt,
+              'errorCode': errorCode,
+            },
+          );
+          await _callRelayReconnectForGroupInboxRetry(
+            bridge,
+            timeout: timeout,
+            groupId: groupId,
+          );
+          await Future<void>.delayed(transientRetryDelay * sameLimitAttempt);
+          continue;
+        }
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
@@ -922,8 +973,8 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
       );
       throw BridgeCommandException(
         'group:inboxRetrieveCursor',
-        response['errorCode']?.toString() ?? 'UNKNOWN',
-        response['errorMessage']?.toString(),
+        errorCode,
+        errorMessage,
       );
     }
 
@@ -951,13 +1002,65 @@ Future<GroupInboxPage> callGroupInboxRetrieveWithCursor(
       cursor: nextCursor,
       historyGaps: historyGaps,
     );
-  } on TimeoutException {
+  }
+}
+
+bool _isTransientGroupInboxCursorError(String errorCode, String? errorMessage) {
+  if (errorCode != 'GROUP_INBOX_ERROR') {
+    return false;
+  }
+  final message = (errorMessage ?? '').toLowerCase();
+  return message.contains('read response') &&
+      (message.contains('eof') ||
+          message.contains('reset') ||
+          message.contains('timeout') ||
+          message.contains('deadline'));
+}
+
+Future<void> _callRelayReconnectForGroupInboxRetry(
+  Bridge bridge, {
+  required Duration timeout,
+  required String groupId,
+}) async {
+  final request = {'cmd': 'relay:reconnect', 'payload': <String, dynamic>{}};
+
+  try {
+    final responseJson = await bridge
+        .send(jsonEncode(request))
+        .timeout(timeout + const Duration(seconds: 5));
+    final response = jsonDecode(responseJson) as Map<String, dynamic>;
+    if (response['ok'] == true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RECONNECT_RESPONSE',
+        details: {
+          'ok': true,
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          if (response['recoveryMode'] != null)
+            'recoveryMode': response['recoveryMode'],
+        },
+      );
+      return;
+    }
     emitFlowEvent(
       layer: 'FL',
-      event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RESPONSE',
-      details: {'ok': false, 'errorCode': 'BRIDGE_TIMEOUT'},
+      event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RECONNECT_RESPONSE',
+      details: {
+        'ok': false,
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'errorCode': response['errorCode'],
+      },
     );
-    rethrow;
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_FL_BRIDGE_INBOX_RETRIEVE_CURSOR_RECONNECT_RESPONSE',
+      details: {
+        'ok': false,
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'error': error.toString(),
+      },
+    );
   }
 }
 
@@ -1114,7 +1217,24 @@ Future<String> callGroupKeygen(
       details: {'ok': response['ok']},
     );
 
-    return response['groupKey'] as String;
+    if (response['ok'] != true) {
+      throw BridgeCommandException(
+        'group.keygen',
+        response['errorCode']?.toString() ?? 'UNKNOWN',
+        response['errorMessage']?.toString(),
+      );
+    }
+
+    final groupKey = response['groupKey'];
+    if (groupKey is! String || groupKey.trim().isEmpty) {
+      throw BridgeCommandException(
+        'group.keygen',
+        'INVALID_RESPONSE',
+        'Bridge keygen response did not include a usable groupKey.',
+      );
+    }
+
+    return groupKey;
   } on TimeoutException {
     emitFlowEvent(
       layer: 'FL',

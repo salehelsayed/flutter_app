@@ -16,6 +16,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 
 const groupKeyRepairReasonOfflineMissingKey = 'offline_missing_key';
 const groupKeyRepairReasonLiveDiagnostic = 'live_decryption_failed';
+const groupKeyRepairReasonReceivedMessageEpochMissingLocalKey =
+    'received_message_epoch_missing_local_key';
+const groupKeyRepairReasonKeyUpdateApplyFailed = 'key_update_apply_failed';
 
 class GroupKeyRepairRequest {
   final String groupId;

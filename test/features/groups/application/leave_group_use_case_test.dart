@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/features/groups/application/leave_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -33,6 +35,7 @@ void main() {
       GroupMember(
         groupId: 'group-1',
         peerId: 'peer-1',
+        publicKey: 'pk-peer-1',
         role: MemberRole.writer,
         joinedAt: DateTime.now().toUtc(),
       ),
@@ -77,6 +80,59 @@ void main() {
 
     expect(bridge.commandLog, contains('group:leave'));
   });
+
+  test(
+    'BB-010 failed native leave preserves local state and rejoin eligibility',
+    () async {
+      bridge.responses['group:leave'] = {
+        'ok': false,
+        'errorCode': 'GROUP_ERROR',
+        'errorMessage': 'forced leave failure',
+      };
+
+      await expectLater(
+        leaveGroup(bridge: bridge, groupRepo: groupRepo, groupId: 'group-1'),
+        throwsA(
+          isA<BridgeCommandException>()
+              .having((error) => error.command, 'command', 'group:leave')
+              .having((error) => error.errorCode, 'errorCode', 'GROUP_ERROR'),
+        ),
+      );
+
+      expect(await groupRepo.getGroup('group-1'), isNotNull);
+      final members = await groupRepo.getMembers('group-1');
+      expect(members.map((member) => member.peerId), contains('peer-1'));
+      final latestKey = await groupRepo.getLatestKey('group-1');
+      expect(latestKey, isNotNull);
+      expect(latestKey!.encryptedKey, 'key-data');
+
+      final result = await rejoinGroupTopics(
+        bridge: bridge,
+        groupRepo: groupRepo,
+      );
+      expect(result.joinedGroupCount, 1);
+      expect(result.skippedNoKeyCount, 0);
+      expect(result.errorCount, 0);
+
+      final joinMessages = bridge.sentMessages
+          .map((message) => jsonDecode(message) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:join')
+          .toList();
+      expect(joinMessages, hasLength(1));
+      final joinPayload =
+          joinMessages.single['payload'] as Map<String, dynamic>;
+      expect(joinPayload['groupId'], 'group-1');
+      expect(joinPayload['groupKey'], 'key-data');
+      expect(joinPayload['keyEpoch'], 0);
+      final groupConfig = joinPayload['groupConfig'] as Map<String, dynamic>;
+      final configMembers = groupConfig['members'] as List<dynamic>;
+      expect(configMembers, hasLength(1));
+      expect(
+        configMembers.single as Map<String, dynamic>,
+        containsPair('peerId', 'peer-1'),
+      );
+    },
+  );
 
   test(
     'LP003 normal leave dispatches group leave and clears local state',

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -34,6 +35,24 @@ class _FailFirstNInboxBridge extends FakeBridge {
         throw Exception('Simulated inbox store failure #$_callIndex');
       }
       return jsonEncode({'ok': true});
+    }
+    return super.send(message);
+  }
+}
+
+class _TimeoutInboxStoreBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+
+    if (cmd == 'group:inboxStore') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      throw TimeoutException('Simulated group:inboxStore timeout');
     }
     return super.send(message);
   }
@@ -304,6 +323,45 @@ void main() {
     expect(saved.inboxRetryPayload, isNull);
   });
 
+  test(
+    'IR-007 inbox retry sends same pending message id once without duplicate rows',
+    () async {
+      final msg = _makeRetryEligible(
+        'ir007-pending-retry-id',
+        status: 'pending',
+      );
+      await msgRepo.saveMessage(msg);
+
+      final retried = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+      );
+
+      expect(retried, 1);
+      expect(_inboxStoreMessageIds(bridge), ['ir007-pending-retry-id']);
+      final saved = await msgRepo.getMessage('ir007-pending-retry-id');
+      expect(saved, isNotNull);
+      expect(saved!.id, 'ir007-pending-retry-id');
+      expect(saved.status, 'sent');
+      expect(saved.inboxStored, isTrue);
+      expect(saved.inboxRetryPayload, isNull);
+      final page = await msgRepo.getMessagesPage('group-1');
+      expect(
+        page.where(
+          (row) => !row.isIncoming && row.id == 'ir007-pending-retry-id',
+        ),
+        hasLength(1),
+      );
+
+      final secondPass = await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: msgRepo,
+      );
+      expect(secondPass, 0);
+      expect(_inboxStoreMessageIds(bridge), ['ir007-pending-retry-id']);
+    },
+  );
+
   test('GO-002 retry promotes pending inbox store failure to sent', () async {
     final msg = _makeRetryEligible('go002-pending', status: 'pending');
     await msgRepo.saveMessage(msg);
@@ -389,6 +447,37 @@ void main() {
     );
     expect(okEvent['details']['messageId'], 'msg-ok');
   });
+
+  test(
+    'BB-013 group:inboxStore timeout leaves the row retryable and not marked stored',
+    () async {
+      final timeoutBridge = _TimeoutInboxStoreBridge();
+      final msg = _makeRetryEligible('msg-bb013-timeout');
+      await msgRepo.saveMessage(msg);
+
+      late int retried;
+      final events = await captureFlowEvents(() async {
+        retried = await retryFailedGroupInboxStores(
+          bridge: timeoutBridge,
+          msgRepo: msgRepo,
+        );
+      });
+
+      expect(retried, 0);
+      expect(timeoutBridge.commandLog, ['group:inboxStore']);
+      final saved = await msgRepo.getMessage('msg-bb013-timeout');
+      expect(saved, isNotNull);
+      expect(saved!.inboxStored, isFalse);
+      expect(saved.status, 'sent');
+      expect(saved.inboxRetryPayload, isNotNull);
+
+      final errorEvent = events.firstWhere(
+        (event) => event['event'] == 'RETRY_FAILED_GROUP_INBOX_STORE_ERROR',
+      );
+      expect(errorEvent['details']['messageId'], 'msg-bb01');
+      expect(errorEvent['details']['error'], contains('TimeoutException'));
+    },
+  );
 
   test('respects batch limit', () async {
     // Create 25 retry-eligible messages

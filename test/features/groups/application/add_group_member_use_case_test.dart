@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -117,6 +118,79 @@ void main() {
     final members = await groupRepo.getMembers('group-1');
     expect(members.length, groupMembershipLimit);
   });
+
+  test(
+    'ML-010 exact duplicate active add is idempotent without config sync or key mutation',
+    () async {
+      final joinedAt = DateTime.utc(2026, 5, 15, 12, 10);
+      final duplicateMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-ml010',
+        username: 'ML Ten',
+        role: MemberRole.writer,
+        publicKey: 'pk-peer-ml010',
+        mlKemPublicKey: 'mlkem-peer-ml010',
+        devices: const [
+          GroupMemberDeviceIdentity(
+            deviceId: 'peer-ml010-phone',
+            transportPeerId: 'peer-ml010-phone',
+            deviceSigningPublicKey: 'pk-peer-ml010',
+            mlKemPublicKey: 'mlkem-peer-ml010-phone',
+            keyPackageId: 'kp-peer-ml010-phone',
+            keyPackagePublicMaterial: 'kpm-peer-ml010-phone',
+          ),
+        ],
+        joinedAt: joinedAt,
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          encryptedKey: 'epoch-seven-key',
+          keyGeneration: 7,
+          createdAt: joinedAt,
+        ),
+      );
+
+      await addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: duplicateMember,
+        selfPeerId: 'peer-admin',
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(1),
+      );
+
+      bridge.commandLog.clear();
+      bridge.sentMessages.clear();
+      await addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: duplicateMember,
+        selfPeerId: 'peer-admin',
+      );
+
+      final members = await groupRepo.getMembers('group-1');
+      final duplicateRows = members
+          .where((member) => member.peerId == 'peer-ml010')
+          .toList();
+      expect(duplicateRows, hasLength(1));
+      expect(duplicateRows.single.username, 'ML Ten');
+      expect(duplicateRows.single.role, MemberRole.writer);
+      expect(duplicateRows.single.devices.map((device) => device.deviceId), [
+        'peer-ml010-phone',
+      ]);
+      expect(bridge.commandLog, isEmpty);
+      expect(bridge.sentMessages, isEmpty);
+      final latestKey = await groupRepo.getLatestKey('group-1');
+      expect(latestKey, isNotNull);
+      expect(latestKey!.keyGeneration, 7);
+      expect(latestKey.encryptedKey, 'epoch-seven-key');
+    },
+  );
 
   test('GM-002 addGroupMember syncs updated A/B/C/D config payload', () async {
     final joinedAt = DateTime.utc(2026, 5, 10, 9);
@@ -533,6 +607,64 @@ void main() {
     expect(bridge.commandLog, isEmpty);
   });
 
+  test('ML-013 bare writer cannot add member or sync config', () async {
+    const groupId = 'group-ml013-add';
+    await groupRepo.saveGroup(
+      GroupModel(
+        id: groupId,
+        name: 'ML-013 Add Guard',
+        type: GroupType.chat,
+        topicName: 'group-topic-ml013-add',
+        createdAt: DateTime.now().toUtc(),
+        createdBy: 'peer-admin',
+        myRole: GroupRole.member,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: groupId,
+        peerId: 'peer-b',
+        username: 'Writer',
+        role: MemberRole.writer,
+        publicKey: 'pk-b',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    final newMember = GroupMember(
+      groupId: groupId,
+      peerId: 'peer-d',
+      username: 'Diana',
+      role: MemberRole.writer,
+      publicKey: 'pk-d',
+      joinedAt: DateTime.now().toUtc(),
+    );
+
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        newMember: newMember,
+        selfPeerId: 'peer-b',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await groupRepo.getMember(groupId, 'peer-d'), isNull);
+    expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+  });
+
   test(
     'allows writer with invite permission override to add a member',
     () async {
@@ -747,7 +879,7 @@ void main() {
   });
 
   test(
-    'rejects duplicate member before sync and preserves original row',
+    'ML-010 rejects conflicting duplicate member before sync and preserves original row',
     () async {
       final originalMember = GroupMember(
         groupId: 'group-1',
@@ -903,6 +1035,90 @@ void main() {
     final saved = await groupRepo.getMember('group-1', 'peer-rollback');
     expect(saved, isNull);
   });
+
+  test(
+    'ML-014 rolls back local insert after group:updateConfig failure',
+    () async {
+      final joinedAt = DateTime.utc(2026, 5, 11, 10);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-admin',
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: 'pk-admin',
+          mlKemPublicKey: 'mlkem-admin',
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-existing',
+          username: 'Existing',
+          role: MemberRole.writer,
+          publicKey: 'pk-existing',
+          mlKemPublicKey: 'mlkem-existing',
+          joinedAt: joinedAt,
+        ),
+      );
+      bridge.responses['group:updateConfig'] = {
+        'ok': false,
+        'errorCode': 'CONFIG_SYNC_FAILED',
+        'errorMessage': 'bridge rejected config',
+      };
+
+      final failedMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-ml014',
+        username: 'ML014 Candidate',
+        role: MemberRole.writer,
+        publicKey: 'pk-ml014',
+        mlKemPublicKey: 'mlkem-ml014',
+        joinedAt: joinedAt.add(const Duration(minutes: 1)),
+      );
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: failedMember,
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(isA<Exception>()),
+      );
+
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(1),
+      );
+      final updateConfigMessage = bridge.sentMessages.firstWhere((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      });
+      final payload =
+          (jsonDecode(updateConfigMessage) as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = payload['groupConfig'] as Map<String, dynamic>;
+      expect(
+        (groupConfig['members'] as List<dynamic>)
+            .cast<Map<String, dynamic>>()
+            .map((member) => member['peerId'])
+            .toSet(),
+        {'peer-admin', 'peer-existing', 'peer-ml014'},
+      );
+
+      final remainingMembers = await groupRepo.getMembers('group-1');
+      expect(remainingMembers.map((member) => member.peerId).toSet(), {
+        'peer-admin',
+        'peer-existing',
+      });
+      expect(await groupRepo.getMember('group-1', 'peer-ml014'), isNull);
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+    },
+  );
 
   test('syncBridgeConfig false skips bridge config sync', () async {
     final newMember = GroupMember(

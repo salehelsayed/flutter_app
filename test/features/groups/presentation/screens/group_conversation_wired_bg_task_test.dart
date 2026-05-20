@@ -968,6 +968,97 @@ void main() {
     );
 
     testWidgets(
+      'NW-011 route unmount during group send leaves durable or retryable row, never hidden',
+      (tester) async {
+        final publishGate = Completer<void>();
+        final operationLog = <String>[];
+        final bridge = _OrderRecordingBridge(
+          operationLog: operationLog,
+          publishTopicPeers: 2,
+          commandGates: {'group:publish': publishGate},
+        );
+        final msgRepo = InMemoryGroupMessageRepository();
+
+        await _pumpGroupConversationWired(
+          tester,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+
+        final sendFuture = await _startTextSend(
+          tester,
+          'NW-011 unmount durable',
+        );
+        await pumpUntil(
+          tester,
+          () => bridge.commandLog.contains('group:publish'),
+        );
+
+        final publishMessage = bridge.sentMessages.firstWhere(
+          (raw) =>
+              (jsonDecode(raw) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        final publishPayload =
+            (jsonDecode(publishMessage) as Map<String, dynamic>)['payload']
+                as Map<String, dynamic>;
+        final messageId = publishPayload['messageId'] as String;
+
+        final startedRows = await msgRepo.getMessagesPage('group-1');
+        final startedMatches = startedRows
+            .where((message) => message.id == messageId)
+            .toList(growable: false);
+        expect(startedMatches, hasLength(1));
+        expect(startedMatches.single.status, 'sending');
+        expect(startedMatches.single.wireEnvelope, isNotNull);
+        expect(startedMatches.single.inboxRetryPayload, isNotNull);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        publishGate.complete();
+        await tester.runAsync(() async {
+          await sendFuture.future;
+        });
+        await pumpFrames(tester, count: 20);
+
+        _expectOrdered(operationLog, 'bridge:bg:begin', 'bridge:group:publish');
+        _expectOrdered(
+          operationLog,
+          'bridge:group:publish',
+          'bridge:group:inboxStore',
+        );
+        _expectOrdered(
+          operationLog,
+          'bridge:group:inboxStore',
+          'bridge:bg:end',
+        );
+
+        final rows = await msgRepo.getMessagesPage('group-1');
+        final matches = rows
+            .where((message) => message.id == messageId)
+            .toList(growable: false);
+        expect(matches, hasLength(1));
+        final saved = matches.single;
+        expect(saved.text, 'NW-011 unmount durable');
+        expect(saved.status, anyOf('sent', 'pending', 'failed'));
+        if (saved.status == 'pending') {
+          expect(saved.inboxRetryPayload, isNotNull);
+        }
+        if (saved.status == 'failed') {
+          expect(saved.wireEnvelope ?? saved.inboxRetryPayload, isNotNull);
+        }
+        expect(
+          rows.where(
+            (message) =>
+                !message.isIncoming && message.text == 'NW-011 unmount durable',
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    testWidgets(
       'ordinary group text send returns sent after lock/unmount when topic peers are zero',
       (tester) async {
         final inboxGate = Completer<void>();

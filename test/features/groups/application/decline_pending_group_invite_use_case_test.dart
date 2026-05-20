@@ -64,6 +64,33 @@ void main() {
       expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
     });
 
+    test(
+      'ML-018 decline records a tombstone so delayed copies stay unusable',
+      () async {
+        await pendingInviteRepo.savePendingInvite(makeInvite());
+        final declinedAt = DateTime.utc(2026, 4, 2, 12);
+
+        final result = await declinePendingGroupInvite(
+          pendingInviteRepo: pendingInviteRepo,
+          groupId: 'grp-abc123',
+          now: declinedAt,
+        );
+
+        expect(result, DeclinePendingGroupInviteResult.success);
+        expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+        final consumption = await pendingInviteRepo.getConsumedInvite(
+          'invite-1',
+        );
+        expect(consumption, isNotNull);
+        expect(consumption!.groupId, 'grp-abc123');
+        expect(consumption.consumedAt, declinedAt);
+        expect(
+          consumption.isActiveAt(declinedAt.add(const Duration(days: 6))),
+          isTrue,
+        );
+      },
+    );
+
     test('returns expired when declining an expired invite', () async {
       await pendingInviteRepo.savePendingInvite(
         makeInvite(receivedAt: DateTime.utc(2026, 4, 1, 13, 0)),

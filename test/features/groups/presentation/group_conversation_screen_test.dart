@@ -16,6 +16,7 @@ import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bu
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_history_gap_repair.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
@@ -64,7 +65,9 @@ void main() {
     bool canWrite = true,
     bool isSending = false,
     GroupModel? group,
+    Map<String, GroupMember> membersByPeerId = const {},
     bool initialLoadDone = false,
+    bool isRecovering = false,
     ValueListenable<ConversationComposerViewState>? composerStateListenable,
     UploadProgressViewState? uploadProgress,
     VoidCallback? onCancelUpload,
@@ -96,6 +99,7 @@ void main() {
         body: GroupConversationScreen(
           group: group ?? testGroup,
           messages: messages,
+          membersByPeerId: membersByPeerId,
           ownPeerId: 'peer-1',
           onSend: onSend ?? (_) {},
           onBack: () {},
@@ -104,6 +108,7 @@ void main() {
           uploadProgress: uploadProgress,
           onCancelUpload: onCancelUpload,
           initialLoadDone: initialLoadDone,
+          isRecovering: isRecovering,
           composerStateListenable: composerStateListenable,
           activeQuoteText: activeQuoteText,
           isActiveQuoteUnavailable: isActiveQuoteUnavailable,
@@ -139,6 +144,40 @@ void main() {
 
     expect(find.text('Hello everyone!'), findsOneWidget);
     expect(find.text('Alice'), findsOneWidget);
+  });
+
+  testWidgets('ML-016 non-contact sender labels render stable fallback', (
+    tester,
+  ) async {
+    final messages = [
+      GroupMessage(
+        id: 'ml016-empty-label',
+        groupId: 'group-1',
+        senderPeerId: 'peer-alice-non-contact',
+        senderUsername: '   ',
+        text: 'Alice visible without contact',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+        isIncoming: true,
+      ),
+      GroupMessage(
+        id: 'ml016-null-label',
+        groupId: 'group-1',
+        senderPeerId: 'peer-bob-non-contact',
+        text: 'Bob visible without contact',
+        timestamp: DateTime.now().toUtc(),
+        createdAt: DateTime.now().toUtc(),
+        isIncoming: true,
+      ),
+    ];
+
+    await tester.pumpWidget(buildTestWidget(messages: messages));
+
+    expect(find.text('Alice visible without contact'), findsOneWidget);
+    expect(find.text('Bob visible without contact'), findsOneWidget);
+    expect(find.text('Member peer-ali'), findsOneWidget);
+    expect(find.text('Member peer-bob'), findsOneWidget);
+    expect(find.text('Unknown'), findsNothing);
   });
 
   testWidgets('renders undecryptable epoch placeholders as safe text', (
@@ -218,6 +257,40 @@ void main() {
       );
       expect(
         find.byKey(const ValueKey('failed-media-delete-msg-finalized-repair')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'KE-022 renders key-update recovery placeholder as a visible degraded state',
+    (tester) async {
+      final pending = GroupMessage(
+        id: 'ke022-pending-key-repair',
+        groupId: 'group-1',
+        senderPeerId: 'peer-2',
+        senderUsername: 'Alice',
+        text: groupPendingKeyRepairPlaceholderText,
+        timestamp: DateTime.now().toUtc(),
+        keyGeneration: 2,
+        status: groupPendingKeyRepairStatusPendingKey,
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc(),
+      );
+
+      await tester.pumpWidget(buildTestWidget(messages: [pending]));
+
+      expect(find.text(groupPendingKeyRepairPlaceholderText), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-retry-ke022-pending-key-repair'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('failed-media-delete-ke022-pending-key-repair'),
+        ),
         findsNothing,
       );
     },
@@ -793,6 +866,49 @@ void main() {
     expect(find.text('No messages yet'), findsOneWidget);
   });
 
+  testWidgets(
+    'IR-018 shows recovering state instead of current empty state during replay catch-up',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(initialLoadDone: true, isRecovering: true),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('group-recovery-banner')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('group-loading-shell')), findsOneWidget);
+      expect(find.text('No messages yet'), findsNothing);
+      expect(
+        find.text(
+          'Catching up missed messages. New messages will still appear here.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'IR-018 keeps visible messages live while marking the group as recovering',
+    (tester) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: testMessages,
+          initialLoadDone: true,
+          isRecovering: true,
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('group-recovery-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('Hello everyone!'), findsOneWidget);
+    },
+  );
+
   testWidgets('hides compose area for readers in announcement group', (
     tester,
   ) async {
@@ -851,7 +967,7 @@ void main() {
   });
 
   testWidgets(
-    'shows expired backlog banner and empty-state override after retention expiry',
+    'IR-016 shows expired backlog banner and empty-state override after retention expiry',
     (tester) async {
       final expiredGroup = testGroup.copyWith(
         lastBacklogExpiredAt: DateTime.utc(2026, 4, 5, 12),
@@ -882,7 +998,7 @@ void main() {
   );
 
   testWidgets(
-    'shows mixed-window retention banner while retained messages stay visible',
+    'IR-016 shows mixed-window retention banner while retained messages stay visible',
     (tester) async {
       final mixedGroup = testGroup.copyWith(
         lastBacklogExpiredAt: DateTime.utc(2026, 4, 5, 12),

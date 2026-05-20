@@ -8,6 +8,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_sender_display_name.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
@@ -55,6 +56,11 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       normalizedTransportPeerId != null && normalizedTransportPeerId.isNotEmpty
       ? normalizedTransportPeerId
       : senderId;
+  final normalizedSelfPeerId = selfPeerId?.trim();
+  final localRecipientPeerId =
+      normalizedSelfPeerId != null && normalizedSelfPeerId.isNotEmpty
+      ? normalizedSelfPeerId
+      : null;
   final mediaValidation = _validateIncomingMediaDescriptors(media);
   if (!mediaValidation.isValid) {
     emitFlowEvent(
@@ -78,6 +84,22 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       messageId.isNotEmpty) {
     final existingById = await msgRepo.getMessage(messageId);
     if (existingById != null && !_isRepairPlaceholder(existingById)) {
+      final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
+        msgRepo: msgRepo,
+        existing: existingById,
+        messageId: messageId,
+        groupId: groupId,
+        senderId: senderId,
+        resolvedTransportPeerId: resolvedTransportPeerId,
+        sanitizedText: sanitizedText,
+        selfPeerId: selfPeerId,
+        quotedMessageId: quotedMessageId,
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+      if (reconciledSelfEcho != null) {
+        return reconciledSelfEcho;
+      }
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         messageId: messageId,
@@ -135,9 +157,88 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     return null;
   }
 
+  GroupMember? localRecipientMember;
+  String? localRecipientAccountPeerId = localRecipientPeerId;
+  if (localRecipientPeerId != null) {
+    localRecipientMember = await groupRepo.getMember(
+      groupId,
+      localRecipientPeerId,
+    );
+    if (localRecipientMember == null) {
+      localRecipientMember = await _findLocalRecipientMemberByDeviceTransport(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        localTransportPeerId: localRecipientPeerId,
+      );
+      localRecipientAccountPeerId = localRecipientMember?.peerId;
+    }
+    if (!isSystemMessage && localRecipientMember == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_HANDLE_INCOMING_MSG_LOCAL_MEMBERSHIP_MISSING',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+          'selfPeerId': localRecipientPeerId.length > 8
+              ? localRecipientPeerId.substring(0, 8)
+              : localRecipientPeerId,
+          'keyEpoch': keyEpoch,
+        },
+      );
+      return null;
+    }
+
+    if (localRecipientMember != null &&
+        localRecipientAccountPeerId != null &&
+        localRecipientAccountPeerId.isNotEmpty) {
+      final localRemovedAt = await msgRepo
+          .getLatestSystemEventTimestampForTarget(
+            groupId,
+            eventType: 'member_removed',
+            targetId: localRecipientAccountPeerId,
+          );
+      final localRejoinedAt = localRecipientMember.joinedAt.toUtc();
+      final isReaddedAfterRemoval =
+          localRemovedAt != null && localRejoinedAt.isAfter(localRemovedAt);
+      final isRemovedIntervalReplay =
+          localRemovedAt != null &&
+          !normalizedTimestamp.isBefore(localRemovedAt) &&
+          normalizedTimestamp.isBefore(localRejoinedAt);
+      if (isReaddedAfterRemoval && isRemovedIntervalReplay) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: localRecipientAccountPeerId == localRecipientPeerId
+              ? 'GROUP_HANDLE_INCOMING_MSG_SELF_REMOVED_WINDOW_AFTER_REJOIN'
+              : 'GROUP_HANDLE_INCOMING_MSG_LOCAL_REMOVED_INTERVAL_REPLAY_REJECTED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'senderId': senderId.length > 8
+                ? senderId.substring(0, 8)
+                : senderId,
+            'selfPeerId': localRecipientPeerId.length > 8
+                ? localRecipientPeerId.substring(0, 8)
+                : localRecipientPeerId,
+            if (localRecipientAccountPeerId != localRecipientPeerId)
+              'memberPeerId': localRecipientAccountPeerId.length > 8
+                  ? localRecipientAccountPeerId.substring(0, 8)
+                  : localRecipientAccountPeerId,
+            'cutoffAt': localRemovedAt.toIso8601String(),
+            'removedAt': localRemovedAt.toIso8601String(),
+            'joinedAt': localRejoinedAt.toIso8601String(),
+            'rejoinedAt': localRejoinedAt.toIso8601String(),
+            'keyEpoch': keyEpoch,
+          },
+        );
+        return null;
+      }
+    }
+  }
+
   // 2. Check sender is a member. A persisted pre-removal cutoff can still
   // admit traffic sent before removal; otherwise unknown senders fail closed.
-  final member = await groupRepo.getMember(groupId, senderId);
+  final member = senderId == localRecipientAccountPeerId
+      ? localRecipientMember
+      : await groupRepo.getMember(groupId, senderId);
   if (member == null) {
     final removalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
       groupId,
@@ -220,35 +321,34 @@ Future<GroupMessage?> handleIncomingGroupMessage({
       );
       return null;
     }
+
+    if (removalCutoff != null &&
+        keyEpoch > 0 &&
+        !joinedAt.isBefore(removalCutoff) &&
+        !normalizedTimestamp.isBefore(joinedAt)) {
+      final latestKey = await groupRepo.getLatestKey(groupId);
+      final latestEpoch = latestKey?.keyGeneration ?? 0;
+      if (latestEpoch > 0 && keyEpoch < latestEpoch) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_HANDLE_INCOMING_MSG_STALE_EPOCH_AFTER_READD_REJECTED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'senderId': senderId.length > 8
+                ? senderId.substring(0, 8)
+                : senderId,
+            'keyEpoch': keyEpoch,
+            'latestEpoch': latestEpoch,
+            'rejoinedAt': joinedAt.toIso8601String(),
+          },
+        );
+        return null;
+      }
+    }
   }
 
-  final normalizedSelfPeerId = selfPeerId?.trim();
-  if (normalizedSelfPeerId != null && normalizedSelfPeerId.isNotEmpty) {
-    final selfRemovalCutoff = await msgRepo.getLatestRemovalTimestampForSender(
-      groupId,
-      normalizedSelfPeerId,
-    );
-    final selfMember = await groupRepo.getMember(groupId, normalizedSelfPeerId);
-    final selfJoinedAt = selfMember?.joinedAt.toUtc();
-    if (selfRemovalCutoff != null &&
-        selfJoinedAt != null &&
-        !normalizedTimestamp.isBefore(selfRemovalCutoff) &&
-        normalizedTimestamp.isBefore(selfJoinedAt)) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_HANDLE_INCOMING_MSG_SELF_REMOVED_WINDOW_AFTER_REJOIN',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-          'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'selfPeerId': normalizedSelfPeerId.length > 8
-              ? normalizedSelfPeerId.substring(0, 8)
-              : normalizedSelfPeerId,
-          'cutoffAt': selfRemovalCutoff.toIso8601String(),
-          'joinedAt': selfJoinedAt.toIso8601String(),
-        },
-      );
-      return null;
-    }
+  if (localRecipientPeerId != null) {
+    final selfJoinedAt = localRecipientMember?.joinedAt.toUtc();
     if (!isSystemMessage &&
         enforceSelfJoinedAtLowerBound &&
         selfJoinedAt != null &&
@@ -260,9 +360,9 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         details: {
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
-          'selfPeerId': normalizedSelfPeerId.length > 8
-              ? normalizedSelfPeerId.substring(0, 8)
-              : normalizedSelfPeerId,
+          'selfPeerId': localRecipientPeerId.length > 8
+              ? localRecipientPeerId.substring(0, 8)
+              : localRecipientPeerId,
           'joinedAt': selfJoinedAt.toIso8601String(),
         },
       );
@@ -270,6 +370,11 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     }
   }
   final sanitizedSenderUsername = sanitizeUsername(senderUsername).trim();
+  final resolvedSenderUsername = resolveGroupSenderDisplayName(
+    senderPeerId: senderId,
+    wireSenderUsername: sanitizedSenderUsername,
+    member: member,
+  );
 
   if (appendGroupEventLogEntry != null) {
     final sourceEventId = messageId != null && messageId.isNotEmpty
@@ -285,7 +390,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
         'messageId': messageId,
         'groupId': groupId,
         'senderId': senderId,
-        'senderUsername': sanitizedSenderUsername,
+        'senderUsername': resolvedSenderUsername,
         'transportPeerId': resolvedTransportPeerId,
         'senderDeviceId': senderDeviceId,
         'text': sanitizedText,
@@ -300,6 +405,22 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   if (messageId != null && messageId.isNotEmpty) {
     final existingById = await msgRepo.getMessage(messageId);
     if (existingById != null && !_isRepairPlaceholder(existingById)) {
+      final reconciledSelfEcho = await _reconcileOutgoingSelfEchoDuplicate(
+        msgRepo: msgRepo,
+        existing: existingById,
+        messageId: messageId,
+        groupId: groupId,
+        senderId: senderId,
+        resolvedTransportPeerId: resolvedTransportPeerId,
+        sanitizedText: sanitizedText,
+        selfPeerId: selfPeerId,
+        quotedMessageId: quotedMessageId,
+        media: media,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+      if (reconciledSelfEcho != null) {
+        return reconciledSelfEcho;
+      }
       await _enrichExistingDuplicateMessage(
         msgRepo: msgRepo,
         messageId: messageId,
@@ -352,7 +473,12 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   final resolvedMessageId = (messageId != null && messageId.isNotEmpty)
       ? messageId
       : const Uuid().v4();
-  final isSelfDelivery = selfPeerId != null && senderId == selfPeerId;
+  final isSelfDelivery = _isLocalSelfDelivery(
+    senderId: senderId,
+    senderTransportPeerId: resolvedTransportPeerId,
+    localRecipientPeerId: localRecipientPeerId,
+    localRecipientAccountPeerId: localRecipientAccountPeerId,
+  );
 
   // 5. Create GroupMessage (isIncoming: true)
   final message = GroupMessage(
@@ -360,7 +486,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     groupId: groupId,
     senderPeerId: senderId,
     transportPeerId: resolvedTransportPeerId,
-    senderUsername: sanitizedSenderUsername,
+    senderUsername: resolvedSenderUsername,
     text: sanitizedText,
     timestamp: normalizedTimestamp,
     quotedMessageId: quotedMessageId,
@@ -399,6 +525,34 @@ bool _isRepairPlaceholder(GroupMessage message) {
           message.status == groupPendingKeyRepairStatusUndecryptable);
 }
 
+Future<GroupMember?> _findLocalRecipientMemberByDeviceTransport({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String localTransportPeerId,
+}) async {
+  final members = await groupRepo.getMembers(groupId);
+  for (final member in members) {
+    final device = member.findDeviceByTransportPeerId(localTransportPeerId);
+    if (device != null && device.isActive) {
+      return member;
+    }
+  }
+  return null;
+}
+
+bool _isLocalSelfDelivery({
+  required String senderId,
+  required String senderTransportPeerId,
+  required String? localRecipientPeerId,
+  required String? localRecipientAccountPeerId,
+}) {
+  if (localRecipientPeerId == null) return false;
+  if (senderId == localRecipientPeerId) return true;
+  return localRecipientAccountPeerId != null &&
+      senderId == localRecipientAccountPeerId &&
+      senderTransportPeerId == localRecipientPeerId;
+}
+
 bool _isSenderDeviceBound({
   required GroupMember member,
   required String? senderDeviceId,
@@ -416,6 +570,83 @@ bool _isSenderDeviceBound({
   return device != null &&
       device.isActive &&
       device.transportPeerId == transportPeerId;
+}
+
+Future<GroupMessage?> _reconcileOutgoingSelfEchoDuplicate({
+  required GroupMessageRepository msgRepo,
+  required GroupMessage existing,
+  required String messageId,
+  required String groupId,
+  required String senderId,
+  required String resolvedTransportPeerId,
+  required String sanitizedText,
+  required String? selfPeerId,
+  String? quotedMessageId,
+  List<Map<String, dynamic>>? media,
+  MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  final normalizedSelfPeerId = selfPeerId?.trim();
+  if (normalizedSelfPeerId == null || normalizedSelfPeerId.isEmpty) {
+    return null;
+  }
+  if (senderId != normalizedSelfPeerId &&
+      resolvedTransportPeerId != normalizedSelfPeerId) {
+    return null;
+  }
+  if (existing.id != messageId ||
+      existing.groupId != groupId ||
+      existing.senderPeerId != senderId ||
+      (existing.transportPeerId?.isNotEmpty == true &&
+          existing.transportPeerId != resolvedTransportPeerId) ||
+      existing.isIncoming) {
+    return null;
+  }
+  if (existing.status != 'sending' && existing.status != 'pending') {
+    return null;
+  }
+  if (existing.text != sanitizedText) {
+    return null;
+  }
+
+  final reconciled = existing.copyWith(
+    status: 'sent',
+    isIncoming: false,
+    quotedMessageId: _reconciledQuotedMessageId(
+      existing.quotedMessageId,
+      quotedMessageId,
+    ),
+    wireEnvelope: null,
+  );
+  await msgRepo.saveMessage(reconciled);
+  await _saveIncomingMediaAttachments(
+    messageId: messageId,
+    media: media,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+  );
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'GROUP_HANDLE_INCOMING_MSG_SELF_ECHO_RECONCILED',
+    details: {
+      'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+      'senderId': senderId.length > 8 ? senderId.substring(0, 8) : senderId,
+      'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+    },
+  );
+  return reconciled;
+}
+
+String? _reconciledQuotedMessageId(
+  String? existingQuotedMessageId,
+  String? incomingQuotedMessageId,
+) {
+  if (existingQuotedMessageId != null && existingQuotedMessageId.isNotEmpty) {
+    return existingQuotedMessageId;
+  }
+  if (incomingQuotedMessageId != null && incomingQuotedMessageId.isNotEmpty) {
+    return incomingQuotedMessageId;
+  }
+  return existingQuotedMessageId;
 }
 
 DateTime _normalizeIncomingMessageTimestamp({

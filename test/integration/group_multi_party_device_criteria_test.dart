@@ -29,6 +29,28 @@ void main() {
           'ge023',
           'ge024',
           'gm001',
+          'de002',
+          'de003',
+          'de007',
+          'de017',
+          'ir001',
+          'ir015',
+          'private_abc_create',
+          'private_online_add',
+          'private_offline_readd',
+          'private_readd_current',
+          'private_readd_active_members',
+          'private_readd_alternating_churn',
+          'private_rotated_device_readd',
+          'private_same_user_multi_device_readd',
+          'private_readd_cycles',
+          'private_rapid_readd',
+          'private_concurrent_admin_membership_edits',
+          'private_timeline_truth',
+          'private_history_retention',
+          'private_invite_terminal_states',
+          'private_stale_invite_readd',
+          'private_admin_role_transfer_delivery',
           'gm002',
           'gm035',
         ]),
@@ -86,8 +108,92 @@ void main() {
       expect(scenarioRequirement('ge023').requiredDeviceCount, 3);
       expect(scenarioRequirement('ge024').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('ge024').requiredDeviceCount, 3);
+      expect(scenarioRequirement('private_abc_create').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(scenarioRequirement('private_abc_create').requiredDeviceCount, 3);
+      expect(scenarioRequirement('private_full_mesh_online').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_full_mesh_online').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_relay_only_delivery').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_relay_only_delivery').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_partition_readd_heal').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_partition_readd_heal').requiredDeviceCount,
+        3,
+      );
+      expect(
+        scenarioRequirement('private_relay_reconnect_group_recovery').roles,
+        ['alice', 'bob', 'charlie'],
+      );
+      expect(
+        scenarioRequirement(
+          'private_relay_reconnect_group_recovery',
+        ).requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_peer_disconnect_not_removal').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_peer_disconnect_not_removal',
+        ).requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_long_offline_epoch_churn').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_long_offline_epoch_churn',
+        ).requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_online_add').roles, [
+        'alice',
+        'bob',
+        'charlie',
+        'dana',
+      ]);
+      expect(scenarioRequirement('private_online_add').requiredDeviceCount, 4);
       expect(scenarioRequirement('gm001').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('gm001').requiredDeviceCount, 3);
+      expect(scenarioRequirement('de002').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('de002').requiredDeviceCount, 3);
+      expect(scenarioRequirement('de003').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('de003').requiredDeviceCount, 3);
+      expect(scenarioRequirement('de007').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('de007').requiredDeviceCount, 3);
+      expect(scenarioRequirement('ir001').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('ir001').requiredDeviceCount, 3);
+      expect(scenarioRequirement('ir015').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('ir015').requiredDeviceCount, 3);
+      expect(scenarioRequirement('ir016').roles, ['alice', 'bob', 'charlie']);
+      expect(scenarioRequirement('ir016').requiredDeviceCount, 3);
       expect(scenarioRequirement('gm002').roles, [
         'alice',
         'bob',
@@ -104,6 +210,198 @@ void main() {
       expect(scenarioRequirement('gm003').requiredDeviceCount, 4);
       expect(scenarioRequirement('gm004').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('gm004').requiredDeviceCount, 3);
+      expect(scenarioRequirement('private_online_remove').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_online_remove').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_offline_remove').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_offline_remove').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_offline_readd').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_offline_readd').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_readd_current').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_readd_current').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_readd_active_members').roles, [
+        'alice',
+        'bob',
+        'charlie',
+        'dana',
+      ]);
+      expect(
+        scenarioRequirement('private_readd_active_members').requiredDeviceCount,
+        4,
+      );
+      expect(scenarioRequirement('private_readd_alternating_churn').roles, [
+        'alice',
+        'bob',
+        'charlie',
+        'dana',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_readd_alternating_churn',
+        ).requiredDeviceCount,
+        4,
+      );
+      expect(scenarioRequirement('private_late_leave_readd').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_late_leave_readd').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_rotated_device_readd').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_rotated_device_readd').requiredDeviceCount,
+        3,
+      );
+      expect(
+        scenarioRequirement('private_same_user_multi_device_readd').roles,
+        ['alice', 'bob', 'charlie', 'dana'],
+      );
+      expect(
+        scenarioRequirement(
+          'private_same_user_multi_device_readd',
+        ).requiredDeviceCount,
+        4,
+      );
+      expect(scenarioRequirement('private_readd_cycles').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_readd_cycles').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_rapid_readd').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(scenarioRequirement('private_rapid_readd').requiredDeviceCount, 3);
+      expect(
+        scenarioRequirement('private_concurrent_admin_membership_edits').roles,
+        ['alice', 'bob', 'charlie', 'dana'],
+      );
+      expect(
+        scenarioRequirement(
+          'private_concurrent_admin_membership_edits',
+        ).requiredDeviceCount,
+        4,
+      );
+      expect(scenarioRequirement('private_timeline_truth').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_timeline_truth').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_history_retention').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_history_retention').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_invite_terminal_states').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_invite_terminal_states',
+        ).requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_stale_invite_readd').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_stale_invite_readd').requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_stale_lower_key_update').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_stale_lower_key_update',
+        ).requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_same_epoch_key_conflict').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_same_epoch_key_conflict',
+        ).requiredDeviceCount,
+        3,
+      );
+      expect(scenarioRequirement('private_partial_key_distribution').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement(
+          'private_partial_key_distribution',
+        ).requiredDeviceCount,
+        3,
+      );
+      expect(
+        scenarioRequirement('private_admin_role_transfer_delivery').roles,
+        ['alice', 'bob', 'charlie'],
+      );
+      expect(
+        scenarioRequirement(
+          'private_admin_role_transfer_delivery',
+        ).requiredDeviceCount,
+        3,
+      );
       expect(scenarioRequirement('gm005').roles, ['alice', 'bob', 'charlie']);
       expect(scenarioRequirement('gm005').requiredDeviceCount, 3);
       expect(scenarioRequirement('gm006').roles, ['alice', 'bob', 'charlie']);
@@ -221,6 +519,145 @@ void main() {
       expect(wrong.detail, contains('does not match'));
     });
 
+    test(
+      'ML-016 private_non_friend_member_delivery accepts no-contact Dana delivery proof',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_non_friend_member_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validMl016NonFriendVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains('private_non_friend_member_delivery verdicts valid'),
+        );
+      },
+    );
+
+    test(
+      'ML-016 private_non_friend_member_delivery rejects contact-seeded Dana proof',
+      () {
+        final verdicts = _validMl016NonFriendVerdicts();
+        verdicts[2] = _withMl016ProofOverrides(
+          verdicts[2],
+          const <String, Object?>{'danaHasSavedAliceContact': true},
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_non_friend_member_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'dana: ml016NonFriendDeliveryProof.danaHasSavedAliceContact must be false',
+          ),
+        );
+      },
+    );
+
+    test(
+      'ML-016 private_non_friend_member_delivery rejects blank stable labels',
+      () {
+        final verdicts = _validMl016NonFriendVerdicts();
+        verdicts[2] = _withMl016ProofOverrides(
+          verdicts[2],
+          const <String, Object?>{
+            'aliceStableSenderLabel': '',
+            'bobStableSenderLabel': 'Unknown',
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_non_friend_member_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('aliceStableSenderLabel'));
+        expect(rejected.detail, contains('bobStableSenderLabel'));
+      },
+    );
+
+    test('ML-020 accepts private_admin_role_transfer_delivery proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_admin_role_transfer_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validMl020AdminRoleTransferVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_admin_role_transfer_delivery verdicts valid'),
+      );
+    });
+
+    test(
+      'ML-020 private_admin_role_transfer_delivery rejects creator-bound proof',
+      () {
+        final verdicts = _validMl020AdminRoleTransferVerdicts();
+        verdicts[0] = _withMl020ProofOverrides(
+          verdicts[0],
+          const <String, Object?>{'creatorRequiredForDelivery': true},
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_admin_role_transfer_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'alice: ml020AdminRoleDeliveryProof.creatorRequiredForDelivery must be false',
+          ),
+        );
+      },
+    );
+
+    test(
+      'ML-020 private_admin_role_transfer_delivery rejects removed-window delivery to Charlie',
+      () {
+        final verdicts = _validMl020AdminRoleTransferVerdicts();
+        final charlie = verdicts[2];
+        charlie['receivedMessages'] = <Map<String, Object?>>[
+          ...List<Map<String, Object?>>.from(
+            charlie['receivedMessages'] as List,
+          ),
+          _received(
+            'aliceRemovedWindowAfterDemotion',
+            'msg-ml020-alice-removed',
+            'ML-020 Alice removed-window',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ];
+        verdicts[2] = _withMl020ProofOverrides(charlie, const <String, Object?>{
+          'charlieReceivedRemovedWindow': true,
+          'removedWindowPlaintextCount': 1,
+        });
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_admin_role_transfer_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('charlieReceivedRemovedWindow'));
+        expect(rejected.detail, contains('removedWindowPlaintextCount'));
+      },
+    );
+
     test('accepts valid GM-001 A/B/C receiver persistence verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm001',
@@ -230,6 +667,1956 @@ void main() {
 
       expect(verdict.ok, isTrue);
       expect(verdict.detail, contains('gm001 verdicts valid'));
+    });
+
+    test('rejects GM-001 without DE-001 live delivery proof', () {
+      final missingProof = _validGm001Verdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('de001LiveDeliveryProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm001',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing DE-001 live delivery proof fields'),
+      );
+    });
+
+    test('rejects GM-001 DE-001 timestamp mismatch', () {
+      final wrongTimestamp = _validGm001Verdicts();
+      wrongTimestamp[1] = {
+        ...wrongTimestamp[1],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceInitial',
+            'gm001-a1',
+            'hello gm001',
+            'alice-peer',
+            groupId: 'gm001-group',
+            keyEpoch: 1,
+            timestamp: '2026-05-12T14:36:17.000000Z',
+          ),
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm001',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongTimestamp,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: received aliceInitial timestamp mismatch'),
+      );
+    });
+
+    test('accepts valid DE-002 rapid ordered delivery verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validDe002Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('de002 verdicts valid'));
+    });
+
+    test('rejects DE-002 without ordered delivery proof', () {
+      final missingProof = _validDe002Verdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('de002OrderedDeliveryProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing DE-002 ordered delivery proof fields'),
+      );
+    });
+
+    test('rejects DE-002 out-of-order receiver proof', () {
+      final outOfOrder = _validDe002Verdicts();
+      final bobReceived = List<Map<String, Object?>>.from(
+        outOfOrder[1]['receivedMessages'] as List,
+      );
+      final first = bobReceived[0];
+      bobReceived[0] = bobReceived[1];
+      bobReceived[1] = first;
+      outOfOrder[1] = {...outOfOrder[1], 'receivedMessages': bobReceived};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de002',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: outOfOrder,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: received DE-002 keys are not in sequence order'),
+      );
+    });
+
+    test('accepts valid DE-003 caller message id verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de003',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validDe003Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('de003 verdicts valid'));
+    });
+
+    test('rejects DE-003 without message id proof', () {
+      final missingProof = _validDe003Verdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('de003MessageIdProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de003',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing DE-003 message id proof fields'),
+      );
+    });
+
+    test('rejects DE-003 receiver message id mismatch', () {
+      final wrongId = _validDe003Verdicts();
+      wrongId[1] = {
+        ...wrongId[1],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceExplicit',
+            'wrong-de003-id',
+            'DE-003 explicit id',
+            'alice-peer',
+            groupId: 'de003-group',
+            keyEpoch: 1,
+          ),
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de003',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongId,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('messageId mismatch'));
+    });
+
+    test('accepts valid DE-007 zero-peer replay verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validDe007Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('de007 verdicts valid'));
+    });
+
+    test('rejects DE-007 without zero-peer proof', () {
+      final missingProof = _validDe007Verdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('de007ZeroPeerProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing DE-007 zero-peer proof fields'),
+      );
+    });
+
+    test('rejects DE-007 receiver message id mismatch', () {
+      final wrongId = _validDe007Verdicts();
+      wrongId[1] = {
+        ...wrongId[1],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceZeroPeer',
+            'wrong-de007-id',
+            'DE-007 zero-peer durable fallback',
+            'alice-peer',
+            groupId: 'de007-group',
+            keyEpoch: 1,
+          ),
+        ],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongId,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('message id mismatch'));
+    });
+
+    test('accepts valid DE-017 membership-ordering verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de017',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validDe017Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('de017 verdicts valid'));
+    });
+
+    test('rejects DE-017 without membership-ordering proof', () {
+      final missingProof = _validDe017Verdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('de017MembershipOrderingProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de017',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing DE-017 membership-ordering proof fields'),
+      );
+    });
+
+    test('rejects DE-017 repaired post-removal leak', () {
+      final leaked = _validDe017Verdicts();
+      leaked[1] = {
+        ...leaked[1],
+        'de017MembershipOrderingProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[1]['de017MembershipOrderingProof'] as Map,
+          ),
+          'postRemovalPersistedCountAfterRepair': 1,
+          'repairedPostRemovalContent': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'de017',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: de017MembershipOrderingProof.repairedPostRemovalContent must be true',
+        ),
+      );
+    });
+
+    test('accepts valid IR-001 offline active reconnect verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir001',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validIr001Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('ir001 verdicts valid'));
+    });
+
+    test('rejects IR-001 without offline reconnect proof', () {
+      final missingProof = _validIr001Verdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('ir001OfflineReconnectProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir001',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing IR-001 offline reconnect proof fields'),
+      );
+    });
+
+    test('rejects IR-001 missed backlog count mismatch', () {
+      final wrongCount = _validIr001Verdicts();
+      wrongCount[1] = {
+        ...wrongCount[1],
+        'ir001OfflineReconnectProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            wrongCount[1]['ir001OfflineReconnectProof'] as Map,
+          ),
+          'drainedMissedCount': 2,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir001',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongCount,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: ir001OfflineReconnectProof.drainedMissedCount must be 3',
+        ),
+      );
+    });
+
+    test('rejects IR-001 post-drain live delivery without live proof', () {
+      final notLive = _validIr001Verdicts();
+      notLive[1] = {
+        ...notLive[1],
+        'ir001OfflineReconnectProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            notLive[1]['ir001OfflineReconnectProof'] as Map,
+          ),
+          'liveAfterDrainWasLive': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir001',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: notLive,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: ir001OfflineReconnectProof.liveAfterDrainWasLive must be true',
+        ),
+      );
+    });
+
+    test('accepts valid IR-015 variant replay verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir015',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validIr015Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('ir015 verdicts valid'));
+    });
+
+    test('rejects IR-015 without media rehydration proof', () {
+      final missingMedia = _validIr015Verdicts();
+      missingMedia[1] = {
+        ...missingMedia[1],
+        'ir015VariantReplayProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingMedia[1]['ir015VariantReplayProof'] as Map,
+          ),
+          'mediaVariantsRehydrated': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir015',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingMedia,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: ir015VariantReplayProof.mediaVariantsRehydrated must be true',
+        ),
+      );
+    });
+
+    test('rejects IR-015 quote target mismatch', () {
+      final wrongQuote = _validIr015Verdicts();
+      final bobReceived = List<Map<String, Object?>>.from(
+        wrongQuote[1]['receivedMessages'] as List,
+      );
+      final quoteIndex = bobReceived.indexWhere(
+        (entry) => entry['key'] == 'aliceIr015Quote',
+      );
+      bobReceived[quoteIndex] = {
+        ...bobReceived[quoteIndex],
+        'quotedMessageId': 'wrong-parent',
+      };
+      wrongQuote[1] = {...wrongQuote[1], 'receivedMessages': bobReceived};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir015',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongQuote,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: ir015VariantReplayProof quote did not reference text'),
+      );
+    });
+
+    test('IR-016 accepts long-offline retention cutoff proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir016',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validIr016Verdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('ir016 verdicts valid'));
+    });
+
+    test('IR-016 rejects silent-complete Bob retention proof', () {
+      final silentComplete = _validIr016Verdicts();
+      silentComplete[1] = {
+        ...silentComplete[1],
+        'ir016RetentionCutoffProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            silentComplete[1]['ir016RetentionCutoffProof'] as Map,
+          ),
+          'lastBacklogExpiredAtRecorded': false,
+          'explicitRetentionStateRecorded': false,
+          'noSilentCompleteState': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir016',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: silentComplete,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: ir016RetentionCutoffProof.noSilentCompleteState must be true',
+        ),
+      );
+    });
+
+    test('IR-016 rejects Bob expired-message resurrection', () {
+      final resurrected = _validIr016Verdicts();
+      resurrected[1] = {
+        ...resurrected[1],
+        'ir016RetentionCutoffProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            resurrected[1]['ir016RetentionCutoffProof'] as Map,
+          ),
+          'expiredBacklogSkipped': false,
+          'expiredVisibleCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'ir016',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: resurrected,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: ir016RetentionCutoffProof.expiredVisibleCount must be 0',
+        ),
+      );
+    });
+
+    test('NW-001 accepts valid private full-mesh online verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_full_mesh_online',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateFullMeshOnlineVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_full_mesh_online verdicts valid'),
+      );
+    });
+
+    test('NW-001 rejects Alice-only full-mesh proof', () {
+      final aliceOnly = _validPrivateFullMeshOnlineVerdicts();
+      aliceOnly[1] = {
+        ...aliceOnly[1],
+        'receivedMessages': const <Map<String, Object?>>[],
+        'persistedMessageCounts': const <String, int>{},
+      };
+      aliceOnly[2] = {
+        ...aliceOnly[2],
+        'receivedMessages': const <Map<String, Object?>>[],
+        'persistedMessageCounts': const <String, int>{},
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_full_mesh_online',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: aliceOnly,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('bob: missing received proof keys'));
+      expect(rejected.detail, contains('charlie: missing received proof keys'));
+    });
+
+    test('NW-001 rejects missing Bob or Charlie publish proof', () {
+      final missingBobPublish = _validPrivateFullMeshOnlineVerdicts();
+      missingBobPublish[1] = {
+        ...missingBobPublish[1],
+        'sentMessages': const <Map<String, Object?>>[],
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_full_mesh_online',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingBobPublish,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('bob: sent bobFullMesh count=0'));
+    });
+
+    test('NW-001 rejects missing topic peer counts', () {
+      final missingTopicCounts = _validPrivateFullMeshOnlineVerdicts();
+      missingTopicCounts[0] = _withNw001ProofOverrides(
+        missingTopicCounts[0],
+        const <String, Object?>{'topicPeerCountsBySender': <String, int>{}},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_full_mesh_online',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingTopicCounts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: nw001FullMeshProof.topicPeerCountsBySender.alice'),
+      );
+    });
+
+    test('NW-001 rejects zero or partial peer publish proof', () {
+      final partialPeer = _validPrivateFullMeshOnlineVerdicts();
+      final bobSent = List<Map<String, Object?>>.from(
+        partialPeer[1]['sentMessages'] as List,
+      );
+      bobSent[0] = {
+        ...bobSent[0],
+        'outcome': 'successNoPeers',
+        'topicPeers': 0,
+        'liveFanoutState': 'zero_peers',
+      };
+      partialPeer[1] = _withNw001ProofOverrides(
+        {...partialPeer[1], 'sentMessages': bobSent},
+        const <String, Object?>{
+          'successNoPeersCount': 1,
+          'partialPeerPublishCount': 1,
+          'topicPeerCountsBySender': <String, int>{
+            'alice': 2,
+            'bob': 0,
+            'charlie': 2,
+          },
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_full_mesh_online',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: partialPeer,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('bob: NW-001 bobFullMesh must publish'));
+      expect(rejected.detail, contains('successNoPeersCount must be 0'));
+      expect(rejected.detail, contains('partialPeerPublishCount must be 0'));
+    });
+
+    test(
+      'NW-001 rejects missing receiver tuple and duplicate visible message',
+      () {
+        final missingReceiver = _validPrivateFullMeshOnlineVerdicts();
+        final bobReceived = List<Map<String, Object?>>.from(
+          missingReceiver[1]['receivedMessages'] as List,
+        )..removeWhere((entry) => entry['key'] == 'charlieFullMesh');
+        missingReceiver[1] = _withNw001ProofOverrides(
+          {
+            ...missingReceiver[1],
+            'receivedMessages': bobReceived,
+            'persistedMessageCounts': const <String, int>{
+              'aliceFullMesh': 1,
+              'charlieFullMesh': 2,
+            },
+          },
+          const <String, Object?>{'duplicateVisibleMessageCount': 1},
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_full_mesh_online',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingReceiver,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('bob: received charlieFullMesh count=0'),
+        );
+        expect(
+          rejected.detail,
+          contains('duplicateVisibleMessageCount must be 0'),
+        );
+      },
+    );
+
+    test('NW-001 rejects non-NW-001 proof row id', () {
+      final wrongRow = _validPrivateFullMeshOnlineVerdicts();
+      wrongRow[2] = _withNw001ProofOverrides(
+        wrongRow[2],
+        const <String, Object?>{'rowId': 'GM-001'},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_full_mesh_online',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongRow,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: nw001FullMeshProof.rowId must be NW-001'),
+      );
+    });
+
+    test('NW-002 accepts valid relay-only delivery verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_only_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateRelayOnlyDeliveryVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_relay_only_delivery verdicts valid'),
+      );
+    });
+
+    test('NW-002 rejects direct-only route proof', () {
+      final directOnly = _validPrivateRelayOnlyDeliveryVerdicts();
+      for (var i = 0; i < directOnly.length; i++) {
+        directOnly[i] = _withNw002ProofOverrides(
+          directOnly[i],
+          const <String, Object?>{
+            'circuitOrRelayRouteProven': false,
+            'directPathSuppressed': false,
+          },
+        );
+      }
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_only_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: directOnly,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('circuitOrRelayRouteProven'));
+      expect(rejected.detail, contains('directPathSuppressed'));
+    });
+
+    test('NW-002 rejects fabricated route booleans without diagnostics', () {
+      final fabricated = _validPrivateRelayOnlyDeliveryVerdicts();
+      for (var i = 0; i < fabricated.length; i++) {
+        fabricated[i] =
+            _withNw002ProofOverrides(fabricated[i], const <String, Object?>{
+              'circuitOrRelayRouteProven': true,
+              'directPathSuppressed': true,
+              'routeDiagnostics': <Map<String, Object?>>[],
+            });
+      }
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_only_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: fabricated,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('must be backed by a Bob route diagnostic'),
+      );
+    });
+
+    test('NW-002 rejects scenario-only route diagnostics', () {
+      final fabricated = _validPrivateRelayOnlyDeliveryVerdicts();
+      for (var i = 0; i < fabricated.length; i++) {
+        fabricated[i] = _withNw002ProofOverrides(
+          fabricated[i],
+          const <String, Object?>{
+            'circuitOrRelayRouteProven': true,
+            'directPathSuppressed': true,
+            'routeDiagnostics': <Map<String, Object?>>[
+              <String, Object?>{
+                'scenario': 'private_relay_only_delivery',
+                'relayEnvPresent': true,
+              },
+            ],
+          },
+        );
+      }
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_only_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: fabricated,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('must be backed by a Bob route diagnostic'),
+      );
+    });
+
+    test('NW-002 rejects missing relay-only role', () {
+      final missingRelayRole = _validPrivateRelayOnlyDeliveryVerdicts();
+      missingRelayRole[0] = _withNw002ProofOverrides(
+        missingRelayRole[0],
+        const <String, Object?>{'relayOnlyRoles': <String>[]},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_only_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingRelayRole,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('relayOnlyRoles must include bob'));
+    });
+
+    test('NW-002 rejects missing routed receiver and publish-back proof', () {
+      final missingTuples = _validPrivateRelayOnlyDeliveryVerdicts();
+      final charlieReceived = List<Map<String, Object?>>.from(
+        missingTuples[2]['receivedMessages'] as List,
+      )..removeWhere((entry) => entry['key'] == 'bobRelayOnlyPublishBack');
+      missingTuples[2] = _withNw002ProofOverrides(
+        {
+          ...missingTuples[2],
+          'receivedMessages': charlieReceived,
+          'persistedMessageCounts': const <String, int>{
+            'aliceToRelayOnlyBob': 1,
+          },
+        },
+        const <String, Object?>{
+          'routedSenderPublishBackCovered': false,
+          'deliveryModeByMessage': <String, Object?>{
+            'aliceToRelayOnlyBob': <String, Object?>{
+              'senderRole': 'alice',
+              'routedReceiverRoles': <String>[],
+              'deliveryMode': 'live_pubsub',
+            },
+          },
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_only_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingTuples,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('missing routed receiver bob'));
+      expect(rejected.detail, contains('routedSenderPublishBackCovered'));
+      expect(
+        rejected.detail,
+        contains('received bobRelayOnlyPublishBack count=0'),
+      );
+    });
+
+    test('NW-002 rejects successNoPeers without replay proof', () {
+      final noReplay = _validPrivateRelayOnlyDeliveryVerdicts();
+      final aliceSent = List<Map<String, Object?>>.from(
+        noReplay[0]['sentMessages'] as List,
+      );
+      aliceSent[0] = {...aliceSent[0], 'outcome': 'successNoPeers'};
+      noReplay[0] = _withNw002ProofOverrides(
+        {...noReplay[0], 'sentMessages': aliceSent},
+        const <String, Object?>{'successNoPeersCount': 1},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_only_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: noReplay,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('successNoPeers'));
+      expect(rejected.detail, contains('replay'));
+    });
+
+    test(
+      'NW-002 rejects duplicate visible delivery or membership mutation',
+      () {
+        final duplicateAndMutation = _validPrivateRelayOnlyDeliveryVerdicts();
+        duplicateAndMutation[1] = _withNw002ProofOverrides(
+          duplicateAndMutation[1],
+          const <String, Object?>{
+            'duplicateVisibleMessageCount': 1,
+            'membershipMutationCount': 1,
+          },
+        );
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_relay_only_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: duplicateAndMutation,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('duplicateVisibleMessageCount'));
+        expect(rejected.detail, contains('membershipMutationCount'));
+      },
+    );
+
+    test('NW-003 accepts complete partition re-add heal proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivatePartitionReaddHealVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_partition_readd_heal verdicts valid'),
+      );
+    });
+
+    test('NW-003 rejects missing row id', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      verdicts[0] = _withNw003ProofOverrides(
+        verdicts[0],
+        const <String, Object?>{'rowId': 'RA-007'},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: nw003PartitionReaddHealProof.rowId must be NW-003'),
+      );
+    });
+
+    test('NW-003 rejects missing Alice-to-Bob partition', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      verdicts[1] = _withNw003ProofOverrides(
+        verdicts[1],
+        const <String, Object?>{'alicePartitionedFromBob': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('alicePartitionedFromBob must be true'));
+    });
+
+    test('NW-003 rejects missing Alice-to-Charlie partition', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      verdicts[2] = _withNw003ProofOverrides(
+        verdicts[2],
+        const <String, Object?>{'alicePartitionedFromCharlie': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alicePartitionedFromCharlie must be true'),
+      );
+    });
+
+    test('NW-003 rejects fake-only partition coverage', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      verdicts[0] = _withNw003ProofOverrides(
+        verdicts[0],
+        const <String, Object?>{
+          'partitionProofSource': 'fake_network',
+          'fakeNetworkOnly': true,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('partitionProofSource'));
+      expect(rejected.detail, contains('fakeNetworkOnly must be false'));
+    });
+
+    test('NW-003 rejects Bob missing removed-window history', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      verdicts[1] = _withNw003ProofOverrides(
+        {
+          ...verdicts[1],
+          'receivedMessages': const <Map<String, Object?>>[],
+          'persistedMessageCounts': const <String, int>{},
+        },
+        const <String, Object?>{'bobReceivedRemovedWindowAfterHeal': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('bobReceivedRemovedWindowAfterHeal'));
+      expect(rejected.detail, contains('bob: missing received proof keys'));
+    });
+
+    test('NW-003 rejects Charlie receiving removed-window history', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      final charlieReceived =
+          List<Map<String, Object?>>.from(
+            verdicts[2]['receivedMessages'] as List,
+          )..add(
+            _received(
+              'aliceRemovedWindow',
+              'nw003-removed-window',
+              'NW-003 removed-window',
+              'alice-peer',
+              groupId: 'private-partition-readd-heal-group',
+              keyEpoch: 2,
+              timestamp: '2026-05-13T11:02:00.000Z',
+              usedOfflineDrain: true,
+            ),
+          );
+      verdicts[2] = _withNw003ProofOverrides(
+        {
+          ...verdicts[2],
+          'receivedMessages': charlieReceived,
+          'persistedMessageCounts': const <String, int>{
+            'aliceRemovedWindow': 1,
+            'alicePostHeal': 1,
+            'bobPostHeal': 1,
+          },
+        },
+        const <String, Object?>{'charlieDidNotReceiveRemovedWindow': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('charlieDidNotReceiveRemovedWindow'));
+      expect(rejected.detail, contains('must not receive aliceRemovedWindow'));
+    });
+
+    test('NW-003 rejects missing final membership and key convergence', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      verdicts[0] = _withNw003ProofOverrides(
+        {
+          ...verdicts[0],
+          'activeMemberPeerIds': const <String>['alice-peer', 'bob-peer'],
+          'keyEpoch': 1,
+        },
+        const <String, Object?>{
+          'finalMembershipConvergedForAliceBobCharlie': false,
+          'finalKeyEpochConvergedForAliceBobCharlie': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('finalMembershipConverged'));
+      expect(rejected.detail, contains('finalKeyEpochConverged'));
+      expect(rejected.detail, contains('incomplete membership convergence'));
+    });
+
+    test('NW-003 rejects missing post-heal live delivery from one role', () {
+      final verdicts = _validPrivatePartitionReaddHealVerdicts();
+      verdicts[2] = _withNw003ProofOverrides(
+        {...verdicts[2], 'sentMessages': const <Map<String, Object?>>[]},
+        const <String, Object?>{'postHealCharlieToAliceBobDelivery': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partition_readd_heal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('postHealCharlieToAliceBobDelivery'));
+      expect(
+        rejected.detail,
+        contains('charlie: sent charliePostHeal count=0'),
+      );
+    });
+
+    test('NW-004 accepts relay reconnect group recovery proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_reconnect_group_recovery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateRelayReconnectGroupRecoveryVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_relay_reconnect_group_recovery verdicts valid'),
+      );
+    });
+
+    test('NW-004 rejects missing relay drop and reconnect proof', () {
+      final verdicts = _validPrivateRelayReconnectGroupRecoveryVerdicts();
+      verdicts[0] = _withNw004ProofOverrides(
+        verdicts[0],
+        const <String, Object?>{
+          'relayDropForced': false,
+          'relayReconnectCalled': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_reconnect_group_recovery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('relayDropForced must be true'));
+      expect(rejected.detail, contains('relayReconnectCalled must be true'));
+    });
+
+    test('NW-004 rejects recovery without rejoin or preserved topics', () {
+      final verdicts = _validPrivateRelayReconnectGroupRecoveryVerdicts();
+      verdicts[1] = _withNw004ProofOverrides(
+        verdicts[1],
+        const <String, Object?>{
+          'groupTopicsRejoinedAfterReconnect': false,
+          'topicsPreservedInPlace': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_reconnect_group_recovery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('requires group topic rejoin'));
+    });
+
+    test('NW-004 rejects missing replay drain for dropped publish', () {
+      final verdicts = _validPrivateRelayReconnectGroupRecoveryVerdicts();
+      final bobReceived = List<Map<String, Object?>>.from(
+        verdicts[1]['receivedMessages'] as List,
+      );
+      bobReceived[0] = {...bobReceived[0], 'usedOfflineDrain': false};
+      verdicts[1] = _withNw004ProofOverrides(
+        {...verdicts[1], 'receivedMessages': bobReceived},
+        const <String, Object?>{
+          'groupReplayDrainCompleted': false,
+          'missedDuringDropRecoveredByReplay': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_reconnect_group_recovery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('groupReplayDrainCompleted'));
+      expect(rejected.detail, contains('recovered by offline drain'));
+    });
+
+    test('NW-004 rejects non-iOS-26.2 app peer proof', () {
+      final verdicts = _validPrivateRelayReconnectGroupRecoveryVerdicts();
+      verdicts[2] = _withNw004ProofOverrides(
+        verdicts[2],
+        const <String, Object?>{'appPeerPlatform': 'ios_26_4_core_simulator'},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_reconnect_group_recovery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('appPeerPlatform'));
+    });
+
+    test('NW-004 rejects ack missing when needsGroupRecovery was observed', () {
+      final verdicts = _validPrivateRelayReconnectGroupRecoveryVerdicts();
+      verdicts[1] =
+          _withNw004ProofOverrides(verdicts[1], const <String, Object?>{
+            'needsGroupRecoveryObserved': true,
+            'recoveryAckSentAfterRejoinAndDrain': false,
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_reconnect_group_recovery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('recoveryAckSentAfterRejoinAndDrain'));
+    });
+
+    test('NW-004 rejects duplicate delivery and convergence drift', () {
+      final verdicts = _validPrivateRelayReconnectGroupRecoveryVerdicts();
+      verdicts[0] = _withNw004ProofOverrides(
+        {
+          ...verdicts[0],
+          'activeMemberPeerIds': const <String>['alice-peer', 'bob-peer'],
+          'keyEpoch': 1,
+        },
+        const <String, Object?>{
+          'duplicateVisibleMessageCount': 1,
+          'finalMembershipConvergedForAliceBobCharlie': false,
+          'finalKeyEpochConvergedForAliceBobCharlie': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_relay_reconnect_group_recovery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('duplicateVisibleMessageCount'));
+      expect(rejected.detail, contains('finalMembershipConverged'));
+      expect(rejected.detail, contains('finalKeyEpochConverged'));
+    });
+
+    test('NW-006 accepts peer disconnect not removal proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_peer_disconnect_not_removal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivatePeerDisconnectNotRemovalVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_peer_disconnect_not_removal verdicts valid'),
+      );
+    });
+
+    test('NW-006 rejects missing row id and wrong app-peer source', () {
+      final verdicts = _validPrivatePeerDisconnectNotRemovalVerdicts();
+      verdicts[0] =
+          _withNw006ProofOverrides(verdicts[0], const <String, Object?>{
+            'rowId': 'NW-004',
+            'appPeerPlatform': 'ios_26_4_core_simulator',
+            'disconnectProofSource': 'fake_network',
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_peer_disconnect_not_removal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('rowId must be NW-006'));
+      expect(rejected.detail, contains('appPeerPlatform'));
+      expect(rejected.detail, contains('disconnectProofSource'));
+    });
+
+    test('NW-006 rejects missing disconnect and durable recipient proof', () {
+      final verdicts = _validPrivatePeerDisconnectNotRemovalVerdicts();
+      final aliceSent = List<Map<String, Object?>>.from(
+        verdicts[0]['sentMessages'] as List,
+      );
+      aliceSent[0] = {
+        ...aliceSent[0],
+        'recipientPeerIds': const <String>['charlie-peer'],
+      };
+      verdicts[0] = _withNw006ProofOverrides(
+        {...verdicts[0], 'sentMessages': aliceSent},
+        const <String, Object?>{
+          'bobDisconnected': false,
+          'durableRecipientIncludedDisconnectedBob': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_peer_disconnect_not_removal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('bobDisconnected'));
+      expect(
+        rejected.detail,
+        contains('durableRecipientIncludedDisconnectedBob'),
+      );
+      expect(rejected.detail, contains('disconnected Bob must remain'));
+    });
+
+    test('NW-006 rejects removal side effects', () {
+      final verdicts = _validPrivatePeerDisconnectNotRemovalVerdicts();
+      verdicts[1] = _withNw006ProofOverrides(
+        verdicts[1],
+        const <String, Object?>{
+          'bobRemovedSignalCount': 1,
+          'membershipMutationCount': 1,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_peer_disconnect_not_removal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('bobRemovedSignalCount'));
+      expect(rejected.detail, contains('membershipMutationCount'));
+    });
+
+    test('NW-006 rejects missing replay and post-reconnect live proof', () {
+      final verdicts = _validPrivatePeerDisconnectNotRemovalVerdicts();
+      final bobReceived = List<Map<String, Object?>>.from(
+        verdicts[1]['receivedMessages'] as List,
+      );
+      bobReceived[0] = {...bobReceived[0], 'usedOfflineDrain': false};
+      bobReceived[1] = {...bobReceived[1], 'usedOfflineDrain': true};
+      verdicts[1] = _withNw006ProofOverrides(
+        {...verdicts[1], 'receivedMessages': bobReceived},
+        const <String, Object?>{
+          'missedDuringDisconnectRecoveredByReplay': false,
+          'postReconnectLiveDeliveryToBob': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_peer_disconnect_not_removal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('missedDuringDisconnectRecoveredByReplay'),
+      );
+      expect(rejected.detail, contains('postReconnectLiveDeliveryToBob'));
+      expect(rejected.detail, contains('must be recovered by offline drain'));
+      expect(rejected.detail, contains('must be live after reconnect'));
+    });
+
+    test('NW-006 rejects duplicate delivery and convergence drift', () {
+      final verdicts = _validPrivatePeerDisconnectNotRemovalVerdicts();
+      verdicts[2] = _withNw006ProofOverrides(
+        {
+          ...verdicts[2],
+          'activeMemberPeerIds': const <String>['alice-peer', 'bob-peer'],
+          'keyEpoch': 1,
+        },
+        const <String, Object?>{
+          'duplicateVisibleMessageCount': 1,
+          'finalMembershipConvergedForAliceBobCharlie': false,
+          'finalKeyEpochConvergedForAliceBobCharlie': false,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_peer_disconnect_not_removal',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('duplicateVisibleMessageCount'));
+      expect(rejected.detail, contains('finalMembershipConverged'));
+      expect(rejected.detail, contains('finalKeyEpochConverged'));
+    });
+
+    test('NW-010 accepts background resume group delivery proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_background_resume_group_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateBackgroundResumeGroupDeliveryVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_background_resume_group_delivery verdicts valid'),
+      );
+    });
+
+    test(
+      'NW-010 rejects missing row id and non-app-peer background source',
+      () {
+        final verdicts = _validPrivateBackgroundResumeGroupDeliveryVerdicts();
+        verdicts[1] =
+            _withNw010ProofOverrides(verdicts[1], const <String, Object?>{
+              'rowId': 'NW-006',
+              'appPeerPlatform': 'ios_26_4_core_simulator',
+              'backgroundProofSource': 'process_restart',
+            });
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_background_resume_group_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('rowId must be NW-010'));
+        expect(rejected.detail, contains('appPeerPlatform'));
+        expect(rejected.detail, contains('backgroundProofSource'));
+      },
+    );
+
+    test(
+      'NW-010 rejects missing background and foreground lifecycle proof',
+      () {
+        final verdicts = _validPrivateBackgroundResumeGroupDeliveryVerdicts();
+        verdicts[1] =
+            _withNw010ProofOverrides(verdicts[1], const <String, Object?>{
+              'bobBackgroundedDuringAliceActivity': false,
+              'bobForegroundedAfterMembershipEdit': false,
+              'groupTopicsRejoinedAfterForeground': false,
+              'groupReplayDrainCompleted': false,
+              'recoveryAckSentAfterRejoinAndDrain': false,
+            });
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_background_resume_group_delivery',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: verdicts,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('bobBackgroundedDuringAliceActivity'));
+        expect(rejected.detail, contains('bobForegroundedAfterMembershipEdit'));
+        expect(rejected.detail, contains('groupTopicsRejoinedAfterForeground'));
+        expect(rejected.detail, contains('groupReplayDrainCompleted'));
+        expect(rejected.detail, contains('recoveryAckSentAfterRejoinAndDrain'));
+      },
+    );
+
+    test('NW-010 rejects unordered drain and duplicate replay', () {
+      final verdicts = _validPrivateBackgroundResumeGroupDeliveryVerdicts();
+      final bobReceived = List<Map<String, Object?>>.from(
+        verdicts[1]['receivedMessages'] as List,
+      );
+      bobReceived[0] = {...bobReceived[0], 'usedOfflineDrain': false};
+      verdicts[1] = _withNw010ProofOverrides(
+        {...verdicts[1], 'receivedMessages': bobReceived},
+        const <String, Object?>{
+          'orderedDrainIncludesContentAndMembership': false,
+          'orderedDrainKeys': <String>[
+            'aliceDuringBackgroundAfterEdit',
+            'memberRemovedCharlie',
+            'aliceDuringBackgroundBeforeEdit',
+          ],
+          'duplicateVisibleMessageCount': 1,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_background_resume_group_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('orderedDrainIncludesContentAndMembership'),
+      );
+      expect(rejected.detail, contains('orderedDrainKeys'));
+      expect(rejected.detail, contains('duplicateVisibleMessageCount'));
+      expect(rejected.detail, contains('drain/live classification mismatch'));
+    });
+
+    test('NW-010 rejects missing entitlement filtering and convergence', () {
+      final verdicts = _validPrivateBackgroundResumeGroupDeliveryVerdicts();
+      final aliceSent = List<Map<String, Object?>>.from(
+        verdicts[0]['sentMessages'] as List,
+      );
+      aliceSent[1] = {
+        ...aliceSent[1],
+        'recipientPeerIds': const <String>['charlie-peer'],
+      };
+      final charlieReceived =
+          List<Map<String, Object?>>.from(
+            verdicts[2]['receivedMessages'] as List,
+          )..add(
+            _received(
+              'aliceDuringBackgroundAfterEdit',
+              'nw010-after-edit',
+              'NW-010 missed after membership edit',
+              'alice-peer',
+              groupId: 'private-background-resume-group',
+              keyEpoch: 2,
+              usedOfflineDrain: false,
+            ),
+          );
+      verdicts[0] = _withNw010ProofOverrides(
+        {...verdicts[0], 'sentMessages': aliceSent},
+        const <String, Object?>{
+          'entitlementFilteringPreserved': false,
+          'finalMembershipConvergedForAliceBob': false,
+          'finalKeyEpochConvergedForAliceBob': false,
+          'charlieRemovedBeforeSecondBackgroundMessage': false,
+        },
+      );
+      verdicts[2] = {...verdicts[2], 'receivedMessages': charlieReceived};
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_background_resume_group_delivery',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('entitlementFilteringPreserved'));
+      expect(
+        rejected.detail,
+        contains('second background send must include Bob'),
+      );
+      expect(rejected.detail, contains('exclude removed Charlie'));
+      expect(rejected.detail, contains('removed member must not receive'));
+      expect(rejected.detail, contains('finalMembershipConvergedForAliceBob'));
+      expect(rejected.detail, contains('finalKeyEpochConvergedForAliceBob'));
+    });
+
+    test('NW-012 accepts long offline epoch churn proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_long_offline_epoch_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateLongOfflineEpochChurnVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_long_offline_epoch_churn verdicts valid'),
+      );
+    });
+
+    test('NW-012 rejects non-iOS proof source and wrong row id', () {
+      final verdicts = _validPrivateLongOfflineEpochChurnVerdicts();
+      verdicts[2] =
+          _withNw012ProofOverrides(verdicts[2], const <String, Object?>{
+            'rowId': 'NW-010',
+            'appPeerPlatform': 'ios_26_4_core_simulator',
+            'offlineProofSource': 'host_fake_network',
+          });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_long_offline_epoch_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('rowId must be NW-012'));
+      expect(rejected.detail, contains('appPeerPlatform'));
+      expect(rejected.detail, contains('offlineProofSource'));
+    });
+
+    test('NW-012 rejects removed-window leakage and duplicate replay', () {
+      final verdicts = _validPrivateLongOfflineEpochChurnVerdicts();
+      final charlieReceived =
+          List<Map<String, Object?>>.from(
+            verdicts[2]['receivedMessages'] as List,
+          )..add(
+            _received(
+              'aliceRemovedWindow',
+              'nw012-removed-window',
+              'NW-012 removed-window',
+              'alice-peer',
+              groupId: 'private-long-offline-epoch-churn-group',
+              keyEpoch: 2,
+              usedOfflineDrain: true,
+            ),
+          );
+      verdicts[2] = _withNw012ProofOverrides(
+        {...verdicts[2], 'receivedMessages': charlieReceived},
+        const <String, Object?>{
+          'charlieReceivedOnlyFinalActiveInterval': false,
+          'duplicateVisibleMessageCount': 1,
+          'removedWindowPlaintextCount': 1,
+          'staleEpochPlaintextCount': 1,
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_long_offline_epoch_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('unexpected received proof keys'));
+      expect(
+        rejected.detail,
+        contains('charlieReceivedOnlyFinalActiveInterval'),
+      );
+      expect(rejected.detail, contains('duplicateVisibleMessageCount'));
+      expect(rejected.detail, contains('removedWindowPlaintextCount'));
+      expect(rejected.detail, contains('staleEpochPlaintextCount'));
+    });
+
+    test('NW-012 rejects weak final convergence and unordered drain', () {
+      final verdicts = _validPrivateLongOfflineEpochChurnVerdicts();
+      final aliceSent = List<Map<String, Object?>>.from(
+        verdicts[0]['sentMessages'] as List,
+      );
+      aliceSent[0] = {
+        ...aliceSent[0],
+        'recipientPeerIds': const <String>['charlie-peer'],
+      };
+      verdicts[0] = _withNw012ProofOverrides(
+        {...verdicts[0], 'sentMessages': aliceSent},
+        const <String, Object?>{
+          'entitlementFilteringPreserved': false,
+          'finalMembershipConverged': false,
+          'finalKeyEpochConverged': false,
+          'finalEpoch': 2,
+          'orderedDrainKeys': <String>[
+            'aliceFinalActiveOne',
+            'memberRemovedCharlie',
+            'bobFinalActiveTwo',
+          ],
+        },
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_long_offline_epoch_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('entitlementFilteringPreserved'));
+      expect(rejected.detail, contains('removed-window send must include Bob'));
+      expect(
+        rejected.detail,
+        contains('removed-window send must exclude Charlie'),
+      );
+      expect(rejected.detail, contains('finalMembershipConverged'));
+      expect(rejected.detail, contains('finalKeyEpochConverged'));
+      expect(rejected.detail, contains('finalEpoch must be at least 4'));
+      expect(rejected.detail, contains('orderedDrainKeys'));
+    });
+
+    test('accepts private A/B/C create reusable proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_abc_create',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateAbcCreateVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_abc_create verdicts valid'));
+    });
+
+    test('rejects private A/B/C create without ML-001 invite path proof', () {
+      final missingProof = _validPrivateAbcCreateVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('ml001CreateInviteProof');
+
+      final rejectedMissing = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_abc_create',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+      expect(rejectedMissing.ok, isFalse);
+      expect(
+        rejectedMissing.detail,
+        contains('bob: missing ML-001 create/invite proof fields'),
+      );
+
+      final wrongPath = _validPrivateAbcCreateVerdicts();
+      wrongPath[2] = {
+        ...wrongPath[2],
+        'ml001CreateInviteProof': {
+          ...wrongPath[2]['ml001CreateInviteProof'] as Map<String, Object?>,
+          'invitePath': 'fixture_import',
+        },
+      };
+
+      final rejectedPath = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_abc_create',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongPath,
+      );
+      expect(rejectedPath.ok, isFalse);
+      expect(rejectedPath.detail, contains('supported_pending_invite'));
+    });
+
+    test('rejects private proof topic and key epoch divergence', () {
+      final topicMismatch = _validPrivateAbcCreateVerdicts();
+      topicMismatch[1] = {
+        ...topicMismatch[1],
+        'topicName': '/mknoon/group/other-topic',
+      };
+
+      final rejectedTopic = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_abc_create',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: topicMismatch,
+      );
+      expect(rejectedTopic.ok, isFalse);
+      expect(rejectedTopic.detail, contains('disagree on topicName'));
+
+      final epochMismatch = _validPrivateAbcCreateVerdicts();
+      epochMismatch[2] = {...epochMismatch[2], 'keyEpoch': 2};
+
+      final rejectedEpoch = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_abc_create',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: epochMismatch,
+      );
+      expect(rejectedEpoch.ok, isFalse);
+      expect(
+        rejectedEpoch.detail,
+        contains('keyEpoch must be exactly 1 for KE-001'),
+      );
+
+      final wrongInitialEpoch = _validPrivateAbcCreateVerdicts();
+      for (var i = 0; i < wrongInitialEpoch.length; i++) {
+        wrongInitialEpoch[i] = {
+          ...wrongInitialEpoch[i],
+          'keyEpoch': 2,
+          'sentMessages': [
+            for (final sent
+                in wrongInitialEpoch[i]['sentMessages']
+                    as List<Map<String, Object?>>)
+              {...sent, 'keyEpoch': 2},
+          ],
+          'receivedMessages': [
+            for (final received
+                in wrongInitialEpoch[i]['receivedMessages']
+                    as List<Map<String, Object?>>)
+              {...received, 'keyEpoch': 2},
+          ],
+        };
+      }
+
+      final rejectedWrongInitialEpoch = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_abc_create',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: wrongInitialEpoch,
+      );
+      expect(rejectedWrongInitialEpoch.ok, isFalse);
+      expect(
+        rejectedWrongInitialEpoch.detail,
+        contains('keyEpoch must be exactly 1 for KE-001'),
+      );
+    });
+
+    test('accepts private online-add ML-002 live proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_add',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateOnlineAddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_online_add verdicts valid'));
+    });
+
+    test('rejects private online-add without ML-002 proof fields', () {
+      final missingProof = _validPrivateOnlineAddVerdicts();
+      missingProof[3] = Map<String, dynamic>.from(missingProof[3])
+        ..remove('ml002OnlineAddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_add',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('dana: missing ML-002 online-add proof fields'),
+      );
+    });
+
+    test(
+      'rejects ML-002 private online-add without Bob post-join proof to D',
+      () {
+        final missingBob = _validPrivateOnlineAddVerdicts();
+        missingBob[1] = {
+          ...missingBob[1],
+          'sentMessages': const <Map<String, Object?>>[],
+        };
+        missingBob[3] = {
+          ...missingBob[3],
+          'receivedMessages': <Map<String, Object?>>[
+            _received(
+              'aliceAfterDanaAdd',
+              'poa-a1',
+              'private alice after dana',
+              'alice-peer',
+              keyEpoch: 2,
+              liveOnly: true,
+              usedOfflineDrain: false,
+            ),
+          ],
+          'persistedMessageCounts': const <String, int>{'aliceAfterDanaAdd': 1},
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_online_add',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingBob,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('bob: sent bobAfterDanaAdd count=0'));
+        expect(
+          rejected.detail,
+          contains('dana: missing received proof keys bobAfterDanaAdd'),
+        );
+      },
+    );
+
+    test(
+      'rejects ML-002 private online-add D receipt that used offline drain',
+      () {
+        final drained = _validPrivateOnlineAddVerdicts();
+        drained[3] = {
+          ...drained[3],
+          'receivedMessages': <Map<String, Object?>>[
+            _received(
+              'aliceAfterDanaAdd',
+              'poa-a1',
+              'private alice after dana',
+              'alice-peer',
+              keyEpoch: 2,
+              liveOnly: true,
+              usedOfflineDrain: false,
+            ),
+            _received(
+              'bobAfterDanaAdd',
+              'poa-b1',
+              'private bob after dana',
+              'bob-peer',
+              keyEpoch: 2,
+              liveOnly: true,
+              usedOfflineDrain: true,
+            ),
+          ],
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_online_add',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: drained,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'dana: received bobAfterDanaAdd usedOfflineDrain must be false',
+          ),
+        );
+      },
+    );
+
+    test('accepts private offline-add ML-003 replay proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_add',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateOfflineAddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_offline_add verdicts valid'));
+    });
+
+    test(
+      'rejects private offline-add hash divergence as non-converged config',
+      () {
+        final divergent = _validPrivateOfflineAddVerdicts();
+        divergent[3] = <String, dynamic>{
+          ...divergent[3],
+          'groupConfigStateHash': 'private-offline-add-dana-diverged-state',
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_offline_add',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: divergent,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('role verdicts disagree on groupConfigStateHash'),
+        );
+      },
+    );
+
+    test('rejects private offline-add without ML-003 proof fields', () {
+      final missingProof = _validPrivateOfflineAddVerdicts();
+      missingProof[3] = Map<String, dynamic>.from(missingProof[3])
+        ..remove('ml003OfflineAddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_add',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('dana: missing ML-003 offline-add proof fields'),
+      );
+    });
+
+    test('rejects private offline-add fixture-only invite path', () {
+      final fixtureOnly = _validPrivateOfflineAddVerdicts();
+      fixtureOnly[3] = {
+        ...fixtureOnly[3],
+        'ml003OfflineAddProof': {
+          ...fixtureOnly[3]['ml003OfflineAddProof'] as Map<String, Object?>,
+          'invitePath': 'fixture_import',
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_add',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: fixtureOnly,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('supported_pending_invite'));
+    });
+
+    test('rejects ML-003 private offline-add without Bob replay to D', () {
+      final missingBob = _validPrivateOfflineAddVerdicts();
+      missingBob[1] = {
+        ...missingBob[1],
+        'sentMessages': const <Map<String, Object?>>[],
+      };
+      missingBob[3] = {
+        ...missingBob[3],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceAfterDanaOfflineAdd',
+            'poff-a1',
+            'private alice offline replay',
+            'alice-peer',
+            keyEpoch: 2,
+            liveOnly: false,
+            usedOfflineDrain: true,
+          ),
+          _received(
+            'aliceLiveAfterDanaDrain',
+            'poff-live1',
+            'private alice live after drain',
+            'alice-peer',
+            keyEpoch: 2,
+            liveOnly: true,
+            usedOfflineDrain: false,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceAfterDanaOfflineAdd': 1,
+          'aliceLiveAfterDanaDrain': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_add',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingBob,
+      );
+
+      expect(
+        rejected.detail,
+        contains('bob: sent bobAfterDanaOfflineAdd count=0'),
+      );
+      expect(
+        rejected.detail,
+        contains('dana: missing received proof keys bobAfterDanaOfflineAdd'),
+      );
     });
 
     test('accepts valid GE-001 A/B/C all-send smoke verdicts', () {
@@ -2203,6 +4590,682 @@ void main() {
       expect(verdict.detail, contains('gm004 verdicts valid'));
     });
 
+    test('accepts private_online_remove ML-005 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateOnlineRemoveVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_online_remove verdicts valid'));
+    });
+
+    test('accepts private_offline_remove ML-006 and IR-004 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateOfflineRemoveVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_offline_remove verdicts valid'));
+    });
+
+    test('accepts private_offline_readd RA-003 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateOfflineReaddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_offline_readd verdicts valid'));
+    });
+
+    test('accepts private_readd_current ML-007 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCurrentVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_current verdicts valid'));
+    });
+
+    test(
+      'accepts private_readd_current RA-006 delayed old key proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateReaddCurrentVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_readd_current verdicts valid'),
+        );
+      },
+    );
+
+    test('accepts private_readd_current RA-007 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCurrentVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_current verdicts valid'));
+    });
+
+    test('accepts private_readd_current RA-008 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCurrentVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_current verdicts valid'));
+    });
+
+    test('accepts private_readd_current RA-009 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCurrentVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_current verdicts valid'));
+    });
+
+    test('accepts private_readd_current RA-010 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCurrentVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_current verdicts valid'));
+    });
+
+    test('accepts private_readd_current RA-014 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCurrentVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_current verdicts valid'));
+    });
+
+    test('accepts private_readd_current RA-015 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCurrentVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_current verdicts valid'));
+    });
+
+    test('accepts valid RA-011 late leave re-add verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_late_leave_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validRa011LateLeaveReaddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_late_leave_readd verdicts valid'),
+      );
+    });
+
+    test('accepts valid RA-012 rotated device re-add verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rotated_device_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validRa012RotatedDeviceReaddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_rotated_device_readd verdicts valid'),
+      );
+    });
+
+    test('RA-013 accepts same-user multi-device re-add verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_same_user_multi_device_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validRa013SameUserMultiDeviceReaddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_same_user_multi_device_readd verdicts valid'),
+      );
+    });
+
+    test('RA-013 rejects weak same-user device proof', () {
+      final weak = _validRa013SameUserMultiDeviceReaddVerdicts();
+      weak[3] = <String, dynamic>{
+        ...weak[3],
+        'ra013SameUserMultiDeviceReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            weak[3]['ra013SameUserMultiDeviceReaddProof'] as Map,
+          ),
+          'preAcceptPlaintextCount': 1,
+          'memberListIncludesDanaAccount': true,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_same_user_multi_device_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: weak,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('dana: ra013SameUserMultiDeviceReaddProof'),
+      );
+      expect(rejected.detail, contains('preAcceptPlaintextCount must be 0'));
+    });
+
+    test('RA-017 accepts private_readd_active_members proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_active_members',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddActiveMembersVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_readd_active_members verdicts valid'),
+      );
+    });
+
+    test('RA-017 rejects A/B/C-only proof missing Dana role', () {
+      final missingDana = _validPrivateReaddActiveMembersVerdicts()
+        ..removeWhere((verdict) => verdict['role'] == 'dana');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_active_members',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDana,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('dana: missing role verdict'));
+      expect(
+        rejected.detail,
+        contains('dana: RA-017 requires explicit D/Dana peer id coverage'),
+      );
+    });
+
+    test('RA-017 rejects missing Dana active send counter', () {
+      final missingDanaSend = _validPrivateReaddActiveMembersVerdicts();
+      final dana = Map<String, dynamic>.from(missingDanaSend[3]);
+      dana['sentMessages'] = _mapListForTest(dana['sentMessages'])
+          .where((entry) => entry['key'] != 'ra017Cycle1_removed_dana')
+          .toList(growable: false);
+      missingDanaSend[3] = dana;
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_active_members',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDanaSend,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('dana: sent ra017Cycle1_removed_dana count=0'),
+      );
+    });
+
+    test('RA-017 rejects missing active receive counter', () {
+      final missingReceive = _validPrivateReaddActiveMembersVerdicts();
+      final bob = Map<String, dynamic>.from(missingReceive[1]);
+      bob['receivedMessages'] = _mapListForTest(bob['receivedMessages'])
+          .where((entry) => entry['key'] != 'ra017Cycle1_removed_dana')
+          .toList(growable: false);
+      bob['persistedMessageCounts'] = <String, int>{
+        ...Map<String, int>.from(bob['persistedMessageCounts'] as Map),
+      }..remove('ra017Cycle1_removed_dana');
+      missingReceive[1] = bob;
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_active_members',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingReceive,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: received ra017Cycle1_removed_dana count=0'),
+      );
+    });
+
+    test('RA-017 rejects fewer than 3 Charlie churn cycles', () {
+      final shortRun = _validPrivateReaddActiveMembersVerdicts();
+      shortRun[0] = {
+        ...shortRun[0],
+        'ra017ActiveMemberChurnProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            shortRun[0]['ra017ActiveMemberChurnProof'] as Map,
+          ),
+          'churnCycles': 2,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_active_members',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: shortRun,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: ra017ActiveMemberChurnProof.churnCycles must be >= 3'),
+      );
+    });
+
+    test('RA-017 rejects removed-window plaintext leakage to Charlie', () {
+      final leaked = _validPrivateReaddActiveMembersVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          ..._mapListForTest(leaked[2]['receivedMessages']),
+          _received(
+            'ra017Cycle1_removed_alice',
+            'ra017-c1-removed-alice',
+            'RA-017 cycle 1 removed from Alice',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': <String, int>{
+          ...Map<String, int>.from(leaked[2]['persistedMessageCounts'] as Map),
+          'ra017Cycle1_removed_alice': 1,
+        },
+        'ra017ActiveMemberChurnProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ra017ActiveMemberChurnProof'] as Map,
+          ),
+          'charlieRemovedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_active_members',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('removed-window RA-017 plaintext leaked'),
+      );
+      expect(
+        rejected.detail,
+        contains('charlieRemovedWindowPlaintextCount must be 0'),
+      );
+    });
+
+    test('RA-017 rejects final member or key divergence', () {
+      final divergent = _validPrivateReaddActiveMembersVerdicts();
+      divergent[3] = {
+        ...divergent[3],
+        'keyEpoch': 6,
+        'memberPeerIds': const <String>[
+          'alice-peer',
+          'bob-peer',
+          'charlie-peer',
+        ],
+        'activeMemberPeerIds': const <String>[
+          'alice-peer',
+          'bob-peer',
+          'charlie-peer',
+        ],
+        'ra017ActiveMemberChurnProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            divergent[3]['ra017ActiveMemberChurnProof'] as Map,
+          ),
+          'finalRoles': const <String>['alice', 'bob', 'charlie'],
+          'finalEpoch': 6,
+          'finalEpochConverged': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_active_members',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: divergent,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('missing dana-peer'));
+      expect(rejected.detail, contains('finalEpochConverged must be true'));
+      expect(
+        rejected.detail,
+        contains('dana: ra017ActiveMemberChurnProof.finalEpoch must be >= 7'),
+      );
+    });
+
+    test('RA-018 accepts private_readd_alternating_churn proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddAlternatingChurnVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_readd_alternating_churn verdicts valid'),
+      );
+    });
+
+    test('RA-018 rejects weak RA-017-only proof', () {
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddActiveMembersVerdicts(),
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('missing RA-018 alternating churn proof fields'),
+      );
+      expect(
+        rejected.detail,
+        contains('sent ra018Cycle1_charlieRemoved_alice count=0'),
+      );
+    });
+
+    test('RA-018 rejects weak ML-008-only proof', () {
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCyclesVerdicts(),
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('dana: missing role verdict'));
+      expect(
+        rejected.detail,
+        contains('missing RA-018 alternating churn proof fields'),
+      );
+    });
+
+    test('RA-018 rejects missing Charlie or Dana churn target', () {
+      final missingCharlie = _validPrivateReaddAlternatingChurnVerdicts();
+      missingCharlie[0] = _withRa018ProofOverrides(
+        missingCharlie[0],
+        const <String, Object?>{
+          'churnTargets': <String>['dana'],
+        },
+      );
+      final charlieRejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingCharlie,
+      );
+      expect(charlieRejected.ok, isFalse);
+      expect(
+        charlieRejected.detail,
+        contains('churnTargets must include charlie, dana'),
+      );
+
+      final missingDana = _validPrivateReaddAlternatingChurnVerdicts();
+      missingDana[1] = _withRa018ProofOverrides(
+        missingDana[1],
+        const <String, Object?>{
+          'churnTargets': <String>['charlie'],
+        },
+      );
+      final danaRejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDana,
+      );
+      expect(danaRejected.ok, isFalse);
+      expect(
+        danaRejected.detail,
+        contains('churnTargets must include charlie, dana'),
+      );
+    });
+
+    test('RA-018 rejects missing active sender or inactive sender use', () {
+      final missingSender = _validPrivateReaddAlternatingChurnVerdicts();
+      missingSender[2] = _withRa018ProofOverrides(
+        missingSender[2],
+        const <String, Object?>{
+          'activeSenders': <String>['alice', 'bob', 'dana'],
+        },
+      );
+      final missingSenderRejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingSender,
+      );
+      expect(missingSenderRejected.ok, isFalse);
+      expect(
+        missingSenderRejected.detail,
+        contains('activeSenders must include alice, bob, charlie, dana'),
+      );
+
+      final inactiveSender = _validPrivateReaddAlternatingChurnVerdicts();
+      inactiveSender[3] = _withRa018ProofOverrides(
+        inactiveSender[3],
+        const <String, Object?>{'inactiveSenderAttemptCount': 1},
+      );
+      final inactiveSenderRejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: inactiveSender,
+      );
+      expect(inactiveSenderRejected.ok, isFalse);
+      expect(
+        inactiveSenderRejected.detail,
+        contains('inactiveSenderAttemptCount must be 0'),
+      );
+    });
+
+    test('RA-018 rejects inactive-window plaintext leakage', () {
+      final leaked = _validPrivateReaddAlternatingChurnVerdicts();
+      leaked[2] = _withRa018ProofOverrides(
+        {
+          ...leaked[2],
+          'receivedMessages': <Map<String, Object?>>[
+            ..._mapListForTest(leaked[2]['receivedMessages']),
+            _received(
+              'ra018Cycle1_charlieRemoved_alice',
+              'ra018-c1-charlieRemoved-alice',
+              'RA-018 cycle 1 charlieRemoved from Alice',
+              'alice-peer',
+              keyEpoch: 2,
+            ),
+          ],
+          'persistedMessageCounts': <String, int>{
+            ...Map<String, int>.from(
+              leaked[2]['persistedMessageCounts'] as Map,
+            ),
+            'ra018Cycle1_charlieRemoved_alice': 1,
+          },
+        },
+        const <String, Object?>{'charlieRemovedWindowPlaintextCount': 1},
+      );
+      leaked[3] = _withRa018ProofOverrides(
+        {
+          ...leaked[3],
+          'receivedMessages': <Map<String, Object?>>[
+            ..._mapListForTest(leaked[3]['receivedMessages']),
+            _received(
+              'ra018Cycle1_danaRemoved_charlie',
+              'ra018-c1-danaRemoved-charlie',
+              'RA-018 cycle 1 danaRemoved from Charlie',
+              'charlie-peer',
+              keyEpoch: 4,
+            ),
+          ],
+          'persistedMessageCounts': <String, int>{
+            ...Map<String, int>.from(
+              leaked[3]['persistedMessageCounts'] as Map,
+            ),
+            'ra018Cycle1_danaRemoved_charlie': 1,
+          },
+        },
+        const <String, Object?>{'danaRemovedWindowPlaintextCount': 1},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: removed-window RA-018 plaintext leaked'),
+      );
+      expect(
+        rejected.detail,
+        contains('dana: removed-window RA-018 plaintext leaked'),
+      );
+      expect(
+        rejected.detail,
+        contains('charlieRemovedWindowPlaintextCount must be 0'),
+      );
+      expect(
+        rejected.detail,
+        contains('danaRemovedWindowPlaintextCount must be 0'),
+      );
+    });
+
+    test('RA-018 rejects duplicate visible messages', () {
+      final duplicated = _validPrivateReaddAlternatingChurnVerdicts();
+      final bob = Map<String, dynamic>.from(duplicated[1]);
+      bob['receivedMessages'] = <Map<String, Object?>>[
+        ..._mapListForTest(bob['receivedMessages']),
+        _received(
+          'ra018Cycle1_charlieRemoved_alice',
+          'ra018-c1-charlieRemoved-alice',
+          'RA-018 cycle 1 charlieRemoved from Alice',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ];
+      bob['persistedMessageCounts'] = <String, int>{
+        ...Map<String, int>.from(bob['persistedMessageCounts'] as Map),
+        'ra018Cycle1_charlieRemoved_alice': 2,
+      };
+      duplicated[1] = _withRa018ProofOverrides(bob, const <String, Object?>{
+        'duplicateVisibleMessageCount': 1,
+      });
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: duplicated,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: received ra018Cycle1_charlieRemoved_alice count=2'),
+      );
+      expect(
+        rejected.detail,
+        contains('duplicateVisibleMessageCount must be 0'),
+      );
+    });
+
+    test('RA-018 rejects insufficient cycles or final divergence', () {
+      final shortRun = _validPrivateReaddAlternatingChurnVerdicts();
+      shortRun[0] = _withRa018ProofOverrides(
+        shortRun[0],
+        const <String, Object?>{'churnCycles': 2},
+      );
+      final shortRejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: shortRun,
+      );
+      expect(shortRejected.ok, isFalse);
+      expect(
+        shortRejected.detail,
+        contains('ra018AlternatingChurnProof.churnCycles must be >= 3'),
+      );
+
+      final divergent = _validPrivateReaddAlternatingChurnVerdicts();
+      divergent[3] = _withRa018ProofOverrides(
+        {
+          ...divergent[3],
+          'keyEpoch': 12,
+          'memberPeerIds': const <String>[
+            'alice-peer',
+            'bob-peer',
+            'charlie-peer',
+          ],
+          'activeMemberPeerIds': const <String>[
+            'alice-peer',
+            'bob-peer',
+            'charlie-peer',
+          ],
+        },
+        const <String, Object?>{
+          'finalRoles': <String>['alice', 'bob', 'charlie'],
+          'finalEpoch': 12,
+          'finalEpochConverged': false,
+        },
+      );
+      final divergentRejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_alternating_churn',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: divergent,
+      );
+      expect(divergentRejected.ok, isFalse);
+      expect(divergentRejected.detail, contains('missing dana-peer'));
+      expect(
+        divergentRejected.detail,
+        contains('finalEpochConverged must be true'),
+      );
+      expect(divergentRejected.detail, contains('finalEpoch must be >= 13'));
+    });
+
+    test('accepts private_readd_cycles ML-008 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReaddCyclesVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_readd_cycles verdicts valid'));
+    });
+
     test('accepts valid GM-005 offline removal verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm005',
@@ -2225,16 +5288,19 @@ void main() {
       expect(verdict.detail, contains('gm006 verdicts valid'));
     });
 
-    test('accepts valid GM-007 history-boundary verdicts', () {
-      final verdict = evaluateGroupMultiPartyVerdicts(
-        scenario: 'gm007',
-        relayAddresses: expectedMultiPartyRelayAddresses,
-        verdicts: _validGm007Verdicts(),
-      );
+    test(
+      'accepts valid GM-007, KE-018, and IR-005 history-boundary verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'gm007',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validGm007Verdicts(),
+        );
 
-      expect(verdict.ok, isTrue);
-      expect(verdict.detail, contains('gm007 verdicts valid'));
-    });
+        expect(verdict.ok, isTrue);
+        expect(verdict.detail, contains('gm007 verdicts valid'));
+      },
+    );
 
     test('accepts valid GM-008 restart re-add verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
@@ -5854,6 +8920,420 @@ void main() {
       expect(rejected.detail, contains('must not hold rotated epoch'));
     });
 
+    test('rejects private_online_remove without ML-005 proof fields', () {
+      final missingProof = _validPrivateOnlineRemoveVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ml005OnlineRemovalProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing ML-005 online-removal proof fields'),
+      );
+    });
+
+    test('rejects private_online_remove Charlie post-removal plaintext', () {
+      final leaked = _validPrivateOnlineRemoveVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceAfterCharlieRemove',
+            'ml005-a-after',
+            'alice after charlie remove',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceAfterCharlieRemove': 1,
+        },
+        'ml005OnlineRemovalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml005OnlineRemovalProof'] as Map,
+          ),
+          'receivedAliceAfterRemoval': true,
+          'postRemovalPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: unexpected received proof keys aliceAfterCharlieRemove',
+        ),
+      );
+      expect(rejected.detail, contains('postRemovalPlaintextCount must be 0'));
+    });
+
+    test('rejects private_online_remove missing A/B post-removal delivery', () {
+      final missingBobDelivery = _validPrivateOnlineRemoveVerdicts();
+      missingBobDelivery[1] = {
+        ...missingBobDelivery[1],
+        'receivedMessages': const <Map<String, Object?>>[],
+        'persistedMessageCounts': const <String, int>{},
+        'ml005OnlineRemovalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingBobDelivery[1]['ml005OnlineRemovalProof'] as Map,
+          ),
+          'receivedAliceAfterRemoval': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingBobDelivery,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing received proof keys aliceAfterCharlieRemove'),
+      );
+      expect(
+        rejected.detail,
+        contains('bob: ml005OnlineRemovalProof.receivedAliceAfterRemoval'),
+      );
+    });
+
+    test(
+      'rejects private_online_remove successful Charlie post-removal send',
+      () {
+        final acceptedSend = _validPrivateOnlineRemoveVerdicts();
+        acceptedSend[2] = {
+          ...acceptedSend[2],
+          'ml005OnlineRemovalProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              acceptedSend[2]['ml005OnlineRemovalProof'] as Map,
+            ),
+            'postRemovalSendOutcome': 'success',
+            'postRemovalPublishAccepted': true,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_online_remove',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: acceptedSend,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('postRemovalPublishAccepted must be false'),
+        );
+        expect(
+          rejected.detail,
+          contains('postRemovalSendOutcome must reject send'),
+        );
+      },
+    );
+
+    test('rejects private_online_remove without KE-006 key proof fields', () {
+      final missingProof = _validPrivateOnlineRemoveVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('ke006RemovalKeyRotationProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing KE-006 removal-key proof fields'),
+      );
+    });
+
+    test('rejects private_online_remove Charlie retaining KE-006 key', () {
+      final retainedKey = _validPrivateOnlineRemoveVerdicts();
+      retainedKey[2] = {
+        ...retainedKey[2],
+        'keyEpoch': 2,
+        'ke006RemovalKeyRotationProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            retainedKey[2]['ke006RemovalKeyRotationProof'] as Map,
+          ),
+          'hasRotatedEpoch': true,
+          'retainedEpochAfterRemoval': 2,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: retainedKey,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('hasRotatedEpoch must be false'));
+      expect(
+        rejected.detail,
+        contains('retainedEpochAfterRemoval must stay below rotated epoch'),
+      );
+    });
+
+    test('rejects private_offline_remove without ML-006 proof fields', () {
+      final missingProof = _validPrivateOfflineRemoveVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ml006OfflineRemovalProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing ML-006 offline removal proof fields'),
+      );
+    });
+
+    test('rejects private_offline_remove without IR-004 proof fields', () {
+      final missingProof = _validPrivateOfflineRemoveVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ir004PostRemovalReplayProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing IR-004 post-removal replay proof fields'),
+      );
+    });
+
+    test('rejects IR-004 proof when Charlie receives post-removal plaintext', () {
+      final leaked = _validPrivateOfflineRemoveVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'ir004PostRemovalReplayProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ir004PostRemovalReplayProof'] as Map,
+          ),
+          'postRemovalPlaintextCount': 1,
+          'receivedAlicePostRemoval': true,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: ir004PostRemovalReplayProof.postRemovalPlaintextCount must be 0',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains('receivedAlicePostRemoval must be false'),
+      );
+    });
+
+    test('rejects private_offline_remove Charlie post-removal plaintext', () {
+      final leaked = _validPrivateOfflineRemoveVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceAfterCharlieOfflineRemove',
+            'ml006-a-after',
+            'alice after offline charlie remove',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceAfterCharlieOfflineRemove': 1,
+        },
+        'ml006OfflineRemovalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml006OfflineRemovalProof'] as Map,
+          ),
+          'receivedAliceAfterRemoval': true,
+          'postRemovalPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: unexpected received proof keys aliceAfterCharlieOfflineRemove',
+        ),
+      );
+      expect(rejected.detail, contains('postRemovalPlaintextCount must be 0'));
+    });
+
+    test('rejects private_offline_remove accepted Charlie send', () {
+      final acceptedSend = _validPrivateOfflineRemoveVerdicts();
+      acceptedSend[2] = {
+        ...acceptedSend[2],
+        'ml006OfflineRemovalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            acceptedSend[2]['ml006OfflineRemovalProof'] as Map,
+          ),
+          'postRemovalSendOutcome': 'success',
+          'postRemovalPublishAccepted': true,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: acceptedSend,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('postRemovalPublishAccepted must be false'),
+      );
+      expect(
+        rejected.detail,
+        contains('postRemovalSendOutcome must reject send'),
+      );
+    });
+
+    test('rejects private_offline_remove missing A/B delivery', () {
+      final missingDelivery = _validPrivateOfflineRemoveVerdicts();
+      missingDelivery[0] = {
+        ...missingDelivery[0],
+        'receivedMessages': const <Map<String, Object?>>[],
+        'persistedMessageCounts': const <String, int>{},
+        'ml006OfflineRemovalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingDelivery[0]['ml006OfflineRemovalProof'] as Map,
+          ),
+          'receivedBobAfterRemoval': false,
+        },
+      };
+      missingDelivery[1] = {
+        ...missingDelivery[1],
+        'receivedMessages': const <Map<String, Object?>>[],
+        'persistedMessageCounts': const <String, int>{},
+        'ml006OfflineRemovalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingDelivery[1]['ml006OfflineRemovalProof'] as Map,
+          ),
+          'receivedAliceAfterRemoval': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDelivery,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: missing received proof keys bobAfterCharlieOfflineRemove',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'bob: missing received proof keys aliceAfterCharlieOfflineRemove',
+        ),
+      );
+      expect(rejected.detail, contains('receivedBobAfterRemoval'));
+      expect(rejected.detail, contains('receivedAliceAfterRemoval'));
+    });
+
+    test(
+      'rejects private_offline_remove missing stale reconnect and drain proof',
+      () {
+        final missingCatchUp = _validPrivateOfflineRemoveVerdicts();
+        missingCatchUp[2] = {
+          ...missingCatchUp[2],
+          'ml006OfflineRemovalProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              missingCatchUp[2]['ml006OfflineRemovalProof'] as Map,
+            ),
+            'reconnectedWithStaleState': false,
+            'retrievedInboxAfterReconnect': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_offline_remove',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingCatchUp,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('reconnectedWithStaleState must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains('retrievedInboxAfterReconnect must be true'),
+        );
+      },
+    );
+
+    test('rejects private_offline_remove Charlie retaining rotated epoch', () {
+      final leakedKey = _validPrivateOfflineRemoveVerdicts();
+      leakedKey[2] = {
+        ...leakedKey[2],
+        'keyEpoch': 2,
+        'ml006OfflineRemovalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leakedKey[2]['ml006OfflineRemovalProof'] as Map,
+          ),
+          'hasRotatedEpoch': true,
+          'rotatedEpoch': 2,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leakedKey,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('hasRotatedEpoch must be false'));
+      expect(rejected.detail, contains('must not hold rotated epoch'));
+    });
+
     test('rejects GM-005 missing Charlie stale-offline proof', () {
       final missingProof = _validGm005Verdicts();
       missingProof[2] = Map<String, dynamic>.from(missingProof[2])
@@ -6063,6 +9543,2502 @@ void main() {
       expect(
         rejected.detail,
         contains('charlie: missing GM-006 immediate re-add proof fields'),
+      );
+    });
+
+    test('rejects private_readd_current without ML-007 proof fields', () {
+      final missingProof = _validPrivateReaddCurrentVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ml007ReaddCurrentProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing ML-007 re-add current proof fields'),
+      );
+    });
+
+    test('rejects private_readd_current without RA-002 proof fields', () {
+      final missingProof = _validPrivateReaddCurrentVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ra002OnlineSubscribedReaddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing RA-002 online re-add proof fields'),
+      );
+    });
+
+    test('rejects private_readd_current RA-002 removed-window leakage', () {
+      final leaked = _validPrivateReaddCurrentVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceDuringCharlieRemoval',
+            'ml007-a-during',
+            'alice during charlie removal',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'aliceAfterImmediateReadd',
+            'ml007-a-after',
+            'alice after immediate readd',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'bobAfterReaddCurrent',
+            'ml007-b-after',
+            'bob after readd current',
+            'bob-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceDuringCharlieRemoval': 1,
+          'aliceAfterImmediateReadd': 1,
+          'bobAfterReaddCurrent': 1,
+        },
+        'ra002OnlineSubscribedReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ra002OnlineSubscribedReaddProof'] as Map,
+          ),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: unexpected received proof keys aliceDuringCharlieRemoval',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: ra002OnlineSubscribedReaddProof.removedWindowPlaintextCount must be 0',
+        ),
+      );
+    });
+
+    test('rejects private_offline_readd without RA-003 proof fields', () {
+      final missingProof = _validPrivateOfflineReaddVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ra003OfflineReaddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing RA-003 offline re-add proof fields'),
+      );
+    });
+
+    test('rejects private_offline_readd RA-003 removed-window leakage', () {
+      final leaked = _validPrivateOfflineReaddVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceDuringCharlieRemoval',
+            'ra003-a-during',
+            'alice during offline charlie removal',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'aliceAfterImmediateReadd',
+            'ra003-a-after',
+            'alice after offline readd',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'bobAfterOfflineReadd',
+            'ra003-b-after',
+            'bob after offline readd',
+            'bob-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceDuringCharlieRemoval': 1,
+          'aliceAfterImmediateReadd': 1,
+          'bobAfterOfflineReadd': 1,
+        },
+        'ra003OfflineReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ra003OfflineReaddProof'] as Map,
+          ),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_offline_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: unexpected received proof keys aliceDuringCharlieRemoval',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: ra003OfflineReaddProof.removedWindowPlaintextCount must be 0',
+        ),
+      );
+    });
+
+    test('rejects private_readd_current without KE-008 activation proof', () {
+      final missingProof = _validPrivateReaddCurrentVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ke008ReaddActivationProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing KE-008 re-add activation proof fields'),
+      );
+    });
+
+    test(
+      'rejects private_readd_current Charlie rejoin without current key',
+      () {
+        final staleActivation = _validPrivateReaddCurrentVerdicts();
+        staleActivation[2] = {
+          ...staleActivation[2],
+          'keyEpoch': 1,
+          'ke008ReaddActivationProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              staleActivation[2]['ke008ReaddActivationProof'] as Map,
+            ),
+            'importedCurrentEpochBeforeRejoinAck': false,
+            'epochBeforeRejoinAck': 1,
+            'hasCurrentEpochBeforePostReaddPublish': false,
+            'postReaddPublishEpoch': 1,
+            'hasStaleEpochAfterReadd': true,
+            'finalEpoch': 1,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: staleActivation,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('importedCurrentEpochBeforeRejoinAck must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains('hasCurrentEpochBeforePostReaddPublish must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains('hasStaleEpochAfterReadd must be false'),
+        );
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: ke008ReaddActivationProof.finalEpoch must be >= 2',
+          ),
+        );
+      },
+    );
+
+    test(
+      'rejects private_readd_current without KE-010 key-before-config proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ke010KeyBeforeConfigProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing KE-010 key-before-config proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current KE-010 pre-config plaintext leak', () {
+      final leaked = _validPrivateReaddCurrentVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'ke010KeyBeforeConfigProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ke010KeyBeforeConfigProof'] as Map,
+          ),
+          'noPreConfigPlaintextDespiteKey': false,
+          'receivedBobPostConfigAtCurrentEpoch': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('noPreConfigPlaintextDespiteKey must be true'),
+      );
+      expect(
+        rejected.detail,
+        contains('receivedBobPostConfigAtCurrentEpoch must be true'),
+      );
+    });
+
+    test(
+      'rejects private_readd_current without KE-011 delayed old key proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ke011DelayedOldKeyAfterReaddProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing KE-011 delayed old key proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current KE-011 Charlie downgrade', () {
+      final downgraded = _validPrivateReaddCurrentVerdicts();
+      downgraded[2] = {
+        ...downgraded[2],
+        'keyEpoch': 1,
+        'ke011DelayedOldKeyAfterReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            downgraded[2]['ke011DelayedOldKeyAfterReaddProof'] as Map,
+          ),
+          'keptCurrentEpochAfterDelayedOldKey': false,
+          'storedDelayedOldKeyAsHistorical': false,
+          'epochAfterDelayedOldKey': 1,
+          'finalEpoch': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: downgraded,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('keptCurrentEpochAfterDelayedOldKey must be true'),
+      );
+      expect(rejected.detail, contains('epochAfterDelayedOldKey must be >= 2'));
+    });
+
+    test(
+      'rejects private_readd_current without RA-006 delayed old key proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ra006DelayedOldKeyAfterReaddProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing RA-006 delayed old key proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current RA-006 Charlie downgrade', () {
+      final downgraded = _validPrivateReaddCurrentVerdicts();
+      downgraded[2] = {
+        ...downgraded[2],
+        'keyEpoch': 1,
+        'ra006DelayedOldKeyAfterReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            downgraded[2]['ra006DelayedOldKeyAfterReaddProof'] as Map,
+          ),
+          'keptCurrentEpochAfterDelayedOldKey': false,
+          'storedDelayedOldKeyAsHistorical': false,
+          'epochAfterDelayedOldKey': 1,
+          'finalEpoch': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: downgraded,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('keptCurrentEpochAfterDelayedOldKey must be true'),
+      );
+      expect(rejected.detail, contains('epochAfterDelayedOldKey must be >= 2'));
+    });
+
+    test('rejects private_readd_current without RA-007 observer proof', () {
+      final missingProof = _validPrivateReaddCurrentVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('ra007PartitionedObserverReaddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing RA-007 partitioned observer proof fields'),
+      );
+    });
+
+    test('rejects private_readd_current RA-007 Bob non-convergence', () {
+      final nonConverged = _validPrivateReaddCurrentVerdicts();
+      nonConverged[1] = {
+        ...nonConverged[1],
+        'memberPeerIds': <String>['alice-peer', 'bob-peer'],
+        'ra007PartitionedObserverReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            nonConverged[1]['ra007PartitionedObserverReaddProof'] as Map,
+          ),
+          'observedCharlieReadded': false,
+          'receivedCharliePostHealAtCurrentEpoch': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: nonConverged,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('observedCharlieReadded must be true'));
+      expect(
+        rejected.detail,
+        contains('receivedCharliePostHealAtCurrentEpoch must be true'),
+      );
+    });
+
+    test(
+      'rejects private_readd_current without RA-008 removed peer partition proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ra008PartitionedRemovedReaddProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: missing RA-008 removed peer partition proof fields',
+          ),
+        );
+      },
+    );
+
+    test('rejects private_readd_current RA-008 removed-window leakage', () {
+      final leaked = _validPrivateReaddCurrentVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'ra008PartitionedRemovedReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ra008PartitionedRemovedReaddProof'] as Map,
+          ),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: ra008PartitionedRemovedReaddProof.removedWindowPlaintextCount must be 0',
+        ),
+      );
+    });
+
+    test(
+      'rejects private_readd_current without RA-009 first publish proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+          ..remove('ra009FirstReaddPublishProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('bob: missing RA-009 first re-add publish proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current RA-009 missing Bob visibility', () {
+      final missingVisibility = _validPrivateReaddCurrentVerdicts();
+      missingVisibility[1] = {
+        ...missingVisibility[1],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceDuringCharlieRemoval',
+            'ml007-a-during',
+            'alice during charlie removal',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'aliceAfterImmediateReadd',
+            'ml007-a-after',
+            'alice after immediate readd',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceDuringCharlieRemoval': 1,
+          'aliceAfterImmediateReadd': 1,
+        },
+        'ra009FirstReaddPublishProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingVisibility[1]['ra009FirstReaddPublishProof'] as Map,
+          ),
+          'receivedCharlieFirstPostReaddAtCurrentEpoch': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingVisibility,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing received proof keys charlieAfterImmediateReadd'),
+      );
+      expect(
+        rejected.detail,
+        contains('receivedCharlieFirstPostReaddAtCurrentEpoch must be true'),
+      );
+    });
+
+    test(
+      'rejects private_readd_current without RA-010 incoming restart proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ra010ReaddIncomingRestartProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing RA-010 incoming restart proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current RA-010 lost post-restart delivery', () {
+      final lostRestartDelivery = _validPrivateReaddCurrentVerdicts();
+      lostRestartDelivery[2] = {
+        ...lostRestartDelivery[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceAfterImmediateReadd',
+            'ml007-a-after',
+            'alice after immediate readd',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'bobAfterReaddCurrent',
+            'ml007-b-after',
+            'bob after readd current',
+            'bob-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceAfterImmediateReadd': 1,
+          'bobAfterReaddCurrent': 1,
+        },
+        'ra010ReaddIncomingRestartProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            lostRestartDelivery[2]['ra010ReaddIncomingRestartProof'] as Map,
+          ),
+          'receivedSecondIncomingAfterRestartAtCurrentEpoch': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: lostRestartDelivery,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: missing received proof keys aliceAfterCharlieRestart',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'receivedSecondIncomingAfterRestartAtCurrentEpoch must be true',
+        ),
+      );
+    });
+
+    test(
+      'rejects private_readd_current without RA-014 old-key publish proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ra014OldKeyPublishAfterReaddProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing RA-014 old-key publish proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current RA-014 stale publish acceptance', () {
+      final staleAccepted = _validPrivateReaddCurrentVerdicts();
+      staleAccepted[2] = {
+        ...staleAccepted[2],
+        'ra014OldKeyPublishAfterReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            staleAccepted[2]['ra014OldKeyPublishAfterReaddProof'] as Map,
+          ),
+          'oldKeyPublishRejected': false,
+          'staleEpoch': 2,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: staleAccepted,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('oldKeyPublishRejected must be true'));
+      expect(rejected.detail, contains('staleEpoch must be lower than 2'));
+    });
+
+    test(
+      'rejects private_readd_current without RA-015 already-joined refresh proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ra015AlreadyJoinedReaddRefreshProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: missing RA-015 already-joined re-add proof fields',
+          ),
+        );
+      },
+    );
+
+    test('rejects private_readd_current RA-015 missing current delivery', () {
+      final noDelivery = _validPrivateReaddCurrentVerdicts();
+      noDelivery[2] = {
+        ...noDelivery[2],
+        'ra015AlreadyJoinedReaddRefreshProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            noDelivery[2]['ra015AlreadyJoinedReaddRefreshProof'] as Map,
+          ),
+          'receivedAlicePostRefreshAtCurrentEpoch': false,
+          'finalEpoch': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: noDelivery,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('receivedAlicePostRefreshAtCurrentEpoch must be true'),
+      );
+      expect(rejected.detail, contains('finalEpoch must be >= 2'));
+    });
+
+    test(
+      'RA-016 accepts private_readd_current removed-interval replay proof',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateReaddCurrentVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_readd_current verdicts valid'),
+        );
+      },
+    );
+
+    test(
+      'RA-016 rejects private_readd_current without removed-interval replay proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ra016RemovedIntervalReplayProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains(
+            'charlie: missing RA-016 removed-interval replay proof fields',
+          ),
+        );
+      },
+    );
+
+    test(
+      'RA-016 rejects private_readd_current Charlie removed-window leakage',
+      () {
+        final leaked = _validPrivateReaddCurrentVerdicts();
+        leaked[2] = {
+          ...leaked[2],
+          'ra016RemovedIntervalReplayProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              leaked[2]['ra016RemovedIntervalReplayProof'] as Map,
+            ),
+            'removedWindowPlaintextCount': 1,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: leaked,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('removedWindowPlaintextCount must be 0'),
+        );
+      },
+    );
+
+    test(
+      'RA-016 rejects private_readd_current missing host direct fake-network coverage',
+      () {
+        final missingHostCoverage = _validPrivateReaddCurrentVerdicts();
+        missingHostCoverage[0] = {
+          ...missingHostCoverage[0],
+          'ra016RemovedIntervalReplayProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              missingHostCoverage[0]['ra016RemovedIntervalReplayProof'] as Map,
+            ),
+            'hostDirectRemovedIntervalReplayCovered': false,
+          },
+        };
+        missingHostCoverage[1] = {
+          ...missingHostCoverage[1],
+          'ra016RemovedIntervalReplayProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              missingHostCoverage[1]['ra016RemovedIntervalReplayProof'] as Map,
+            ),
+            'hostFakeNetworkRemovedIntervalReplayCovered': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingHostCoverage,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('hostDirectRemovedIntervalReplayCovered must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains('hostFakeNetworkRemovedIntervalReplayCovered must be true'),
+        );
+      },
+    );
+
+    test(
+      'RA-016 rejects private_readd_current missing live current delivery',
+      () {
+        final missingDelivery = _validPrivateReaddCurrentVerdicts();
+        missingDelivery[2] = {
+          ...missingDelivery[2],
+          'ra016RemovedIntervalReplayProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              missingDelivery[2]['ra016RemovedIntervalReplayProof'] as Map,
+            ),
+            'receivedBobPostReaddCurrent': false,
+            'livePostReaddCurrentDeliveryCovered': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingDelivery,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('livePostReaddCurrentDeliveryCovered must be true'),
+        );
+        expect(
+          rejected.detail,
+          contains('receivedBobPostReaddCurrent must be true'),
+        );
+      },
+    );
+
+    test('RA-016 rejects private_readd_current final epoch mismatch', () {
+      final epochMismatch = _validPrivateReaddCurrentVerdicts();
+      epochMismatch[1] = {
+        ...epochMismatch[1],
+        'ra016RemovedIntervalReplayProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            epochMismatch[1]['ra016RemovedIntervalReplayProof'] as Map,
+          ),
+          'finalEpoch': 3,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: epochMismatch,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('RA-016 finalEpoch mismatch'));
+    });
+
+    test('rejects RA-011 missing late leave repair proof', () {
+      final missingProof = _validRa011LateLeaveReaddVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ra011LateLeaveReaddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_late_leave_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing RA-011 late leave re-add proof fields'),
+      );
+    });
+
+    test('rejects RA-011 late leave without repair join', () {
+      final stranded = _validRa011LateLeaveReaddVerdicts();
+      stranded[2] = {
+        ...stranded[2],
+        'ra011LateLeaveReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            stranded[2]['ra011LateLeaveReaddProof'] as Map,
+          ),
+          'lateLeaveRepairJoinCompleted': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_late_leave_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: stranded,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: ra011LateLeaveReaddProof.lateLeaveRepairJoinCompleted must be true',
+        ),
+      );
+    });
+
+    test('rejects RA-012 missing rotated material proof', () {
+      final missingProof = _validRa012RotatedDeviceReaddVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('ra012RotatedDeviceReaddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rotated_device_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing RA-012 rotated device re-add proof fields'),
+      );
+    });
+
+    test('rejects RA-012 retained old device material', () {
+      final retainedOldMaterial = _validRa012RotatedDeviceReaddVerdicts();
+      retainedOldMaterial[2] = {
+        ...retainedOldMaterial[2],
+        'ra012RotatedDeviceReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            retainedOldMaterial[2]['ra012RotatedDeviceReaddProof'] as Map,
+          ),
+          'oldDeviceMaterialRetained': true,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rotated_device_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: retainedOldMaterial,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: ra012RotatedDeviceReaddProof.oldDeviceMaterialRetained must be false',
+        ),
+      );
+    });
+
+    test(
+      'rejects private_readd_current without KE-012 delayed old config proof',
+      () {
+        final missingProof = _validPrivateReaddCurrentVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ke012DelayedOldConfigAfterReaddProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing KE-012 delayed old config proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_readd_current KE-012 active member loss', () {
+      final activeLoss = _validPrivateReaddCurrentVerdicts();
+      activeLoss[1] = {
+        ...activeLoss[1],
+        'ke012DelayedOldConfigAfterReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            activeLoss[1]['ke012DelayedOldConfigAfterReaddProof'] as Map,
+          ),
+          'keptActiveAfterDelayedOldConfig': false,
+        },
+      };
+      activeLoss[2] = {
+        ...activeLoss[2],
+        'keyEpoch': 1,
+        'ke012DelayedOldConfigAfterReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            activeLoss[2]['ke012DelayedOldConfigAfterReaddProof'] as Map,
+          ),
+          'keptFinalMembersAfterDelayedOldConfig': false,
+          'keptCurrentEpochAfterDelayedOldConfig': false,
+          'epochAfterDelayedOldConfig': 1,
+          'finalEpoch': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: activeLoss,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('keptActiveAfterDelayedOldConfig must be true'),
+      );
+      expect(
+        rejected.detail,
+        contains('keptFinalMembersAfterDelayedOldConfig must be true'),
+      );
+      expect(
+        rejected.detail,
+        contains('epochAfterDelayedOldConfig must be >= 2'),
+      );
+    });
+
+    test('rejects private_readd_current Charlie removed-window plaintext', () {
+      final leaked = _validPrivateReaddCurrentVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceDuringCharlieRemoval',
+            'ml007-a-during',
+            'alice during charlie removal',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'aliceAfterImmediateReadd',
+            'ml007-a-after',
+            'alice after immediate readd',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'bobAfterReaddCurrent',
+            'ml007-b-after',
+            'bob after readd current',
+            'bob-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceDuringCharlieRemoval': 1,
+          'aliceAfterImmediateReadd': 1,
+          'bobAfterReaddCurrent': 1,
+        },
+        'ml007ReaddCurrentProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml007ReaddCurrentProof'] as Map,
+          ),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: unexpected received proof keys aliceDuringCharlieRemoval',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains('removedWindowPlaintextCount must be 0'),
+      );
+    });
+
+    test('rejects private_readd_current Charlie stale epoch after re-add', () {
+      final stale = _validPrivateReaddCurrentVerdicts();
+      stale[2] = {
+        ...stale[2],
+        'keyEpoch': 1,
+        'ml007ReaddCurrentProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            stale[2]['ml007ReaddCurrentProof'] as Map,
+          ),
+          'hasStaleEpochAfterReadd': true,
+          'finalEpoch': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: stale,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('hasStaleEpochAfterReadd must be false'),
+      );
+      expect(rejected.detail, contains('finalEpoch must be >= 2'));
+    });
+
+    test('rejects private_readd_current missing Bob delivery to Charlie', () {
+      final missingDelivery = _validPrivateReaddCurrentVerdicts();
+      missingDelivery[2] = {
+        ...missingDelivery[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceAfterImmediateReadd',
+            'ml007-a-after',
+            'alice after immediate readd',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceAfterImmediateReadd': 1,
+        },
+        'ml007ReaddCurrentProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingDelivery[2]['ml007ReaddCurrentProof'] as Map,
+          ),
+          'receivedBobPostReaddMessage': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDelivery,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('charlie: missing received proof keys'));
+      expect(rejected.detail, contains('bobAfterReaddCurrent'));
+      expect(
+        rejected.detail,
+        contains('receivedBobPostReaddMessage must be true'),
+      );
+    });
+
+    test('rejects private_readd_cycles without ML-008 proof fields', () {
+      final missingProof = _validPrivateReaddCyclesVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ml008CycleProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing ML-008 cycle proof fields'),
+      );
+    });
+
+    test('rejects private_readd_cycles with fewer than 20 cycles', () {
+      final shortRun = _validPrivateReaddCyclesVerdicts();
+      shortRun[0] = {
+        ...shortRun[0],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(shortRun[0]['ml008CycleProof'] as Map),
+          'cycleCount': 19,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: shortRun,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('alice: ml008CycleProof.cycleCount must be 20'),
+      );
+    });
+
+    test('rejects private_readd_cycles without Bob exact member-row proof', () {
+      final missingExactRows = _validPrivateReaddCyclesVerdicts();
+      missingExactRows[1] = {
+        ...missingExactRows[1],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingExactRows[1]['ml008CycleProof'] as Map,
+          ),
+          'bobCharlieExactMemberRowCountProofs': 19,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingExactRows,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: ml008CycleProof.bobCharlieExactMemberRowCountProofs must be >= 20',
+        ),
+      );
+    });
+
+    test('rejects private_readd_cycles without enough restart markers', () {
+      final weakRestart = _validPrivateReaddCyclesVerdicts();
+      weakRestart[0] = {
+        ...weakRestart[0],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            weakRestart[0]['ml008CycleProof'] as Map,
+          ),
+          'restartMarkersObserved': 3,
+        },
+      };
+      weakRestart[1] = {
+        ...weakRestart[1],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            weakRestart[1]['ml008CycleProof'] as Map,
+          ),
+          'restartMarkersPerformed': 1,
+        },
+      };
+      weakRestart[2] = {
+        ...weakRestart[2],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            weakRestart[2]['ml008CycleProof'] as Map,
+          ),
+          'restartMarkersPerformed': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: weakRestart,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('restartMarkersObserved'));
+      expect(
+        rejected.detail,
+        contains('restartMarkersPerformed total must be >= 4'),
+      );
+    });
+
+    test('rejects private_readd_cycles Charlie removed-window plaintext', () {
+      final leaked = _validPrivateReaddCyclesVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(leaked[2]['ml008CycleProof'] as Map),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('removedWindowPlaintextCount must be 0'),
+      );
+    });
+
+    test('rejects private_readd_cycles missing post-readd delivery', () {
+      final missingDelivery = _validPrivateReaddCyclesVerdicts();
+      missingDelivery[0] = {
+        ...missingDelivery[0],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingDelivery[0]['ml008CycleProof'] as Map,
+          ),
+          'receivedCharliePostReaddCount': 19,
+        },
+      };
+      missingDelivery[2] = {
+        ...missingDelivery[2],
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingDelivery[2]['ml008CycleProof'] as Map,
+          ),
+          'receivedAlicePostReaddCount': 19,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDelivery,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'alice: ml008CycleProof.receivedCharliePostReaddCount must be >= 20',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: ml008CycleProof.receivedAlicePostReaddCount must be >= 20',
+        ),
+      );
+    });
+
+    test('rejects private_readd_cycles final epoch divergence', () {
+      final divergent = _validPrivateReaddCyclesVerdicts();
+      divergent[2] = {
+        ...divergent[2],
+        'keyEpoch': 19,
+        'ml008CycleProof': <String, Object?>{
+          ...Map<String, Object?>.from(divergent[2]['ml008CycleProof'] as Map),
+          'finalEpoch': 19,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_cycles',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: divergent,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: ml008CycleProof.finalEpoch must be >= 20'),
+      );
+      expect(rejected.detail, contains('ML-008 finalEpoch mismatch'));
+    });
+
+    test('accepts private_rapid_readd ML-009 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rapid_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateRapidReaddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(verdict.detail, contains('private_rapid_readd verdicts valid'));
+    });
+
+    test('rejects private_rapid_readd without ML-009 proof fields', () {
+      final missingProof = _validPrivateRapidReaddVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ml009RapidReaddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rapid_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing ML-009 rapid re-add proof fields'),
+      );
+    });
+
+    test('rejects private_rapid_readd without rapid ordering proof', () {
+      final weakOrdering = _validPrivateRapidReaddVerdicts();
+      weakOrdering[0] = {
+        ...weakOrdering[0],
+        'ml009RapidReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            weakOrdering[0]['ml009RapidReaddProof'] as Map,
+          ),
+          'readdIssuedBeforeRemovalAcks': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rapid_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: weakOrdering,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('readdIssuedBeforeRemovalAcks'));
+    });
+
+    test('rejects private_rapid_readd stale remove application', () {
+      final staleRemove = _validPrivateRapidReaddVerdicts();
+      staleRemove[1] = {
+        ...staleRemove[1],
+        'memberPeerIds': const <String>['alice-peer', 'bob-peer'],
+        'activeMemberPeerIds': const <String>['alice-peer', 'bob-peer'],
+        'ml009RapidReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            staleRemove[1]['ml009RapidReaddProof'] as Map,
+          ),
+          'memberListIncludesCharlie': false,
+          'staleRemoveIgnored': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rapid_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: staleRemove,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('memberListIncludesCharlie'));
+      expect(rejected.detail, contains('staleRemoveIgnored'));
+    });
+
+    test('rejects private_rapid_readd Charlie removed-window plaintext', () {
+      final leaked = _validPrivateRapidReaddVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceDuringRapidRemove',
+            'ml009-a-during',
+            'alice during rapid remove',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'alicePostRapidReadd',
+            'ml009-a-after',
+            'alice after rapid readd',
+            'alice-peer',
+            keyEpoch: 3,
+          ),
+          _received(
+            'bobPostRapidReadd',
+            'ml009-b-after',
+            'bob after rapid readd',
+            'bob-peer',
+            keyEpoch: 3,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceDuringRapidRemove': 1,
+          'alicePostRapidReadd': 1,
+          'bobPostRapidReadd': 1,
+        },
+        'ml009RapidReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml009RapidReaddProof'] as Map,
+          ),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rapid_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('unexpected received proof keys aliceDuringRapidRemove'),
+      );
+      expect(
+        rejected.detail,
+        contains('removedWindowPlaintextCount must be 0'),
+      );
+    });
+
+    test('rejects private_rapid_readd missing Bob delivery to Charlie', () {
+      final missingDelivery = _validPrivateRapidReaddVerdicts();
+      missingDelivery[2] = {
+        ...missingDelivery[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'alicePostRapidReadd',
+            'ml009-a-after',
+            'alice after rapid readd',
+            'alice-peer',
+            keyEpoch: 3,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{'alicePostRapidReadd': 1},
+        'ml009RapidReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingDelivery[2]['ml009RapidReaddProof'] as Map,
+          ),
+          'receivedBobPostReaddMessage': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rapid_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDelivery,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing received proof keys bobPostRapidReadd'),
+      );
+      expect(rejected.detail, contains('receivedBobPostReaddMessage'));
+    });
+
+    test('rejects private_rapid_readd final epoch divergence', () {
+      final divergent = _validPrivateRapidReaddVerdicts();
+      divergent[2] = {
+        ...divergent[2],
+        'keyEpoch': 1,
+        'ml009RapidReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            divergent[2]['ml009RapidReaddProof'] as Map,
+          ),
+          'hasStaleEpochAfterReadd': true,
+          'finalEpoch': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_rapid_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: divergent,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('hasStaleEpochAfterReadd must be false'),
+      );
+      expect(
+        rejected.detail,
+        contains('charlie: ml009RapidReaddProof.finalEpoch must be >= 2'),
+      );
+      expect(rejected.detail, contains('ML-009 finalEpoch mismatch'));
+    });
+
+    test('accepts private_concurrent_admin_membership_edits ML-012 proof', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_concurrent_admin_membership_edits',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateConcurrentAdminMembershipVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_concurrent_admin_membership_edits verdicts valid'),
+      );
+    });
+
+    test('rejects private_concurrent_admin_membership_edits missing proof', () {
+      final missingProof = _validPrivateConcurrentAdminMembershipVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('ml012ConcurrentAdminEditsProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_concurrent_admin_membership_edits',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing ML-012 concurrent-admin proof fields'),
+      );
+    });
+
+    test(
+      'rejects private_concurrent_admin_membership_edits wrong row or app peer metadata',
+      () {
+        final wrongMetadata = _validPrivateConcurrentAdminMembershipVerdicts();
+        wrongMetadata[0] = {
+          ...wrongMetadata[0],
+          'ml012ConcurrentAdminEditsProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              wrongMetadata[0]['ml012ConcurrentAdminEditsProof'] as Map,
+            ),
+            'rowId': 'ML-013',
+            'appPeerPlatform': 'ios_26_4_core_simulator',
+            'concurrentAdminProofSource': 'fake_network',
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_concurrent_admin_membership_edits',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: wrongMetadata,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('rowId must be ML-012'));
+        expect(rejected.detail, contains('appPeerPlatform'));
+        expect(rejected.detail, contains('concurrentAdminProofSource'));
+      },
+    );
+
+    test(
+      'rejects private_concurrent_admin_membership_edits missing delivery order',
+      () {
+        final weak = _validPrivateConcurrentAdminMembershipVerdicts();
+        weak[0] = {
+          ...weak[0],
+          'ml012ConcurrentAdminEditsProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              weak[0]['ml012ConcurrentAdminEditsProof'] as Map,
+            ),
+            'deliveryOrdersTested': const <String>['add_then_remove'],
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_concurrent_admin_membership_edits',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: weak,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('deliveryOrdersTested'));
+      },
+    );
+
+    test(
+      'rejects private_concurrent_admin_membership_edits member divergence',
+      () {
+        final divergent = _validPrivateConcurrentAdminMembershipVerdicts();
+        divergent[3] = {
+          ...divergent[3],
+          'memberPeerIds': const <String>['alice-peer', 'bob-peer'],
+          'activeMemberPeerIds': const <String>['alice-peer', 'bob-peer'],
+          'ml012ConcurrentAdminEditsProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              divergent[3]['ml012ConcurrentAdminEditsProof'] as Map,
+            ),
+            'finalMemberPeerIds': const <String>['alice-peer', 'bob-peer'],
+            'independentAddPreserved': false,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_concurrent_admin_membership_edits',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: divergent,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('finalMemberPeerIds'));
+        expect(rejected.detail, contains('independentAddPreserved'));
+      },
+    );
+
+    test(
+      'rejects private_concurrent_admin_membership_edits config hash mismatch',
+      () {
+        final divergent = _validPrivateConcurrentAdminMembershipVerdicts();
+        divergent[1] = {
+          ...divergent[1],
+          'ml012ConcurrentAdminEditsProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              divergent[1]['ml012ConcurrentAdminEditsProof'] as Map,
+            ),
+            'finalConfigStateHash': 'different-hash',
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_concurrent_admin_membership_edits',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: divergent,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('finalConfigStateHash mismatch'));
+      },
+    );
+
+    test('accepts private_timeline_truth ML-015 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateTimelineTruthVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(verdict.detail, contains('private_timeline_truth verdicts valid'));
+    });
+
+    test('rejects private_timeline_truth without ML-015 proof fields', () {
+      final missingProof = _validPrivateTimelineTruthVerdicts();
+      missingProof[1] = Map<String, dynamic>.from(missingProof[1])
+        ..remove('ml015TimelineTruthProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('bob: missing ML-015 timeline-truth proof fields'),
+      );
+    });
+
+    test('rejects private_timeline_truth timeline/member divergence', () {
+      final divergent = _validPrivateTimelineTruthVerdicts();
+      divergent[1] = {
+        ...divergent[1],
+        'memberPeerIds': const <String>['alice-peer', 'bob-peer'],
+        'activeMemberPeerIds': const <String>['alice-peer', 'bob-peer'],
+        'ml015TimelineTruthProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            divergent[1]['ml015TimelineTruthProof'] as Map,
+          ),
+          'timelineOrderMatchesMembershipIntervals': false,
+          'memberListIncludesCharlie': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: divergent,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('timelineOrderMatchesMembershipIntervals must be true'),
+      );
+      expect(rejected.detail, contains('memberListIncludesCharlie'));
+    });
+
+    test('rejects private_timeline_truth removed-window leak to Charlie', () {
+      final leaked = _validPrivateTimelineTruthVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceBeforeTimelineRemoval',
+            'ml015-a-before',
+            'alice before removal',
+            'alice-peer',
+            keyEpoch: 1,
+          ),
+          _received(
+            'aliceDuringTimelineRemoval',
+            'ml015-a-window',
+            'alice removed window',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+          _received(
+            'alicePostTimelineReadd',
+            'ml015-a-after',
+            'alice after readd',
+            'alice-peer',
+            keyEpoch: 3,
+          ),
+          _received(
+            'bobPostTimelineReadd',
+            'ml015-b-after',
+            'bob after readd',
+            'bob-peer',
+            keyEpoch: 3,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceBeforeTimelineRemoval': 1,
+          'aliceDuringTimelineRemoval': 1,
+          'alicePostTimelineReadd': 1,
+          'bobPostTimelineReadd': 1,
+        },
+        'ml015TimelineTruthProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml015TimelineTruthProof'] as Map,
+          ),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('unexpected received proof keys aliceDuringTimelineRemoval'),
+      );
+      expect(
+        rejected.detail,
+        contains('removedWindowPlaintextCount must be 0'),
+      );
+    });
+
+    test('rejects private_timeline_truth final epoch divergence', () {
+      final divergent = _validPrivateTimelineTruthVerdicts();
+      divergent[2] = {
+        ...divergent[2],
+        'keyEpoch': 1,
+        'ml015TimelineTruthProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            divergent[2]['ml015TimelineTruthProof'] as Map,
+          ),
+          'hasStaleEpochAfterReadd': true,
+          'finalEpoch': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_timeline_truth',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: divergent,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('hasStaleEpochAfterReadd must be false'),
+      );
+      expect(
+        rejected.detail,
+        contains('charlie: ml015TimelineTruthProof.finalEpoch must be >= 2'),
+      );
+      expect(rejected.detail, contains('ML-015 finalEpoch mismatch'));
+    });
+
+    test('accepts private_history_retention ML-017 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_history_retention',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateHistoryRetentionVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_history_retention verdicts valid'),
+      );
+    });
+
+    test('rejects private_history_retention without ML-017 proof fields', () {
+      final missingProof = _validPrivateHistoryRetentionVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ml017HistoryRetentionProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_history_retention',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing ML-017 history-retention proof fields'),
+      );
+    });
+
+    test('rejects private_history_retention missing old history', () {
+      final missingHistory = _validPrivateHistoryRetentionVerdicts();
+      missingHistory[2] = {
+        ...missingHistory[2],
+        'receivedMessages': const <Map<String, Object?>>[],
+        'persistedMessageCounts': const <String, int>{},
+        'ml017HistoryRetentionProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingHistory[2]['ml017HistoryRetentionProof'] as Map,
+          ),
+          'retainedPreRemovalHistory': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_history_retention',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingHistory,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('missing received proof keys aliceBeforeHistoryRemoval'),
+      );
+      expect(rejected.detail, contains('retainedPreRemovalHistory'));
+    });
+
+    test('rejects private_history_retention post-removal leak', () {
+      final leaked = _validPrivateHistoryRetentionVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceBeforeHistoryRemoval',
+            'ml017-a-before',
+            'alice before removal',
+            'alice-peer',
+            keyEpoch: 1,
+          ),
+          _received(
+            'alicePostHistoryRemoval',
+            'ml017-a-after',
+            'alice after removal',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceBeforeHistoryRemoval': 1,
+          'alicePostHistoryRemoval': 1,
+        },
+        'ml017HistoryRetentionProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml017HistoryRetentionProof'] as Map,
+          ),
+          'receivedAlicePostRemovalMessage': true,
+          'postRemovalPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_history_retention',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('unexpected received proof keys alicePostHistoryRemoval'),
+      );
+      expect(rejected.detail, contains('postRemovalPlaintextCount must be 0'));
+    });
+
+    test('rejects private_history_retention accepted Charlie send', () {
+      final acceptedSend = _validPrivateHistoryRetentionVerdicts();
+      acceptedSend[2] = {
+        ...acceptedSend[2],
+        'sentMessages': const <Map<String, Object?>>[
+          {
+            'key': 'charliePostHistoryRemoval',
+            'messageId': 'ml017-c-after',
+            'text': 'charlie after removal',
+            'outcome': 'success',
+            'senderPeerId': 'charlie-peer',
+            'keyEpoch': 1,
+          },
+        ],
+        'ml017HistoryRetentionProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            acceptedSend[2]['ml017HistoryRetentionProof'] as Map,
+          ),
+          'postRemovalPublishAccepted': true,
+          'postRemovalSendRejected': false,
+          'postRemovalSendOutcome': 'success',
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_history_retention',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: acceptedSend,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('postRemovalPublishAccepted must be false'),
+      );
+      expect(rejected.detail, contains('postRemovalSendOutcome'));
+    });
+
+    test('accepts private_invite_terminal_states ML-018 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_invite_terminal_states',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateInviteTerminalStatesVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_invite_terminal_states verdicts valid'),
+      );
+    });
+
+    test(
+      'rejects private_invite_terminal_states without ML-018 proof fields',
+      () {
+        final missingProof = _validPrivateInviteTerminalStatesVerdicts();
+        missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+          ..remove('ml018InviteTerminalProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_invite_terminal_states',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('charlie: missing ML-018 invite-terminal proof fields'),
+        );
+      },
+    );
+
+    test('rejects private_invite_terminal_states post-terminal leak', () {
+      final leaked = _validPrivateInviteTerminalStatesVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceAfterInviteTerminalStates',
+            'ml018-a-after',
+            'alice after invite terminal states',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceAfterInviteTerminalStates': 1,
+        },
+        'ml018InviteTerminalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml018InviteTerminalProof'] as Map,
+          ),
+          'receivedAlicePostTerminalMessage': true,
+          'postTerminalPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_invite_terminal_states',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'unexpected received proof keys aliceAfterInviteTerminalStates',
+        ),
+      );
+      expect(rejected.detail, contains('postTerminalPlaintextCount must be 0'));
+    });
+
+    test('rejects private_invite_terminal_states accepted Charlie send', () {
+      final acceptedSend = _validPrivateInviteTerminalStatesVerdicts();
+      acceptedSend[2] = {
+        ...acceptedSend[2],
+        'sentMessages': const <Map<String, Object?>>[
+          {
+            'key': 'charlieAfterInviteTerminalStates',
+            'messageId': 'ml018-c-after',
+            'text': 'charlie after invite terminal states',
+            'outcome': 'success',
+            'senderPeerId': 'charlie-peer',
+            'keyEpoch': 1,
+          },
+        ],
+        'ml018InviteTerminalProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            acceptedSend[2]['ml018InviteTerminalProof'] as Map,
+          ),
+          'postTerminalPublishAccepted': true,
+          'postTerminalSendRejected': false,
+          'postTerminalSendOutcome': 'success',
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_invite_terminal_states',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: acceptedSend,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('postTerminalPublishAccepted must be false'),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'postTerminalSendOutcome must be groupNotFound or unauthorized',
+        ),
+      );
+    });
+
+    test(
+      'accepts private_stale_invite_readd ML-019 and KE-016 proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_stale_invite_readd',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateStaleInviteReaddVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue, reason: verdict.detail);
+        expect(
+          verdict.detail,
+          contains('private_stale_invite_readd verdicts valid'),
+        );
+      },
+    );
+
+    test('accepts private_stale_invite_readd RA-004 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_stale_invite_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateStaleInviteReaddVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_stale_invite_readd verdicts valid'),
+      );
+    });
+
+    test('rejects private_stale_invite_readd without RA-004 proof', () {
+      final missingRa004 = _validPrivateStaleInviteReaddVerdicts();
+      missingRa004[2] = {...missingRa004[2]}
+        ..remove('ra004StaleInviteBeforeReaddProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_stale_invite_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingRa004,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('missing RA-004 stale invite proof fields'),
+      );
+    });
+
+    test('rejects private_stale_invite_readd RA-004 old accept success', () {
+      final staleAccepted = _validPrivateStaleInviteReaddVerdicts();
+      staleAccepted[2] = {
+        ...staleAccepted[2],
+        'ra004StaleInviteBeforeReaddProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            staleAccepted[2]['ra004StaleInviteBeforeReaddProof'] as Map,
+          ),
+          'oldAcceptBeforeCurrentRejected': false,
+          'oldAcceptResultBeforeCurrent': 'success',
+          'noGroupAfterOldAccept': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_stale_invite_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: staleAccepted,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('oldAcceptBeforeCurrentRejected'));
+      expect(
+        rejected.detail,
+        contains('oldAcceptResultBeforeCurrent must be revoked or notFound'),
+      );
+    });
+
+    test('rejects private_stale_invite_readd without KE-016 proof', () {
+      final missingKe016 = _validPrivateStaleInviteReaddVerdicts();
+      missingKe016[2] = {...missingKe016[2]}..remove('ke016StaleReinviteProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_stale_invite_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingKe016,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('missing KE-016 stale re-invite proof fields'),
+      );
+    });
+
+    test('rejects private_stale_invite_readd without stale reject proof', () {
+      final staleAccepted = _validPrivateStaleInviteReaddVerdicts();
+      staleAccepted[2] = {
+        ...staleAccepted[2],
+        'ml019StaleInviteProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            staleAccepted[2]['ml019StaleInviteProof'] as Map,
+          ),
+          'staleAcceptRejected': false,
+          'staleAcceptResult': 'success',
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_stale_invite_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: staleAccepted,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('staleAcceptRejected'));
+      expect(
+        rejected.detail,
+        contains('staleAcceptResult must be invalidPayload'),
+      );
+    });
+
+    test('rejects private_stale_invite_readd removed-window leak', () {
+      final leaked = _validPrivateStaleInviteReaddVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'receivedMessages': <Map<String, Object?>>[
+          _received(
+            'aliceDuringStaleInviteRemoval',
+            'ml019-a-during',
+            'alice during stale invite removal',
+            'alice-peer',
+            keyEpoch: 2,
+          ),
+        ],
+        'persistedMessageCounts': const <String, int>{
+          'aliceDuringStaleInviteRemoval': 1,
+        },
+        'ml019StaleInviteProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ml019StaleInviteProof'] as Map,
+          ),
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_stale_invite_readd',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'unexpected received proof keys aliceDuringStaleInviteRemoval',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains('removedWindowPlaintextCount must be 0'),
+      );
+    });
+
+    test('accepts private_stale_lower_key_update KE-003 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_stale_lower_key_update',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateStaleLowerKeyUpdateVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_stale_lower_key_update verdicts valid'),
+      );
+    });
+
+    test(
+      'rejects private_stale_lower_key_update downgrade after stale update',
+      () {
+        final downgraded = _validPrivateStaleLowerKeyUpdateVerdicts();
+        downgraded[1] = {
+          ...downgraded[1],
+          'keyEpoch': 4,
+          'ke003StaleLowerKeyUpdateProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              downgraded[1]['ke003StaleLowerKeyUpdateProof'] as Map,
+            ),
+            'keptEpochFiveAfterStale': false,
+            'epochAfterStale': 4,
+            'finalEpoch': 4,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_stale_lower_key_update',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: downgraded,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('keptEpochFiveAfterStale'));
+        expect(rejected.detail, contains('epochAfterStale must be 5'));
+        expect(rejected.detail, contains('finalEpoch must be 5'));
+      },
+    );
+
+    test('accepts private_same_epoch_key_conflict KE-005 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_same_epoch_key_conflict',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateSameEpochKeyConflictVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_same_epoch_key_conflict verdicts valid'),
+      );
+    });
+
+    test(
+      'rejects private_same_epoch_key_conflict replacement after conflict',
+      () {
+        final replaced = _validPrivateSameEpochKeyConflictVerdicts();
+        replaced[1] = {
+          ...replaced[1],
+          'ke005SameEpochKeyConflictProof': <String, Object?>{
+            ...Map<String, Object?>.from(
+              replaced[1]['ke005SameEpochKeyConflictProof'] as Map,
+            ),
+            'rejectedConflictingMaterial': false,
+            'keptOriginalEpochFiveAfterConflict': false,
+            'epochAfterConflict': 6,
+            'finalEpoch': 6,
+          },
+        };
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_same_epoch_key_conflict',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: replaced,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(rejected.detail, contains('rejectedConflictingMaterial'));
+        expect(rejected.detail, contains('keptOriginalEpochFiveAfterConflict'));
+        expect(rejected.detail, contains('epochAfterConflict must be 5'));
+        expect(rejected.detail, contains('finalEpoch must be 5'));
+      },
+    );
+
+    test('accepts private_partial_key_distribution KE-015 proof verdicts', () {
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partial_key_distribution',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivatePartialKeyDistributionVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue);
+      expect(
+        verdict.detail,
+        contains('private_partial_key_distribution verdicts valid'),
+      );
+    });
+
+    test('rejects partial key distribution without KE-015 proof fields', () {
+      final missingProof = _validPrivatePartialKeyDistributionVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ke015PartialKeyDistributionProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partial_key_distribution',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: missing KE-015 partial-key-distribution proof fields',
+        ),
+      );
+    });
+
+    test('rejects partial key distribution when sender promotes epoch', () {
+      final unblocked = _validPrivatePartialKeyDistributionVerdicts();
+      unblocked[0] = {
+        ...unblocked[0],
+        'keyEpoch': 2,
+        'sentMessages': const <Map<String, Object?>>[
+          {
+            'key': 'aliceAfterPartialKeyDistributionFailure',
+            'messageId': 'ke015-a-after',
+            'text': 'alice after partial distribution failure',
+            'outcome': 'success',
+            'senderPeerId': 'alice-peer',
+            'keyEpoch': 2,
+          },
+        ],
+        'ke015PartialKeyDistributionProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            unblocked[0]['ke015PartialKeyDistributionProof'] as Map,
+          ),
+          'rotationBlocked': false,
+          'keptSenderEpochAfterFailure': false,
+          'blockedKeyRotatedPublish': false,
+          'finalEpoch': 2,
+          'postFailureMessageEpoch': 2,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partial_key_distribution',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: unblocked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(rejected.detail, contains('rotationBlocked must be true'));
+      expect(rejected.detail, contains('finalEpoch must remain 1'));
+      expect(rejected.detail, contains('postFailureMessageEpoch must be 1'));
+    });
+
+    test('rejects partial key distribution when failed recipient is deaf', () {
+      final deaf = _validPrivatePartialKeyDistributionVerdicts();
+      deaf[2] = {
+        ...deaf[2],
+        'receivedMessages': const <Map<String, Object?>>[],
+        'persistedMessageCounts': const <String, int>{},
+        'ke015PartialKeyDistributionProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            deaf[2]['ke015PartialKeyDistributionProof'] as Map,
+          ),
+          'receivedPostFailureAtPreviousEpoch': false,
+          'notDeafAfterFailedKeyUpdate': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_partial_key_distribution',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: deaf,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: missing received proof keys aliceAfterPartialKeyDistributionFailure',
+        ),
       );
     });
 
@@ -6628,6 +12604,72 @@ void main() {
       expect(
         rejected.detail,
         contains('charlie: missing GM-007 history-boundary proof fields'),
+      );
+    });
+
+    test('rejects GM-007 without KE-018 replay-window proof', () {
+      final missingProof = _validGm007Verdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ke018HistoryReplayEpochWindowProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing KE-018 history replay epoch-window proof'),
+      );
+    });
+
+    test('rejects GM-007 without IR-005 re-add replay proof', () {
+      final missingProof = _validGm007Verdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('ir005ReaddReplayProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing IR-005 re-add replay proof'),
+      );
+    });
+
+    test('rejects IR-005 proof with Charlie removed-window replay', () {
+      final leaked = _validGm007Verdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'ir005ReaddReplayProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['ir005ReaddReplayProof'] as Map,
+          ),
+          'noRemovedWindowReplayAfterDrain': false,
+          'removedWindowPlaintextCount': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'gm007',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('noRemovedWindowReplayAfterDrain must be true'),
+      );
+      expect(
+        rejected.detail,
+        contains('ir005ReaddReplayProof.removedWindowPlaintextCount must be 0'),
       );
     });
 
@@ -8917,48 +14959,2947 @@ List<Map<String, dynamic>> _validGe013Verdicts() {
   ];
 }
 
+String _de002Key(int index) =>
+    'aliceSeq${(index + 1).toString().padLeft(3, '0')}';
+
+String _de002Text(int index) =>
+    'DE-002 rapid message ${(index + 1).toString().padLeft(3, '0')}';
+
+String _de002MessageId(int index) =>
+    'de002-a-${(index + 1).toString().padLeft(3, '0')}';
+
+String _de002Timestamp(int index) => DateTime.utc(
+  2026,
+  5,
+  12,
+  1,
+).add(Duration(microseconds: index)).toIso8601String();
+
+List<String> _de002Keys() =>
+    List<String>.generate(100, (index) => _de002Key(index));
+
+Map<String, Object?> _de002Proof({
+  required bool sender,
+  required List<String> orderedKeys,
+}) {
+  return <String, Object?>{
+    'rowId': 'DE-002',
+    if (sender) ...<String, Object?>{
+      'sentAllMessages': true,
+      'preservedSendOrder': true,
+      'timestampsStrictlyIncreasing': true,
+      'sentCount': orderedKeys.length,
+    } else ...<String, Object?>{
+      'receivedAllMessagesOnce': true,
+      'preservedPerSenderOrder': true,
+      'matchedSenderPeerId': true,
+      'timestampsStrictlyIncreasing': true,
+      'receivedCount': orderedKeys.length,
+      'expectedCount': 100,
+    },
+    'firstKey': orderedKeys.first,
+    'lastKey': orderedKeys.last,
+    'orderedKeys': orderedKeys,
+  };
+}
+
+List<Map<String, dynamic>> _validDe002Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  final keys = _de002Keys();
+  final sentMessages = List<Map<String, Object?>>.generate(
+    keys.length,
+    (index) => <String, Object?>{
+      'key': keys[index],
+      'messageId': _de002MessageId(index),
+      'groupId': 'de002-group',
+      'text': _de002Text(index),
+      'outcome': 'success',
+      'senderPeerId': 'alice-peer',
+      'keyEpoch': 1,
+      'timestamp': _de002Timestamp(index),
+    },
+  );
+  List<Map<String, Object?>> receivedMessages() =>
+      List<Map<String, Object?>>.generate(
+        keys.length,
+        (index) => _received(
+          keys[index],
+          _de002MessageId(index),
+          _de002Text(index),
+          'alice-peer',
+          groupId: 'de002-group',
+          keyEpoch: 1,
+          timestamp: _de002Timestamp(index),
+        ),
+      );
+  final counts = <String, int>{for (final key in keys) key: 1};
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'de002',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'de002-group',
+      memberPeerIds: members,
+      sentMessages: sentMessages,
+      extra: <String, Object?>{
+        'de002OrderedDeliveryProof': _de002Proof(
+          sender: true,
+          orderedKeys: keys,
+        ),
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de002',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'de002-group',
+      memberPeerIds: members,
+      receivedMessages: receivedMessages(),
+      persistedMessageCounts: counts,
+      extra: <String, Object?>{
+        'de002OrderedDeliveryProof': _de002Proof(
+          sender: false,
+          orderedKeys: keys,
+        ),
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de002',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'de002-group',
+      memberPeerIds: members,
+      receivedMessages: receivedMessages(),
+      persistedMessageCounts: counts,
+      extra: <String, Object?>{
+        'de002OrderedDeliveryProof': _de002Proof(
+          sender: false,
+          orderedKeys: keys,
+        ),
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validDe003Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const messageId = 'de003-explicit-id';
+  const text = 'DE-003 explicit id';
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'de003',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'de003-group',
+      memberPeerIds: members,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceExplicit',
+          'messageId': messageId,
+          'groupId': 'de003-group',
+          'text': text,
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 1,
+          'timestamp': '2026-05-12T03:00:00.000Z',
+        },
+      ],
+      extra: <String, Object?>{
+        'de003MessageIdProof': {
+          'rowId': 'DE-003',
+          'requestedMessageId': messageId,
+          'returnedMessageId': messageId,
+          'publishPathMessageIdPreserved': true,
+          'replayEnvelopeCoveredByHostGate': true,
+          'retryPathCoveredByHostGate': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de003',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'de003-group',
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceExplicit',
+          messageId,
+          text,
+          'alice-peer',
+          groupId: 'de003-group',
+          keyEpoch: 1,
+          timestamp: '2026-05-12T03:00:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceExplicit': 1},
+      extra: <String, Object?>{
+        'de003MessageIdProof': {
+          'rowId': 'DE-003',
+          'requestedMessageId': messageId,
+          'receivedMessageId': messageId,
+          'receivedExplicitMessageOnce': true,
+          'matchedRequestedMessageId': true,
+          'duplicateReplayDeduped': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de003',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'de003-group',
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceExplicit',
+          messageId,
+          text,
+          'alice-peer',
+          groupId: 'de003-group',
+          keyEpoch: 1,
+          timestamp: '2026-05-12T03:00:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceExplicit': 1},
+      extra: <String, Object?>{
+        'de003MessageIdProof': {
+          'rowId': 'DE-003',
+          'requestedMessageId': messageId,
+          'receivedMessageId': messageId,
+          'receivedExplicitMessageOnce': true,
+          'matchedRequestedMessageId': true,
+          'duplicateReplayDeduped': true,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validDe007Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const messageId = 'de007-zero-peer-id';
+  const text = 'DE-007 zero-peer durable fallback';
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'de007',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'de007-group',
+      memberPeerIds: members,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceZeroPeer',
+          'messageId': messageId,
+          'groupId': 'de007-group',
+          'text': text,
+          'outcome': 'successNoPeers',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 1,
+          'timestamp': '2026-05-12T04:00:00.000Z',
+        },
+      ],
+      extra: const <String, Object?>{
+        'de007ZeroPeerProof': <String, Object?>{
+          'rowId': 'DE-007',
+          'messageId': messageId,
+          'sendResultSuccessNoPeers': true,
+          'inboxStored': true,
+          'publishedBeforeReceiversJoined': true,
+          'activeRecipientsCovered': true,
+          'activeRecipientCount': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de007',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'de007-group',
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        {
+          ..._received(
+            'aliceZeroPeer',
+            messageId,
+            text,
+            'alice-peer',
+            groupId: 'de007-group',
+            keyEpoch: 1,
+            timestamp: '2026-05-12T04:00:00.000Z',
+          ),
+          'persistedCount': 1,
+        },
+      ],
+      persistedMessageCounts: const <String, int>{'aliceZeroPeer': 1},
+      extra: const <String, Object?>{
+        'de007ZeroPeerProof': <String, Object?>{
+          'rowId': 'DE-007',
+          'messageId': messageId,
+          'joinedAfterAliceSend': true,
+          'receivedViaOfflineReplay': true,
+          'receivedVisibleMessageOnce': true,
+          'matchedMessageId': true,
+          'matchedSenderPeerId': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de007',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'de007-group',
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        {
+          ..._received(
+            'aliceZeroPeer',
+            messageId,
+            text,
+            'alice-peer',
+            groupId: 'de007-group',
+            keyEpoch: 1,
+            timestamp: '2026-05-12T04:00:00.000Z',
+          ),
+          'persistedCount': 1,
+        },
+      ],
+      persistedMessageCounts: const <String, int>{'aliceZeroPeer': 1},
+      extra: const <String, Object?>{
+        'de007ZeroPeerProof': <String, Object?>{
+          'rowId': 'DE-007',
+          'messageId': messageId,
+          'joinedAfterAliceSend': true,
+          'receivedViaOfflineReplay': true,
+          'receivedVisibleMessageOnce': true,
+          'matchedMessageId': true,
+          'matchedSenderPeerId': true,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validDe017Verdicts() {
+  const remainingMembers = <String>['alice-peer', 'bob-peer'];
+  const groupId = 'de017-group';
+  const memberAddedAt = '2026-05-12T05:00:03.000Z';
+  const removalAt = '2026-05-12T05:00:11.000Z';
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'de017',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: remainingMembers,
+      extra: const <String, Object?>{
+        'de017MembershipOrderingProof': <String, Object?>{
+          'rowId': 'DE-017',
+          'removedPeerId': 'charlie-peer',
+          'addedCharlieBeforePublishingMemberEvent': true,
+          'publishedMemberEventAfterCharlieContent': true,
+          'removedCharlieAfterPostRemovalContent': true,
+          'bobConfirmedAddRepair': true,
+          'bobConfirmedRemovalRepair': true,
+          'memberListExcludesCharlie': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de017',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: remainingMembers,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'charliePostAddOutOfOrder',
+          'de017-post-add',
+          'DE-017 Charlie post-add before member event',
+          'charlie-peer',
+          groupId: groupId,
+          keyEpoch: 1,
+          timestamp: '2026-05-12T05:00:04.000Z',
+        ),
+        _received(
+          'charliePreRemovalBeforeEvent',
+          'de017-pre-removal',
+          'DE-017 Charlie pre-removal before event',
+          'charlie-peer',
+          groupId: groupId,
+          keyEpoch: 1,
+          timestamp: '2026-05-12T05:00:10.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'charliePostAddOutOfOrder': 1,
+        'charliePreRemovalBeforeEvent': 1,
+      },
+      extra: const <String, Object?>{
+        'de017MembershipOrderingProof': <String, Object?>{
+          'rowId': 'DE-017',
+          'removedPeerId': 'charlie-peer',
+          'memberAddedAt': memberAddedAt,
+          'removalAt': removalAt,
+          'bufferedContentBeforeMemberAdd': true,
+          'deliveredPostAddAfterMembership': true,
+          'retainedPreRemovalContent': true,
+          'repairedPostRemovalContent': true,
+          'memberListExcludesCharlie': true,
+          'postRemovalPersistedCountAfterRepair': 0,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'de017',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: remainingMembers,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charliePostAddOutOfOrder',
+          'messageId': 'de017-post-add',
+          'groupId': groupId,
+          'text': 'DE-017 Charlie post-add before member event',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 1,
+          'timestamp': '2026-05-12T05:00:04.000Z',
+        },
+        {
+          'key': 'charliePreRemovalBeforeEvent',
+          'messageId': 'de017-pre-removal',
+          'groupId': groupId,
+          'text': 'DE-017 Charlie pre-removal before event',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 1,
+          'timestamp': '2026-05-12T05:00:10.000Z',
+        },
+        {
+          'key': 'charliePostRemovalBeforeEvent',
+          'messageId': 'de017-post-removal',
+          'groupId': groupId,
+          'text': 'DE-017 Charlie post-removal before event',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 1,
+          'timestamp': '2026-05-12T05:00:12.000Z',
+        },
+      ],
+      extra: const <String, Object?>{
+        'de017MembershipOrderingProof': <String, Object?>{
+          'rowId': 'DE-017',
+          'removedPeerId': 'charlie-peer',
+          'memberAddedAt': memberAddedAt,
+          'removalAt': removalAt,
+          'sentPostAddBeforeMemberEvent': true,
+          'sentPreRemovalBeforeRemovalEvent': true,
+          'sentPostRemovalBeforeRemovalEvent': true,
+          'postRemovalAcceptedByLocalSend': true,
+          'selfRemovedAfterRemoval': true,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validIr001Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const groupId = 'ir001-group';
+  const missedKeys = <String>[
+    'aliceMissedWhileBobOffline1',
+    'aliceMissedWhileBobOffline2',
+    'aliceMissedWhileBobOffline3',
+  ];
+  const liveKey = 'aliceLiveAfterBobDrain';
+  const allKeys = <String>[...missedKeys, liveKey];
+  final missedSent = List<Map<String, Object?>>.generate(3, (index) {
+    final messageNumber = index + 1;
+    return <String, Object?>{
+      'key': missedKeys[index],
+      'messageId': 'ir001-missed-$messageNumber',
+      'groupId': groupId,
+      'text': 'IR-001 missed while Bob offline $messageNumber',
+      'outcome': 'success',
+      'senderPeerId': 'alice-peer',
+      'keyEpoch': 1,
+      'timestamp': '2026-05-12T06:00:0$messageNumber.000Z',
+    };
+  });
+  final liveSent = <String, Object?>{
+    'key': liveKey,
+    'messageId': 'ir001-live-after-drain',
+    'groupId': groupId,
+    'text': 'IR-001 live after Bob drain',
+    'outcome': 'success',
+    'senderPeerId': 'alice-peer',
+    'keyEpoch': 1,
+    'timestamp': '2026-05-12T06:00:10.000Z',
+  };
+  final sentMessages = <Map<String, Object?>>[...missedSent, liveSent];
+  final persistedCounts = <String, int>{for (final key in allKeys) key: 1};
+  final bobReceived = <Map<String, Object?>>[
+    for (var index = 0; index < missedKeys.length; index++)
+      <String, Object?>{
+        ..._received(
+          missedKeys[index],
+          'ir001-missed-${index + 1}',
+          'IR-001 missed while Bob offline ${index + 1}',
+          'alice-peer',
+          groupId: groupId,
+          keyEpoch: 1,
+          timestamp: '2026-05-12T06:00:0${index + 1}.000Z',
+          liveOnly: false,
+          usedOfflineDrain: true,
+        ),
+        'persistedCount': 1,
+      },
+    <String, Object?>{
+      ..._received(
+        liveKey,
+        'ir001-live-after-drain',
+        'IR-001 live after Bob drain',
+        'alice-peer',
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-12T06:00:10.000Z',
+        liveOnly: true,
+        usedOfflineDrain: false,
+      ),
+      'persistedCount': 1,
+    },
+  ];
+  final charlieReceived = <Map<String, Object?>>[
+    for (var index = 0; index < missedKeys.length; index++)
+      <String, Object?>{
+        ..._received(
+          missedKeys[index],
+          'ir001-missed-${index + 1}',
+          'IR-001 missed while Bob offline ${index + 1}',
+          'alice-peer',
+          groupId: groupId,
+          keyEpoch: 1,
+          timestamp: '2026-05-12T06:00:0${index + 1}.000Z',
+          liveOnly: true,
+          usedOfflineDrain: false,
+        ),
+        'persistedCount': 1,
+      },
+    <String, Object?>{
+      ..._received(
+        liveKey,
+        'ir001-live-after-drain',
+        'IR-001 live after Bob drain',
+        'alice-peer',
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-12T06:00:10.000Z',
+        liveOnly: true,
+        usedOfflineDrain: false,
+      ),
+      'persistedCount': 1,
+    },
+  ];
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'ir001',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      sentMessages: sentMessages,
+      extra: <String, Object?>{
+        'ir001OfflineReconnectProof': <String, Object?>{
+          'rowId': 'IR-001',
+          'activeOfflineRecipientRole': 'bob',
+          'bobWasJoinedBeforeOffline': true,
+          'bobOfflineBeforeMissedSendObserved': true,
+          'bobDrainCompletedBeforeLiveSend': true,
+          'missedMessageCount': missedKeys.length,
+          'missedKeys': missedKeys,
+          'missedMessageIds': const <String>[
+            'ir001-missed-1',
+            'ir001-missed-2',
+            'ir001-missed-3',
+          ],
+          'liveKey': liveKey,
+          'liveMessageId': 'ir001-live-after-drain',
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'ir001',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: bobReceived,
+      persistedMessageCounts: persistedCounts,
+      extra: <String, Object?>{
+        'ir001OfflineReconnectProof': <String, Object?>{
+          'rowId': 'IR-001',
+          'restoredActiveMembershipBeforeDrain': true,
+          'receivedAllMissedExactlyOnce': true,
+          'usedOfflineDrainForMissed': true,
+          'liveAfterDrainReceived': true,
+          'liveAfterDrainWasLive': true,
+          'drainedMissedCount': missedKeys.length,
+          'missedKeys': missedKeys,
+          'liveKey': liveKey,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'ir001',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: charlieReceived,
+      persistedMessageCounts: persistedCounts,
+      extra: <String, Object?>{
+        'ir001OfflineReconnectProof': <String, Object?>{
+          'rowId': 'IR-001',
+          'onlineControlReceivedMissedLive': true,
+          'onlineControlReceivedLiveAfterReconnect': true,
+          'onlineControlMissedCount': missedKeys.length,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validIr015Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const groupId = 'ir015-group';
+  const keys = <String>[
+    'aliceIr015Text',
+    'aliceIr015Quote',
+    'aliceIr015Image',
+    'aliceIr015Video',
+    'aliceIr015File',
+    'aliceIr015Gif',
+    'aliceIr015Voice',
+  ];
+  const mediaKeys = <String>[
+    'aliceIr015Image',
+    'aliceIr015Video',
+    'aliceIr015File',
+    'aliceIr015Gif',
+    'aliceIr015Voice',
+  ];
+
+  String messageIdFor(String key) => 'ir015-${key.substring(10).toLowerCase()}';
+  String textFor(String key) => 'IR-015 $key replay variant';
+  Map<String, Object?> mediaFor(String key) {
+    switch (key) {
+      case 'aliceIr015Image':
+        return const <String, Object?>{
+          'id': 'ir015-image',
+          'mime': 'image/jpeg',
+          'mediaType': 'image',
+          'size': 12345,
+        };
+      case 'aliceIr015Video':
+        return const <String, Object?>{
+          'id': 'ir015-video',
+          'mime': 'video/mp4',
+          'mediaType': 'video',
+          'durationMs': 4200,
+          'size': 23456,
+        };
+      case 'aliceIr015File':
+        return const <String, Object?>{
+          'id': 'ir015-file',
+          'mime': 'application/octet-stream',
+          'mediaType': 'file',
+          'size': 34567,
+        };
+      case 'aliceIr015Gif':
+        return const <String, Object?>{
+          'id': 'ir015-gif',
+          'mime': 'image/gif',
+          'mediaType': 'image',
+          'size': 45678,
+        };
+      case 'aliceIr015Voice':
+        return const <String, Object?>{
+          'id': 'ir015-voice',
+          'mime': 'audio/mp4',
+          'mediaType': 'audio',
+          'durationMs': 3100,
+          'size': 56789,
+        };
+      default:
+        return const <String, Object?>{};
+    }
+  }
+
+  Map<String, Object?> sent(String key, int index) {
+    final entry = <String, Object?>{
+      'key': key,
+      'messageId': messageIdFor(key),
+      'groupId': groupId,
+      'text': textFor(key),
+      'outcome': 'success',
+      'senderPeerId': 'alice-peer',
+      'keyEpoch': 1,
+      'timestamp': '2026-05-12T07:00:0$index.000Z',
+    };
+    if (key == 'aliceIr015Quote') {
+      entry['quotedMessageId'] = messageIdFor('aliceIr015Text');
+    }
+    if (mediaKeys.contains(key)) {
+      entry['mediaAttachmentCount'] = 1;
+      entry['mediaAttachments'] = <Map<String, Object?>>[mediaFor(key)];
+    }
+    return entry;
+  }
+
+  Map<String, Object?> received(String key, int index, {required bool live}) {
+    final entry = <String, Object?>{
+      ..._received(
+        key,
+        messageIdFor(key),
+        textFor(key),
+        'alice-peer',
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-12T07:00:0$index.000Z',
+        liveOnly: live,
+        usedOfflineDrain: !live,
+      ),
+      'persistedCount': 1,
+    };
+    if (key == 'aliceIr015Quote') {
+      entry['quotedMessageId'] = messageIdFor('aliceIr015Text');
+    }
+    if (mediaKeys.contains(key)) {
+      entry['mediaAttachmentCount'] = 1;
+      entry['mediaAttachments'] = <Map<String, Object?>>[mediaFor(key)];
+    }
+    return entry;
+  }
+
+  final sentMessages = <Map<String, Object?>>[
+    for (var i = 0; i < keys.length; i++) sent(keys[i], i + 1),
+  ];
+  final bobReceived = <Map<String, Object?>>[
+    for (var i = 0; i < keys.length; i++) received(keys[i], i + 1, live: false),
+  ];
+  final charlieReceived = <Map<String, Object?>>[
+    for (var i = 0; i < keys.length; i++) received(keys[i], i + 1, live: true),
+  ];
+  final persistedCounts = <String, int>{for (final key in keys) key: 1};
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'ir015',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      sentMessages: sentMessages,
+      extra: <String, Object?>{
+        'ir015VariantReplayProof': <String, Object?>{
+          'rowId': 'IR-015',
+          'activeOfflineRecipientRole': 'bob',
+          'bobWasJoinedBeforeOffline': true,
+          'bobOfflineBeforeVariantSendObserved': true,
+          'charlieOnlineReceivedAllVariants': true,
+          'bobDrainCompletedAfterAllVariants': true,
+          'variantKeys': keys,
+          'mediaVariantKeys': mediaKeys,
+          'quoteKey': 'aliceIr015Quote',
+          'quoteTargetMessageId': 'ir015-text',
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'ir015',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: bobReceived,
+      persistedMessageCounts: persistedCounts,
+      extra: <String, Object?>{
+        'ir015VariantReplayProof': <String, Object?>{
+          'rowId': 'IR-015',
+          'restoredActiveMembershipBeforeDrain': true,
+          'receivedAllVariantsExactlyOnce': true,
+          'usedOfflineDrainForAllVariants': true,
+          'quoteRehydrated': true,
+          'mediaVariantsRehydrated': true,
+          'matchedKeyEpochs': true,
+          'drainedVariantCount': keys.length,
+          'variantKeys': keys,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'ir015',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: charlieReceived,
+      persistedMessageCounts: persistedCounts,
+      extra: <String, Object?>{
+        'ir015VariantReplayProof': <String, Object?>{
+          'rowId': 'IR-015',
+          'onlineControlReceivedAllVariantsLive': true,
+          'onlineControlVariantCount': keys.length,
+          'quoteRehydrated': true,
+          'mediaVariantsRehydrated': true,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validIr016Verdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const groupId = 'ir016-group';
+  const expiredKeys = <String>[
+    'aliceIr016Expired1',
+    'aliceIr016Expired2',
+    'aliceIr016Expired3',
+    'aliceIr016Expired4',
+  ];
+  const retainedKeys = <String>[
+    'aliceIr016Retained1',
+    'aliceIr016Retained2',
+    'aliceIr016Retained3',
+  ];
+  const allKeys = <String>[...expiredKeys, ...retainedKeys];
+
+  String messageIdFor(String key) => 'ir016-${key.substring(9).toLowerCase()}';
+  String textFor(String key) => 'IR-016 $key retention cutoff';
+
+  Map<String, Object?> sent(String key, int index) {
+    return <String, Object?>{
+      'key': key,
+      'messageId': messageIdFor(key),
+      'groupId': groupId,
+      'text': textFor(key),
+      'outcome': 'success',
+      'senderPeerId': 'alice-peer',
+      'keyEpoch': 1,
+      'timestamp': key.contains('Expired')
+          ? '2026-05-01T07:00:0$index.000Z'
+          : '2026-05-14T07:00:0$index.000Z',
+    };
+  }
+
+  Map<String, Object?> received(String key, int index, {required bool live}) {
+    return <String, Object?>{
+      ..._received(
+        key,
+        messageIdFor(key),
+        textFor(key),
+        'alice-peer',
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: key.contains('Expired')
+            ? '2026-05-01T07:00:0$index.000Z'
+            : '2026-05-14T07:00:0$index.000Z',
+        liveOnly: live,
+        usedOfflineDrain: !live,
+      ),
+      'persistedCount': 1,
+    };
+  }
+
+  final sentMessages = <Map<String, Object?>>[
+    for (var i = 0; i < allKeys.length; i++) sent(allKeys[i], i + 1),
+  ];
+  final bobReceived = <Map<String, Object?>>[
+    for (var i = 0; i < retainedKeys.length; i++)
+      received(retainedKeys[i], i + 1, live: false),
+  ];
+  final charlieReceived = <Map<String, Object?>>[
+    for (var i = 0; i < allKeys.length; i++)
+      received(allKeys[i], i + 1, live: true),
+  ];
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'ir016',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      sentMessages: sentMessages,
+      extra: <String, Object?>{
+        'ir016RetentionCutoffProof': <String, Object?>{
+          'rowId': 'IR-016',
+          'activeOfflineRecipientRole': 'bob',
+          'bobWasJoinedBeforeOffline': true,
+          'bobOfflineBeforeExpiredSendObserved': true,
+          'sentExpiredBeyondRetention': true,
+          'sentRetainedWithinRetention': true,
+          'bobDrainCompletedAfterRetained': true,
+          'expiredKeys': expiredKeys,
+          'retainedKeys': retainedKeys,
+          'manyMessagesSentCount': allKeys.length,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'ir016',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: bobReceived,
+      persistedMessageCounts: const <String, int>{
+        'aliceIr016Retained1': 1,
+        'aliceIr016Retained2': 1,
+        'aliceIr016Retained3': 1,
+      },
+      extra: <String, Object?>{
+        'ir016RetentionCutoffProof': <String, Object?>{
+          'rowId': 'IR-016',
+          'restoredActiveMembershipBeforeDrain': true,
+          'receivedRetainedExactlyOnce': true,
+          'usedOfflineDrainForRetained': true,
+          'expiredBacklogSkipped': true,
+          'expiredVisibleCount': 0,
+          'lastBacklogExpiredAtRecorded': true,
+          'lastBacklogRetainedAtRecorded': true,
+          'explicitRetentionStateRecorded': true,
+          'noSilentCompleteState': true,
+          'retentionWindowDays': 7,
+          'drainedRetainedCount': retainedKeys.length,
+          'expiredKeys': expiredKeys,
+          'retainedKeys': retainedKeys,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'ir016',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: charlieReceived,
+      persistedMessageCounts: const <String, int>{
+        'aliceIr016Expired1': 1,
+        'aliceIr016Expired2': 1,
+        'aliceIr016Expired3': 1,
+        'aliceIr016Expired4': 1,
+        'aliceIr016Retained1': 1,
+        'aliceIr016Retained2': 1,
+        'aliceIr016Retained3': 1,
+      },
+      extra: <String, Object?>{
+        'ir016RetentionCutoffProof': <String, Object?>{
+          'rowId': 'IR-016',
+          'onlineControlReceivedAllMessagesLive': true,
+          'onlineControlMessageCount': allKeys.length,
+          'onlineControlExpiredCount': expiredKeys.length,
+          'onlineControlRetainedCount': retainedKeys.length,
+        },
+      },
+    ),
+  ];
+}
+
 List<Map<String, dynamic>> _validGm001Verdicts() {
   const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const groupId = 'gm001-group';
+  const messageId = 'gm001-a1';
+  const text = 'hello gm001';
+  const timestamp = '2026-05-12T14:36:16.419641Z';
+  const keyEpoch = 1;
   return <Map<String, dynamic>>[
     _baseVerdict(
       scenario: 'gm001',
       role: 'alice',
       peerId: 'alice-peer',
-      groupId: 'gm001-group',
+      groupId: groupId,
       memberPeerIds: members,
       sentMessages: const <Map<String, Object?>>[
         {
           'key': 'aliceInitial',
-          'messageId': 'gm001-a1',
-          'text': 'hello gm001',
+          'groupId': groupId,
+          'messageId': messageId,
+          'text': text,
           'outcome': 'success',
           'senderPeerId': 'alice-peer',
+          'timestamp': timestamp,
+          'keyEpoch': keyEpoch,
         },
       ],
+      extra: const <String, Object?>{
+        'de001LiveDeliveryProof': <String, Object?>{
+          'rowId': 'DE-001',
+          'sentLiveText': true,
+          'sentGroupId': groupId,
+          'sentMessageId': messageId,
+          'sentTimestamp': timestamp,
+          'sentKeyEpoch': keyEpoch,
+          'bobReceiptSignalObserved': true,
+          'charlieReceiptSignalObserved': true,
+        },
+      },
     ),
     _baseVerdict(
       scenario: 'gm001',
       role: 'bob',
       peerId: 'bob-peer',
-      groupId: 'gm001-group',
+      groupId: groupId,
       memberPeerIds: members,
       receivedMessages: <Map<String, Object?>>[
-        _received('aliceInitial', 'gm001-a1', 'hello gm001', 'alice-peer'),
+        _received(
+          'aliceInitial',
+          messageId,
+          text,
+          'alice-peer',
+          groupId: groupId,
+          keyEpoch: keyEpoch,
+          timestamp: timestamp,
+        ),
       ],
       persistedMessageCounts: const <String, int>{'aliceInitial': 1},
+      extra: const <String, Object?>{
+        'de001LiveDeliveryProof': <String, Object?>{
+          'rowId': 'DE-001',
+          'receivedVisibleMessageOnce': true,
+          'matchedGroupId': true,
+          'matchedMessageId': true,
+          'matchedSenderPeerId': true,
+          'matchedTimestamp': true,
+          'matchedEpoch': true,
+          'incomingVisible': true,
+          'receivedTimestamp': timestamp,
+        },
+      },
     ),
     _baseVerdict(
       scenario: 'gm001',
       role: 'charlie',
       peerId: 'charlie-peer',
-      groupId: 'gm001-group',
+      groupId: groupId,
       memberPeerIds: members,
       receivedMessages: <Map<String, Object?>>[
-        _received('aliceInitial', 'gm001-a1', 'hello gm001', 'alice-peer'),
+        _received(
+          'aliceInitial',
+          messageId,
+          text,
+          'alice-peer',
+          groupId: groupId,
+          keyEpoch: keyEpoch,
+          timestamp: timestamp,
+        ),
       ],
       persistedMessageCounts: const <String, int>{'aliceInitial': 1},
+      extra: const <String, Object?>{
+        'de001LiveDeliveryProof': <String, Object?>{
+          'rowId': 'DE-001',
+          'receivedVisibleMessageOnce': true,
+          'matchedGroupId': true,
+          'matchedMessageId': true,
+          'matchedSenderPeerId': true,
+          'matchedTimestamp': true,
+          'matchedEpoch': true,
+          'incomingVisible': true,
+          'receivedTimestamp': timestamp,
+        },
+      },
     ),
   ];
+}
+
+List<Map<String, dynamic>> _validPrivateFullMeshOnlineVerdicts() {
+  const scenario = 'private_full_mesh_online';
+  const groupId = 'private-full-mesh-online-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const keysByRole = <String, String>{
+    'alice': 'aliceFullMesh',
+    'bob': 'bobFullMesh',
+    'charlie': 'charlieFullMesh',
+  };
+  const textsByRole = <String, String>{
+    'alice': 'NW-001 Alice full mesh',
+    'bob': 'NW-001 Bob full mesh',
+    'charlie': 'NW-001 Charlie full mesh',
+  };
+  const timestampsByRole = <String, String>{
+    'alice': '2026-05-13T09:01:00.000Z',
+    'bob': '2026-05-13T09:02:00.000Z',
+    'charlie': '2026-05-13T09:03:00.000Z',
+  };
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+
+  for (final senderRole in peerIdsByRole.keys) {
+    final key = keysByRole[senderRole]!;
+    final messageId = 'nw001-$senderRole-message';
+    final text = textsByRole[senderRole]!;
+    sentByRole[senderRole]!.add(<String, Object?>{
+      'key': key,
+      'messageId': messageId,
+      'groupId': groupId,
+      'text': text,
+      'outcome': 'success',
+      'senderPeerId': peerIdsByRole[senderRole],
+      'keyEpoch': 1,
+      'timestamp': timestampsByRole[senderRole],
+      'topicPeers': 2,
+      'liveFanoutState': 'full_peers',
+    });
+    for (final receiverRole in peerIdsByRole.keys) {
+      if (receiverRole == senderRole) continue;
+      receivedByRole[receiverRole]!.add(
+        _received(
+          key,
+          messageId,
+          text,
+          peerIdsByRole[senderRole]!,
+          groupId: groupId,
+          keyEpoch: 1,
+          timestamp: timestampsByRole[senderRole],
+          liveOnly: true,
+          usedOfflineDrain: false,
+        ),
+      );
+    }
+  }
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => const <String, Object?>{
+    'rowId': 'NW-001',
+    'activeRoles': <String>['alice', 'bob', 'charlie'],
+    'senderRoles': <String>['alice', 'bob', 'charlie'],
+    'expectedReceiversPerMessage': 2,
+    'allRolePublishesCovered': true,
+    'allActiveReceiversCovered': true,
+    'duplicateVisibleMessageCount': 0,
+    'successNoPeersCount': 0,
+    'partialPeerPublishCount': 0,
+    'topicPeerCountsBySender': <String, int>{
+      'alice': 2,
+      'bob': 2,
+      'charlie': 2,
+    },
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 1,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'nw001FullMeshProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withNw001ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw001FullMeshProof': <String, Object?>{
+      ...Map<String, Object?>.from(verdict['nw001FullMeshProof'] as Map),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateRelayOnlyDeliveryVerdicts() {
+  const scenario = 'private_relay_only_delivery';
+  const groupId = 'private-relay-only-delivery-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  final aliceSent = <String, Object?>{
+    'key': 'aliceToRelayOnlyBob',
+    'messageId': 'nw002-alice-message',
+    'groupId': groupId,
+    'text': 'NW-002 Alice to relay-only Bob',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['alice'],
+    'keyEpoch': 1,
+    'timestamp': '2026-05-13T10:01:00.000Z',
+    'topicPeers': 2,
+    'liveFanoutState': 'full_peers',
+  };
+  final bobSent = <String, Object?>{
+    'key': 'bobRelayOnlyPublishBack',
+    'messageId': 'nw002-bob-message',
+    'groupId': groupId,
+    'text': 'NW-002 Bob relay-only publish back',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['bob'],
+    'keyEpoch': 1,
+    'timestamp': '2026-05-13T10:02:00.000Z',
+    'topicPeers': 2,
+    'liveFanoutState': 'full_peers',
+  };
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[aliceSent],
+    'bob': <Map<String, Object?>>[bobSent],
+    'charlie': <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[
+      _received(
+        'bobRelayOnlyPublishBack',
+        'nw002-bob-message',
+        'NW-002 Bob relay-only publish back',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-13T10:02:00.000Z',
+        liveOnly: true,
+        usedOfflineDrain: false,
+      ),
+    ],
+    'bob': <Map<String, Object?>>[
+      _received(
+        'aliceToRelayOnlyBob',
+        'nw002-alice-message',
+        'NW-002 Alice to relay-only Bob',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-13T10:01:00.000Z',
+        liveOnly: true,
+        usedOfflineDrain: false,
+      ),
+    ],
+    'charlie': <Map<String, Object?>>[
+      _received(
+        'aliceToRelayOnlyBob',
+        'nw002-alice-message',
+        'NW-002 Alice to relay-only Bob',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-13T10:01:00.000Z',
+        liveOnly: true,
+        usedOfflineDrain: false,
+      ),
+      _received(
+        'bobRelayOnlyPublishBack',
+        'nw002-bob-message',
+        'NW-002 Bob relay-only publish back',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 1,
+        timestamp: '2026-05-13T10:02:00.000Z',
+        liveOnly: true,
+        usedOfflineDrain: false,
+      ),
+    ],
+  };
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'NW-002',
+    'relayOnlyRoles': const <String>['bob'],
+    'circuitOrRelayRouteProven': true,
+    'directPathSuppressed': true,
+    'relayLifecycleProof': true,
+    'activeMembershipPreserved': true,
+    'deliveryModeByMessage': const <String, Object?>{
+      'aliceToRelayOnlyBob': <String, Object?>{
+        'senderRole': 'alice',
+        'routedReceiverRoles': <String>['bob'],
+        'deliveryMode': 'live_pubsub',
+      },
+      'bobRelayOnlyPublishBack': <String, Object?>{
+        'senderRole': 'bob',
+        'routedReceiverRoles': <String>['alice', 'charlie'],
+        'deliveryMode': 'live_pubsub',
+      },
+    },
+    'allRoutedReceiversCovered': true,
+    'routedSenderPublishBackCovered': true,
+    'replayDeliveryCovered': false,
+    'successNoPeersCount': 0,
+    'duplicateVisibleMessageCount': 0,
+    'membershipMutationCount': 0,
+    'routeDiagnostics': const <Map<String, Object?>>[
+      <String, Object?>{
+        'sourceEvent': 'GROUP_DISCOVERY',
+        'step': 'known_member_dial_success',
+        'peerIdPrefix': 'bob-peer',
+        'path': 'relay',
+        'attemptedDirect': false,
+        'directAddrCount': 0,
+        'usedRelayFallback': false,
+      },
+    ],
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 1,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'nw002RelayOnlyDeliveryProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withNw002ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw002RelayOnlyDeliveryProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['nw002RelayOnlyDeliveryProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivatePartitionReaddHealVerdicts() {
+  const scenario = 'private_partition_readd_heal';
+  const groupId = 'private-partition-readd-heal-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  final removedWindow = <String, Object?>{
+    'key': 'aliceRemovedWindow',
+    'messageId': 'nw003-removed-window',
+    'groupId': groupId,
+    'text': 'NW-003 removed-window',
+    'outcome': 'successNoPeers',
+    'senderPeerId': peerIdsByRole['alice'],
+    'recipientPeerIds': <String>[peerIdsByRole['bob']!],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T11:02:00.000Z',
+    'topicPeers': 0,
+    'liveFanoutState': 'zero_peers',
+    'inboxStored': true,
+  };
+  final alicePostHeal = <String, Object?>{
+    'key': 'alicePostHeal',
+    'messageId': 'nw003-alice-post-heal',
+    'groupId': groupId,
+    'text': 'NW-003 Alice post-heal',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['alice'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T11:03:00.000Z',
+  };
+  final bobPostHeal = <String, Object?>{
+    'key': 'bobPostHeal',
+    'messageId': 'nw003-bob-post-heal',
+    'groupId': groupId,
+    'text': 'NW-003 Bob post-heal',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['bob'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T11:04:00.000Z',
+  };
+  final charliePostHeal = <String, Object?>{
+    'key': 'charliePostHeal',
+    'messageId': 'nw003-charlie-post-heal',
+    'groupId': groupId,
+    'text': 'NW-003 Charlie post-heal',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['charlie'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T11:05:00.000Z',
+  };
+
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[removedWindow, alicePostHeal],
+    'bob': <Map<String, Object?>>[bobPostHeal],
+    'charlie': <Map<String, Object?>>[charliePostHeal],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[
+      _received(
+        'bobPostHeal',
+        'nw003-bob-post-heal',
+        'NW-003 Bob post-heal',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T11:04:00.000Z',
+      ),
+      _received(
+        'charliePostHeal',
+        'nw003-charlie-post-heal',
+        'NW-003 Charlie post-heal',
+        peerIdsByRole['charlie']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T11:05:00.000Z',
+      ),
+    ],
+    'bob': <Map<String, Object?>>[
+      _received(
+        'aliceRemovedWindow',
+        'nw003-removed-window',
+        'NW-003 removed-window',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T11:02:00.000Z',
+        usedOfflineDrain: true,
+      ),
+      _received(
+        'alicePostHeal',
+        'nw003-alice-post-heal',
+        'NW-003 Alice post-heal',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T11:03:00.000Z',
+      ),
+      _received(
+        'charliePostHeal',
+        'nw003-charlie-post-heal',
+        'NW-003 Charlie post-heal',
+        peerIdsByRole['charlie']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T11:05:00.000Z',
+      ),
+    ],
+    'charlie': <Map<String, Object?>>[
+      _received(
+        'alicePostHeal',
+        'nw003-alice-post-heal',
+        'NW-003 Alice post-heal',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T11:03:00.000Z',
+      ),
+      _received(
+        'bobPostHeal',
+        'nw003-bob-post-heal',
+        'NW-003 Bob post-heal',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T11:04:00.000Z',
+      ),
+    ],
+  };
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'NW-003',
+    'scenario': scenario,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'partitionProofSource': 'app_peer_core_simulator',
+    'fakeNetworkOnly': false,
+    'alicePartitionedFromBob': true,
+    'alicePartitionedFromCharlie': true,
+    'bobAndCharliePartitionedFromAlice': true,
+    'removedWindowSentWhileCharlieRemoved': true,
+    'removedWindowLiveDeliveryBlockedDuringPartition': true,
+    'bobReceivedRemovedWindowAfterHeal': true,
+    'charlieDidNotReceiveRemovedWindow': true,
+    'finalMembershipConvergedForAliceBobCharlie': true,
+    'finalKeyEpochConvergedForAliceBobCharlie': true,
+    'postHealAliceToBobCharlieDelivery': true,
+    'postHealBobToAliceCharlieDelivery': true,
+    'postHealCharlieToAliceBobDelivery': true,
+    'routeDiagnostics': const <Map<String, Object?>>[
+      <String, Object?>{
+        'sourceEvent': 'P2P_PEER_DISCONNECT_RESPONSE',
+        'targetRole': 'bob',
+        'ok': true,
+      },
+      <String, Object?>{
+        'sourceEvent': 'P2P_PEER_DISCONNECT_RESPONSE',
+        'targetRole': 'charlie',
+        'ok': true,
+      },
+      <String, Object?>{
+        'sourceEvent': 'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
+        'senderRole': 'alice',
+        'topicPeers': 0,
+      },
+    ],
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 2,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'nw003PartitionReaddHealProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withNw003ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw003PartitionReaddHealProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['nw003PartitionReaddHealProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateRelayReconnectGroupRecoveryVerdicts() {
+  const scenario = 'private_relay_reconnect_group_recovery';
+  const groupId = 'private-relay-reconnect-group-recovery';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  final missedDuringDrop = <String, Object?>{
+    'key': 'aliceMissedDuringRelayDrop',
+    'messageId': 'nw004-missed-during-drop',
+    'groupId': groupId,
+    'text': 'NW-004 missed during relay drop',
+    'outcome': 'successNoPeers',
+    'senderPeerId': peerIdsByRole['alice'],
+    'recipientPeerIds': <String>[peerIdsByRole['bob']!],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:01:00.000Z',
+    'topicPeers': 0,
+    'liveFanoutState': 'zero_peers',
+    'inboxStored': true,
+  };
+  final alicePostReconnectLive = <String, Object?>{
+    'key': 'alicePostReconnectLive',
+    'messageId': 'nw004-alice-post-reconnect-live',
+    'groupId': groupId,
+    'text': 'NW-004 Alice live after reconnect',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['alice'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:02:00.000Z',
+  };
+  final bobRecoveredPublishBack = <String, Object?>{
+    'key': 'bobRecoveredPublishBack',
+    'messageId': 'nw004-bob-recovered-publish-back',
+    'groupId': groupId,
+    'text': 'NW-004 Bob recovered publish back',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['bob'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:03:00.000Z',
+  };
+
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[missedDuringDrop, alicePostReconnectLive],
+    'bob': <Map<String, Object?>>[bobRecoveredPublishBack],
+    'charlie': const <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[
+      _received(
+        'bobRecoveredPublishBack',
+        'nw004-bob-recovered-publish-back',
+        'NW-004 Bob recovered publish back',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:03:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'bob': <Map<String, Object?>>[
+      _received(
+        'aliceMissedDuringRelayDrop',
+        'nw004-missed-during-drop',
+        'NW-004 missed during relay drop',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:01:00.000Z',
+        usedOfflineDrain: true,
+      ),
+      _received(
+        'alicePostReconnectLive',
+        'nw004-alice-post-reconnect-live',
+        'NW-004 Alice live after reconnect',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:02:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'charlie': <Map<String, Object?>>[
+      _received(
+        'alicePostReconnectLive',
+        'nw004-alice-post-reconnect-live',
+        'NW-004 Alice live after reconnect',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:02:00.000Z',
+        usedOfflineDrain: false,
+      ),
+      _received(
+        'bobRecoveredPublishBack',
+        'nw004-bob-recovered-publish-back',
+        'NW-004 Bob recovered publish back',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:03:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+  };
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'NW-004',
+    'scenario': scenario,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'relayDropForced': true,
+    'relayReconnectCalled': true,
+    'recoveryMode': 'watchdog_restart',
+    'needsGroupRecoveryObserved': true,
+    'groupTopicsRejoinedAfterReconnect': true,
+    'topicsPreservedInPlace': false,
+    'groupReplayDrainCompleted': true,
+    'missedDuringDropRecoveredByReplay': true,
+    'postReconnectLiveDeliveryToRecoveredPeer': true,
+    'recoveredPeerPublishBackLive': true,
+    'recoveryAckSentAfterRejoinAndDrain': true,
+    'membershipUnchangedByReconnect': true,
+    'finalMembershipConvergedForAliceBobCharlie': true,
+    'finalKeyEpochConvergedForAliceBobCharlie': true,
+    'duplicateVisibleMessageCount': 0,
+    'routeDiagnostics': const <Map<String, Object?>>[
+      <String, Object?>{
+        'sourceEvent': 'APP_PEER_RELAY_DROP',
+        'targetRole': 'bob',
+        'relayState': 'degraded',
+      },
+      <String, Object?>{
+        'sourceEvent': 'GROUP_SEND_MSG_USE_CASE_SUCCESS_NO_PEERS',
+        'senderRole': 'alice',
+        'topicPeers': 0,
+      },
+    ],
+    'reconnectDiagnostics': const <Map<String, Object?>>[
+      <String, Object?>{
+        'sourceEvent': 'P2P_RELAY_RECONNECT_RESPONSE',
+        'targetRole': 'bob',
+        'recoveryMode': 'watchdog_restart',
+        'needsGroupRecovery': true,
+      },
+      <String, Object?>{
+        'sourceEvent': 'GROUP_REJOIN_AND_DRAIN',
+        'targetRole': 'bob',
+        'ackAfterDrain': true,
+      },
+    ],
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 2,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'nw004RelayReconnectRecoveryProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withNw004ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw004RelayReconnectRecoveryProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['nw004RelayReconnectRecoveryProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivatePeerDisconnectNotRemovalVerdicts() {
+  const scenario = 'private_peer_disconnect_not_removal';
+  const groupId = 'private-peer-disconnect-not-removal-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  final missedDuringDisconnect = <String, Object?>{
+    'key': 'aliceMissedDuringDisconnect',
+    'messageId': 'nw006-missed-during-disconnect',
+    'groupId': groupId,
+    'text': 'NW-006 missed while Bob disconnected',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['alice'],
+    'recipientPeerIds': <String>[
+      peerIdsByRole['bob']!,
+      peerIdsByRole['charlie']!,
+    ],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:10:00.000Z',
+    'topicPeers': 1,
+    'liveFanoutState': 'partial_peers',
+    'inboxStored': true,
+  };
+  final alicePostReconnectLive = <String, Object?>{
+    'key': 'alicePostReconnectLive',
+    'messageId': 'nw006-alice-post-reconnect-live',
+    'groupId': groupId,
+    'text': 'NW-006 Alice live after reconnect',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['alice'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:11:00.000Z',
+  };
+  final bobPublishBack = <String, Object?>{
+    'key': 'bobPublishBackAfterReconnect',
+    'messageId': 'nw006-bob-publish-back-after-reconnect',
+    'groupId': groupId,
+    'text': 'NW-006 Bob publish back after reconnect',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['bob'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:12:00.000Z',
+  };
+
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[
+      missedDuringDisconnect,
+      alicePostReconnectLive,
+    ],
+    'bob': <Map<String, Object?>>[bobPublishBack],
+    'charlie': const <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[
+      _received(
+        'bobPublishBackAfterReconnect',
+        'nw006-bob-publish-back-after-reconnect',
+        'NW-006 Bob publish back after reconnect',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:12:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'bob': <Map<String, Object?>>[
+      _received(
+        'aliceMissedDuringDisconnect',
+        'nw006-missed-during-disconnect',
+        'NW-006 missed while Bob disconnected',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:10:00.000Z',
+        usedOfflineDrain: true,
+      ),
+      _received(
+        'alicePostReconnectLive',
+        'nw006-alice-post-reconnect-live',
+        'NW-006 Alice live after reconnect',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:11:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'charlie': <Map<String, Object?>>[
+      _received(
+        'aliceMissedDuringDisconnect',
+        'nw006-missed-during-disconnect',
+        'NW-006 missed while Bob disconnected',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:10:00.000Z',
+        usedOfflineDrain: false,
+      ),
+      _received(
+        'alicePostReconnectLive',
+        'nw006-alice-post-reconnect-live',
+        'NW-006 Alice live after reconnect',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:11:00.000Z',
+        usedOfflineDrain: false,
+      ),
+      _received(
+        'bobPublishBackAfterReconnect',
+        'nw006-bob-publish-back-after-reconnect',
+        'NW-006 Bob publish back after reconnect',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:12:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+  };
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'NW-006',
+    'scenario': scenario,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'disconnectProofSource': 'app_peer_core_simulator',
+    'bobDisconnected': true,
+    'bobGroupPresentDuringDisconnect': true,
+    'bobSelfMemberActiveDuringDisconnect': true,
+    'bobRemovedSignalCount': 0,
+    'membershipMutationCount': 0,
+    'durableRecipientIncludedDisconnectedBob': true,
+    'missedDuringDisconnectRecoveredByReplay': true,
+    'postReconnectLiveDeliveryToBob': true,
+    'bobPublishBackAfterReconnect': true,
+    'duplicateVisibleMessageCount': 0,
+    'finalMembershipConvergedForAliceBobCharlie': true,
+    'finalKeyEpochConvergedForAliceBobCharlie': true,
+    'stableKeyEpoch': true,
+    'disconnectDiagnostics': const <Map<String, Object?>>[
+      <String, Object?>{
+        'sourceEvent': 'APP_PEER_DISCONNECT',
+        'targetRole': 'bob',
+        'topicPeersDuringAliceSend': 1,
+      },
+      <String, Object?>{
+        'sourceEvent': 'GROUP_REJOIN_AND_DRAIN',
+        'targetRole': 'bob',
+        'replayDrain': true,
+      },
+    ],
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 2,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'nw006DisconnectNotRemovalProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withNw006ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw006DisconnectNotRemovalProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['nw006DisconnectNotRemovalProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>>
+_validPrivateBackgroundResumeGroupDeliveryVerdicts() {
+  const scenario = 'private_background_resume_group_delivery';
+  const groupId = 'private-background-resume-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  const remainingMembers = <String>['alice-peer', 'bob-peer'];
+  final beforeEdit = <String, Object?>{
+    'key': 'aliceDuringBackgroundBeforeEdit',
+    'messageId': 'nw010-before-edit',
+    'groupId': groupId,
+    'text': 'NW-010 missed before membership edit',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['alice'],
+    'recipientPeerIds': <String>[
+      peerIdsByRole['bob']!,
+      peerIdsByRole['charlie']!,
+    ],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:20:00.000Z',
+    'topicPeers': 1,
+    'liveFanoutState': 'partial_peers',
+    'inboxStored': true,
+  };
+  final afterEdit = <String, Object?>{
+    'key': 'aliceDuringBackgroundAfterEdit',
+    'messageId': 'nw010-after-edit',
+    'groupId': groupId,
+    'text': 'NW-010 missed after membership edit',
+    'outcome': 'successNoPeers',
+    'senderPeerId': peerIdsByRole['alice'],
+    'recipientPeerIds': <String>[peerIdsByRole['bob']!],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:21:00.000Z',
+    'topicPeers': 0,
+    'liveFanoutState': 'zero_peers',
+    'inboxStored': true,
+  };
+  final postForegroundLive = <String, Object?>{
+    'key': 'alicePostForegroundLive',
+    'messageId': 'nw010-post-foreground-live',
+    'groupId': groupId,
+    'text': 'NW-010 Alice live after foreground',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['alice'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:22:00.000Z',
+  };
+  final bobPublishBack = <String, Object?>{
+    'key': 'bobPostForegroundPublishBack',
+    'messageId': 'nw010-bob-publish-back',
+    'groupId': groupId,
+    'text': 'NW-010 Bob publish after foreground',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['bob'],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T12:23:00.000Z',
+  };
+
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[beforeEdit, afterEdit, postForegroundLive],
+    'bob': <Map<String, Object?>>[bobPublishBack],
+    'charlie': const <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[
+      _received(
+        'bobPostForegroundPublishBack',
+        'nw010-bob-publish-back',
+        'NW-010 Bob publish after foreground',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:23:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'bob': <Map<String, Object?>>[
+      _received(
+        'aliceDuringBackgroundBeforeEdit',
+        'nw010-before-edit',
+        'NW-010 missed before membership edit',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:20:00.000Z',
+        usedOfflineDrain: true,
+      ),
+      _received(
+        'aliceDuringBackgroundAfterEdit',
+        'nw010-after-edit',
+        'NW-010 missed after membership edit',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:21:00.000Z',
+        usedOfflineDrain: true,
+      ),
+      _received(
+        'alicePostForegroundLive',
+        'nw010-post-foreground-live',
+        'NW-010 Alice live after foreground',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:22:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'charlie': <Map<String, Object?>>[
+      _received(
+        'aliceDuringBackgroundBeforeEdit',
+        'nw010-before-edit',
+        'NW-010 missed before membership edit',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 2,
+        timestamp: '2026-05-13T12:20:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+  };
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'NW-010',
+    'scenario': scenario,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'backgroundProofSource': 'app_peer_core_simulator_lifecycle_pause_resume',
+    'bobBackgroundedDuringAliceActivity': true,
+    'bobForegroundedAfterMembershipEdit': true,
+    'bobReceivedNoLiveCopyWhileBackgrounded': true,
+    'groupTopicsRejoinedAfterForeground': true,
+    'groupReplayDrainCompleted': true,
+    'recoveryAckSentAfterRejoinAndDrain': true,
+    'orderedDrainIncludesContentAndMembership': true,
+    'orderedDrainKeys': const <String>[
+      'aliceDuringBackgroundBeforeEdit',
+      'memberRemovedCharlie',
+      'aliceDuringBackgroundAfterEdit',
+    ],
+    'entitlementFilteringPreserved': true,
+    'postForegroundLiveDeliveryToBob': true,
+    'bobPublishBackAfterForeground': true,
+    'duplicateVisibleMessageCount': 0,
+    'finalMembershipConvergedForAliceBob': true,
+    'finalKeyEpochConvergedForAliceBob': true,
+    'charlieRemovedBeforeSecondBackgroundMessage': true,
+    'lifecycleDiagnostics': const <Map<String, Object?>>[
+      <String, Object?>{
+        'sourceEvent': 'APP_PEER_BACKGROUND_PAUSE',
+        'targetRole': 'bob',
+        'transportStopped': true,
+      },
+      <String, Object?>{
+        'sourceEvent': 'APP_PEER_FOREGROUND_RESUME',
+        'targetRole': 'bob',
+        'rejoinDrainAck': true,
+      },
+    ],
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: remainingMembers,
+        keyEpoch: role == 'charlie' ? 0 : 2,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': remainingMembers,
+          'nw010BackgroundResumeDeliveryProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withNw010ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw010BackgroundResumeDeliveryProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['nw010BackgroundResumeDeliveryProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateLongOfflineEpochChurnVerdicts() {
+  const scenario = 'private_long_offline_epoch_churn';
+  const groupId = 'private-long-offline-epoch-churn-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+  };
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  final removedWindow = <String, Object?>{
+    'key': 'aliceRemovedWindow',
+    'messageId': 'nw012-removed-window',
+    'groupId': groupId,
+    'text': 'NW-012 removed-window',
+    'outcome': 'successNoPeers',
+    'senderPeerId': peerIdsByRole['alice'],
+    'recipientPeerIds': <String>[peerIdsByRole['bob']!],
+    'keyEpoch': 2,
+    'timestamp': '2026-05-13T13:20:00.000Z',
+    'topicPeers': 0,
+    'liveFanoutState': 'zero_peers',
+    'inboxStored': true,
+  };
+  final aliceFinal = <String, Object?>{
+    'key': 'aliceFinalActiveOne',
+    'messageId': 'nw012-alice-final-active-one',
+    'groupId': groupId,
+    'text': 'NW-012 Alice final active one',
+    'outcome': 'successNoPeers',
+    'senderPeerId': peerIdsByRole['alice'],
+    'recipientPeerIds': <String>[
+      peerIdsByRole['bob']!,
+      peerIdsByRole['charlie']!,
+    ],
+    'keyEpoch': 4,
+    'timestamp': '2026-05-13T13:42:00.000Z',
+    'topicPeers': 0,
+    'liveFanoutState': 'zero_peers',
+    'inboxStored': true,
+  };
+  final bobFinal = <String, Object?>{
+    'key': 'bobFinalActiveTwo',
+    'messageId': 'nw012-bob-final-active-two',
+    'groupId': groupId,
+    'text': 'NW-012 Bob final active two',
+    'outcome': 'successNoPeers',
+    'senderPeerId': peerIdsByRole['bob'],
+    'recipientPeerIds': <String>[
+      peerIdsByRole['alice']!,
+      peerIdsByRole['charlie']!,
+    ],
+    'keyEpoch': 4,
+    'timestamp': '2026-05-13T13:43:00.000Z',
+    'topicPeers': 0,
+    'liveFanoutState': 'zero_peers',
+    'inboxStored': true,
+  };
+  final charliePostLive = <String, Object?>{
+    'key': 'charliePostReconnectLive',
+    'messageId': 'nw012-charlie-post-reconnect-live',
+    'groupId': groupId,
+    'text': 'NW-012 Charlie post reconnect live',
+    'outcome': 'success',
+    'senderPeerId': peerIdsByRole['charlie'],
+    'keyEpoch': 4,
+    'timestamp': '2026-05-13T13:45:00.000Z',
+  };
+
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[removedWindow, aliceFinal],
+    'bob': <Map<String, Object?>>[bobFinal],
+    'charlie': <Map<String, Object?>>[charliePostLive],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    'alice': <Map<String, Object?>>[
+      _received(
+        'bobFinalActiveTwo',
+        'nw012-bob-final-active-two',
+        'NW-012 Bob final active two',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 4,
+        timestamp: '2026-05-13T13:43:00.000Z',
+        usedOfflineDrain: false,
+      ),
+      _received(
+        'charliePostReconnectLive',
+        'nw012-charlie-post-reconnect-live',
+        'NW-012 Charlie post reconnect live',
+        peerIdsByRole['charlie']!,
+        groupId: groupId,
+        keyEpoch: 4,
+        timestamp: '2026-05-13T13:45:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'bob': <Map<String, Object?>>[
+      _received(
+        'aliceFinalActiveOne',
+        'nw012-alice-final-active-one',
+        'NW-012 Alice final active one',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 4,
+        timestamp: '2026-05-13T13:42:00.000Z',
+        usedOfflineDrain: false,
+      ),
+      _received(
+        'charliePostReconnectLive',
+        'nw012-charlie-post-reconnect-live',
+        'NW-012 Charlie post reconnect live',
+        peerIdsByRole['charlie']!,
+        groupId: groupId,
+        keyEpoch: 4,
+        timestamp: '2026-05-13T13:45:00.000Z',
+        usedOfflineDrain: false,
+      ),
+    ],
+    'charlie': <Map<String, Object?>>[
+      _received(
+        'aliceFinalActiveOne',
+        'nw012-alice-final-active-one',
+        'NW-012 Alice final active one',
+        peerIdsByRole['alice']!,
+        groupId: groupId,
+        keyEpoch: 4,
+        timestamp: '2026-05-13T13:42:00.000Z',
+        usedOfflineDrain: true,
+      ),
+      _received(
+        'bobFinalActiveTwo',
+        'nw012-bob-final-active-two',
+        'NW-012 Bob final active two',
+        peerIdsByRole['bob']!,
+        groupId: groupId,
+        keyEpoch: 4,
+        timestamp: '2026-05-13T13:43:00.000Z',
+        usedOfflineDrain: true,
+      ),
+    ],
+  };
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'NW-012',
+    'scenario': scenario,
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'offlineProofSource': 'app_peer_core_simulator_long_offline_reconnect',
+    'charlieOfflineThroughEpochChurn': true,
+    'groupTopicsRejoinedAfterReconnect': true,
+    'groupReplayDrainCompleted': true,
+    'entitlementFilteringPreserved': true,
+    'finalActiveMessagesDelivered': true,
+    'charlieReceivedOnlyFinalActiveInterval': true,
+    'postReconnectLiveDelivery': true,
+    'finalMembershipConverged': true,
+    'finalKeyEpochConverged': true,
+    'finalMemberRoles': const <String>['alice', 'bob', 'charlie'],
+    'finalEpoch': 4,
+    'orderedDrainKeys': const <String>[
+      'memberRemovedCharlie',
+      'memberReaddedCharlie',
+      'aliceFinalActiveOne',
+      'bobFinalActiveTwo',
+    ],
+    'finalActiveMessageKeys': const <String>[
+      'aliceFinalActiveOne',
+      'bobFinalActiveTwo',
+    ],
+    'duplicateVisibleMessageCount': 0,
+    'removedWindowPlaintextCount': 0,
+    'staleFirstIntervalPlaintextCount': 0,
+    'staleEpochPlaintextCount': 0,
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 4,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'nw012LongOfflineEpochConvergenceProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withNw012ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'nw012LongOfflineEpochConvergenceProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['nw012LongOfflineEpochConvergenceProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateAbcCreateVerdicts() {
+  const scenario = 'private_abc_create';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'private-abc-group',
+      memberPeerIds: members,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceInitial',
+          'messageId': 'pabc-a1',
+          'text': 'private abc hello',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 1,
+        },
+      ],
+      extra: _privateAbcVerdictExtra(
+        deviceId: 'sim-alice',
+        members: members,
+        topicName: '/mknoon/group/private-abc',
+        groupConfigStateHash: 'private-abc-state',
+        ml001Proof: _ml001AliceProof(),
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'private-abc-group',
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceInitial',
+          'pabc-a1',
+          'private abc hello',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceInitial': 1},
+      extra: _privateAbcVerdictExtra(
+        deviceId: 'sim-bob',
+        members: members,
+        topicName: '/mknoon/group/private-abc',
+        groupConfigStateHash: 'private-abc-state',
+        ml001Proof: _ml001InviteeProof(),
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'private-abc-group',
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceInitial',
+          'pabc-a1',
+          'private abc hello',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceInitial': 1},
+      extra: _privateAbcVerdictExtra(
+        deviceId: 'sim-charlie',
+        members: members,
+        topicName: '/mknoon/group/private-abc',
+        groupConfigStateHash: 'private-abc-state',
+        ml001Proof: _ml001InviteeProof(),
+      ),
+    ),
+  ];
+}
+
+Map<String, Object?> _privateAbcVerdictExtra({
+  required String deviceId,
+  required List<String> members,
+  required String topicName,
+  required String groupConfigStateHash,
+  required Map<String, Object?> ml001Proof,
+}) {
+  return <String, Object?>{
+    'deviceId': deviceId,
+    'topicName': topicName,
+    'activeMemberPeerIds': members,
+    'groupConfigStateHash': groupConfigStateHash,
+    'ml001CreateInviteProof': ml001Proof,
+  };
+}
+
+Map<String, Object?> _ml001AliceProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-001',
+    'invitePath': 'supported_pending_invite',
+    'createdViaCreateGroupWithMembers': true,
+    'bobInviteSent': true,
+    'charlieInviteSent': true,
+    'bobAcceptedSignal': true,
+    'charlieAcceptedSignal': true,
+    'readableJoinTimelineObserved': true,
+  };
+}
+
+Map<String, Object?> _ml001InviteeProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-001',
+    'invitePath': 'supported_pending_invite',
+    'storedPendingInvite': true,
+    'acceptedPendingInvite': true,
+    'joinedViaGroupJoin': true,
+    'readableSelfJoinTimeline': true,
+    'receivedAliceInitialAfterInviteAccept': true,
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateOnlineAddVerdicts() {
+  const scenario = 'private_online_add';
+  const members = <String>[
+    'alice-peer',
+    'bob-peer',
+    'charlie-peer',
+    'dana-peer',
+  ];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'private-online-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterDanaAdd',
+          'messageId': 'poa-a1',
+          'text': 'private alice after dana',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobAfterDanaAdd',
+          'poa-b1',
+          'private bob after dana',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'danaAfterJoin',
+          'poa-d1',
+          'private dana joined',
+          'dana-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'bobAfterDanaAdd': 1,
+        'danaAfterJoin': 1,
+      },
+      extra: _privateOnlineAddVerdictExtra(
+        deviceId: 'sim-alice',
+        members: members,
+        ml002Proof: _ml002AliceProof(),
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'private-online-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterDanaAdd',
+          'messageId': 'poa-b1',
+          'text': 'private bob after dana',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterDanaAdd',
+          'poa-a1',
+          'private alice after dana',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'danaAfterJoin',
+          'poa-d1',
+          'private dana joined',
+          'dana-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterDanaAdd': 1,
+        'danaAfterJoin': 1,
+      },
+      extra: _privateOnlineAddVerdictExtra(
+        deviceId: 'sim-bob',
+        members: members,
+        ml002Proof: _ml002BobProof(),
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'private-online-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterDanaAdd',
+          'poa-a1',
+          'private alice after dana',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobAfterDanaAdd',
+          'poa-b1',
+          'private bob after dana',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'danaAfterJoin',
+          'poa-d1',
+          'private dana joined',
+          'dana-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterDanaAdd': 1,
+        'bobAfterDanaAdd': 1,
+        'danaAfterJoin': 1,
+      },
+      extra: _privateOnlineAddVerdictExtra(
+        deviceId: 'sim-charlie',
+        members: members,
+        ml002Proof: _ml002CharlieProof(),
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'dana',
+      peerId: 'dana-peer',
+      groupId: 'private-online-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'danaAfterJoin',
+          'messageId': 'poa-d1',
+          'text': 'private dana joined',
+          'outcome': 'successNoPeers',
+          'senderPeerId': 'dana-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterDanaAdd',
+          'poa-a1',
+          'private alice after dana',
+          'alice-peer',
+          keyEpoch: 2,
+          liveOnly: true,
+          usedOfflineDrain: false,
+        ),
+        _received(
+          'bobAfterDanaAdd',
+          'poa-b1',
+          'private bob after dana',
+          'bob-peer',
+          keyEpoch: 2,
+          liveOnly: true,
+          usedOfflineDrain: false,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterDanaAdd': 1,
+        'bobAfterDanaAdd': 1,
+      },
+      extra: _privateOnlineAddVerdictExtra(
+        deviceId: 'sim-dana',
+        members: members,
+        ml002Proof: _ml002DanaProof(),
+      ),
+    ),
+  ];
+}
+
+Map<String, Object?> _privateOnlineAddVerdictExtra({
+  required String deviceId,
+  required List<String> members,
+  required Map<String, Object?> ml002Proof,
+}) {
+  return <String, Object?>{
+    'deviceId': deviceId,
+    'topicName': '/mknoon/group/private-online-add',
+    'activeMemberPeerIds': members,
+    'groupConfigStateHash': 'private-online-add-state',
+    'ml002OnlineAddProof': ml002Proof,
+  };
+}
+
+Map<String, Object?> _ml002AliceProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-002',
+    'danaOnlineBeforeAdd': true,
+    'danaNotActiveBeforeAdd': true,
+    'aliceAddedDana': true,
+    'danaJoinedAfterAdd': true,
+    'allRolesSeeDanaActiveAfterJoin': true,
+    'aliceSentPostJoin': true,
+    'bobSentPostJoin': true,
+  };
+}
+
+Map<String, Object?> _ml002BobProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-002',
+    'danaActiveAfterJoin': true,
+    'bobSentPostJoin': true,
+  };
+}
+
+Map<String, Object?> _ml002CharlieProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-002',
+    'danaActiveAfterJoin': true,
+  };
+}
+
+Map<String, Object?> _ml002DanaProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-002',
+    'danaOnlineBeforeAdd': true,
+    'danaNotActiveBeforeAdd': true,
+    'joinedViaGroupJoinWithConfig': true,
+    'currentKeyEpochInstalledBeforeLiveReceive': true,
+    'receivedAlicePostJoinLiveNoDrain': true,
+    'receivedBobPostJoinLiveNoDrain': true,
+    'noOfflineDrainBeforeLiveReceipts': true,
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateOfflineAddVerdicts() {
+  const scenario = 'private_offline_add';
+  const members = <String>[
+    'alice-peer',
+    'bob-peer',
+    'charlie-peer',
+    'dana-peer',
+  ];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'private-offline-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterDanaOfflineAdd',
+          'messageId': 'poff-a1',
+          'text': 'private alice offline replay',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceLiveAfterDanaDrain',
+          'messageId': 'poff-live1',
+          'text': 'private alice live after drain',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobAfterDanaOfflineAdd',
+          'poff-b1',
+          'private bob offline replay',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'bobAfterDanaOfflineAdd': 1},
+      extra: _privateOfflineAddVerdictExtra(
+        deviceId: 'sim-alice',
+        members: members,
+        ml003Proof: _ml003AliceProof(),
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'private-offline-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterDanaOfflineAdd',
+          'messageId': 'poff-b1',
+          'text': 'private bob offline replay',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterDanaOfflineAdd',
+          'poff-a1',
+          'private alice offline replay',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterDanaOfflineAdd': 1,
+      },
+      extra: _privateOfflineAddVerdictExtra(
+        deviceId: 'sim-bob',
+        members: members,
+        ml003Proof: _ml003BobProof(),
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'private-offline-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterDanaOfflineAdd',
+          'poff-a1',
+          'private alice offline replay',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobAfterDanaOfflineAdd',
+          'poff-b1',
+          'private bob offline replay',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterDanaOfflineAdd': 1,
+        'bobAfterDanaOfflineAdd': 1,
+      },
+      extra: _privateOfflineAddVerdictExtra(
+        deviceId: 'sim-charlie',
+        members: members,
+      ),
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'dana',
+      peerId: 'dana-peer',
+      groupId: 'private-offline-add-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterDanaOfflineAdd',
+          'poff-a1',
+          'private alice offline replay',
+          'alice-peer',
+          keyEpoch: 2,
+          liveOnly: false,
+          usedOfflineDrain: true,
+        ),
+        _received(
+          'bobAfterDanaOfflineAdd',
+          'poff-b1',
+          'private bob offline replay',
+          'bob-peer',
+          keyEpoch: 2,
+          liveOnly: false,
+          usedOfflineDrain: true,
+        ),
+        _received(
+          'aliceLiveAfterDanaDrain',
+          'poff-live1',
+          'private alice live after drain',
+          'alice-peer',
+          keyEpoch: 2,
+          liveOnly: true,
+          usedOfflineDrain: false,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterDanaOfflineAdd': 1,
+        'bobAfterDanaOfflineAdd': 1,
+        'aliceLiveAfterDanaDrain': 1,
+      },
+      extra: _privateOfflineAddVerdictExtra(
+        deviceId: 'sim-dana',
+        members: members,
+        ml003Proof: _ml003DanaProof(),
+      ),
+    ),
+  ];
+}
+
+Map<String, Object?> _privateOfflineAddVerdictExtra({
+  required String deviceId,
+  required List<String> members,
+  Map<String, Object?>? ml003Proof,
+}) {
+  return <String, Object?>{
+    'deviceId': deviceId,
+    'topicName': '/mknoon/group/private-offline-add',
+    'activeMemberPeerIds': members,
+    'groupConfigStateHash': 'private-offline-add-state',
+    'ml003OfflineAddProof': ?ml003Proof,
+  };
+}
+
+Map<String, Object?> _ml003AliceProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-003',
+    'invitePath': 'supported_pending_invite',
+    'danaOfflineDuringAdd': true,
+    'danaNotSubscribedDuringAdd': true,
+    'danaNotActiveBeforeAccept': true,
+    'aliceAddedDana': true,
+    'aliceSentPostAddBeforeDanaAccept': true,
+    'bobSentPostAddBeforeDanaAccept': true,
+    'liveSentAfterDanaDrain': true,
+  };
+}
+
+Map<String, Object?> _ml003BobProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-003',
+    'danaActiveInConfigBeforeBobSend': true,
+    'bobSentPostAddBeforeDanaAccept': true,
+  };
+}
+
+Map<String, Object?> _ml003DanaProof() {
+  return const <String, Object?>{
+    'rowId': 'ML-003',
+    'invitePath': 'supported_pending_invite',
+    'startedAfterPostAddSends': true,
+    'storedPendingInvite': true,
+    'acceptedPendingInvite': true,
+    'joinedViaGroupJoinWithConfig': true,
+    'drainedOfflineInbox': true,
+    'preAddMessageAbsent': true,
+    'receivedAlicePostAddReplay': true,
+    'receivedBobPostAddReplay': true,
+    'replayPersistedExactlyOnce': true,
+    'liveAfterDrainWithoutRestart': true,
+  };
 }
 
 List<Map<String, dynamic>> _validGm002Verdicts() {
@@ -9326,6 +18267,298 @@ List<Map<String, dynamic>> _validGm004Verdicts() {
   ];
 }
 
+List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
+  const scenario = 'private_online_remove';
+  const remainingMembers = <String>['alice-peer', 'bob-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'private-online-remove-group',
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterCharlieRemove',
+          'messageId': 'ml005-a-after',
+          'text': 'alice after charlie remove',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobAfterCharlieRemove',
+          'ml005-b-after',
+          'bob after charlie remove',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'bobAfterCharlieRemove': 1},
+      extra: const <String, Object?>{
+        'ml005OnlineRemovalProof': <String, Object?>{
+          'rowId': 'ML-005',
+          'charlieOnlineBeforeRemoval': true,
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListExcludesCharlie': true,
+          'receivedBobAfterRemoval': true,
+          'rotatedEpoch': 2,
+        },
+        'ke006RemovalKeyRotationProof': <String, Object?>{
+          'rowId': 'KE-006',
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListExcludesCharlie': true,
+          'rotatedKeyGenerated': true,
+          'rotatedEpoch': 2,
+          'distributedRotatedKeyToBob': true,
+          'sentPostRemovalAtRotatedEpoch': true,
+          'receivedBobAfterRemoval': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'private-online-remove-group',
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterCharlieRemove',
+          'messageId': 'ml005-b-after',
+          'text': 'bob after charlie remove',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterCharlieRemove',
+          'ml005-a-after',
+          'alice after charlie remove',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceAfterCharlieRemove': 1},
+      extra: const <String, Object?>{
+        'ml005OnlineRemovalProof': <String, Object?>{
+          'rowId': 'ML-005',
+          'memberListExcludesCharlie': true,
+          'hasRotatedEpoch': true,
+          'rotatedEpoch': 2,
+          'receivedAliceAfterRemoval': true,
+          'sentPostRemovalAccepted': true,
+        },
+        'ke006RemovalKeyRotationProof': <String, Object?>{
+          'rowId': 'KE-006',
+          'memberListExcludesCharlie': true,
+          'receivedRotatedKey': true,
+          'hasRotatedEpoch': true,
+          'rotatedEpoch': 2,
+          'receivedAliceAfterRemoval': true,
+          'sentPostRemovalAtRotatedEpoch': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'private-online-remove-group',
+      memberPeerIds: const <String>[],
+      keyEpoch: 0,
+      extra: const <String, Object?>{
+        'ml005OnlineRemovalProof': <String, Object?>{
+          'rowId': 'ML-005',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': true,
+          'groupPresentAfterRemoval': false,
+          'hasRotatedEpoch': false,
+          'rotatedEpoch': 0,
+          'postRemovalSendOutcome': 'groupNotFound',
+          'postRemovalPublishAccepted': false,
+          'receivedAliceAfterRemoval': false,
+          'receivedBobAfterRemoval': false,
+          'postRemovalPlaintextCount': 0,
+        },
+        'ke006RemovalKeyRotationProof': <String, Object?>{
+          'rowId': 'KE-006',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': true,
+          'excludedFromRotatedKeyDistribution': true,
+          'hasRotatedEpoch': false,
+          'excludedRotatedEpoch': 2,
+          'retainedEpochAfterRemoval': 0,
+          'postRemovalPublishAccepted': false,
+          'receivedAliceAfterRemoval': false,
+          'receivedBobAfterRemoval': false,
+          'postRemovalPlaintextCount': 0,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateOfflineRemoveVerdicts() {
+  const scenario = 'private_offline_remove';
+  const remainingMembers = <String>['alice-peer', 'bob-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'private-offline-remove-group',
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterCharlieOfflineRemove',
+          'messageId': 'ml006-a-after',
+          'text': 'alice after offline charlie remove',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobAfterCharlieOfflineRemove',
+          'ml006-b-after',
+          'bob after offline charlie remove',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'bobAfterCharlieOfflineRemove': 1,
+      },
+      extra: const <String, Object?>{
+        'ml006OfflineRemovalProof': <String, Object?>{
+          'rowId': 'ML-006',
+          'charlieOfflineBeforeRemoval': true,
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListExcludesCharlie': true,
+          'sentPostRemovalAccepted': true,
+          'receivedBobAfterRemoval': true,
+          'rotatedEpoch': 2,
+        },
+        'ir004PostRemovalReplayProof': <String, Object?>{
+          'rowId': 'IR-004',
+          'charlieOfflineBeforeRemoval': true,
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListExcludesCharlie': true,
+          'sentAlicePostRemoval': true,
+          'receivedBobPostRemoval': true,
+          'rotatedEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'private-offline-remove-group',
+      memberPeerIds: remainingMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterCharlieOfflineRemove',
+          'messageId': 'ml006-b-after',
+          'text': 'bob after offline charlie remove',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterCharlieOfflineRemove',
+          'ml006-a-after',
+          'alice after offline charlie remove',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterCharlieOfflineRemove': 1,
+      },
+      extra: const <String, Object?>{
+        'ml006OfflineRemovalProof': <String, Object?>{
+          'rowId': 'ML-006',
+          'memberListExcludesCharlie': true,
+          'hasRotatedEpoch': true,
+          'rotatedEpoch': 2,
+          'receivedAliceAfterRemoval': true,
+          'sentPostRemovalAccepted': true,
+        },
+        'ir004PostRemovalReplayProof': <String, Object?>{
+          'rowId': 'IR-004',
+          'memberListExcludesCharlie': true,
+          'hasRotatedEpoch': true,
+          'rotatedEpoch': 2,
+          'receivedAlicePostRemoval': true,
+          'sentBobPostRemoval': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'private-offline-remove-group',
+      memberPeerIds: const <String>[],
+      keyEpoch: 0,
+      extra: const <String, Object?>{
+        'ml006OfflineRemovalProof': <String, Object?>{
+          'rowId': 'ML-006',
+          'hadOldConfigBeforeOffline': true,
+          'hadOldKeyBeforeOffline': true,
+          'offlineDuringRemoval': true,
+          'reconnectedWithStaleState': true,
+          'retrievedInboxAfterReconnect': true,
+          'convergedRemoved': true,
+          'groupPresentAfterCatchUp': false,
+          'hasRotatedEpoch': false,
+          'rotatedEpoch': 0,
+          'postRemovalPlaintextCount': 0,
+          'postRemovalSendOutcome': 'groupNotFound',
+          'postRemovalPublishAccepted': false,
+          'receivedAliceAfterRemoval': false,
+          'receivedBobAfterRemoval': false,
+        },
+        'ir004PostRemovalReplayProof': <String, Object?>{
+          'rowId': 'IR-004',
+          'hadOldConfigBeforeOffline': true,
+          'hadOldKeyBeforeOffline': true,
+          'offlineDuringRemoval': true,
+          'reconnectedWithStaleState': true,
+          'retrievedInboxAfterReconnect': true,
+          'convergedRemoved': true,
+          'groupPresentAfterCatchUp': false,
+          'retainedRotatedEpoch': false,
+          'staleKeyEpochBeforeDrain': 1,
+          'rotatedEpochAfterDrain': 0,
+          'postRemovalPlaintextCount': 0,
+          'postRemovalSendOutcome': 'groupNotFound',
+          'postRemovalPublishAccepted': false,
+          'receivedAlicePostRemoval': false,
+          'receivedBobPostRemoval': false,
+        },
+      },
+    ),
+  ];
+}
+
 List<Map<String, dynamic>> _validGm005Verdicts() {
   const remainingMembers = <String>['alice-peer', 'bob-peer'];
   final aliceSentMessages = <Map<String, Object?>>[
@@ -9587,6 +18820,2678 @@ List<Map<String, dynamic>> _validGm006Verdicts() {
   ];
 }
 
+List<Map<String, dynamic>> _validPrivateOfflineReaddVerdicts() {
+  const scenario = 'private_offline_readd';
+  const groupId = 'private-offline-readd-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceDuringCharlieRemoval',
+          'messageId': 'ra003-a-during',
+          'text': 'alice during offline charlie removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceAfterImmediateReadd',
+          'messageId': 'ra003-a-after',
+          'text': 'alice after offline readd',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'charlieAfterImmediateReadd',
+          'ra003-c-after',
+          'charlie after offline readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobAfterOfflineReadd',
+          'ra003-b-after',
+          'bob after offline readd',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'charlieAfterImmediateReadd': 1,
+        'bobAfterOfflineReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra003OfflineReaddProof': <String, Object?>{
+          'rowId': 'RA-003',
+          'removedCharlieWhileOffline': true,
+          'sentRemovedWindowWhileCharlieOffline': true,
+          'waitedForCharlieRemovalResolutionBeforeReadd': true,
+          'readdedCharlieAfterReconnect': true,
+          'sentPostReaddAfterOfflineReconnect': true,
+          'receivedCharliePostReaddAfterOfflineReconnect': true,
+          'receivedBobPostReaddAfterOfflineReconnect': true,
+          'removedPeerId': 'charlie-peer',
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterOfflineReadd',
+          'messageId': 'ra003-b-after',
+          'text': 'bob after offline readd',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceDuringCharlieRemoval',
+          'ra003-a-during',
+          'alice during offline charlie removal',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieAfterImmediateReadd',
+          'ra003-c-after',
+          'charlie after offline readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterImmediateReadd',
+          'ra003-a-after',
+          'alice after offline readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceDuringCharlieRemoval': 1,
+        'charlieAfterImmediateReadd': 1,
+        'aliceAfterImmediateReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra003OfflineReaddProof': <String, Object?>{
+          'rowId': 'RA-003',
+          'observedCharlieRemovedWhileOffline': true,
+          'receivedRemovedWindowWhileCharlieOffline': true,
+          'observedCharlieReaddedAfterReconnect': true,
+          'receivedAlicePostReaddAfterOfflineReconnect': true,
+          'sentBobPostReaddAfterOfflineReconnect': true,
+          'receivedCharliePostReaddAfterOfflineReconnect': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charlieAfterImmediateReadd',
+          'messageId': 'ra003-c-after',
+          'text': 'charlie after offline readd',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterImmediateReadd',
+          'ra003-a-after',
+          'alice after offline readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobAfterOfflineReadd',
+          'ra003-b-after',
+          'bob after offline readd',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterImmediateReadd': 1,
+        'bobAfterOfflineReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra003OfflineReaddProof': <String, Object?>{
+          'rowId': 'RA-003',
+          'offlineDuringRemoval': true,
+          'reconnectedBeforeReadd': true,
+          'resolvedRemovalBeforeReadd': true,
+          'removedWindowPlaintextCount': 0,
+          'rejoinedAfterOfflineRemoval': true,
+          'receivedAlicePostReaddAfterOfflineReconnect': true,
+          'receivedBobPostReaddAfterOfflineReconnect': true,
+          'postReaddPublishAccepted': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
+  const scenario = 'private_readd_current';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'private-readd-current-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceDuringCharlieRemoval',
+          'messageId': 'ml007-a-during',
+          'text': 'alice during charlie removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceAfterImmediateReadd',
+          'messageId': 'ml007-a-after',
+          'text': 'alice after immediate readd',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceAfterCharlieRestart',
+          'messageId': 'ra010-a-after-restart',
+          'text': 'alice after charlie restart',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'charlieAfterImmediateReadd',
+          'ml007-c-after',
+          'charlie after immediate readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobAfterReaddCurrent',
+          'ml007-b-after',
+          'bob after readd current',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'charlieAfterImmediateReadd': 1,
+        'bobAfterReaddCurrent': 1,
+      },
+      extra: const <String, Object?>{
+        'ml007ReaddCurrentProof': <String, Object?>{
+          'rowId': 'ML-007',
+          'removedCharlie': true,
+          'readdedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListIncludesCharlie': true,
+          'sentRemovedWindowBeforeReadd': true,
+          'sentAlicePostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'receivedCharliePostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'ra002OnlineSubscribedReaddProof': <String, Object?>{
+          'rowId': 'RA-002',
+          'removedCharlieWhileOnline': true,
+          'sentRemovedWindowWhileCharlieOnline': true,
+          'readdedCharlieWithoutRestart': true,
+          'sentPostReaddWithoutCharlieRestart': true,
+          'receivedCharliePostReaddWithoutRestart': true,
+          'removedPeerId': 'charlie-peer',
+          'finalEpoch': 2,
+        },
+        'ke008ReaddActivationProof': <String, Object?>{
+          'rowId': 'KE-008',
+          'readdCurrentKeyAvailableBeforeFixture': true,
+          'wroteReaddFixtureWithCurrentKey': true,
+          'readdEpoch': 2,
+          'waitedForCharlieCurrentKeyRejoinBeforePostReaddSends': true,
+          'charlieAcknowledgedRejoinAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ke010KeyBeforeConfigProof': <String, Object?>{
+          'rowId': 'KE-010',
+          'keyBeforeConfigOrderingCoveredByFakeNetwork': true,
+          'liveAuthorizedDeliveryCovered': true,
+          'sentPostConfigAuthorizedAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ke011DelayedOldKeyAfterReaddProof': <String, Object?>{
+          'rowId': 'KE-011',
+          'delayedOldKeyOrderingCoveredByFakeNetwork': true,
+          'livePostStaleDeliveryCovered': true,
+          'deliveredDelayedOldKeyAfterReadd': true,
+          'sentAlicePostStaleAtCurrentEpoch': true,
+          'staleEpoch': 1,
+          'finalEpoch': 2,
+        },
+        'ra006DelayedOldKeyAfterReaddProof': <String, Object?>{
+          'rowId': 'RA-006',
+          'delayedOldKeyOrderingCoveredByFakeNetwork': true,
+          'livePostStaleDeliveryCovered': true,
+          'deliveredDelayedOldKeyAfterReadd': true,
+          'sentAlicePostStaleAtCurrentEpoch': true,
+          'staleEpoch': 1,
+          'finalEpoch': 2,
+        },
+        'ra007PartitionedObserverReaddProof': <String, Object?>{
+          'rowId': 'RA-007',
+          'partitionedObserverOrderingCoveredByFakeNetwork': true,
+          'livePostHealDeliveryCovered': true,
+          'removedCharlie': true,
+          'readdedCharlie': true,
+          'sentRemovedWindowWhileBobPartitionedCoveredByFakeNetwork': true,
+          'sentAlicePostHealAtCurrentEpoch': true,
+          'receivedBobPostHealAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ra008PartitionedRemovedReaddProof': <String, Object?>{
+          'rowId': 'RA-008',
+          'removedPeerPartitionOrderingCoveredByFakeNetwork': true,
+          'livePostHealDeliveryCovered': true,
+          'removedCharlie': true,
+          'readdedCharlie': true,
+          'sentRemovedWindowWhileCharliePartitionedCoveredByFakeNetwork': true,
+          'sentAlicePostHealAtCurrentEpoch': true,
+          'receivedBobPostHealAtCurrentEpoch': true,
+          'receivedCharliePostHealAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ra009FirstReaddPublishProof': <String, Object?>{
+          'rowId': 'RA-009',
+          'firstReaddPublishOrderingCoveredByFakeNetwork': true,
+          'liveFirstReaddPublishCovered': true,
+          'readdedCharlie': true,
+          'receivedCharlieFirstPostReaddAtCurrentEpoch': true,
+          'firstCharliePostReaddMessageKey': 'charlieAfterImmediateReadd',
+          'finalEpoch': 2,
+        },
+        'ra010ReaddIncomingRestartProof': <String, Object?>{
+          'rowId': 'RA-010',
+          'liveIncomingBeforeAndAfterRestartCovered': true,
+          'readdedCharlie': true,
+          'sentFirstIncomingBeforeCharlieRestartAtCurrentEpoch': true,
+          'sentSecondIncomingAfterCharlieRestartAtCurrentEpoch': true,
+          'firstIncomingMessageKey': 'aliceAfterImmediateReadd',
+          'postRestartIncomingMessageKey': 'aliceAfterCharlieRestart',
+          'finalEpoch': 2,
+        },
+        'ra014OldKeyPublishAfterReaddProof': <String, Object?>{
+          'rowId': 'RA-014',
+          'staleOldPublishRejectionCoveredByFakeNetwork': true,
+          'nativeOldKeyPublishRejectionCovered': true,
+          'livePostRejectDeliveryCovered': true,
+          'rejectedCharlieOldKeyPublish': true,
+          'sentAliceCurrentAfterReject': true,
+          'receivedCharlieCurrentAfterReject': true,
+          'staleEpoch': 1,
+          'finalEpoch': 2,
+        },
+        'ra015AlreadyJoinedReaddRefreshProof': <String, Object?>{
+          'rowId': 'RA-015',
+          'flutterAlreadyJoinedPayloadCoveredByHost': true,
+          'nativeAlreadyJoinedRefreshCovered': true,
+          'fakeNetworkAlreadyJoinedReaddCovered': true,
+          'livePostRefreshDeliveryCovered': true,
+          'readdedCharlie': true,
+          'sentAliceCurrentAfterRefresh': true,
+          'receivedCharlieCurrentAfterRefresh': true,
+          'finalEpoch': 2,
+        },
+        'ra016RemovedIntervalReplayProof': <String, Object?>{
+          'rowId': 'RA-016',
+          'hostDirectRemovedIntervalReplayCovered': true,
+          'hostFakeNetworkRemovedIntervalReplayCovered': true,
+          'removedIntervalReplayRejectedByRecipientInterval': true,
+          'livePostReaddCurrentDeliveryCovered': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'sentAlicePostReaddCurrent': true,
+          'receivedBobPostReaddCurrent': true,
+          'receivedCharliePostReaddCurrent': true,
+          'finalEpoch': 2,
+        },
+        'ke012DelayedOldConfigAfterReaddProof': <String, Object?>{
+          'rowId': 'KE-012',
+          'delayedOldConfigOrderingCoveredByFakeNetwork': true,
+          'livePostStaleConfigDeliveryCovered': true,
+          'deliveredDelayedOldConfigAfterReadd': true,
+          'sentAlicePostStaleConfigAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'private-readd-current-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterReaddCurrent',
+          'messageId': 'ml007-b-after',
+          'text': 'bob after readd current',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceDuringCharlieRemoval',
+          'ml007-a-during',
+          'alice during charlie removal',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieAfterImmediateReadd',
+          'ml007-c-after',
+          'charlie after immediate readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterImmediateReadd',
+          'ml007-a-after',
+          'alice after immediate readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterCharlieRestart',
+          'ra010-a-after-restart',
+          'alice after charlie restart',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceDuringCharlieRemoval': 1,
+        'charlieAfterImmediateReadd': 1,
+        'aliceAfterImmediateReadd': 1,
+        'aliceAfterCharlieRestart': 1,
+      },
+      extra: const <String, Object?>{
+        'ml007ReaddCurrentProof': <String, Object?>{
+          'rowId': 'ML-007',
+          'memberListIncludesCharlie': true,
+          'receivedRemovedWindowMessage': true,
+          'sentBobPostReaddMessage': true,
+          'receivedAlicePostReaddMessage': true,
+          'receivedCharliePostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'ra002OnlineSubscribedReaddProof': <String, Object?>{
+          'rowId': 'RA-002',
+          'observedCharlieRemovedWhileOnline': true,
+          'receivedRemovedWindowWhileCharlieOnline': true,
+          'observedCharlieReaddedWithoutRestart': true,
+          'receivedAlicePostReaddWithoutCharlieRestart': true,
+          'sentBobPostReaddWithoutCharlieRestart': true,
+          'receivedCharliePostReaddWithoutRestart': true,
+          'finalEpoch': 2,
+        },
+        'ke008ReaddActivationProof': <String, Object?>{
+          'rowId': 'KE-008',
+          'observedCharlieReadded': true,
+          'receivedCharliePostReaddAtCurrentEpoch': true,
+          'sentBobPostReaddAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ke010KeyBeforeConfigProof': <String, Object?>{
+          'rowId': 'KE-010',
+          'keyBeforeConfigOrderingCoveredByFakeNetwork': true,
+          'liveAuthorizedDeliveryCovered': true,
+          'observedCharlieAuthorized': true,
+          'receivedCharliePostConfigAtCurrentEpoch': true,
+          'sentBobPostConfigAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ke011DelayedOldKeyAfterReaddProof': <String, Object?>{
+          'rowId': 'KE-011',
+          'delayedOldKeyOrderingCoveredByFakeNetwork': true,
+          'livePostStaleDeliveryCovered': true,
+          'observedCharlieReadded': true,
+          'receivedCharliePostStaleAtCurrentEpoch': true,
+          'sentBobPostStaleAtCurrentEpoch': true,
+          'staleEpoch': 1,
+          'finalEpoch': 2,
+        },
+        'ra006DelayedOldKeyAfterReaddProof': <String, Object?>{
+          'rowId': 'RA-006',
+          'delayedOldKeyOrderingCoveredByFakeNetwork': true,
+          'livePostStaleDeliveryCovered': true,
+          'observedCharlieReadded': true,
+          'receivedCharliePostStaleAtCurrentEpoch': true,
+          'sentBobPostStaleAtCurrentEpoch': true,
+          'staleEpoch': 1,
+          'finalEpoch': 2,
+        },
+        'ra007PartitionedObserverReaddProof': <String, Object?>{
+          'rowId': 'RA-007',
+          'partitionedObserverOrderingCoveredByFakeNetwork': true,
+          'livePostHealDeliveryCovered': true,
+          'activeObserverPartitionCoveredByFakeNetwork': true,
+          'retainedEntitledRemovedWindowCoveredByFakeNetwork': true,
+          'observedCharlieReadded': true,
+          'receivedAlicePostHealAtCurrentEpoch': true,
+          'receivedCharliePostHealAtCurrentEpoch': true,
+          'sentBobPostHealAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ra008PartitionedRemovedReaddProof': <String, Object?>{
+          'rowId': 'RA-008',
+          'removedPeerPartitionOrderingCoveredByFakeNetwork': true,
+          'livePostHealDeliveryCovered': true,
+          'observedCharlieRemoved': true,
+          'receivedRemovedWindowWhileCharliePartitionedCoveredByFakeNetwork':
+              true,
+          'observedCharlieReadded': true,
+          'receivedAlicePostHealAtCurrentEpoch': true,
+          'receivedCharliePostHealAtCurrentEpoch': true,
+          'sentBobPostHealAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ra009FirstReaddPublishProof': <String, Object?>{
+          'rowId': 'RA-009',
+          'firstReaddPublishOrderingCoveredByFakeNetwork': true,
+          'liveFirstReaddPublishCovered': true,
+          'observedCharlieReadded': true,
+          'receivedCharlieFirstPostReaddAtCurrentEpoch': true,
+          'firstCharliePostReaddMessageKey': 'charlieAfterImmediateReadd',
+          'finalEpoch': 2,
+        },
+        'ra010ReaddIncomingRestartProof': <String, Object?>{
+          'rowId': 'RA-010',
+          'liveIncomingBeforeAndAfterRestartCovered': true,
+          'observedCharlieReadded': true,
+          'receivedAlicePostRestartAtCurrentEpoch': true,
+          'postRestartIncomingMessageKey': 'aliceAfterCharlieRestart',
+          'finalEpoch': 2,
+        },
+        'ra014OldKeyPublishAfterReaddProof': <String, Object?>{
+          'rowId': 'RA-014',
+          'staleOldPublishRejectionCoveredByFakeNetwork': true,
+          'nativeOldKeyPublishRejectionCovered': true,
+          'livePostRejectDeliveryCovered': true,
+          'rejectedCharlieOldKeyPublish': true,
+          'receivedAliceCurrentAfterReject': true,
+          'receivedCharlieCurrentAfterReject': true,
+          'sentBobCurrentAfterReject': true,
+          'staleEpoch': 1,
+          'finalEpoch': 2,
+        },
+        'ra015AlreadyJoinedReaddRefreshProof': <String, Object?>{
+          'rowId': 'RA-015',
+          'flutterAlreadyJoinedPayloadCoveredByHost': true,
+          'nativeAlreadyJoinedRefreshCovered': true,
+          'fakeNetworkAlreadyJoinedReaddCovered': true,
+          'livePostRefreshDeliveryCovered': true,
+          'observedCharlieReadded': true,
+          'receivedAliceCurrentAfterRefresh': true,
+          'receivedCharlieCurrentAfterRefresh': true,
+          'sentBobCurrentAfterRefresh': true,
+          'finalEpoch': 2,
+        },
+        'ra016RemovedIntervalReplayProof': <String, Object?>{
+          'rowId': 'RA-016',
+          'hostDirectRemovedIntervalReplayCovered': true,
+          'hostFakeNetworkRemovedIntervalReplayCovered': true,
+          'removedIntervalReplayRejectedByRecipientInterval': true,
+          'livePostReaddCurrentDeliveryCovered': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'receivedAlicePostReaddCurrent': true,
+          'sentBobPostReaddCurrent': true,
+          'receivedCharliePostReaddCurrent': true,
+          'finalEpoch': 2,
+        },
+        'ke012DelayedOldConfigAfterReaddProof': <String, Object?>{
+          'rowId': 'KE-012',
+          'delayedOldConfigOrderingCoveredByFakeNetwork': true,
+          'livePostStaleConfigDeliveryCovered': true,
+          'keptActiveAfterDelayedOldConfig': true,
+          'observedCharlieReadded': true,
+          'receivedCharliePostStaleConfigAtCurrentEpoch': true,
+          'sentBobPostStaleConfigAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'private-readd-current-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charlieAfterImmediateReadd',
+          'messageId': 'ml007-c-after',
+          'text': 'charlie after immediate readd',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterImmediateReadd',
+          'ml007-a-after',
+          'alice after immediate readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterCharlieRestart',
+          'ra010-a-after-restart',
+          'alice after charlie restart',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobAfterReaddCurrent',
+          'ml007-b-after',
+          'bob after readd current',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterImmediateReadd': 1,
+        'aliceAfterCharlieRestart': 1,
+        'bobAfterReaddCurrent': 1,
+      },
+      extra: const <String, Object?>{
+        'ml007ReaddCurrentProof': <String, Object?>{
+          'rowId': 'ML-007',
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowPlaintextCount': 0,
+          'hasStaleEpochAfterReadd': false,
+          'postReaddPublishAccepted': true,
+          'receivedAlicePostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'ra002OnlineSubscribedReaddProof': <String, Object?>{
+          'rowId': 'RA-002',
+          'onlineBeforeRemoval': true,
+          'remainedProcessAliveDuringRemoval': true,
+          'staleSubscriptionWindowCovered': true,
+          'removedWindowPlaintextCount': 0,
+          'rejoinedWithoutRestart': true,
+          'receivedAlicePostReaddWithoutRestart': true,
+          'receivedBobPostReaddWithoutRestart': true,
+          'postReaddPublishAccepted': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ke008ReaddActivationProof': <String, Object?>{
+          'rowId': 'KE-008',
+          'importedCurrentEpochBeforeRejoinAck': true,
+          'epochBeforeRejoinAck': 2,
+          'rejoinAcknowledgedAfterCurrentKey': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'hasCurrentEpochBeforePostReaddPublish': true,
+          'postReaddPublishAccepted': true,
+          'postReaddPublishEpoch': 2,
+          'receivedAlicePostReaddAtCurrentEpoch': true,
+          'receivedBobPostReaddAtCurrentEpoch': true,
+          'removedWindowPlaintextCount': 0,
+          'hasStaleEpochAfterReadd': false,
+          'finalEpoch': 2,
+        },
+        'ke010KeyBeforeConfigProof': <String, Object?>{
+          'rowId': 'KE-010',
+          'keyBeforeConfigOrderingCoveredByFakeNetwork': true,
+          'liveAuthorizedDeliveryCovered': true,
+          'noPreConfigPlaintextDespiteKey': true,
+          'receivedAlicePostConfigAtCurrentEpoch': true,
+          'receivedBobPostConfigAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ke011DelayedOldKeyAfterReaddProof': <String, Object?>{
+          'rowId': 'KE-011',
+          'delayedOldKeyOrderingCoveredByFakeNetwork': true,
+          'livePostStaleDeliveryCovered': true,
+          'keptCurrentEpochAfterDelayedOldKey': true,
+          'storedDelayedOldKeyAsHistorical': true,
+          'postStalePublishAccepted': true,
+          'receivedAlicePostStaleAtCurrentEpoch': true,
+          'receivedBobPostStaleAtCurrentEpoch': true,
+          'staleEpoch': 1,
+          'epochBeforeDelayedOldKey': 2,
+          'epochAfterDelayedOldKey': 2,
+          'finalEpoch': 2,
+        },
+        'ra006DelayedOldKeyAfterReaddProof': <String, Object?>{
+          'rowId': 'RA-006',
+          'delayedOldKeyOrderingCoveredByFakeNetwork': true,
+          'livePostStaleDeliveryCovered': true,
+          'keptCurrentEpochAfterDelayedOldKey': true,
+          'storedDelayedOldKeyAsHistorical': true,
+          'postStalePublishAccepted': true,
+          'receivedAlicePostStaleAtCurrentEpoch': true,
+          'receivedBobPostStaleAtCurrentEpoch': true,
+          'staleEpoch': 1,
+          'epochBeforeDelayedOldKey': 2,
+          'epochAfterDelayedOldKey': 2,
+          'finalEpoch': 2,
+        },
+        'ra007PartitionedObserverReaddProof': <String, Object?>{
+          'rowId': 'RA-007',
+          'partitionedObserverOrderingCoveredByFakeNetwork': true,
+          'livePostHealDeliveryCovered': true,
+          'bobPartitionDoesNotLeakRemovedWindowCoveredByFakeNetwork': true,
+          'removedWindowPlaintextCount': 0,
+          'postHealPublishAccepted': true,
+          'receivedAlicePostHealAtCurrentEpoch': true,
+          'receivedBobPostHealAtCurrentEpoch': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ra008PartitionedRemovedReaddProof': <String, Object?>{
+          'rowId': 'RA-008',
+          'removedPeerPartitionOrderingCoveredByFakeNetwork': true,
+          'livePostHealDeliveryCovered': true,
+          'missedRemovalBeforeReaddCoveredByFakeNetwork': true,
+          'removedWindowPlaintextCount': 0,
+          'postHealPublishAccepted': true,
+          'receivedAlicePostHealAtCurrentEpoch': true,
+          'receivedBobPostHealAtCurrentEpoch': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ra009FirstReaddPublishProof': <String, Object?>{
+          'rowId': 'RA-009',
+          'firstReaddPublishOrderingCoveredByFakeNetwork': true,
+          'liveFirstReaddPublishCovered': true,
+          'sentFirstPostReaddAtCurrentEpoch': true,
+          'firstPostReaddPublishAccepted': true,
+          'firstPostReaddMessageKey': 'charlieAfterImmediateReadd',
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ra010ReaddIncomingRestartProof': <String, Object?>{
+          'rowId': 'RA-010',
+          'liveIncomingBeforeAndAfterRestartCovered': true,
+          'receivedFirstIncomingBeforeRestartAtCurrentEpoch': true,
+          'restartPreservedCurrentGroupKeyConfig': true,
+          'receivedSecondIncomingAfterRestartAtCurrentEpoch': true,
+          'firstIncomingMessageKey': 'aliceAfterImmediateReadd',
+          'postRestartIncomingMessageKey': 'aliceAfterCharlieRestart',
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ra014OldKeyPublishAfterReaddProof': <String, Object?>{
+          'rowId': 'RA-014',
+          'staleOldPublishRejectionCoveredByFakeNetwork': true,
+          'nativeOldKeyPublishRejectionCovered': true,
+          'livePostRejectDeliveryCovered': true,
+          'oldKeyPublishRejected': true,
+          'postRejectPublishAccepted': true,
+          'receivedAlicePostRejectAtCurrentEpoch': true,
+          'receivedBobPostRejectAtCurrentEpoch': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'staleEpoch': 1,
+          'finalEpoch': 2,
+        },
+        'ra015AlreadyJoinedReaddRefreshProof': <String, Object?>{
+          'rowId': 'RA-015',
+          'flutterAlreadyJoinedPayloadCoveredByHost': true,
+          'nativeAlreadyJoinedRefreshCovered': true,
+          'fakeNetworkAlreadyJoinedReaddCovered': true,
+          'livePostRefreshDeliveryCovered': true,
+          'alreadyJoinedReaddRefreshAccepted': true,
+          'importedCurrentConfigBeforeRejoinAck': true,
+          'postRefreshPublishAccepted': true,
+          'receivedAlicePostRefreshAtCurrentEpoch': true,
+          'receivedBobPostRefreshAtCurrentEpoch': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ra016RemovedIntervalReplayProof': <String, Object?>{
+          'rowId': 'RA-016',
+          'hostDirectRemovedIntervalReplayCovered': true,
+          'hostFakeNetworkRemovedIntervalReplayCovered': true,
+          'removedIntervalReplayRejectedByRecipientInterval': true,
+          'livePostReaddCurrentDeliveryCovered': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowPlaintextCount': 0,
+          'postReaddPublishAccepted': true,
+          'receivedAlicePostReaddCurrent': true,
+          'receivedBobPostReaddCurrent': true,
+          'finalEpoch': 2,
+        },
+        'ke012DelayedOldConfigAfterReaddProof': <String, Object?>{
+          'rowId': 'KE-012',
+          'delayedOldConfigOrderingCoveredByFakeNetwork': true,
+          'livePostStaleConfigDeliveryCovered': true,
+          'keptFinalMembersAfterDelayedOldConfig': true,
+          'keptCurrentEpochAfterDelayedOldConfig': true,
+          'postStaleConfigPublishAccepted': true,
+          'receivedAlicePostStaleConfigAtCurrentEpoch': true,
+          'receivedBobPostStaleConfigAtCurrentEpoch': true,
+          'epochBeforeDelayedOldConfig': 2,
+          'epochAfterDelayedOldConfig': 2,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateReaddActiveMembersVerdicts() {
+  const scenario = 'private_readd_active_members';
+  const groupId = 'private-readd-active-members-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+    'dana': 'dana-peer',
+  };
+  const members = <String>[
+    'alice-peer',
+    'bob-peer',
+    'charlie-peer',
+    'dana-peer',
+  ];
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+
+  void addMessage({
+    required int cycle,
+    required String phase,
+    required String senderRole,
+    required List<String> receiverRoles,
+    required int keyEpoch,
+  }) {
+    final key = _ra017KeyForTest(cycle, phase, senderRole);
+    final messageId = 'ra017-c$cycle-$phase-$senderRole';
+    final text =
+        'RA-017 cycle $cycle $phase from ${_titleRoleForTest(senderRole)}';
+    sentByRole[senderRole]!.add(<String, Object?>{
+      'key': key,
+      'messageId': messageId,
+      'text': text,
+      'outcome': 'success',
+      'senderPeerId': peerIdsByRole[senderRole],
+      'keyEpoch': keyEpoch,
+    });
+    for (final receiverRole in receiverRoles) {
+      receivedByRole[receiverRole]!.add(
+        _received(
+          key,
+          messageId,
+          text,
+          peerIdsByRole[senderRole]!,
+          keyEpoch: keyEpoch,
+        ),
+      );
+    }
+  }
+
+  for (var cycle = 1; cycle <= 3; cycle++) {
+    addMessage(
+      cycle: cycle,
+      phase: 'removed',
+      senderRole: 'alice',
+      receiverRoles: const <String>['bob', 'dana'],
+      keyEpoch: cycle * 2,
+    );
+    addMessage(
+      cycle: cycle,
+      phase: 'removed',
+      senderRole: 'bob',
+      receiverRoles: const <String>['alice', 'dana'],
+      keyEpoch: cycle * 2,
+    );
+    addMessage(
+      cycle: cycle,
+      phase: 'removed',
+      senderRole: 'dana',
+      receiverRoles: const <String>['alice', 'bob'],
+      keyEpoch: cycle * 2,
+    );
+    addMessage(
+      cycle: cycle,
+      phase: 'readd',
+      senderRole: 'alice',
+      receiverRoles: const <String>['bob', 'charlie', 'dana'],
+      keyEpoch: cycle * 2 + 1,
+    );
+    addMessage(
+      cycle: cycle,
+      phase: 'readd',
+      senderRole: 'bob',
+      receiverRoles: const <String>['alice', 'charlie', 'dana'],
+      keyEpoch: cycle * 2 + 1,
+    );
+    addMessage(
+      cycle: cycle,
+      phase: 'readd',
+      senderRole: 'dana',
+      receiverRoles: const <String>['alice', 'bob', 'charlie'],
+      keyEpoch: cycle * 2 + 1,
+    );
+  }
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'RA-017',
+    'churnCycles': 3,
+    'activeSenders': const <String>['alice', 'bob', 'dana'],
+    'activeReceivers': const <String>['alice', 'bob', 'dana'],
+    'danaActiveMemberCovered': true,
+    'charlieRemovedWindowPlaintextCount': 0,
+    'finalRoles': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'finalMemberListConverged': true,
+    'finalEpoch': 7,
+    'finalEpochConverged': true,
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie', 'dana'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 7,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'ra017ActiveMemberChurnProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateReaddCyclesVerdicts() {
+  const scenario = 'private_readd_cycles';
+  const groupId = 'private-readd-cycles-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 21,
+      extra: const <String, Object?>{
+        'ml008CycleProof': <String, Object?>{
+          'rowId': 'ML-008',
+          'cycleCount': 20,
+          'removedWindowSendCount': 20,
+          'sentPostReaddCount': 20,
+          'receivedCharliePostReaddCount': 20,
+          'restartMarkersObserved': 4,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 21,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 21,
+      extra: const <String, Object?>{
+        'ml008CycleProof': <String, Object?>{
+          'rowId': 'ML-008',
+          'cycleCount': 20,
+          'receivedRemovedWindowCount': 20,
+          'receivedAlicePostReaddCount': 20,
+          'receivedCharliePostReaddCount': 20,
+          'bobCharlieExactMemberRowCountProofs': 20,
+          'restartMarkersPerformed': 2,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 21,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 21,
+      extra: const <String, Object?>{
+        'ml008CycleProof': <String, Object?>{
+          'rowId': 'ML-008',
+          'cycleCount': 20,
+          'selfRemovalCount': 20,
+          'receivedAlicePostReaddCount': 20,
+          'postReaddSendCount': 20,
+          'removedWindowPlaintextCount': 0,
+          'restartMarkersPerformed': 2,
+          'finalMemberListIncludesAliceBobCharlie': true,
+          'finalEpoch': 21,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateRapidReaddVerdicts() {
+  const scenario = 'private_rapid_readd';
+  const groupId = 'private-rapid-readd-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 3,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceDuringRapidRemove',
+          'messageId': 'ml009-a-during',
+          'text': 'alice during rapid remove',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'alicePostRapidReadd',
+          'messageId': 'ml009-a-after',
+          'text': 'alice after rapid readd',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 3,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobPostRapidReadd',
+          'ml009-b-after',
+          'bob after rapid readd',
+          'bob-peer',
+          keyEpoch: 3,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'bobPostRapidReadd': 1},
+      extra: const <String, Object?>{
+        'ml009RapidReaddProof': <String, Object?>{
+          'rowId': 'ML-009',
+          'removedCharlie': true,
+          'readdedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'readdIssuedBeforeRemovalAcks': true,
+          'sentRemovedWindowBeforeReadd': true,
+          'sentAlicePostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 3,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 3,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobPostRapidReadd',
+          'messageId': 'ml009-b-after',
+          'text': 'bob after rapid readd',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 3,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceDuringRapidRemove',
+          'ml009-a-during',
+          'alice during rapid remove',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'alicePostRapidReadd',
+          'ml009-a-after',
+          'alice after rapid readd',
+          'alice-peer',
+          keyEpoch: 3,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceDuringRapidRemove': 1,
+        'alicePostRapidReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml009RapidReaddProof': <String, Object?>{
+          'rowId': 'ML-009',
+          'memberListIncludesCharlie': true,
+          'receivedRemovedWindowMessage': true,
+          'receivedAlicePostReaddMessage': true,
+          'sentBobPostReaddMessage': true,
+          'staleRemoveIgnored': true,
+          'finalEpoch': 3,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 3,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'alicePostRapidReadd',
+          'ml009-a-after',
+          'alice after rapid readd',
+          'alice-peer',
+          keyEpoch: 3,
+        ),
+        _received(
+          'bobPostRapidReadd',
+          'ml009-b-after',
+          'bob after rapid readd',
+          'bob-peer',
+          keyEpoch: 3,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'alicePostRapidReadd': 1,
+        'bobPostRapidReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml009RapidReaddProof': <String, Object?>{
+          'rowId': 'ML-009',
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'receivedAlicePostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'removedWindowPlaintextCount': 0,
+          'staleRemoveIgnored': true,
+          'hasStaleEpochAfterReadd': false,
+          'finalEpoch': 3,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateConcurrentAdminMembershipVerdicts() {
+  const scenario = 'private_concurrent_admin_membership_edits';
+  const groupId = 'private-concurrent-admin-membership-group';
+  const activeMembers = <String>['alice-peer', 'bob-peer', 'dana-peer'];
+  const deliveryOrders = <String>['add_then_remove', 'remove_then_add'];
+  const finalHash = 'ml012-final-config-hash';
+
+  Map<String, Object?> activeProof(String role) => <String, Object?>{
+    'rowId': 'ML-012',
+    'appPeerPlatform': 'ios_26_2_core_simulator',
+    'concurrentAdminProofSource': 'app_peer_core_simulator',
+    'deliveryOrdersTested': deliveryOrders,
+    'finalMemberPeerIds': activeMembers,
+    'finalConfigStateHash': finalHash,
+    'memberSetsConverged': true,
+    'configHashesConverged': true,
+    'independentAddPreserved': true,
+    'removedCharlieExcluded': true,
+    'sameTargetNewerReaddWins': true,
+    'sameTargetTieRemoveWins': true,
+    'role': role,
+  };
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 2,
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'ml012ConcurrentAdminEditsProof': activeProof('alice'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 2,
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'ml012ConcurrentAdminEditsProof': activeProof('bob'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: const <String>[],
+      keyEpoch: 1,
+      extra: const <String, Object?>{
+        'activeMemberPeerIds': <String>[],
+        'ml012ConcurrentAdminEditsProof': <String, Object?>{
+          'rowId': 'ML-012',
+          'appPeerPlatform': 'ios_26_2_core_simulator',
+          'concurrentAdminProofSource': 'app_peer_core_simulator',
+          'deliveryOrdersTested': deliveryOrders,
+          'charlieRemoved': true,
+          'postRemovalGroupAbsent': true,
+          'removedCharlieExcluded': true,
+          'sameTargetTieRemoveWins': true,
+          'removedWindowPlaintextCount': 0,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'dana',
+      peerId: 'dana-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 2,
+      extra: <String, Object?>{
+        'activeMemberPeerIds': activeMembers,
+        'ml012ConcurrentAdminEditsProof': activeProof('dana'),
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateTimelineTruthVerdicts() {
+  const scenario = 'private_timeline_truth';
+  const groupId = 'private-timeline-truth-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 3,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceBeforeTimelineRemoval',
+          'messageId': 'ml015-a-before',
+          'text': 'alice before removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 1,
+        },
+        {
+          'key': 'aliceDuringTimelineRemoval',
+          'messageId': 'ml015-a-window',
+          'text': 'alice removed window',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'alicePostTimelineReadd',
+          'messageId': 'ml015-a-after',
+          'text': 'alice after readd',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 3,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobPostTimelineReadd',
+          'ml015-b-after',
+          'bob after readd',
+          'bob-peer',
+          keyEpoch: 3,
+        ),
+        _received(
+          'charliePostTimelineReadd',
+          'ml015-c-after',
+          'charlie after readd',
+          'charlie-peer',
+          keyEpoch: 3,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'bobPostTimelineReadd': 1,
+        'charliePostTimelineReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml015TimelineTruthProof': <String, Object?>{
+          'rowId': 'ML-015',
+          'removedCharlie': true,
+          'readdedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'sentBeforeRemovalMessage': true,
+          'sentRemovedWindowBeforeReadd': true,
+          'sentAlicePostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'receivedCharliePostReaddMessage': true,
+          'timelineOrderMatchesMembershipIntervals': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 3,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 3,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobPostTimelineReadd',
+          'messageId': 'ml015-b-after',
+          'text': 'bob after readd',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 3,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceBeforeTimelineRemoval',
+          'ml015-a-before',
+          'alice before removal',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+        _received(
+          'aliceDuringTimelineRemoval',
+          'ml015-a-window',
+          'alice removed window',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'alicePostTimelineReadd',
+          'ml015-a-after',
+          'alice after readd',
+          'alice-peer',
+          keyEpoch: 3,
+        ),
+        _received(
+          'charliePostTimelineReadd',
+          'ml015-c-after',
+          'charlie after readd',
+          'charlie-peer',
+          keyEpoch: 3,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceBeforeTimelineRemoval': 1,
+        'aliceDuringTimelineRemoval': 1,
+        'alicePostTimelineReadd': 1,
+        'charliePostTimelineReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml015TimelineTruthProof': <String, Object?>{
+          'rowId': 'ML-015',
+          'receivedBeforeRemovalMessage': true,
+          'receivedRemovedWindowMessage': true,
+          'receivedAlicePostReaddMessage': true,
+          'sentBobPostReaddMessage': true,
+          'receivedCharliePostReaddMessage': true,
+          'timelineOrderMatchesMembershipIntervals': true,
+          'timelineContainsRemoval': true,
+          'timelineContainsReadd': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 3,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 3,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charliePostTimelineReadd',
+          'messageId': 'ml015-c-after',
+          'text': 'charlie after readd',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 3,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceBeforeTimelineRemoval',
+          'ml015-a-before',
+          'alice before removal',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+        _received(
+          'alicePostTimelineReadd',
+          'ml015-a-after',
+          'alice after readd',
+          'alice-peer',
+          keyEpoch: 3,
+        ),
+        _received(
+          'bobPostTimelineReadd',
+          'ml015-b-after',
+          'bob after readd',
+          'bob-peer',
+          keyEpoch: 3,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceBeforeTimelineRemoval': 1,
+        'alicePostTimelineReadd': 1,
+        'bobPostTimelineReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml015TimelineTruthProof': <String, Object?>{
+          'rowId': 'ML-015',
+          'receivedBeforeRemovalMessage': true,
+          'receivedAlicePostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'sentCharliePostReaddMessage': true,
+          'selfRemovalCleanupObserved': true,
+          'memberListIncludesAliceBob': true,
+          'timelineOrderMatchesMembershipIntervals': true,
+          'timelineContainsReadd': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowPlaintextCount': 0,
+          'hasStaleEpochAfterReadd': false,
+          'finalEpoch': 3,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateHistoryRetentionVerdicts() {
+  const scenario = 'private_history_retention';
+  const groupId = 'private-history-retention-group';
+  const activeMembers = <String>['alice-peer', 'bob-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceBeforeHistoryRemoval',
+          'messageId': 'ml017-a-before',
+          'text': 'alice before removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 1,
+        },
+        {
+          'key': 'alicePostHistoryRemoval',
+          'messageId': 'ml017-a-after',
+          'text': 'alice after removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+          'recipientPeerIds': <String>['bob-peer'],
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobPostHistoryRemoval',
+          'ml017-b-after',
+          'bob after removal',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'bobPostHistoryRemoval': 1},
+      extra: const <String, Object?>{
+        'ml017HistoryRetentionProof': <String, Object?>{
+          'rowId': 'ML-017',
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'sentPreRemovalHistory': true,
+          'sentPostRemovalMessage': true,
+          'receivedBobPostRemovalMessage': true,
+          'memberListExcludesCharlie': true,
+          'rotatedEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobPostHistoryRemoval',
+          'messageId': 'ml017-b-after',
+          'text': 'bob after removal',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+          'recipientPeerIds': <String>['alice-peer'],
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceBeforeHistoryRemoval',
+          'ml017-a-before',
+          'alice before removal',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+        _received(
+          'alicePostHistoryRemoval',
+          'ml017-a-after',
+          'alice after removal',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceBeforeHistoryRemoval': 1,
+        'alicePostHistoryRemoval': 1,
+      },
+      extra: const <String, Object?>{
+        'ml017HistoryRetentionProof': <String, Object?>{
+          'rowId': 'ML-017',
+          'receivedPreRemovalHistory': true,
+          'receivedAlicePostRemovalMessage': true,
+          'sentBobPostRemovalMessage': true,
+          'memberListExcludesCharlie': true,
+          'hasRotatedEpoch': true,
+          'rotatedEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 0,
+      sentMessages: const <Map<String, Object?>>[],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceBeforeHistoryRemoval',
+          'ml017-a-before',
+          'alice before removal',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceBeforeHistoryRemoval': 1,
+      },
+      extra: const <String, Object?>{
+        'ml017HistoryRetentionProof': <String, Object?>{
+          'rowId': 'ML-017',
+          'retainedLocalGroup': true,
+          'retainedPreRemovalHistory': true,
+          'composeDisabled': true,
+          'postRemovalSendRejected': true,
+          'selfMemberRemoved': true,
+          'noCurrentKey': true,
+          'selfRemovalCleanupObserved': true,
+          'receivedAlicePostRemovalMessage': false,
+          'receivedBobPostRemovalMessage': false,
+          'postRemovalPublishAccepted': false,
+          'postRemovalPlaintextCount': 0,
+          'postRemovalSendOutcome': 'unauthorized',
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateInviteTerminalStatesVerdicts() {
+  const scenario = 'private_invite_terminal_states';
+  const groupId = 'private-invite-terminal-states-group';
+  const activeMembers = <String>['alice-peer', 'bob-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterInviteTerminalStates',
+          'messageId': 'ml018-a-after',
+          'text': 'alice after invite terminal states',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobAfterInviteTerminalStates',
+          'ml018-b-after',
+          'bob after invite terminal states',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'bobAfterInviteTerminalStates': 1,
+      },
+      extra: const <String, Object?>{
+        'ml018InviteTerminalProof': <String, Object?>{
+          'rowId': 'ML-018',
+          'sentDeclineInvite': true,
+          'sentExpiryInvite': true,
+          'sentCancellationInvite': true,
+          'sentCancellationRevocation': true,
+          'sentPostTerminalMessage': true,
+          'receivedBobPostTerminalMessage': true,
+          'memberListExcludesCharlie': true,
+          'terminalInviteePeerId': 'charlie-peer',
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterInviteTerminalStates',
+          'messageId': 'ml018-b-after',
+          'text': 'bob after invite terminal states',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterInviteTerminalStates',
+          'ml018-a-after',
+          'alice after invite terminal states',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterInviteTerminalStates': 1,
+      },
+      extra: const <String, Object?>{
+        'ml018InviteTerminalProof': <String, Object?>{
+          'rowId': 'ML-018',
+          'receivedAlicePostTerminalMessage': true,
+          'sentBobPostTerminalMessage': true,
+          'memberListExcludesCharlie': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: activeMembers,
+      keyEpoch: 0,
+      extra: const <String, Object?>{
+        'ml018InviteTerminalProof': <String, Object?>{
+          'rowId': 'ML-018',
+          'receivedDeclineInvite': true,
+          'declinedInvite': true,
+          'declinePendingCleared': true,
+          'declineTombstoneRecorded': true,
+          'declinedDelayedCopyRejected': true,
+          'receivedExpiryInvite': true,
+          'expiredInviteRejected': true,
+          'receivedCancellationInvite': true,
+          'cancelledInviteRejected': true,
+          'noLocalGroup': true,
+          'noUsableKey': true,
+          'postTerminalSendRejected': true,
+          'receivedAlicePostTerminalMessage': false,
+          'receivedBobPostTerminalMessage': false,
+          'postTerminalPublishAccepted': false,
+          'postTerminalPlaintextCount': 0,
+          'postTerminalSendOutcome': 'groupNotFound',
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateStaleInviteReaddVerdicts() {
+  const scenario = 'private_stale_invite_readd';
+  const groupId = 'private-stale-invite-readd-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceDuringStaleInviteRemoval',
+          'messageId': 'ml019-a-during',
+          'text': 'alice during stale invite removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceAfterStaleInviteReadd',
+          'messageId': 'ml019-a-after',
+          'text': 'alice after stale invite readd',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobAfterStaleInviteReadd',
+          'ml019-b-after',
+          'bob after stale invite readd',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieAfterStaleInviteReadd',
+          'ml019-c-after',
+          'charlie after stale invite readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'bobAfterStaleInviteReadd': 1,
+        'charlieAfterStaleInviteReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml019StaleInviteProof': <String, Object?>{
+          'rowId': 'ML-019',
+          'sentOldInvite': true,
+          'removedCharlieAfterOldInvite': true,
+          'rotatedAfterRemoval': true,
+          'sentRemovedWindowMessage': true,
+          'sentLatestInvite': true,
+          'sentPostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'receivedCharliePostReaddMessage': true,
+          'memberListIncludesCharlie': true,
+          'staleInviteePeerId': 'charlie-peer',
+          'finalEpoch': 2,
+        },
+        'ke016StaleReinviteProof': <String, Object?>{
+          'rowId': 'KE-016',
+          'sentEpochNInvite': true,
+          'rotatedToNextEpochBeforeAccept': true,
+          'sentCurrentEpochInvite': true,
+          'sentPostAcceptAtCurrentEpoch': true,
+          'receivedBobPostAcceptAtCurrentEpoch': true,
+          'receivedCharliePostAcceptAtCurrentEpoch': true,
+          'memberListIncludesCharlie': true,
+          'staleInviteePeerId': 'charlie-peer',
+          'finalEpoch': 2,
+        },
+        'ra004StaleInviteBeforeReaddProof': <String, Object?>{
+          'rowId': 'RA-004',
+          'sentOldInvite': true,
+          'removedCharlieBeforeOldAccept': true,
+          'rotatedAfterRemoval': true,
+          'revokedOldInviteBeforeCurrentInvite': true,
+          'sentCurrentInviteAfterOldAcceptBlocked': true,
+          'sentPostCurrentInviteMessage': true,
+          'receivedBobPostCurrentInviteMessage': true,
+          'receivedCharliePostCurrentInviteMessage': true,
+          'memberListIncludesCharlie': true,
+          'staleInviteePeerId': 'charlie-peer',
+          'oldInviteId': 'invite-old',
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'bobAfterStaleInviteReadd',
+          'messageId': 'ml019-b-after',
+          'text': 'bob after stale invite readd',
+          'outcome': 'success',
+          'senderPeerId': 'bob-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceDuringStaleInviteRemoval',
+          'ml019-a-during',
+          'alice during stale invite removal',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterStaleInviteReadd',
+          'ml019-a-after',
+          'alice after stale invite readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieAfterStaleInviteReadd',
+          'ml019-c-after',
+          'charlie after stale invite readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceDuringStaleInviteRemoval': 1,
+        'aliceAfterStaleInviteReadd': 1,
+        'charlieAfterStaleInviteReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml019StaleInviteProof': <String, Object?>{
+          'rowId': 'ML-019',
+          'observedOldAdd': true,
+          'observedRemovalBeforeReadd': true,
+          'receivedRemovedWindowMessage': true,
+          'memberListIncludesCharlie': true,
+          'hasCurrentEpoch': true,
+          'receivedAlicePostReaddMessage': true,
+          'sentBobPostReaddMessage': true,
+          'receivedCharliePostReaddMessage': true,
+          'finalEpoch': 2,
+        },
+        'ke016StaleReinviteProof': <String, Object?>{
+          'rowId': 'KE-016',
+          'observedEpochNInviteMemberState': true,
+          'observedRemovalBeforeCurrentInvite': true,
+          'receivedRemovedWindowMessage': true,
+          'memberListIncludesCharlie': true,
+          'hasCurrentEpoch': true,
+          'receivedAlicePostAcceptAtCurrentEpoch': true,
+          'sentBobPostAcceptAtCurrentEpoch': true,
+          'receivedCharliePostAcceptAtCurrentEpoch': true,
+          'finalEpoch': 2,
+        },
+        'ra004StaleInviteBeforeReaddProof': <String, Object?>{
+          'rowId': 'RA-004',
+          'observedOldInviteMemberState': true,
+          'observedRemovalBeforeCurrentInvite': true,
+          'receivedRemovedWindowMessage': true,
+          'memberListIncludesCharlie': true,
+          'hasCurrentEpoch': true,
+          'receivedAlicePostCurrentInviteMessage': true,
+          'sentBobPostCurrentInviteMessage': true,
+          'receivedCharliePostCurrentInviteMessage': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charlieAfterStaleInviteReadd',
+          'messageId': 'ml019-c-after',
+          'text': 'charlie after stale invite readd',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterStaleInviteReadd',
+          'ml019-a-after',
+          'alice after stale invite readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobAfterStaleInviteReadd',
+          'ml019-b-after',
+          'bob after stale invite readd',
+          'bob-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterStaleInviteReadd': 1,
+        'bobAfterStaleInviteReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ml019StaleInviteProof': <String, Object?>{
+          'rowId': 'ML-019',
+          'receivedOldInvite': true,
+          'receivedLatestInvite': true,
+          'delayedOldInviteRejected': true,
+          'pendingRemainedLatestBeforeAccept': true,
+          'acceptedLatestInvite': true,
+          'staleAcceptRejected': true,
+          'noKeyDowngradeAfterStaleAccept': true,
+          'memberListIncludesAliceBobCharlie': true,
+          'receivedAlicePostReaddMessage': true,
+          'receivedBobPostReaddMessage': true,
+          'sentCharliePostReaddMessage': true,
+          'oldInviteEpoch': 1,
+          'latestInviteEpoch': 2,
+          'acceptedEpoch': 2,
+          'delayedStoreResult': 'invalidPayload',
+          'staleAcceptResult': 'invalidPayload',
+          'removedWindowPlaintextCount': 0,
+          'finalEpoch': 2,
+        },
+        'ke016StaleReinviteProof': <String, Object?>{
+          'rowId': 'KE-016',
+          'receivedEpochNInvite': true,
+          'receivedCurrentEpochInvite': true,
+          'delayedEpochNInviteRejected': true,
+          'pendingRemainedCurrentBeforeAccept': true,
+          'acceptedCurrentEpochInvite': true,
+          'staleEpochNAcceptRejected': true,
+          'noKeyDowngradeAfterStaleAccept': true,
+          'memberListIncludesAliceBobCharlie': true,
+          'receivedAlicePostAcceptAtCurrentEpoch': true,
+          'receivedBobPostAcceptAtCurrentEpoch': true,
+          'sentCharliePostAcceptAtCurrentEpoch': true,
+          'epochNInviteEpoch': 1,
+          'currentInviteEpoch': 2,
+          'acceptedEpoch': 2,
+          'delayedStoreResult': 'invalidPayload',
+          'staleAcceptResult': 'invalidPayload',
+          'removedWindowPlaintextCount': 0,
+          'finalEpoch': 2,
+        },
+        'ra004StaleInviteBeforeReaddProof': <String, Object?>{
+          'rowId': 'RA-004',
+          'receivedOldInvite': true,
+          'oldInviteEpoch': 1,
+          'oldAcceptAttemptedBeforeCurrentInvite': true,
+          'oldInviteWasPendingBeforeBlockedAccept': false,
+          'oldAcceptBeforeCurrentRejected': true,
+          'oldAcceptResultBeforeCurrent': 'notFound',
+          'noGroupAfterOldAccept': true,
+          'noKeyAfterOldAccept': true,
+          'receivedCurrentInvite': true,
+          'acceptedCurrentInvite': true,
+          'currentInviteEpoch': 2,
+          'acceptedEpoch': 2,
+          'staleAcceptRejected': true,
+          'staleAcceptResult': 'revoked',
+          'noKeyDowngradeAfterStaleAccept': true,
+          'removedWindowPlaintextCount': 0,
+          'memberListIncludesAliceBobCharlie': true,
+          'receivedAlicePostCurrentInviteMessage': true,
+          'receivedBobPostCurrentInviteMessage': true,
+          'sentCharliePostCurrentInviteMessage': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateStaleLowerKeyUpdateVerdicts() {
+  const scenario = 'private_stale_lower_key_update';
+  const groupId = 'private-stale-lower-key-update-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 5,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterStaleLowerUpdate',
+          'messageId': 'ke003-a-after',
+          'text': 'alice after stale lower update',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 5,
+        },
+      ],
+      extra: const <String, Object?>{
+        'ke003StaleLowerKeyUpdateProof': <String, Object?>{
+          'rowId': 'KE-003',
+          'heldLowerEpochForBob': true,
+          'deliveredEpochFiveBeforeStale': true,
+          'deliveredStaleEpochAfterEpochFive': true,
+          'sentEpochFiveAfterStale': true,
+          'staleEpoch': 4,
+          'currentEpoch': 5,
+          'finalEpoch': 5,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 5,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterStaleLowerUpdate',
+          'ke003-a-after',
+          'alice after stale lower update',
+          'alice-peer',
+          keyEpoch: 5,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterStaleLowerUpdate': 1,
+      },
+      extra: const <String, Object?>{
+        'ke003StaleLowerKeyUpdateProof': <String, Object?>{
+          'rowId': 'KE-003',
+          'acceptedEpochFiveBeforeStale': true,
+          'storedStaleEpochAsHistorical': true,
+          'keptEpochFiveAfterStale': true,
+          'receivedEpochFiveAfterStale': true,
+          'staleEpoch': 4,
+          'currentEpoch': 5,
+          'epochBeforeStale': 5,
+          'epochAfterStale': 5,
+          'finalEpoch': 5,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 5,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterStaleLowerUpdate',
+          'ke003-a-after',
+          'alice after stale lower update',
+          'alice-peer',
+          keyEpoch: 5,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterStaleLowerUpdate': 1,
+      },
+      extra: const <String, Object?>{
+        'ke003StaleLowerKeyUpdateProof': <String, Object?>{
+          'rowId': 'KE-003',
+          'notTargetedByStaleUpdate': true,
+          'receivedEpochFiveAfterStale': true,
+          'staleEpoch': 4,
+          'currentEpoch': 5,
+          'finalEpoch': 5,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateSameEpochKeyConflictVerdicts() {
+  const scenario = 'private_same_epoch_key_conflict';
+  const groupId = 'private-same-epoch-key-conflict-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 5,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterSameEpochConflict',
+          'messageId': 'ke005-a-after',
+          'text': 'alice after same epoch conflict',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 5,
+        },
+      ],
+      extra: const <String, Object?>{
+        'ke005SameEpochKeyConflictProof': <String, Object?>{
+          'rowId': 'KE-005',
+          'generatedOriginalEpochFive': true,
+          'deliveredOriginalEpochFiveToBob': true,
+          'deliveredSameEpochConflictToBob': true,
+          'sentEpochFiveAfterConflict': true,
+          'conflictEpoch': 5,
+          'currentEpoch': 5,
+          'finalEpoch': 5,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 5,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterSameEpochConflict',
+          'ke005-a-after',
+          'alice after same epoch conflict',
+          'alice-peer',
+          keyEpoch: 5,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterSameEpochConflict': 1,
+      },
+      extra: const <String, Object?>{
+        'ke005SameEpochKeyConflictProof': <String, Object?>{
+          'rowId': 'KE-005',
+          'acceptedOriginalEpochFive': true,
+          'observedSameEpochConflict': true,
+          'rejectedConflictingMaterial': true,
+          'keptOriginalEpochFiveAfterConflict': true,
+          'receivedEpochFiveAfterConflict': true,
+          'conflictEpoch': 5,
+          'currentEpoch': 5,
+          'epochBeforeConflict': 5,
+          'epochAfterConflict': 5,
+          'finalEpoch': 5,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 5,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterSameEpochConflict',
+          'ke005-a-after',
+          'alice after same epoch conflict',
+          'alice-peer',
+          keyEpoch: 5,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterSameEpochConflict': 1,
+      },
+      extra: const <String, Object?>{
+        'ke005SameEpochKeyConflictProof': <String, Object?>{
+          'rowId': 'KE-005',
+          'notTargetedByConflict': true,
+          'receivedEpochFiveAfterConflict': true,
+          'conflictEpoch': 5,
+          'currentEpoch': 5,
+          'finalEpoch': 5,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivatePartialKeyDistributionVerdicts() {
+  const scenario = 'private_partial_key_distribution';
+  const groupId = 'private-partial-key-distribution-group';
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 1,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceAfterPartialKeyDistributionFailure',
+          'messageId': 'ke015-a-after',
+          'text': 'alice after partial distribution failure',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 1,
+        },
+      ],
+      extra: const <String, Object?>{
+        'ke015PartialKeyDistributionProof': <String, Object?>{
+          'rowId': 'KE-015',
+          'attemptedMixedDistribution': true,
+          'bobKeyUpdateSucceeded': true,
+          'charlieKeyUpdateFailed': true,
+          'rotationBlocked': true,
+          'keptSenderEpochAfterFailure': true,
+          'blockedKeyRotatedPublish': true,
+          'sentPostFailureAtPreviousEpoch': true,
+          'attemptedEpoch': 2,
+          'postFailureMessageEpoch': 1,
+          'finalEpoch': 1,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterPartialKeyDistributionFailure',
+          'ke015-a-after',
+          'alice after partial distribution failure',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterPartialKeyDistributionFailure': 1,
+      },
+      extra: const <String, Object?>{
+        'ke015PartialKeyDistributionProof': <String, Object?>{
+          'rowId': 'KE-015',
+          'receivedSuccessfulKeyUpdate': true,
+          'successfulRecipientStillReceivesPostFailure': true,
+          'receivedPostFailureAtPreviousEpoch': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 1,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterPartialKeyDistributionFailure',
+          'ke015-a-after',
+          'alice after partial distribution failure',
+          'alice-peer',
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterPartialKeyDistributionFailure': 1,
+      },
+      extra: const <String, Object?>{
+        'ke015PartialKeyDistributionProof': <String, Object?>{
+          'rowId': 'KE-015',
+          'failedRecipientDidNotAdvance': true,
+          'receivedPostFailureAtPreviousEpoch': true,
+          'notDeafAfterFailedKeyUpdate': true,
+          'finalEpoch': 1,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validMl016NonFriendVerdicts() {
+  const scenario = 'private_non_friend_member_delivery';
+  const groupId = 'group-ml016';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const danaPeerId = 'dana-peer';
+  const activeMembers = <String>[alicePeerId, bobPeerId, danaPeerId];
+  const aliceMessage = <String, Object?>{
+    'key': 'aliceNonFriendToDana',
+    'messageId': 'msg-ml016-alice',
+    'groupId': groupId,
+    'text': 'ML-016 Alice to non-friend Dana',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 2,
+    'accepted': true,
+  };
+  const bobMessage = <String, Object?>{
+    'key': 'bobNonFriendToDana',
+    'messageId': 'msg-ml016-bob',
+    'groupId': groupId,
+    'text': 'ML-016 Bob to non-friend Dana',
+    'outcome': 'success',
+    'senderPeerId': bobPeerId,
+    'keyEpoch': 2,
+    'accepted': true,
+  };
+
+  Map<String, Object?> proofFor(String role) {
+    return <String, Object?>{
+      'rowId': 'ML-016',
+      'scenario': scenario,
+      'proofRole': role,
+      'appPeerPlatform': 'ios_26_2_core_simulator',
+      'nonFriendProofSource': 'app_peer_core_simulator',
+      'danaExplicitlyInvitedOrAdmitted': true,
+      'danaHasSavedAliceContact': false,
+      'danaHasSavedBobContact': false,
+      'aliceMessageReceived': true,
+      'bobMessageReceived': true,
+      'alicePersistedExactlyOnce': true,
+      'bobPersistedExactlyOnce': true,
+      'aliceStableSenderLabel': 'Alice',
+      'bobStableSenderLabel': 'Bob',
+      'senderLabelsNonBlank': true,
+      'messagesHiddenByContactGate': false,
+      'finalMemberConvergence': true,
+      'finalKeyConvergence': true,
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      keyEpoch: 2,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[aliceMessage],
+      extra: <String, Object?>{
+        'ml016NonFriendDeliveryProof': proofFor('alice'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      keyEpoch: 2,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[bobMessage],
+      extra: <String, Object?>{'ml016NonFriendDeliveryProof': proofFor('bob')},
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'dana',
+      peerId: danaPeerId,
+      groupId: groupId,
+      keyEpoch: 2,
+      memberPeerIds: activeMembers,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceNonFriendToDana',
+          'msg-ml016-alice',
+          'ML-016 Alice to non-friend Dana',
+          alicePeerId,
+          keyEpoch: 2,
+        ),
+        _received(
+          'bobNonFriendToDana',
+          'msg-ml016-bob',
+          'ML-016 Bob to non-friend Dana',
+          bobPeerId,
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceNonFriendToDana': 1,
+        'bobNonFriendToDana': 1,
+      },
+      extra: <String, Object?>{'ml016NonFriendDeliveryProof': proofFor('dana')},
+    ),
+  ];
+}
+
+Map<String, dynamic> _withMl016ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'ml016NonFriendDeliveryProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['ml016NonFriendDeliveryProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
+List<Map<String, dynamic>> _validMl020AdminRoleTransferVerdicts() {
+  const scenario = 'private_admin_role_transfer_delivery';
+  const groupId = 'group-ml020';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const activeMembers = <String>[alicePeerId, bobPeerId, charliePeerId];
+  const aliceRemoved = <String, Object?>{
+    'key': 'aliceRemovedWindowAfterDemotion',
+    'messageId': 'msg-ml020-alice-removed',
+    'groupId': groupId,
+    'text': 'ML-020 Alice removed-window',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 2,
+    'timestamp': '2026-05-15T18:02:00.000Z',
+    'accepted': true,
+  };
+  const bobRemoved = <String, Object?>{
+    'key': 'bobRemovedWindowAfterAliceDemotion',
+    'messageId': 'msg-ml020-bob-removed',
+    'groupId': groupId,
+    'text': 'ML-020 Bob removed-window',
+    'outcome': 'success',
+    'senderPeerId': bobPeerId,
+    'keyEpoch': 2,
+    'timestamp': '2026-05-15T18:03:00.000Z',
+    'accepted': true,
+  };
+  const aliceAfter = <String, Object?>{
+    'key': 'aliceAfterCharlieReadd',
+    'messageId': 'msg-ml020-alice-after',
+    'groupId': groupId,
+    'text': 'ML-020 Alice after readd',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 3,
+    'timestamp': '2026-05-15T18:04:00.000Z',
+    'accepted': true,
+  };
+  const bobAfter = <String, Object?>{
+    'key': 'bobAfterCharlieReadd',
+    'messageId': 'msg-ml020-bob-after',
+    'groupId': groupId,
+    'text': 'ML-020 Bob after readd',
+    'outcome': 'success',
+    'senderPeerId': bobPeerId,
+    'keyEpoch': 3,
+    'timestamp': '2026-05-15T18:05:00.000Z',
+    'accepted': true,
+  };
+  const charlieAfter = <String, Object?>{
+    'key': 'charlieAfterRoleReadd',
+    'messageId': 'msg-ml020-charlie-after',
+    'groupId': groupId,
+    'text': 'ML-020 Charlie after readd',
+    'outcome': 'success',
+    'senderPeerId': charliePeerId,
+    'keyEpoch': 3,
+    'timestamp': '2026-05-15T18:06:00.000Z',
+    'accepted': true,
+  };
+
+  Map<String, Object?> proofFor(String role) {
+    return <String, Object?>{
+      'rowId': 'ML-020',
+      'scenario': scenario,
+      'proofRole': role,
+      'appPeerPlatform': 'ios_26_2_core_simulator',
+      'roleChangeProofSource': 'app_peer_core_simulator',
+      'bobPromotedToAdmin': true,
+      'aliceDemotedButActive': true,
+      'charlieRemovedBeforeReadd': true,
+      'charlieReaddedAfterRemoval': true,
+      'removedWindowDeliveryExcludedCharlie': true,
+      'postReaddDeliveryToAllActiveMembers': true,
+      'roleStateConverged': true,
+      'memberStateConverged': true,
+      'finalKeyConverged': true,
+      'creatorRequiredForDelivery': false,
+      'adminOnlyDelivery': false,
+      'charlieReceivedRemovedWindow': false,
+      'removedWindowPlaintextCount': 0,
+      'finalEpoch': 3,
+      'finalMemberRoles': const <String, String>{
+        'alice': 'writer',
+        'bob': 'admin',
+        'charlie': 'writer',
+      },
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      keyEpoch: 3,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[aliceRemoved, aliceAfter],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'bobRemovedWindowAfterAliceDemotion',
+          'msg-ml020-bob-removed',
+          'ML-020 Bob removed-window',
+          bobPeerId,
+          keyEpoch: 2,
+          timestamp: '2026-05-15T18:03:00.000Z',
+        ),
+        _received(
+          'bobAfterCharlieReadd',
+          'msg-ml020-bob-after',
+          'ML-020 Bob after readd',
+          bobPeerId,
+          keyEpoch: 3,
+          timestamp: '2026-05-15T18:05:00.000Z',
+        ),
+        _received(
+          'charlieAfterRoleReadd',
+          'msg-ml020-charlie-after',
+          'ML-020 Charlie after readd',
+          charliePeerId,
+          keyEpoch: 3,
+          timestamp: '2026-05-15T18:06:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'bobRemovedWindowAfterAliceDemotion': 1,
+        'bobAfterCharlieReadd': 1,
+        'charlieAfterRoleReadd': 1,
+      },
+      extra: <String, Object?>{
+        'ml020AdminRoleDeliveryProof': proofFor('alice'),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      keyEpoch: 3,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[bobRemoved, bobAfter],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceRemovedWindowAfterDemotion',
+          'msg-ml020-alice-removed',
+          'ML-020 Alice removed-window',
+          alicePeerId,
+          keyEpoch: 2,
+          timestamp: '2026-05-15T18:02:00.000Z',
+        ),
+        _received(
+          'aliceAfterCharlieReadd',
+          'msg-ml020-alice-after',
+          'ML-020 Alice after readd',
+          alicePeerId,
+          keyEpoch: 3,
+          timestamp: '2026-05-15T18:04:00.000Z',
+        ),
+        _received(
+          'charlieAfterRoleReadd',
+          'msg-ml020-charlie-after',
+          'ML-020 Charlie after readd',
+          charliePeerId,
+          keyEpoch: 3,
+          timestamp: '2026-05-15T18:06:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceRemovedWindowAfterDemotion': 1,
+        'aliceAfterCharlieReadd': 1,
+        'charlieAfterRoleReadd': 1,
+      },
+      extra: <String, Object?>{'ml020AdminRoleDeliveryProof': proofFor('bob')},
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      keyEpoch: 3,
+      memberPeerIds: activeMembers,
+      sentMessages: const <Map<String, Object?>>[charlieAfter],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterCharlieReadd',
+          'msg-ml020-alice-after',
+          'ML-020 Alice after readd',
+          alicePeerId,
+          keyEpoch: 3,
+          timestamp: '2026-05-15T18:04:00.000Z',
+        ),
+        _received(
+          'bobAfterCharlieReadd',
+          'msg-ml020-bob-after',
+          'ML-020 Bob after readd',
+          bobPeerId,
+          keyEpoch: 3,
+          timestamp: '2026-05-15T18:05:00.000Z',
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterCharlieReadd': 1,
+        'bobAfterCharlieReadd': 1,
+      },
+      extra: <String, Object?>{
+        'ml020AdminRoleDeliveryProof': proofFor('charlie'),
+      },
+    ),
+  ];
+}
+
+Map<String, dynamic> _withMl020ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'ml020AdminRoleDeliveryProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['ml020AdminRoleDeliveryProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
 List<Map<String, dynamic>> _validGm007Verdicts() {
   const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
   return <Map<String, dynamic>>[
@@ -9650,6 +21555,25 @@ List<Map<String, dynamic>> _validGm007Verdicts() {
           'sentPostReaddAfterReadd': true,
           'finalEpoch': 2,
         },
+        'ke018HistoryReplayEpochWindowProof': <String, Object?>{
+          'rowId': 'KE-018',
+          'sentPreRemovalReplayWindow': true,
+          'sentRemovedWindowWhileCharlieRemoved': true,
+          'sentRemovedWindowCount': 3,
+          'sentPostReaddReplayWindow': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ir005ReaddReplayProof': <String, Object?>{
+          'rowId': 'IR-005',
+          'sentPreRemovalReplayWindow': true,
+          'sentRemovedWindowWhileCharlieRemoved': true,
+          'sentRemovedWindowCount': 3,
+          'sentPostReaddReplayWindow': true,
+          'readdedCharlie': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
       },
     ),
     _baseVerdict(
@@ -9711,6 +21635,24 @@ List<Map<String, dynamic>> _validGm007Verdicts() {
           'receivedPostReaddMessage': true,
           'finalEpoch': 2,
         },
+        'ke018HistoryReplayEpochWindowProof': <String, Object?>{
+          'rowId': 'KE-018',
+          'receivedPreRemovalReplayWindow': true,
+          'receivedRemovedWindowWhileCharlieRemoved': true,
+          'receivedRemovedWindowCount': 3,
+          'receivedPostReaddReplayWindow': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+        'ir005ReaddReplayProof': <String, Object?>{
+          'rowId': 'IR-005',
+          'receivedPreRemovalReplayWindow': true,
+          'receivedRemovedWindowWhileCharlieRemoved': true,
+          'receivedRemovedWindowCount': 3,
+          'receivedPostReaddReplayWindow': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
       },
     ),
     _baseVerdict(
@@ -9748,6 +21690,30 @@ List<Map<String, dynamic>> _validGm007Verdicts() {
           'receivedPostReaddMessage': true,
           'removedWindowPlaintextCount': 0,
           'hasStaleEpochAfterReadd': false,
+          'finalEpoch': 2,
+        },
+        'ke018HistoryReplayEpochWindowProof': <String, Object?>{
+          'rowId': 'KE-018',
+          'receivedPreRemovalReplayWindow': true,
+          'postReaddMissingBeforeDrain': true,
+          'drainedPostReaddReplayAtCurrentEpoch': true,
+          'noRemovedWindowReplayAfterDrain': true,
+          'memberListIncludesAliceBobCharlie': true,
+          'removedWindowPlaintextCount': 0,
+          'preRemovalReplayEpoch': 1,
+          'postReaddReplayEpoch': 2,
+          'finalEpoch': 2,
+        },
+        'ir005ReaddReplayProof': <String, Object?>{
+          'rowId': 'IR-005',
+          'receivedAllowedPreRemovalHistory': true,
+          'postReaddMissingBeforeDrain': true,
+          'receivedPostReaddReplayAfterDrain': true,
+          'noRemovedWindowReplayAfterDrain': true,
+          'memberListIncludesAliceBobCharlie': true,
+          'removedWindowPlaintextCount': 0,
+          'preRemovalReplayEpoch': 1,
+          'postReaddReplayEpoch': 2,
           'finalEpoch': 2,
         },
       },
@@ -13862,6 +25828,717 @@ List<Map<String, dynamic>> _validGm034Verdicts() {
   ];
 }
 
+List<Map<String, dynamic>> _validRa011LateLeaveReaddVerdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'private_late_leave_readd',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'ra011-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceDuringCharlieRemoval',
+          'messageId': 'ra011-a-during',
+          'text': 'alice during charlie removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceAfterImmediateReadd',
+          'messageId': 'ra011-a-after',
+          'text': 'alice after late leave readd',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'charlieAfterImmediateReadd',
+          'ra011-c-after',
+          'charlie after late leave repair',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'charlieAfterImmediateReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra011LateLeaveReaddProof': <String, Object?>{
+          'rowId': 'RA-011',
+          'removedCharlie': true,
+          'observedCharlieLeaveStartedBeforeReadd': true,
+          'readdedCharlieBeforeLateLeaveCompleted': true,
+          'receivedCharliePostLateLeaveRepair': true,
+          'memberListIncludesCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'private_late_leave_readd',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'ra011-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceDuringCharlieRemoval',
+          'ra011-a-during',
+          'alice during charlie removal',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieAfterImmediateReadd',
+          'ra011-c-after',
+          'charlie after late leave repair',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterImmediateReadd',
+          'ra011-a-after',
+          'alice after late leave readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceDuringCharlieRemoval': 1,
+        'charlieAfterImmediateReadd': 1,
+        'aliceAfterImmediateReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra011LateLeaveReaddProof': <String, Object?>{
+          'rowId': 'RA-011',
+          'observedCharlieRemoved': true,
+          'observedCharlieReadded': true,
+          'receivedAlicePostLateLeaveRepair': true,
+          'receivedCharliePostLateLeaveRepair': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'private_late_leave_readd',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'ra011-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charlieAfterImmediateReadd',
+          'messageId': 'ra011-c-after',
+          'text': 'charlie after late leave repair',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterImmediateReadd',
+          'ra011-a-after',
+          'alice after late leave readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterImmediateReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra011LateLeaveReaddProof': <String, Object?>{
+          'rowId': 'RA-011',
+          'leaveStartedBeforeReadd': true,
+          'importedReaddBeforeLateLeaveCompleted': true,
+          'lateLeaveRepairJoinCompleted': true,
+          'postReaddPublishAccepted': true,
+          'receivedAlicePostLateLeaveRepair': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validRa012RotatedDeviceReaddVerdicts() {
+  const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
+  const oldMlKem = 'old-charlie-mlkem';
+  const rotatedMlKem = 'rotated-charlie-mlkem';
+  const oldKeyPackage = 'old-charlie-key-package';
+  const rotatedKeyPackage = 'rotated-charlie-key-package';
+  const commonMaterial = <String, Object?>{
+    'samePeerIdReadded': true,
+    'oldMlKemPublicKey': oldMlKem,
+    'rotatedMlKemPublicKey': rotatedMlKem,
+    'oldKeyPackageId': oldKeyPackage,
+    'rotatedKeyPackageId': rotatedKeyPackage,
+    'memberConfigUsesRotatedDeviceMaterial': true,
+    'oldDeviceMaterialRetained': false,
+  };
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: 'private_rotated_device_readd',
+      role: 'alice',
+      peerId: 'alice-peer',
+      groupId: 'ra012-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceDuringCharlieRemoval',
+          'messageId': 'ra012-a-during',
+          'text': 'alice during charlie removal',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+        {
+          'key': 'aliceAfterImmediateReadd',
+          'messageId': 'ra012-a-after',
+          'text': 'alice after rotated device readd',
+          'outcome': 'success',
+          'senderPeerId': 'alice-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'charlieAfterImmediateReadd',
+          'ra012-c-after',
+          'charlie after rotated device readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'charlieAfterImmediateReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra012RotatedDeviceReaddProof': <String, Object?>{
+          'rowId': 'RA-012',
+          'removedCharlie': true,
+          'readdedCharlieWithRotatedMaterial': true,
+          'receivedCharliePostRotatedReadd': true,
+          'memberListIncludesCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'finalEpoch': 2,
+          ...commonMaterial,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'private_rotated_device_readd',
+      role: 'bob',
+      peerId: 'bob-peer',
+      groupId: 'ra012-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceDuringCharlieRemoval',
+          'ra012-a-during',
+          'alice during charlie removal',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieAfterImmediateReadd',
+          'ra012-c-after',
+          'charlie after rotated device readd',
+          'charlie-peer',
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterImmediateReadd',
+          'ra012-a-after',
+          'alice after rotated device readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceDuringCharlieRemoval': 1,
+        'charlieAfterImmediateReadd': 1,
+        'aliceAfterImmediateReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra012RotatedDeviceReaddProof': <String, Object?>{
+          'rowId': 'RA-012',
+          'observedCharlieRemoved': true,
+          'observedCharlieReaddedWithRotatedMaterial': true,
+          'receivedAlicePostRotatedReadd': true,
+          'receivedCharliePostRotatedReadd': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+          ...commonMaterial,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: 'private_rotated_device_readd',
+      role: 'charlie',
+      peerId: 'charlie-peer',
+      groupId: 'ra012-group',
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charlieAfterImmediateReadd',
+          'messageId': 'ra012-c-after',
+          'text': 'charlie after rotated device readd',
+          'outcome': 'success',
+          'senderPeerId': 'charlie-peer',
+          'keyEpoch': 2,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterImmediateReadd',
+          'ra012-a-after',
+          'alice after rotated device readd',
+          'alice-peer',
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterImmediateReadd': 1,
+      },
+      extra: const <String, Object?>{
+        'ra012RotatedDeviceReaddProof': <String, Object?>{
+          'rowId': 'RA-012',
+          'importedRotatedMaterial': true,
+          'postRotatedReaddPublishAccepted': true,
+          'receivedAlicePostRotatedReadd': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'finalEpoch': 2,
+          ...commonMaterial,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validRa013SameUserMultiDeviceReaddVerdicts() {
+  const scenario = 'private_same_user_multi_device_readd';
+  const groupId = 'ra013-group';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const danaPeerId = 'dana-peer';
+  const phoneDeviceId = 'charlie-phone-device';
+  const tabletDeviceId = 'charlie-tablet-device';
+  const members = <String>[alicePeerId, bobPeerId, charliePeerId];
+  const common = <String, Object?>{
+    'rowId': 'RA-013',
+    'sameAccountPeerId': charliePeerId,
+    'phoneDeviceId': phoneDeviceId,
+    'tabletDeviceId': tabletDeviceId,
+    'distinctDeviceIds': true,
+    'finalEpoch': 2,
+  };
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'aliceDuringRa013Removal',
+          'messageId': 'ra013-a-removed',
+          'groupId': groupId,
+          'text': 'RA-013 Alice during Charlie removal',
+          'outcome': 'success',
+          'senderPeerId': alicePeerId,
+          'keyEpoch': 2,
+          'accepted': true,
+        },
+        {
+          'key': 'aliceAfterRa013PhoneAccept',
+          'messageId': 'ra013-a-phone',
+          'groupId': groupId,
+          'text': 'RA-013 Alice after phone accept',
+          'outcome': 'success',
+          'senderPeerId': alicePeerId,
+          'keyEpoch': 2,
+          'accepted': true,
+        },
+        {
+          'key': 'aliceAfterRa013TabletAccept',
+          'messageId': 'ra013-a-tablet',
+          'groupId': groupId,
+          'text': 'RA-013 Alice after tablet accept',
+          'outcome': 'success',
+          'senderPeerId': alicePeerId,
+          'keyEpoch': 2,
+          'accepted': true,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'charlieTabletAfterRa013Accept',
+          'ra013-c2-post',
+          'RA-013 Charlie tablet after own accept',
+          charliePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'charlieTabletAfterRa013Accept': 1,
+      },
+      extra: const <String, Object?>{
+        'ra013SameUserMultiDeviceReaddProof': <String, Object?>{
+          ...common,
+          'removedCharlie': true,
+          'readdedCharlieWithTwoDevices': true,
+          'phoneAcceptedBeforeTablet': true,
+          'tabletPendingWhilePhoneJoined': true,
+          'sentRemovedWindowMessage': true,
+          'sentPostPhoneAcceptMessage': true,
+          'sentPostTabletAcceptMessage': true,
+          'receivedTabletPostAcceptMessage': true,
+          'removedWindowRecipientExcludedTablet': true,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceDuringRa013Removal',
+          'ra013-a-removed',
+          'RA-013 Alice during Charlie removal',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterRa013PhoneAccept',
+          'ra013-a-phone',
+          'RA-013 Alice after phone accept',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterRa013TabletAccept',
+          'ra013-a-tablet',
+          'RA-013 Alice after tablet accept',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+        _received(
+          'charlieTabletAfterRa013Accept',
+          'ra013-c2-post',
+          'RA-013 Charlie tablet after own accept',
+          charliePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceDuringRa013Removal': 1,
+        'aliceAfterRa013PhoneAccept': 1,
+        'aliceAfterRa013TabletAccept': 1,
+        'charlieTabletAfterRa013Accept': 1,
+      },
+      extra: const <String, Object?>{
+        'ra013SameUserMultiDeviceReaddProof': <String, Object?>{
+          ...common,
+          'observedCharlieRemoved': true,
+          'observedCharlieReaddedWithTwoDevices': true,
+          'receivedRemovedWindowAsActiveMember': true,
+          'receivedPostPhoneAccept': true,
+          'receivedPostTabletAccept': true,
+          'receivedTabletDevicePostAccept': true,
+          'memberListIncludesCharlie': true,
+          'memberListIncludesDanaAccount': false,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterRa013PhoneAccept',
+          'ra013-a-phone',
+          'RA-013 Alice after phone accept',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+        _received(
+          'aliceAfterRa013TabletAccept',
+          'ra013-a-tablet',
+          'RA-013 Alice after tablet accept',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterRa013PhoneAccept': 1,
+        'aliceAfterRa013TabletAccept': 1,
+      },
+      extra: const <String, Object?>{
+        'ra013SameUserMultiDeviceReaddProof': <String, Object?>{
+          ...common,
+          'phoneAcceptedOwnInvite': true,
+          'tabletDeviceInMemberConfig': true,
+          'receivedPostPhoneAccept': true,
+          'receivedPostTabletAccept': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowPlaintextCount': 0,
+        },
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'dana',
+      peerId: danaPeerId,
+      groupId: groupId,
+      memberPeerIds: members,
+      keyEpoch: 2,
+      sentMessages: const <Map<String, Object?>>[
+        {
+          'key': 'charlieTabletAfterRa013Accept',
+          'messageId': 'ra013-c2-post',
+          'groupId': groupId,
+          'text': 'RA-013 Charlie tablet after own accept',
+          'outcome': 'success',
+          'senderPeerId': charliePeerId,
+          'senderDeviceId': tabletDeviceId,
+          'transportRolePeerId': danaPeerId,
+          'keyEpoch': 2,
+          'accepted': true,
+        },
+      ],
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceAfterRa013TabletAccept',
+          'ra013-a-tablet',
+          'RA-013 Alice after tablet accept',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 2,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{
+        'aliceAfterRa013TabletAccept': 1,
+      },
+      extra: const <String, Object?>{
+        'ra013SameUserMultiDeviceReaddProof': <String, Object?>{
+          ...common,
+          'actualRolePeerId': danaPeerId,
+          'tabletPendingBeforeOwnAccept': true,
+          'groupAbsentBeforeOwnAccept': true,
+          'tabletAcceptedAfterPhone': true,
+          'receivedPostTabletAccept': true,
+          'sentTabletDevicePostAccept': true,
+          'memberListIncludesDanaAccount': false,
+          'tabletDeviceInMemberConfig': true,
+          'preAcceptPlaintextCount': 0,
+        },
+      },
+    ),
+  ];
+}
+
+List<Map<String, dynamic>> _validPrivateReaddAlternatingChurnVerdicts() {
+  const scenario = 'private_readd_alternating_churn';
+  const groupId = 'private-readd-alternating-churn-group';
+  const peerIdsByRole = <String, String>{
+    'alice': 'alice-peer',
+    'bob': 'bob-peer',
+    'charlie': 'charlie-peer',
+    'dana': 'dana-peer',
+  };
+  const members = <String>[
+    'alice-peer',
+    'bob-peer',
+    'charlie-peer',
+    'dana-peer',
+  ];
+  final sentByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+  final receivedByRole = <String, List<Map<String, Object?>>>{
+    for (final role in peerIdsByRole.keys) role: <Map<String, Object?>>[],
+  };
+  final intervals = <Map<String, Object?>>[];
+
+  void addMessage({
+    required int cycle,
+    required String operation,
+    required String churnTarget,
+    required String senderRole,
+    required List<String> activeRoles,
+    required List<String> receiverRoles,
+    required int keyEpoch,
+  }) {
+    final key = _ra018KeyForTest(cycle, operation, senderRole);
+    final messageId = 'ra018-c$cycle-$operation-$senderRole';
+    final text =
+        'RA-018 cycle $cycle $operation from ${_titleRoleForTest(senderRole)}';
+    intervals.add(<String, Object?>{
+      'cycle': cycle,
+      'operation': operation,
+      'churnTarget': churnTarget,
+      'sender': senderRole,
+      'activeRoles': activeRoles,
+      'receiverRoles': receiverRoles,
+      'key': key,
+    });
+    sentByRole[senderRole]!.add(<String, Object?>{
+      'key': key,
+      'messageId': messageId,
+      'text': text,
+      'outcome': 'success',
+      'senderPeerId': peerIdsByRole[senderRole],
+      'keyEpoch': keyEpoch,
+    });
+    for (final receiverRole in receiverRoles) {
+      receivedByRole[receiverRole]!.add(
+        _received(
+          key,
+          messageId,
+          text,
+          peerIdsByRole[senderRole]!,
+          keyEpoch: keyEpoch,
+        ),
+      );
+    }
+  }
+
+  for (var cycle = 1; cycle <= 3; cycle++) {
+    final epochBase = (cycle - 1) * 4 + 1;
+    addMessage(
+      cycle: cycle,
+      operation: 'charlieRemoved',
+      churnTarget: 'charlie',
+      senderRole: 'alice',
+      activeRoles: const <String>['alice', 'bob', 'dana'],
+      receiverRoles: const <String>['bob', 'dana'],
+      keyEpoch: epochBase + 1,
+    );
+    addMessage(
+      cycle: cycle,
+      operation: 'charlieReadded',
+      churnTarget: 'charlie',
+      senderRole: 'bob',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      receiverRoles: const <String>['alice', 'charlie', 'dana'],
+      keyEpoch: epochBase + 2,
+    );
+    addMessage(
+      cycle: cycle,
+      operation: 'danaRemoved',
+      churnTarget: 'dana',
+      senderRole: 'charlie',
+      activeRoles: const <String>['alice', 'bob', 'charlie'],
+      receiverRoles: const <String>['alice', 'bob'],
+      keyEpoch: epochBase + 3,
+    );
+    addMessage(
+      cycle: cycle,
+      operation: 'danaReadded',
+      churnTarget: 'dana',
+      senderRole: 'dana',
+      activeRoles: const <String>['alice', 'bob', 'charlie', 'dana'],
+      receiverRoles: const <String>['alice', 'bob', 'charlie'],
+      keyEpoch: epochBase + 4,
+    );
+  }
+
+  Map<String, int> countsFor(String role) => <String, int>{
+    for (final message in receivedByRole[role]!) message['key'] as String: 1,
+  };
+
+  Map<String, Object?> proofForRole(String role) => <String, Object?>{
+    'rowId': 'RA-018',
+    'churnCycles': 3,
+    'churnTargets': const <String>['charlie', 'dana'],
+    'activeSenders': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeReceivers': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'activeIntervals': intervals,
+    'charlieRemovedWindowPlaintextCount': 0,
+    'danaRemovedWindowPlaintextCount': 0,
+    'duplicateVisibleMessageCount': 0,
+    'inactiveSenderAttemptCount': 0,
+    'finalRoles': const <String>['alice', 'bob', 'charlie', 'dana'],
+    'finalMemberListConverged': true,
+    'finalEpoch': 13,
+    'finalEpochConverged': true,
+    'proofRole': role,
+  };
+
+  return <Map<String, dynamic>>[
+    for (final role in const <String>['alice', 'bob', 'charlie', 'dana'])
+      _baseVerdict(
+        scenario: scenario,
+        role: role,
+        peerId: peerIdsByRole[role]!,
+        groupId: groupId,
+        memberPeerIds: members,
+        keyEpoch: 13,
+        sentMessages: sentByRole[role]!,
+        receivedMessages: receivedByRole[role]!,
+        persistedMessageCounts: countsFor(role),
+        extra: <String, Object?>{
+          'activeMemberPeerIds': members,
+          'ra018AlternatingChurnProof': proofForRole(role),
+        },
+      ),
+  ];
+}
+
+Map<String, dynamic> _withRa018ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'ra018AlternatingChurnProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['ra018AlternatingChurnProof'] as Map,
+      ),
+      ...overrides,
+    },
+  };
+}
+
 List<Map<String, dynamic>> _validGm035Verdicts() {
   const proofName = 'gm035ZeroPeerReaddFirstSendProof';
   const members = <String>['alice-peer', 'bob-peer', 'charlie-peer'];
@@ -13974,6 +26651,35 @@ List<Map<String, dynamic>> _validGm035Verdicts() {
   ];
 }
 
+String _ra017KeyForTest(int cycle, String phase, String senderRole) =>
+    'ra017Cycle${cycle}_${phase}_$senderRole';
+
+String _ra018KeyForTest(int cycle, String operation, String senderRole) =>
+    'ra018Cycle${cycle}_${operation}_$senderRole';
+
+String _titleRoleForTest(String role) {
+  switch (role) {
+    case 'alice':
+      return 'Alice';
+    case 'bob':
+      return 'Bob';
+    case 'charlie':
+      return 'Charlie';
+    case 'dana':
+      return 'Dana';
+    default:
+      return role;
+  }
+}
+
+List<Map<String, Object?>> _mapListForTest(Object? value) {
+  if (value is! List) return const <Map<String, Object?>>[];
+  return value
+      .whereType<Map>()
+      .map((entry) => Map<String, Object?>.from(entry))
+      .toList(growable: false);
+}
+
 Map<String, dynamic> _baseVerdict({
   required String scenario,
   required String role,
@@ -14006,14 +26712,24 @@ Map<String, Object?> _received(
   String messageId,
   String text,
   String senderPeerId, {
+  String? groupId,
   int? keyEpoch,
+  String? timestamp,
+  bool? liveOnly,
+  bool? usedOfflineDrain,
 }) {
   return <String, Object?>{
     'key': key,
+    ...?groupId == null ? null : <String, Object?>{'groupId': groupId},
     'messageId': messageId,
     'text': text,
     'senderPeerId': senderPeerId,
     ...?keyEpoch == null ? null : <String, Object?>{'keyEpoch': keyEpoch},
+    ...?timestamp == null ? null : <String, Object?>{'timestamp': timestamp},
     'isIncoming': true,
+    ...?liveOnly == null ? null : <String, Object?>{'liveOnly': liveOnly},
+    ...?usedOfflineDrain == null
+        ? null
+        : <String, Object?>{'usedOfflineDrain': usedOfflineDrain},
   };
 }

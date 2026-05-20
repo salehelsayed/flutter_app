@@ -1,3 +1,5 @@
+import 'package:flutter_app/features/groups/application/rotate_group_key_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -28,6 +30,98 @@ void main() {
   }
 
   group('Group edge cases and fault injection smoke tests', () {
+    test(
+      'KE-014 failed legacy rotation keeps later sends on previous key epoch',
+      () async {
+        final admin = GroupTestUser.create(
+          peerId: 'peer-ke014-admin',
+          username: 'Admin',
+          network: network,
+        );
+        final bob = GroupTestUser.create(
+          peerId: 'peer-ke014-bob',
+          username: 'Bob',
+          network: network,
+        );
+
+        final groupId = 'grp-ke014-legacy-rotate';
+        final now = DateTime.now().toUtc();
+        await admin.createGroup(groupId: groupId, name: 'KE-014 Group');
+        await admin.addMember(groupId: groupId, invitee: bob);
+        await admin.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'epoch1-admin-key',
+            createdAt: now,
+          ),
+        );
+        await bob.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'epoch1-bob-key',
+            createdAt: now,
+          ),
+        );
+        admin.bridge.responses['group:rotateKey'] = {
+          'ok': true,
+          'keyGeneration': 2,
+          'encryptedKey': 'dangerous-undistributed-epoch2',
+        };
+
+        admin.start();
+        bob.start();
+
+        await expectLater(
+          rotateGroupKey(
+            bridge: admin.bridge,
+            groupRepo: admin.groupRepo,
+            groupId: groupId,
+          ),
+          throwsA(
+            isA<Exception>().having(
+              (error) => error.toString(),
+              'message',
+              contains('rotateAndDistributeGroupKey'),
+            ),
+          ),
+        );
+
+        final adminLatestAfterRotate = await admin.groupRepo.getLatestKey(
+          groupId,
+        );
+        expect(adminLatestAfterRotate, isNotNull);
+        expect(adminLatestAfterRotate!.keyGeneration, 1);
+        expect(await admin.groupRepo.getKeyByGeneration(groupId, 2), isNull);
+        expect(admin.bridge.commandLog, isEmpty);
+
+        final sent = await admin.sendGroupMessage(
+          groupId: groupId,
+          text: 'Still on epoch 1',
+        );
+        expect(sent, isNotNull);
+        expect(sent!.keyGeneration, 1);
+        await waitUntil(
+          () async => (await bob.loadGroupMessages(groupId)).isNotEmpty,
+          reason: 'Bob should receive the post-failed-legacy-rotate message',
+        );
+
+        final bobMsgs = await bob.loadGroupMessages(groupId);
+        expect(bobMsgs, hasLength(1));
+        expect(bobMsgs.single.text, 'Still on epoch 1');
+        expect(bobMsgs.single.keyGeneration, 1);
+
+        final bobLatest = await bob.groupRepo.getLatestKey(groupId);
+        expect(bobLatest, isNotNull);
+        expect(bobLatest!.keyGeneration, 1);
+        expect(await bob.groupRepo.getKeyByGeneration(groupId, 2), isNull);
+
+        admin.dispose();
+        bob.dispose();
+      },
+    );
+
     // ---------------------------------------------------------------
     // 1. Delivery failure — messages not delivered when network fails
     // ---------------------------------------------------------------

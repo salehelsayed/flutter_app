@@ -174,22 +174,10 @@ Future<bool?> handleAppResumed({
           'errors=${rejoinResult.errorCount}, took ${rejoinMs}ms)',
         );
 
-        if (needsGroupRecovery && rejoinResult.canAcknowledgeGroupRecovery) {
-          final ackStart = DateTime.now();
-          debugPrint(
-            '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() starting...',
-          );
-          await callGroupAcknowledgeRecovery(bridge);
-          final ackMs = DateTime.now().difference(ackStart).inMilliseconds;
-          debugPrint(
-            '[RESUME] Step 3b.1: callGroupAcknowledgeRecovery() done '
-            '(took ${ackMs}ms)',
-          );
-        }
-
         final groupDrainStart = DateTime.now();
         debugPrint('[RESUME] Step 3c: drainGroupOfflineInbox() starting...');
-        await drainGroupOfflineInbox(
+        final identity = await identityRepo?.loadIdentity();
+        final groupDrainResult = await drainGroupOfflineInbox(
           bridge: bridge,
           groupRepo: groupRepo,
           msgRepo: groupMsgRepo,
@@ -199,13 +187,30 @@ Future<bool?> handleAppResumed({
           pendingKeyRepairRepo: pendingKeyRepairRepo,
           historyGapRepairRepo: historyGapRepairRepo,
           requestGroupKeyRepair: requestGroupKeyRepair,
+          selfPeerId: identity?.peerId,
         );
         final groupDrainMs = DateTime.now()
             .difference(groupDrainStart)
             .inMilliseconds;
         debugPrint(
-          '[RESUME] Step 3c: drainGroupOfflineInbox done (took ${groupDrainMs}ms)',
+          '[RESUME] Step 3c: drainGroupOfflineInbox done '
+          '(errors=${groupDrainResult.errorCount}, took ${groupDrainMs}ms)',
         );
+
+        if (needsGroupRecovery &&
+            rejoinResult.canAcknowledgeGroupRecovery &&
+            groupDrainResult.isSuccessful) {
+          final ackStart = DateTime.now();
+          debugPrint(
+            '[RESUME] Step 3c.1: callGroupAcknowledgeRecovery() starting...',
+          );
+          await callGroupAcknowledgeRecovery(bridge);
+          final ackMs = DateTime.now().difference(ackStart).inMilliseconds;
+          debugPrint(
+            '[RESUME] Step 3c.1: callGroupAcknowledgeRecovery() done '
+            '(took ${ackMs}ms)',
+          );
+        }
       });
     } else if (groupRepo != null && resumeGroupRecoveryEnabled) {
       final needsGroupRecovery =

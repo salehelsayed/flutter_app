@@ -32,6 +32,10 @@ ConversationMessage _makeSendingMessage({
 GroupMessage _makeGroupSendingMessage({
   required String id,
   required String groupId,
+  String status = 'sending',
+  String? wireEnvelope,
+  String? inboxRetryPayload,
+  bool inboxStored = false,
 }) {
   return GroupMessage(
     id: id,
@@ -40,9 +44,12 @@ GroupMessage _makeGroupSendingMessage({
     senderUsername: 'Alice',
     text: 'Hello group',
     timestamp: DateTime.parse('2026-01-01T00:00:00.000Z'),
-    status: 'sending',
+    status: status,
     isIncoming: false,
     createdAt: DateTime.parse('2026-01-01T00:00:00.000Z'),
+    wireEnvelope: wireEnvelope,
+    inboxStored: inboxStored,
+    inboxRetryPayload: inboxRetryPayload,
   );
 }
 
@@ -107,25 +114,91 @@ void main() {
       expect(result.groupTransitionedCount, 0);
     });
 
-    test('group-only pending sends still transition when 1:1 count is zero',
-        () async {
-      final messageRepo = InMemoryMessageRepository();
-      final groupMsgRepo = InMemoryGroupMessageRepository();
-      await groupMsgRepo.saveMessage(
-        _makeGroupSendingMessage(id: 'group-2', groupId: 'group-b'),
-      );
+    test(
+      'group-only pending sends still transition when 1:1 count is zero',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        await groupMsgRepo.saveMessage(
+          _makeGroupSendingMessage(id: 'group-2', groupId: 'group-b'),
+        );
 
-      final result = await handleAppPaused(
-        messageRepo: messageRepo,
-        groupMsgRepo: groupMsgRepo,
-      );
+        final result = await handleAppPaused(
+          messageRepo: messageRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
 
-      expect(result.transitionedCount, 0);
-      expect(result.groupTransitionedCount, 1);
-      expect(
-        (await groupMsgRepo.getMessagesPage('group-b')).single.status,
-        'failed',
-      );
-    });
+        expect(result.transitionedCount, 0);
+        expect(result.groupTransitionedCount, 1);
+        expect(
+          (await groupMsgRepo.getMessagesPage('group-b')).single.status,
+          'failed',
+        );
+      },
+    );
+
+    test(
+      'NW-011 pause transitions in-flight group send to retryable failed without deleting custody',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        final groupMsgRepo = InMemoryGroupMessageRepository();
+        await groupMsgRepo.saveMessage(
+          _makeGroupSendingMessage(
+            id: 'nw011-sending',
+            groupId: 'group-nw011',
+            wireEnvelope: '{"messageId":"nw011-sending"}',
+            inboxRetryPayload:
+                '{"groupId":"group-nw011","message":"retryable"}',
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          _makeGroupSendingMessage(
+            id: 'nw011-pending',
+            groupId: 'group-nw011',
+            status: 'pending',
+            inboxRetryPayload:
+                '{"groupId":"group-nw011","message":"pending-retry"}',
+          ),
+        );
+        await groupMsgRepo.saveMessage(
+          _makeGroupSendingMessage(
+            id: 'nw011-sent',
+            groupId: 'group-nw011',
+            status: 'sent',
+            inboxStored: true,
+          ),
+        );
+
+        final result = await handleAppPaused(
+          messageRepo: messageRepo,
+          groupMsgRepo: groupMsgRepo,
+        );
+
+        expect(result.transitionedCount, 0);
+        expect(result.groupTransitionedCount, 1);
+
+        final failed = await groupMsgRepo.getMessage('nw011-sending');
+        expect(failed, isNotNull);
+        expect(failed!.status, 'failed');
+        expect(failed.wireEnvelope, '{"messageId":"nw011-sending"}');
+        expect(
+          failed.inboxRetryPayload,
+          '{"groupId":"group-nw011","message":"retryable"}',
+        );
+
+        final pending = await groupMsgRepo.getMessage('nw011-pending');
+        expect(pending, isNotNull);
+        expect(pending!.status, 'pending');
+        expect(
+          pending.inboxRetryPayload,
+          '{"groupId":"group-nw011","message":"pending-retry"}',
+        );
+
+        final sent = await groupMsgRepo.getMessage('nw011-sent');
+        expect(sent, isNotNull);
+        expect(sent!.status, 'sent');
+        expect(sent.inboxStored, isTrue);
+      },
+    );
   });
 }

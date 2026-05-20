@@ -476,6 +476,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   required String username,
   required Map<String, dynamic>? cliPeerFixture,
   String? restoreMnemonic,
+  IdentityModel? restoreIdentity,
   bool useFreshTransportIdentityForRestoredAccount = false,
 }) async {
   final secureKeyStore = _FakeSecureKeyStore();
@@ -598,23 +599,26 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   final bridge = RecordingGoBridgeClient();
   await bridge.initialize();
 
-  final identityResult = restoreMnemonic == null
-      ? await generateNewIdentity(
-          callGenerate: () => callIdentityGenerate(bridge),
-          callMlKemKeygen: () => callMlKemKeygen(bridge),
-          repo: identityRepo,
-        )
-      : await restoreIdentityFromMnemonic(
-          input: restoreMnemonic,
-          callRestore: (mnemonic) => callIdentityRestore(bridge, mnemonic),
-          callMlKemKeygen: () => callMlKemKeygen(bridge),
-          repo: identityRepo,
-        );
-  if (identityResult.toString().endsWith('success') != true) {
-    throw StateError('Identity setup failed: $identityResult');
+  var savedIdentity = restoreIdentity;
+  if (savedIdentity == null) {
+    final identityResult = restoreMnemonic == null
+        ? await generateNewIdentity(
+            callGenerate: () => callIdentityGenerate(bridge),
+            callMlKemKeygen: () => callMlKemKeygen(bridge),
+            repo: identityRepo,
+          )
+        : await restoreIdentityFromMnemonic(
+            input: restoreMnemonic,
+            callRestore: (mnemonic) => callIdentityRestore(bridge, mnemonic),
+            callMlKemKeygen: () => callMlKemKeygen(bridge),
+            repo: identityRepo,
+          );
+    if (identityResult.toString().endsWith('success') != true) {
+      throw StateError('Identity setup failed: $identityResult');
+    }
+    savedIdentity = await identityRepo.loadIdentity();
   }
 
-  final savedIdentity = await identityRepo.loadIdentity();
   if (savedIdentity == null) {
     throw StateError('Identity missing after setup');
   }

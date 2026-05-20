@@ -1022,6 +1022,129 @@ void main() {
       expect(find.text('Invite unknown'), findsOneWidget);
     });
 
+    testWidgets(
+      'ML-004 mixed B/C/D invite state shows failed recipient as resendable, not joined',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final inviteStatusRepo = _TrackingInviteDeliveryAttemptRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+          ),
+        );
+
+        final members = [
+          (
+            peerId: 'peer-bob',
+            username: 'Bob',
+            status: GroupInviteDeliveryStatus.sent,
+          ),
+          (
+            peerId: 'peer-charlie',
+            username: 'Charlie',
+            status: GroupInviteDeliveryStatus.queued,
+          ),
+          (
+            peerId: 'peer-dave',
+            username: 'Dave',
+            status: GroupInviteDeliveryStatus.needsResend,
+          ),
+        ];
+        for (final member in members) {
+          await groupRepo.saveMember(
+            makeMember(peerId: member.peerId, username: member.username),
+          );
+          await inviteStatusRepo.saveAttempt(
+            GroupInviteDeliveryAttempt(
+              groupId: 'group-1',
+              peerId: member.peerId,
+              username: member.username,
+              status: member.status,
+              attemptedAt: DateTime.utc(2026, 5, 7, 12),
+              updatedAt: DateTime.utc(2026, 5, 7, 12),
+              lastError: member.status == GroupInviteDeliveryStatus.needsResend
+                  ? 'send_failed'
+                  : null,
+            ),
+          );
+        }
+        await msgRepo.saveMessage(
+          buildMemberJoinedTimelineMessage(
+            groupId: 'group-1',
+            joinedPeerId: 'peer-bob',
+            joinedUsername: 'Bob',
+            eventAt: DateTime.utc(2026, 5, 7, 12, 5),
+          ),
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: FakeBridge(),
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+              inviteDeliveryAttemptRepo: inviteStatusRepo,
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        Finder statusBadge(String peerId) =>
+            find.byKey(ValueKey('group-member-invite-status-$peerId'));
+
+        expect(
+          find.descendant(
+            of: statusBadge('peer-bob'),
+            matching: find.text('Joined'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: statusBadge('peer-charlie'),
+            matching: find.text('In their inbox'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: statusBadge('peer-dave'),
+            matching: find.text('Resend needed'),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: statusBadge('peer-dave'),
+            matching: find.text('Joined'),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('group-member-resend-invite-peer-dave')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('group-member-resend-invite-peer-bob')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('group-member-resend-invite-peer-charlie')),
+          findsNothing,
+        );
+      },
+    );
+
     testWidgets('shows cannot-send reason copy from persisted lastError', (
       tester,
     ) async {
@@ -2423,6 +2546,68 @@ void main() {
     });
 
     testWidgets(
+      'BB-010 native leave failure stays on info screen and shows failed leave',
+      (tester) async {
+        final groupRepo = InMemoryGroupRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+
+        final bridge = FakeBridge();
+        bridge.responses['group:leave'] = {
+          'ok': false,
+          'errorCode': 'GROUP_ERROR',
+          'errorMessage': 'forced leave failure',
+        };
+
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => GroupInfoWired(
+                          group: group,
+                          groupRepo: groupRepo,
+                          contactRepo: InMemoryContactRepository(),
+                          bridge: bridge,
+                          identityRepo: FakeIdentityRepository(
+                            identity: testIdentity,
+                          ),
+                          p2pService: FakeP2PService(),
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text('Open Info'),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await tester.tap(find.text('Open Info'));
+        await pumpFrames(tester, count: 20);
+
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+
+        await tapLeaveGroupButton(tester);
+
+        expect(
+          bridge.commandLog.where((command) => command == 'group:leave'),
+          hasLength(1),
+        );
+        expect(find.byType(GroupInfoScreen), findsOneWidget);
+        expect(find.text('Open Info'), findsNothing);
+        expect(find.text('Failed to leave group'), findsOneWidget);
+        expect(await groupRepo.getGroup(group.id), isNotNull);
+        expect(await groupRepo.getLatestKey(group.id), isNotNull);
+      },
+    );
+
+    testWidgets(
       'dissolved local delete clears local state without publishing group leave and pops to the first route',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
@@ -3337,11 +3522,15 @@ void main() {
         final inboxStorePayload =
             (jsonDecode(inboxStoreMsg) as Map<String, dynamic>)['payload']
                 as Map<String, dynamic>;
-        expect(inboxStorePayload['recipientPeerIds'], ['peer-alice']);
+        expect(inboxStorePayload['recipientPeerIds'], [
+          'peer-alice',
+          'peer-bob',
+        ]);
 
         final replayEnvelope = _storedGroupReplayEnvelope(
           inboxStorePayload['message'] as String,
         );
+        expect(replayEnvelope['recipientPeerIds'], ['peer-alice', 'peer-bob']);
         expect(replayEnvelope['kind'], 'group_offline_replay');
         expect(replayEnvelope['payloadType'], 'group_message');
         expect(replayEnvelope['keyEpoch'], 1);

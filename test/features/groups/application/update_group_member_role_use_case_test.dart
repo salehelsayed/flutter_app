@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,27 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+
+class _TimeoutCommandBridge extends FakeBridge {
+  final String command;
+
+  _TimeoutCommandBridge(this.command);
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == command) {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      throw TimeoutException('Simulated $command timeout');
+    }
+    return super.send(message);
+  }
+}
 
 void main() {
   late FakeBridge bridge;
@@ -140,6 +162,30 @@ void main() {
     expect(writerEntry['role'], 'admin');
   });
 
+  test(
+    'BB-013 group:updateConfig timeout rolls back the optimistic role mutation',
+    () async {
+      final timeoutBridge = _TimeoutCommandBridge('group:updateConfig');
+
+      await expectLater(
+        updateGroupMemberRole(
+          bridge: timeoutBridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-writer',
+          role: MemberRole.admin,
+          selfPeerId: 'peer-admin',
+        ),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      final writer = await groupRepo.getMember('group-1', 'peer-writer');
+      expect(writer, isNotNull);
+      expect(writer!.role, MemberRole.writer);
+      expect(timeoutBridge.commandLog, ['group:updateConfig']);
+    },
+  );
+
   test('rejects non-admin caller', () async {
     const groupId = 'group-member-only';
     await groupRepo.saveGroup(
@@ -182,6 +228,42 @@ void main() {
       ),
     );
 
+    expect(bridge.commandLog, isEmpty);
+  });
+
+  test('ML-013 bare writer cannot update member role or sync config', () async {
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-target',
+        username: 'Target',
+        role: MemberRole.writer,
+        publicKey: 'pk-target',
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
+
+    await expectLater(
+      updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-target',
+        role: MemberRole.admin,
+        selfPeerId: 'peer-writer',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('Only admins can manage member roles'),
+        ),
+      ),
+    );
+
+    final target = await groupRepo.getMember('group-1', 'peer-target');
+    expect(target, isNotNull);
+    expect(target!.role, MemberRole.writer);
     expect(bridge.commandLog, isEmpty);
   });
 
@@ -594,6 +676,59 @@ void main() {
       expect(group, isNotNull);
       expect(group!.myRole, GroupRole.member);
       expect(bridge.commandLog, contains('group:updateConfig'));
+    },
+  );
+
+  test(
+    'ML-020 admin transfer demotes creator while preserving one admin',
+    () async {
+      await updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-writer',
+        role: MemberRole.admin,
+        selfPeerId: 'peer-admin',
+        eventAt: DateTime.utc(2026, 5, 15, 18),
+      );
+
+      await updateGroupMemberRole(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-admin',
+        role: MemberRole.writer,
+        selfPeerId: 'peer-writer',
+        eventAt: DateTime.utc(2026, 5, 15, 18, 1),
+      );
+
+      final creator = await groupRepo.getMember('group-1', 'peer-admin');
+      final promoted = await groupRepo.getMember('group-1', 'peer-writer');
+      expect(creator, isNotNull);
+      expect(creator!.role, MemberRole.writer);
+      expect(promoted, isNotNull);
+      expect(promoted!.role, MemberRole.admin);
+
+      final updateConfigMessages = bridge.sentMessages.where((message) {
+        final parsed = jsonDecode(message) as Map<String, dynamic>;
+        return parsed['cmd'] == 'group:updateConfig';
+      }).toList();
+      expect(updateConfigMessages, hasLength(2));
+
+      final finalPayload =
+          (jsonDecode(updateConfigMessages.last)
+                  as Map<String, dynamic>)['payload']
+              as Map<String, dynamic>;
+      final groupConfig = finalPayload['groupConfig'] as Map<String, dynamic>;
+      final members = (groupConfig['members'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      final rolesByPeer = <String, String>{
+        for (final member in members)
+          member['peerId'] as String: member['role'] as String,
+      };
+      expect(rolesByPeer['peer-admin'], 'writer');
+      expect(rolesByPeer['peer-writer'], 'admin');
+      expect(rolesByPeer.values.where((role) => role == 'admin'), hasLength(1));
     },
   );
 
