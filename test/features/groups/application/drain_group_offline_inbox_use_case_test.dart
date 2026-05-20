@@ -11562,7 +11562,7 @@ void main() {
   );
 
   test(
-    'MD-011 removed member cannot decode future media replay with only the old epoch',
+    'PL-006 MD-011 removed member cannot decode future media replay with only the old epoch',
     () async {
       final mediaRepo = InMemoryMediaAttachmentRepository();
       await groupRepo.saveMember(

@@ -4674,6 +4674,152 @@ void main() {
       expect(verdict.detail, contains('private_online_remove verdicts valid'));
     });
 
+    test(
+      'PL-006 rejects private_online_remove without removed media proof',
+      () {
+        final missingProof = _validPrivateOnlineRemoveVerdicts();
+        missingProof[0] = Map<String, dynamic>.from(missingProof[0])
+          ..remove('pl006RemovedMediaProof');
+
+        final rejected = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_online_remove',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: missingProof,
+        );
+
+        expect(rejected.ok, isFalse);
+        expect(
+          rejected.detail,
+          contains('alice: missing PL-006 removed-media proof fields'),
+        );
+      },
+    );
+
+    test('PL-006 rejects Charlie direct media download after removal', () {
+      final allowedDownload = _validPrivateOnlineRemoveVerdicts();
+      allowedDownload[2] = {
+        ...allowedDownload[2],
+        'pl006RemovedMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            allowedDownload[2]['pl006RemovedMediaProof'] as Map,
+          ),
+          'directDownloadDenied': false,
+          'directDownloadOk': true,
+          'directDownloadOutputBytes': 8,
+          'noDirectDownloadPlaintext': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: allowedDownload,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl006RemovedMediaProof.directDownloadDenied must be true',
+        ),
+      );
+    });
+
+    test('PL-006 rejects Charlie direct download output bytes', () {
+      final leakedOutput = _validPrivateOnlineRemoveVerdicts();
+      leakedOutput[2] = {
+        ...leakedOutput[2],
+        'pl006RemovedMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leakedOutput[2]['pl006RemovedMediaProof'] as Map,
+          ),
+          'directDownloadOutputBytes': 8,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leakedOutput,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl006RemovedMediaProof.directDownloadOutputBytes must be 0',
+        ),
+      );
+    });
+
+    test('PL-006 rejects Charlie media rows or pending downloads', () {
+      final leakedRows = _validPrivateOnlineRemoveVerdicts();
+      leakedRows[2] = {
+        ...leakedRows[2],
+        'pl006RemovedMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leakedRows[2]['pl006RemovedMediaProof'] as Map,
+          ),
+          'mediaRowsAfterRemoval': 1,
+          'replayMediaRowsAbsent': false,
+          'pendingDownloadsAfterRemoval': 1,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leakedRows,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl006RemovedMediaProof.replayMediaRowsAbsent must be true',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl006RemovedMediaProof.mediaRowsAfterRemoval must be 0',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl006RemovedMediaProof.pendingDownloadsAfterRemoval must be 0',
+        ),
+      );
+    });
+
+    test('PL-006 rejects mismatched removed media blob ids', () {
+      final mismatchedBlob = _validPrivateOnlineRemoveVerdicts();
+      mismatchedBlob[1] = {
+        ...mismatchedBlob[1],
+        'pl006RemovedMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            mismatchedBlob[1]['pl006RemovedMediaProof'] as Map,
+          ),
+          'mediaBlobId': 'different-post-removal-media',
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_online_remove',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: mismatchedBlob,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: pl006RemovedMediaProof.mediaBlobId must match Alice upload',
+        ),
+      );
+    });
+
     test('accepts private_offline_remove ML-006 and IR-004 proof verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_offline_remove',
@@ -18494,6 +18640,20 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'sentPostRemovalAtRotatedEpoch': true,
           'receivedBobAfterRemoval': true,
         },
+        'pl006RemovedMediaProof': <String, Object?>{
+          'rowId': 'PL-006',
+          'removedCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'memberListExcludesCharlie': true,
+          'mediaUploadedAfterRemoval': true,
+          'mediaBlobId': 'pl006-post-removal-media',
+          'uploadAllowedPeers': <String>['alice-peer', 'bob-peer'],
+          'uploadAllowedPeersExcludeRemoved': true,
+          'uploadAllowedPeersIncludeActive': true,
+          'uploadAllowedPeersCount': 2,
+          'sentPostRemovalMediaAtRotatedEpoch': true,
+          'bobReceiptSignalObserved': true,
+        },
       },
     ),
     _baseVerdict(
@@ -18541,6 +18701,17 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'receivedAliceAfterRemoval': true,
           'sentPostRemovalAtRotatedEpoch': true,
         },
+        'pl006RemovedMediaProof': <String, Object?>{
+          'rowId': 'PL-006',
+          'memberListExcludesCharlie': true,
+          'removedPeerId': 'charlie-peer',
+          'receivedAliceAfterRemoval': true,
+          'receivedAliceAfterRemovalAtRotatedEpoch': true,
+          'bobReceivedMediaDescriptor': true,
+          'bobMediaDownloaded': true,
+          'mediaCount': 1,
+          'mediaBlobId': 'pl006-post-removal-media',
+        },
       },
     ),
     _baseVerdict(
@@ -18576,6 +18747,24 @@ List<Map<String, dynamic>> _validPrivateOnlineRemoveVerdicts() {
           'receivedAliceAfterRemoval': false,
           'receivedBobAfterRemoval': false,
           'postRemovalPlaintextCount': 0,
+        },
+        'pl006RemovedMediaProof': <String, Object?>{
+          'rowId': 'PL-006',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': true,
+          'groupPresentAfterRemoval': false,
+          'mediaBlobId': 'pl006-post-removal-media',
+          'directDownloadAttempted': true,
+          'directDownloadDenied': true,
+          'directDownloadOk': false,
+          'directDownloadError': 'not authorized',
+          'directDownloadOutputBytes': 0,
+          'noDirectDownloadPlaintext': true,
+          'noPostRemovalMessage': true,
+          'postRemovalPlaintextCount': 0,
+          'mediaRowsAfterRemoval': 0,
+          'replayMediaRowsAbsent': true,
+          'pendingDownloadsAfterRemoval': 0,
         },
       },
     ),

@@ -772,6 +772,54 @@ func TestGroupMediaUnauthorizedPeer(t *testing.T) {
 	}
 }
 
+// TestPL006RemovedPeerCannotDownloadPostRemovalGroupMedia proves that a peer
+// removed before a group media upload cannot directly download the new blob.
+func TestPL006RemovedPeerCannotDownloadPostRemovalGroupMedia(t *testing.T) {
+	env := setupTestEnv(t)
+	senderStr := env.sender.ID().String()
+	recipientStr := env.recipient.ID().String()
+
+	data := make([]byte, 512)
+	rand.Read(data)
+
+	// Alice uploads after Charlie removal, so only active Alice and Bob remain
+	// in the relay ACL. The intruder peer represents removed Charlie.
+	allowedPeers := []string{senderStr, recipientStr}
+	env.uploadWithAllowedPeers(t, env.sender, "pl006-post-removal", "group-pl006", "image/png", data, allowedPeers)
+
+	removed, err := env.intruder.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, removed, mediaRequest{Action: "download", ID: "pl006-post-removal"})
+	removedResp := recvMediaResp(t, removed)
+	removed.Close()
+
+	if removedResp.Status != "ERROR" || removedResp.Error != "not authorized" {
+		t.Fatalf("removed peer download: expected not authorized, got status=%s error=%s", removedResp.Status, removedResp.Error)
+	}
+	if meta := env.media.lookup("pl006-post-removal"); meta == nil {
+		t.Fatal("blob should remain available to active peers after removed peer denial")
+	}
+
+	active, err := env.recipient.NewStream(context.Background(), env.server.ID(), MediaProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendMediaReq(t, active, mediaRequest{Action: "download", ID: "pl006-post-removal"})
+	activeResp := recvMediaResp(t, active)
+	if activeResp.Status != "OK" {
+		t.Fatalf("active peer download: expected OK, got %s: %s", activeResp.Status, activeResp.Error)
+	}
+	downloaded := make([]byte, activeResp.Size)
+	io.ReadFull(active, downloaded)
+	active.Close()
+
+	if !bytes.Equal(data, downloaded) {
+		t.Fatal("active peer downloaded data does not match uploaded data")
+	}
+}
+
 // TestBackwardCompat verifies that uploads WITHOUT allowedPeers still
 // behave the same (1:1 mode with auto-delete).
 func TestBackwardCompat(t *testing.T) {

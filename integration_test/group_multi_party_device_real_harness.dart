@@ -8,7 +8,10 @@ import 'package:integration_test/integration_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p_connection;
@@ -24,6 +27,7 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_invite_auth.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -987,6 +991,123 @@ Future<Map<String, dynamic>> _sendProofMessage({
   }
   writeSharedJson(_signalName('${_role}_sent_$key.json'), sent);
   return sent;
+}
+
+Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl006PostRemovalMedia({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String alicePeerId,
+  required String bobPeerId,
+  required String charliePeerId,
+}) async {
+  final members = await stack.groupRepo.getMembers(groupId);
+  final allowedPeers = groupMediaAllowedPeersForMembers(members);
+  final tempDir = await Directory.systemTemp.createTemp(
+    'pl006_post_removal_media_',
+  );
+  final localFile = File('${tempDir.path}/pl006-post-removal.bin');
+  await localFile.writeAsBytes(<int>[6, 0, 0, 6, 42, 43, 44, 45]);
+  final blobId = 'pl006-post-removal-media-$_runId';
+  final uploaded = await uploadMedia(
+    bridge: stack.bridge,
+    localFilePath: localFile.path,
+    mime: 'application/octet-stream',
+    recipientPeerId: groupId,
+    allowedPeers: allowedPeers,
+    blobId: blobId,
+  );
+  if (uploaded == null) {
+    throw StateError('PL-006 Alice media upload failed');
+  }
+  final proof = <String, dynamic>{
+    'blobId': blobId,
+    'allowedPeers': allowedPeers,
+    'uploadAllowedPeersExcludeRemoved': !allowedPeers.contains(charliePeerId),
+    'uploadAllowedPeersIncludeActive':
+        allowedPeers.contains(alicePeerId) && allowedPeers.contains(bobPeerId),
+    'uploadAllowedPeersCount': allowedPeers.length,
+  };
+  writeSharedJson(_signalName('pl006_media_upload.json'), proof);
+  return (uploaded, proof);
+}
+
+Future<List<MediaAttachment>> _downloadPl006ActiveRecipientMedia({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String messageId,
+  required int expectedCount,
+}) async {
+  var attachments = <MediaAttachment>[];
+  await waitForCondition(() async {
+    attachments = await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    return attachments.length == expectedCount;
+  }, timeout: const Duration(seconds: 120));
+
+  final mediaFileManager = MediaFileManager();
+  for (final attachment in attachments) {
+    if (attachment.downloadStatus == 'done') {
+      continue;
+    }
+    await downloadMedia(
+      bridge: stack.bridge,
+      mediaAttachmentRepo: stack.mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+      attachment: attachment,
+      contactPeerId: groupId,
+      enforceGroupMediaPolicy: true,
+    );
+  }
+
+  await waitForCondition(() async {
+    attachments = await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+      messageId,
+    );
+    return attachments.length == expectedCount &&
+        attachments.every((attachment) => attachment.downloadStatus == 'done');
+  }, timeout: const Duration(seconds: 120));
+  return attachments;
+}
+
+Future<Map<String, dynamic>> _attemptPl006DirectMediaDownload({
+  required GroupMultiDeviceTestStack stack,
+  required String blobId,
+}) async {
+  final tempDir = await Directory.systemTemp.createTemp(
+    'pl006_removed_download_',
+  );
+  final outputPath = '${tempDir.path}/$blobId.bin';
+  try {
+    final result = await callP2PMediaDownload(
+      stack.bridge,
+      id: blobId,
+      outputPath: outputPath,
+    ).timeout(const Duration(seconds: 45));
+    final outputFile = File(outputPath);
+    final outputExists = await outputFile.exists();
+    final outputBytes = outputExists ? await outputFile.length() : 0;
+    return <String, dynamic>{
+      ...result,
+      'directDownloadDenied': result['ok'] != true,
+      'outputPath': outputPath,
+      'outputBytes': outputBytes,
+      'noDirectDownloadPlaintext': result['ok'] != true && outputBytes == 0,
+      'errorMessage': result['errorMessage'],
+    };
+  } catch (error) {
+    final outputFile = File(outputPath);
+    final outputExists = await outputFile.exists();
+    final outputBytes = outputExists ? await outputFile.length() : 0;
+    return <String, dynamic>{
+      'ok': false,
+      'directDownloadDenied': true,
+      'outputPath': outputPath,
+      'outputBytes': outputBytes,
+      'noDirectDownloadPlaintext': outputBytes == 0,
+      'errorMessage': error.toString(),
+    };
+  }
 }
 
 String _ra013IdentityString(
@@ -15910,12 +16031,26 @@ Future<void> _runGm004Alice(
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
+  (MediaAttachment, Map<String, dynamic>)? pl006MediaUpload;
+  if (_scenario == 'private_online_remove') {
+    pl006MediaUpload = await _uploadPl006PostRemovalMedia(
+      stack: stack,
+      groupId: groupId,
+      alicePeerId: stack.identity.peerId,
+      bobPeerId: identities['bob']!['peerId'] as String,
+      charliePeerId: identities['charlie']!['peerId'] as String,
+    );
+  }
+
   final aliceText = 'GM-004 Alice after Charlie removal $_runId';
   final aliceSent = await _sendProofMessage(
     stack: stack,
     groupId: groupId,
     key: 'aliceAfterCharlieRemove',
     text: aliceText,
+    mediaAttachments: pl006MediaUpload == null
+        ? null
+        : <MediaAttachment>[pl006MediaUpload.$1],
   );
   await waitForSharedSignal(
     _signalName('bob_received_aliceAfterCharlieRemove.json'),
@@ -15931,6 +16066,8 @@ Future<void> _runGm004Alice(
     text: bobSent['text'] as String,
     senderPeerId: identities['bob']!['peerId'] as String,
   );
+  final pl006UploadedMedia = pl006MediaUpload?.$1;
+  final pl006UploadProof = pl006MediaUpload?.$2;
 
   await _writeVerdict(
     stack: stack,
@@ -15977,6 +16114,28 @@ Future<void> _runGm004Alice(
               aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
           'receivedBobAfterRemoval': true,
         },
+      if (_scenario == 'private_online_remove')
+        'pl006RemovedMediaProof': <String, dynamic>{
+          'rowId': 'PL-006',
+          'removedCharlie': true,
+          'removedPeerId': identities['charlie']!['peerId'] as String,
+          'memberListExcludesCharlie': !(await _memberPeerIds(
+            stack,
+            groupId,
+          )).contains(identities['charlie']!['peerId'] as String),
+          'mediaUploadedAfterRemoval': pl006UploadedMedia != null,
+          'mediaBlobId': pl006UploadedMedia?.id,
+          'uploadAllowedPeers': pl006UploadProof?['allowedPeers'],
+          'uploadAllowedPeersExcludeRemoved':
+              pl006UploadProof?['uploadAllowedPeersExcludeRemoved'] == true,
+          'uploadAllowedPeersIncludeActive':
+              pl006UploadProof?['uploadAllowedPeersIncludeActive'] == true,
+          'uploadAllowedPeersCount':
+              pl006UploadProof?['uploadAllowedPeersCount'],
+          'sentPostRemovalMediaAtRotatedEpoch':
+              aliceSent['keyEpoch'] == rotatedKey.keyGeneration,
+          'bobReceiptSignalObserved': true,
+        },
     },
   );
 }
@@ -16019,6 +16178,15 @@ Future<void> _runGm004Bob(
     text: aliceSent['text'] as String,
     senderPeerId: identities['alice']!['peerId'] as String,
   );
+  var pl006AliceAttachments = <MediaAttachment>[];
+  if (_scenario == 'private_online_remove') {
+    pl006AliceAttachments = await _downloadPl006ActiveRecipientMedia(
+      stack: stack,
+      groupId: groupId,
+      messageId: aliceReceived['messageId'] as String,
+      expectedCount: 1,
+    );
+  }
 
   final bobText = 'GM-004 Bob after Charlie removal $_runId';
   final bobSent = await _sendProofMessage(
@@ -16067,6 +16235,26 @@ Future<void> _runGm004Bob(
           'receivedAliceAfterRemoval': true,
           'sentPostRemovalAtRotatedEpoch': bobSent['keyEpoch'] == rotatedEpoch,
         },
+      if (_scenario == 'private_online_remove')
+        'pl006RemovedMediaProof': <String, dynamic>{
+          'rowId': 'PL-006',
+          'memberListExcludesCharlie': !(await _memberPeerIds(
+            stack,
+            groupId,
+          )).contains(charliePeerId),
+          'removedPeerId': charliePeerId,
+          'receivedAliceAfterRemoval': true,
+          'receivedAliceAfterRemovalAtRotatedEpoch':
+              aliceReceived['keyEpoch'] == rotatedEpoch,
+          'bobReceivedMediaDescriptor': pl006AliceAttachments.length == 1,
+          'bobMediaDownloaded':
+              pl006AliceAttachments.length == 1 &&
+              pl006AliceAttachments.single.downloadStatus == 'done',
+          'mediaCount': pl006AliceAttachments.length,
+          'mediaBlobId': pl006AliceAttachments.isEmpty
+              ? null
+              : pl006AliceAttachments.single.id,
+        },
     },
   );
 }
@@ -16095,6 +16283,23 @@ Future<void> _runGm004Charlie(
   final bobSent = await waitForSharedJson(
     _signalName('bob_sent_bobAfterCharlieRemove.json'),
   );
+  String? pl006MediaBlobId;
+  Map<String, dynamic>? pl006DirectDownloadProof;
+  if (_scenario == 'private_online_remove') {
+    final mediaAttachments = aliceSent['mediaAttachments'];
+    if (mediaAttachments is List &&
+        mediaAttachments.isNotEmpty &&
+        mediaAttachments.first is Map) {
+      pl006MediaBlobId = (mediaAttachments.first as Map)['id'] as String?;
+    }
+    if (pl006MediaBlobId == null || pl006MediaBlobId.isEmpty) {
+      throw StateError('PL-006 Alice post-removal media descriptor missing');
+    }
+    pl006DirectDownloadProof = await _attemptPl006DirectMediaDownload(
+      stack: stack,
+      blobId: pl006MediaBlobId,
+    );
+  }
   await Future<void>.delayed(const Duration(seconds: 5));
 
   final aliceLeakCount = await _proofMessageCount(
@@ -16118,6 +16323,19 @@ Future<void> _runGm004Charlie(
   );
   final keyEpochAfterRemoval = await _keyEpoch(stack, groupId);
   final postRemovalPlaintextCount = aliceLeakCount + bobLeakCount;
+  var pl006MediaRowsAfterRemoval = 0;
+  var pl006PendingDownloadsAfterRemoval = 0;
+  if (_scenario == 'private_online_remove') {
+    final aliceMessageId = aliceSent['messageId'] as String?;
+    if (aliceMessageId != null && aliceMessageId.isNotEmpty) {
+      pl006MediaRowsAfterRemoval =
+          (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+            aliceMessageId,
+          )).length;
+    }
+    pl006PendingDownloadsAfterRemoval =
+        (await stack.mediaAttachmentRepo.getPendingDownloads()).length;
+  }
 
   await _writeVerdict(
     stack: stack,
@@ -16166,6 +16384,28 @@ Future<void> _runGm004Charlie(
           'receivedAliceAfterRemoval': aliceLeakCount > 0,
           'receivedBobAfterRemoval': bobLeakCount > 0,
           'postRemovalPlaintextCount': postRemovalPlaintextCount,
+        },
+      if (_scenario == 'private_online_remove')
+        'pl006RemovedMediaProof': <String, dynamic>{
+          'rowId': 'PL-006',
+          'onlineBeforeRemoval': true,
+          'currentMemberBeforeRemoval': currentMemberBeforeRemoval,
+          'groupPresentAfterRemoval':
+              await stack.groupRepo.getGroup(groupId) != null,
+          'mediaBlobId': pl006MediaBlobId,
+          'directDownloadAttempted': pl006DirectDownloadProof != null,
+          'directDownloadDenied':
+              pl006DirectDownloadProof?['directDownloadDenied'] == true,
+          'directDownloadOk': pl006DirectDownloadProof?['ok'] == true,
+          'directDownloadError': pl006DirectDownloadProof?['errorMessage'],
+          'directDownloadOutputBytes': pl006DirectDownloadProof?['outputBytes'],
+          'noDirectDownloadPlaintext':
+              pl006DirectDownloadProof?['noDirectDownloadPlaintext'] == true,
+          'noPostRemovalMessage': aliceLeakCount == 0 && bobLeakCount == 0,
+          'postRemovalPlaintextCount': postRemovalPlaintextCount,
+          'mediaRowsAfterRemoval': pl006MediaRowsAfterRemoval,
+          'replayMediaRowsAbsent': pl006MediaRowsAfterRemoval == 0,
+          'pendingDownloadsAfterRemoval': pl006PendingDownloadsAfterRemoval,
         },
     },
   );

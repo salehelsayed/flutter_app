@@ -3088,6 +3088,11 @@ void _validateScenarioProofFields({
       peerIdByRole: peerIdByRole,
       failures: failures,
     );
+    _validatePl006RemovedMediaProof(
+      byRole: byRole,
+      peerIdByRole: peerIdByRole,
+      failures: failures,
+    );
     return;
   }
   if (scenario == 'private_offline_remove') {
@@ -10463,6 +10468,165 @@ void _validateKe006RemovalKeyRotationProof({
     final plaintextCount = _intValue(charlieProof['postRemovalPlaintextCount']);
     if (plaintextCount != 0) {
       failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+  }
+}
+
+void _validatePl006RemovedMediaProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required Map<String, String> peerIdByRole,
+  required List<String> failures,
+}) {
+  const proofName = 'pl006RemovedMediaProof';
+  final aliceProof = _mapValue(byRole['alice']?[proofName]);
+  final bobProof = _mapValue(byRole['bob']?[proofName]);
+  final charlieProof = _mapValue(byRole['charlie']?[proofName]);
+  final expectedRemovedPeerId = peerIdByRole['charlie'];
+  final expectedAlicePeerId = peerIdByRole['alice'];
+  final expectedBobPeerId = peerIdByRole['bob'];
+  final expectedBlobId = _stringValue(aliceProof?['mediaBlobId']);
+
+  void requireRowId(String role, Map<String, dynamic> proof) {
+    if (_stringValue(proof['rowId']) != 'PL-006') {
+      failures.add('$role: $proofName.rowId must be PL-006');
+    }
+  }
+
+  void requireMatchingBlobId(String role, Map<String, dynamic> proof) {
+    final blobId = _stringValue(proof['mediaBlobId']);
+    if (blobId == null || blobId.isEmpty) {
+      failures.add('$role: $proofName.mediaBlobId is required');
+      return;
+    }
+    if (expectedBlobId != null &&
+        expectedBlobId.isNotEmpty &&
+        blobId != expectedBlobId) {
+      failures.add('$role: $proofName.mediaBlobId must match Alice upload');
+    }
+  }
+
+  if (aliceProof == null) {
+    failures.add('alice: missing PL-006 removed-media proof fields');
+  } else {
+    requireRowId('alice', aliceProof);
+    for (final field in const <String>[
+      'removedCharlie',
+      'memberListExcludesCharlie',
+      'mediaUploadedAfterRemoval',
+      'uploadAllowedPeersExcludeRemoved',
+      'uploadAllowedPeersIncludeActive',
+      'sentPostRemovalMediaAtRotatedEpoch',
+      'bobReceiptSignalObserved',
+    ]) {
+      _requireTrueProof(
+        role: 'alice',
+        proofName: proofName,
+        proof: aliceProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(aliceProof['removedPeerId']);
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('alice: $proofName.removedPeerId must be charlie');
+    }
+    requireMatchingBlobId('alice', aliceProof);
+    final allowedPeers = _stringList(aliceProof['uploadAllowedPeers']).toSet();
+    if (expectedAlicePeerId != null &&
+        !allowedPeers.contains(expectedAlicePeerId)) {
+      failures.add('alice: $proofName.uploadAllowedPeers missing Alice');
+    }
+    if (expectedBobPeerId != null &&
+        !allowedPeers.contains(expectedBobPeerId)) {
+      failures.add('alice: $proofName.uploadAllowedPeers missing Bob');
+    }
+    if (expectedRemovedPeerId != null &&
+        allowedPeers.contains(expectedRemovedPeerId)) {
+      failures.add('alice: $proofName.uploadAllowedPeers must exclude Charlie');
+    }
+    if (_intValue(aliceProof['uploadAllowedPeersCount']) != 2) {
+      failures.add('alice: $proofName.uploadAllowedPeersCount must be 2');
+    }
+  }
+
+  if (bobProof == null) {
+    failures.add('bob: missing PL-006 removed-media proof fields');
+  } else {
+    requireRowId('bob', bobProof);
+    for (final field in const <String>[
+      'memberListExcludesCharlie',
+      'receivedAliceAfterRemoval',
+      'receivedAliceAfterRemovalAtRotatedEpoch',
+      'bobReceivedMediaDescriptor',
+      'bobMediaDownloaded',
+    ]) {
+      _requireTrueProof(
+        role: 'bob',
+        proofName: proofName,
+        proof: bobProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    final removedPeerId = _stringValue(bobProof['removedPeerId']);
+    if (expectedRemovedPeerId != null &&
+        removedPeerId != expectedRemovedPeerId) {
+      failures.add('bob: $proofName.removedPeerId must be charlie');
+    }
+    if (_intValue(bobProof['mediaCount']) != 1) {
+      failures.add('bob: $proofName.mediaCount must be 1');
+    }
+    requireMatchingBlobId('bob', bobProof);
+  }
+
+  if (charlieProof == null) {
+    failures.add('charlie: missing PL-006 removed-media proof fields');
+  } else {
+    requireRowId('charlie', charlieProof);
+    for (final field in const <String>[
+      'onlineBeforeRemoval',
+      'currentMemberBeforeRemoval',
+      'directDownloadAttempted',
+      'directDownloadDenied',
+      'noDirectDownloadPlaintext',
+      'noPostRemovalMessage',
+      'replayMediaRowsAbsent',
+    ]) {
+      _requireTrueProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    for (final field in const <String>[
+      'groupPresentAfterRemoval',
+      'directDownloadOk',
+    ]) {
+      _requireFalseProof(
+        role: 'charlie',
+        proofName: proofName,
+        proof: charlieProof,
+        field: field,
+        failures: failures,
+      );
+    }
+    requireMatchingBlobId('charlie', charlieProof);
+    if (_intValue(charlieProof['directDownloadOutputBytes']) != 0) {
+      failures.add('charlie: $proofName.directDownloadOutputBytes must be 0');
+    }
+    if (_intValue(charlieProof['postRemovalPlaintextCount']) != 0) {
+      failures.add('charlie: $proofName.postRemovalPlaintextCount must be 0');
+    }
+    if (_intValue(charlieProof['mediaRowsAfterRemoval']) != 0) {
+      failures.add('charlie: $proofName.mediaRowsAfterRemoval must be 0');
+    }
+    if (_intValue(charlieProof['pendingDownloadsAfterRemoval']) != 0) {
+      failures.add(
+        'charlie: $proofName.pendingDownloadsAfterRemoval must be 0',
+      );
     }
   }
 }
