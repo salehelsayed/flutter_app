@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -285,5 +286,44 @@ func TestIdleTimeoutReader_StalledDownloadFails(t *testing.T) {
 
 	if !errors.Is(err, ErrStallTimeout) {
 		t.Fatalf("expected ErrStallTimeout for stalled download, got: %v", err)
+	}
+}
+
+func TestPL013MediaDownloadRemovesPartialOutputOnIncompleteTransfer(t *testing.T) {
+	outputPath := t.TempDir() + "/pl013-partial-download.bin"
+
+	written, err := copyMediaDownloadToFile(
+		outputPath,
+		bytes.NewReader([]byte{1, 2, 3}),
+		8,
+		time.Second,
+	)
+	if err == nil {
+		t.Fatal("expected incomplete download error")
+	}
+	if written != 3 {
+		t.Fatalf("written = %d, want 3", written)
+	}
+	if !strings.Contains(err.Error(), "download incomplete") {
+		t.Fatalf("error = %v, want download incomplete", err)
+	}
+	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+		t.Fatalf("partial output still exists or stat failed unexpectedly: %v", statErr)
+	}
+
+	written, err = copyMediaDownloadToFile(
+		outputPath,
+		bytes.NewReader([]byte{4, 5, 6, 7}),
+		4,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("retry copy failed: %v", err)
+	}
+	if written != 4 {
+		t.Fatalf("retry written = %d, want 4", written)
+	}
+	if got, readErr := os.ReadFile(outputPath); readErr != nil || !bytes.Equal(got, []byte{4, 5, 6, 7}) {
+		t.Fatalf("retry output = %v, err=%v", got, readErr)
 	}
 }

@@ -227,6 +227,13 @@ Future<MediaAttachment?> downloadMedia({
           );
 
           if (result['ok'] != true) {
+            for (final path in {downloadPath, absolutePath}) {
+              final partialFile = File(path);
+              if (await partialFile.exists()) {
+                await partialFile.delete();
+              }
+            }
+
             await mediaAttachmentRepo.updateDownloadStatus(
               attachment.id,
               kMediaDownloadStatusFailed,
