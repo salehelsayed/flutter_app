@@ -1031,6 +1031,48 @@ Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl006PostRemovalMedia({
   return (uploaded, proof);
 }
 
+Future<(MediaAttachment, Map<String, dynamic>)> _uploadPl007ReaddMedia({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String window,
+  required String alicePeerId,
+  required String bobPeerId,
+  required String charliePeerId,
+  required List<int> bytes,
+}) async {
+  final members = await stack.groupRepo.getMembers(groupId);
+  final allowedPeers = groupMediaAllowedPeersForMembers(members);
+  final tempDir = await Directory.systemTemp.createTemp(
+    'pl007_${window}_media_',
+  );
+  final localFile = File('${tempDir.path}/pl007-$window.bin');
+  await localFile.writeAsBytes(bytes);
+  final blobId = 'pl007-$window-media-$_runId';
+  final uploaded = await uploadMedia(
+    bridge: stack.bridge,
+    localFilePath: localFile.path,
+    mime: 'application/octet-stream',
+    recipientPeerId: groupId,
+    allowedPeers: allowedPeers,
+    blobId: blobId,
+  );
+  if (uploaded == null) {
+    throw StateError('PL-007 Alice $window media upload failed');
+  }
+  final proof = <String, dynamic>{
+    'window': window,
+    'blobId': blobId,
+    'allowedPeers': allowedPeers,
+    'allowedPeersCount': allowedPeers.length,
+    'allowedPeersIncludeAlice': allowedPeers.contains(alicePeerId),
+    'allowedPeersIncludeBob': allowedPeers.contains(bobPeerId),
+    'allowedPeersIncludeCharlie': allowedPeers.contains(charliePeerId),
+    'allowedPeersExcludeCharlie': !allowedPeers.contains(charliePeerId),
+  };
+  writeSharedJson(_signalName('pl007_${window}_media_upload.json'), proof);
+  return (uploaded, proof);
+}
+
 Future<List<MediaAttachment>> _downloadPl006ActiveRecipientMedia({
   required GroupMultiDeviceTestStack stack,
   required String groupId,
@@ -16965,6 +17007,19 @@ Future<void> _runGm006Alice(
   });
   await waitForSharedSignal(_signalName('bob_rotated_key'));
 
+  (MediaAttachment, Map<String, dynamic>)? pl007RemovedWindowMediaUpload;
+  if (isMl007) {
+    pl007RemovedWindowMediaUpload = await _uploadPl007ReaddMedia(
+      stack: stack,
+      groupId: groupId,
+      window: 'removed-window',
+      alicePeerId: stack.identity.peerId,
+      bobPeerId: identities['bob']!['peerId'] as String,
+      charliePeerId: charliePeerId,
+      bytes: <int>[7, 0, 0, 7, 1, 2, 3, 4],
+    );
+  }
+
   final duringText = isRa003
       ? 'RA-003 Alice during Charlie removal $_runId'
       : isRa012
@@ -16977,6 +17032,9 @@ Future<void> _runGm006Alice(
     groupId: groupId,
     key: 'aliceDuringCharlieRemoval',
     text: duringText,
+    mediaAttachments: pl007RemovedWindowMediaUpload == null
+        ? null
+        : <MediaAttachment>[pl007RemovedWindowMediaUpload.$1],
   );
   await waitForSharedSignal(
     _signalName('bob_received_aliceDuringCharlieRemoval.json'),
@@ -17090,6 +17148,19 @@ Future<void> _runGm006Alice(
     );
   }
 
+  (MediaAttachment, Map<String, dynamic>)? pl007PostReaddMediaUpload;
+  if (isMl007) {
+    pl007PostReaddMediaUpload = await _uploadPl007ReaddMedia(
+      stack: stack,
+      groupId: groupId,
+      window: 'post-readd',
+      alicePeerId: stack.identity.peerId,
+      bobPeerId: identities['bob']!['peerId'] as String,
+      charliePeerId: charliePeerId,
+      bytes: <int>[7, 0, 0, 7, 5, 6, 7, 8],
+    );
+  }
+
   final charlieSent = await waitForSharedJson(
     _signalName('charlie_sent_charlieAfterImmediateReadd.json'),
   );
@@ -17119,6 +17190,9 @@ Future<void> _runGm006Alice(
     groupId: groupId,
     key: 'aliceAfterImmediateReadd',
     text: afterText,
+    mediaAttachments: pl007PostReaddMediaUpload == null
+        ? null
+        : <MediaAttachment>[pl007PostReaddMediaUpload.$1],
   );
   await waitForSharedSignal(
     _signalName('bob_received_aliceAfterImmediateReadd.json'),
@@ -17269,6 +17343,50 @@ Future<void> _runGm006Alice(
           'receivedQuotedPostReaddLive':
               bobReceived?['quotedMessageId'] == afterSent['messageId'],
           'quoteTargetVisibleBeforeQuotedDelivery': true,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'pl007ReaddMediaProof': <String, dynamic>{
+          'rowId': 'PL-007',
+          'removedPeerId': charliePeerId,
+          'memberListIncludesAliceBob':
+              memberPeerIds.contains(stack.identity.peerId) &&
+              memberPeerIds.contains(identities['bob']!['peerId'] as String),
+          'memberListIncludesCharlie': memberPeerIds.contains(charliePeerId),
+          'removedWindowMediaBlobId': pl007RemovedWindowMediaUpload?.$1.id,
+          'postReaddMediaBlobId': pl007PostReaddMediaUpload?.$1.id,
+          'removedWindowMessageKey': duringSent['key'],
+          'postReaddMessageKey': afterSent['key'],
+          'removedCharlie': true,
+          'readdedCharlie': memberPeerIds.contains(charliePeerId),
+          'removedWindowSentWhileCharlieRemoved': true,
+          'postReaddMediaSentAfterReadd': true,
+          'removedWindowMediaSentAtCurrentEpoch':
+              (duringSent['keyEpoch'] as int?) == finalEpoch && finalEpoch >= 2,
+          'postReaddMediaSentAtCurrentEpoch':
+              (afterSent['keyEpoch'] as int?) == finalEpoch && finalEpoch >= 2,
+          'removedWindowAllowedPeers':
+              pl007RemovedWindowMediaUpload?.$2['allowedPeers'],
+          'removedWindowAllowedPeersExcludeCharlie':
+              pl007RemovedWindowMediaUpload?.$2['allowedPeersExcludeCharlie'] ==
+              true,
+          'removedWindowAllowedPeersIncludeActive':
+              pl007RemovedWindowMediaUpload?.$2['allowedPeersIncludeAlice'] ==
+                  true &&
+              pl007RemovedWindowMediaUpload?.$2['allowedPeersIncludeBob'] ==
+                  true,
+          'removedWindowAllowedPeersCount':
+              pl007RemovedWindowMediaUpload?.$2['allowedPeersCount'],
+          'postReaddAllowedPeers':
+              pl007PostReaddMediaUpload?.$2['allowedPeers'],
+          'postReaddAllowedPeersIncludeAll':
+              pl007PostReaddMediaUpload?.$2['allowedPeersIncludeAlice'] ==
+                  true &&
+              pl007PostReaddMediaUpload?.$2['allowedPeersIncludeBob'] == true &&
+              pl007PostReaddMediaUpload?.$2['allowedPeersIncludeCharlie'] ==
+                  true,
+          'postReaddAllowedPeersCount':
+              pl007PostReaddMediaUpload?.$2['allowedPeersCount'],
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
@@ -17493,6 +17611,15 @@ Future<void> _runGm006Bob(
     text: duringSent['text'] as String,
     senderPeerId: identities['alice']!['peerId'] as String,
   );
+  var pl007RemovedWindowAttachments = <MediaAttachment>[];
+  if (isMl007) {
+    pl007RemovedWindowAttachments = await _downloadPl006ActiveRecipientMedia(
+      stack: stack,
+      groupId: groupId,
+      messageId: duringReceived['messageId'] as String,
+      expectedCount: 1,
+    );
+  }
 
   await _waitForMemberInclusion(
     stack: stack,
@@ -17560,6 +17687,15 @@ Future<void> _runGm006Bob(
     text: afterSent['text'] as String,
     senderPeerId: identities['alice']!['peerId'] as String,
   );
+  var pl007PostReaddAttachments = <MediaAttachment>[];
+  if (isMl007) {
+    pl007PostReaddAttachments = await _downloadPl006ActiveRecipientMedia(
+      stack: stack,
+      groupId: groupId,
+      messageId: afterReceived['messageId'] as String,
+      expectedCount: 1,
+    );
+  }
 
   Map<String, dynamic>? afterRestartReceived;
   if (isMl007) {
@@ -17707,6 +17843,45 @@ Future<void> _runGm006Bob(
               bobSent?['quotedMessageId'] == afterSent['messageId'],
           'quoteTargetVisibleBeforeSend':
               afterReceived['messageId'] == afterSent['messageId'],
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'pl007ReaddMediaProof': <String, dynamic>{
+          'rowId': 'PL-007',
+          'removedPeerId': charliePeerId,
+          'memberListIncludesAliceBob':
+              memberPeerIds.contains(
+                identities['alice']!['peerId'] as String,
+              ) &&
+              memberPeerIds.contains(stack.identity.peerId),
+          'memberListIncludesCharlie': memberPeerIds.contains(charliePeerId),
+          'removedWindowMediaBlobId': pl007RemovedWindowAttachments.isEmpty
+              ? null
+              : pl007RemovedWindowAttachments.single.id,
+          'postReaddMediaBlobId': pl007PostReaddAttachments.isEmpty
+              ? null
+              : pl007PostReaddAttachments.single.id,
+          'removedWindowMessageKey': duringReceived['key'],
+          'postReaddMessageKey': afterReceived['key'],
+          'retainedActiveMembershipDuringRemovedWindow': true,
+          'removedWindowMediaMessageReceived': duringReceived.isNotEmpty,
+          'removedWindowMediaDownloaded':
+              pl007RemovedWindowAttachments.length == 1 &&
+              pl007RemovedWindowAttachments.single.downloadStatus == 'done',
+          'removedWindowMediaPersisted':
+              pl007RemovedWindowAttachments.length == 1 &&
+              pl007RemovedWindowAttachments.single.localPath != null,
+          'postReaddMediaMessageReceived': afterReceived.isNotEmpty,
+          'postReaddMediaDownloaded':
+              pl007PostReaddAttachments.length == 1 &&
+              pl007PostReaddAttachments.single.downloadStatus == 'done',
+          'postReaddMediaPersisted':
+              pl007PostReaddAttachments.length == 1 &&
+              pl007PostReaddAttachments.single.localPath != null,
+          'postReaddMediaDecrypted':
+              pl007PostReaddAttachments.length == 1 &&
+              pl007PostReaddAttachments.single.downloadStatus == 'done' &&
+              pl007PostReaddAttachments.single.localPath != null,
           'finalEpoch': finalEpoch,
         },
       if (isMl007)
@@ -18008,6 +18183,29 @@ Future<void> _runGm006Charlie(
   final duringSent = await waitForSharedJson(
     _signalName('alice_sent_aliceDuringCharlieRemoval.json'),
   );
+  String? pl007RemovedWindowMediaBlobId;
+  Map<String, dynamic>? pl007DirectDownloadProof;
+  if (isMl007) {
+    final mediaAttachments = (duringSent['mediaAttachments'] as List?)
+        ?.cast<Map<String, dynamic>>();
+    if (mediaAttachments != null && mediaAttachments.isNotEmpty) {
+      pl007RemovedWindowMediaBlobId = mediaAttachments.first['id'] as String?;
+    } else {
+      final mediaIds = (duringSent['mediaAttachmentIds'] as List?)
+          ?.cast<String>();
+      if (mediaIds != null && mediaIds.isNotEmpty) {
+        pl007RemovedWindowMediaBlobId = mediaIds.first;
+      }
+    }
+    if (pl007RemovedWindowMediaBlobId == null ||
+        pl007RemovedWindowMediaBlobId.isEmpty) {
+      throw StateError('PL-007 Alice removed-window media descriptor missing');
+    }
+    pl007DirectDownloadProof = await _attemptPl006DirectMediaDownload(
+      stack: stack,
+      blobId: pl007RemovedWindowMediaBlobId,
+    );
+  }
   await Future<void>.delayed(const Duration(seconds: 5));
   final removedWindowPlaintextBeforeReadd = await _proofMessageCount(
     stack: stack,
@@ -18015,6 +18213,19 @@ Future<void> _runGm006Charlie(
     text: duringSent['text'] as String,
     senderPeerId: identities['alice']!['peerId'] as String,
   );
+  var pl007RemovedWindowMediaRowsBeforeReadd = 0;
+  var pl007PendingDownloadsBeforeReadd = 0;
+  if (isMl007) {
+    final removedMessageId = duringSent['messageId'] as String?;
+    if (removedMessageId != null && removedMessageId.isNotEmpty) {
+      pl007RemovedWindowMediaRowsBeforeReadd =
+          (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+            removedMessageId,
+          )).length;
+    }
+    pl007PendingDownloadsBeforeReadd =
+        (await stack.mediaAttachmentRepo.getPendingDownloads()).length;
+  }
 
   final readdFixture = await waitForSharedJson(
     _signalName('charlie_readd_group_fixture.json'),
@@ -18116,6 +18327,15 @@ Future<void> _runGm006Charlie(
     text: afterSent['text'] as String,
     senderPeerId: identities['alice']!['peerId'] as String,
   );
+  var pl007PostReaddAttachments = <MediaAttachment>[];
+  if (isMl007) {
+    pl007PostReaddAttachments = await _downloadPl006ActiveRecipientMedia(
+      stack: stack,
+      groupId: groupId,
+      messageId: afterReceived['messageId'] as String,
+      expectedCount: 1,
+    );
+  }
 
   var restartPreservedCurrentGroupKeyConfig = false;
   Map<String, dynamic>? afterRestartReceived;
@@ -18177,6 +18397,19 @@ Future<void> _runGm006Charlie(
     text: duringSent['text'] as String,
     senderPeerId: identities['alice']!['peerId'] as String,
   );
+  var pl007RemovedWindowMediaRowsAfterReadd = 0;
+  var pl007PendingDownloadsAfterPostReadd = 0;
+  if (isMl007) {
+    final removedMessageId = duringSent['messageId'] as String?;
+    if (removedMessageId != null && removedMessageId.isNotEmpty) {
+      pl007RemovedWindowMediaRowsAfterReadd =
+          (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+            removedMessageId,
+          )).length;
+    }
+    pl007PendingDownloadsAfterPostReadd =
+        (await stack.mediaAttachmentRepo.getPendingDownloads()).length;
+  }
   final memberPeerIds = await _memberPeerIds(stack, groupId);
   final finalEpoch = await _keyEpoch(stack, groupId);
   final charlieSentEpoch = charlieSent['keyEpoch'] as int?;
@@ -18323,6 +18556,59 @@ Future<void> _runGm006Charlie(
           'removedWindowPlaintextCount':
               removedWindowPlaintextBeforeReadd +
               removedWindowPlaintextAfterReadd,
+          'finalEpoch': finalEpoch,
+        },
+      if (isMl007)
+        'pl007ReaddMediaProof': <String, dynamic>{
+          'rowId': 'PL-007',
+          'removedPeerId': charliePeerId,
+          'memberListIncludesAliceBob':
+              memberPeerIds.contains(alicePeerId) &&
+              memberPeerIds.contains(bobPeerId),
+          'memberListIncludesCharlie': memberPeerIds.contains(charliePeerId),
+          'removedWindowMediaBlobId': pl007RemovedWindowMediaBlobId,
+          'postReaddMediaBlobId': pl007PostReaddAttachments.isEmpty
+              ? null
+              : pl007PostReaddAttachments.single.id,
+          'removedWindowMessageKey': duringSent['key'],
+          'postReaddMessageKey': afterReceived['key'],
+          'removedWindowMediaMessageCount':
+              removedWindowPlaintextBeforeReadd +
+              removedWindowPlaintextAfterReadd,
+          'removedWindowMediaRowsBeforeReadd':
+              pl007RemovedWindowMediaRowsBeforeReadd,
+          'removedWindowMediaRowsAfterReadd':
+              pl007RemovedWindowMediaRowsAfterReadd,
+          'removedWindowPendingDownloadsBeforeReadd':
+              pl007PendingDownloadsBeforeReadd,
+          'pendingDownloadsAfterPostReadd': pl007PendingDownloadsAfterPostReadd,
+          'removedWindowDirectDownloadAttempted':
+              pl007DirectDownloadProof != null,
+          'removedWindowDirectDownloadDenied':
+              pl007DirectDownloadProof?['directDownloadDenied'] == true,
+          'removedWindowDirectDownloadOk':
+              pl007DirectDownloadProof?['ok'] == true,
+          'removedWindowDirectDownloadOutputBytes':
+              pl007DirectDownloadProof?['outputBytes'],
+          'noRemovedWindowMediaPlaintext':
+              pl007DirectDownloadProof?['noDirectDownloadPlaintext'] == true &&
+              removedWindowPlaintextBeforeReadd == 0 &&
+              removedWindowPlaintextAfterReadd == 0 &&
+              pl007RemovedWindowMediaRowsBeforeReadd == 0 &&
+              pl007RemovedWindowMediaRowsAfterReadd == 0,
+          'postReaddMediaMessageReceived': afterReceived.isNotEmpty,
+          'postReaddMediaRows': pl007PostReaddAttachments.length,
+          'postReaddMediaDownloaded':
+              pl007PostReaddAttachments.length == 1 &&
+              pl007PostReaddAttachments.single.downloadStatus == 'done',
+          'postReaddMediaPersisted':
+              pl007PostReaddAttachments.length == 1 &&
+              pl007PostReaddAttachments.single.localPath != null,
+          'postReaddMediaDecrypted':
+              pl007PostReaddAttachments.length == 1 &&
+              pl007PostReaddAttachments.single.downloadStatus == 'done' &&
+              pl007PostReaddAttachments.single.localPath != null,
+          'postReaddMediaEpoch': afterReceivedEpoch,
           'finalEpoch': finalEpoch,
         },
       if (isMl007)

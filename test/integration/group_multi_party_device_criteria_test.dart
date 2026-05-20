@@ -4901,6 +4901,170 @@ void main() {
     });
 
     test(
+      'PL-007 accepts private_readd_current re-added media proof verdicts',
+      () {
+        final verdict = evaluateGroupMultiPartyVerdicts(
+          scenario: 'private_readd_current',
+          relayAddresses: expectedMultiPartyRelayAddresses,
+          verdicts: _validPrivateReaddCurrentVerdicts(),
+        );
+
+        expect(verdict.ok, isTrue);
+        expect(
+          verdict.detail,
+          contains('private_readd_current verdicts valid'),
+        );
+      },
+    );
+
+    test('PL-007 rejects missing re-added media proof fields', () {
+      final missingProof = _validPrivateReaddCurrentVerdicts();
+      missingProof[2] = Map<String, dynamic>.from(missingProof[2])
+        ..remove('pl007ReaddMediaProof');
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingProof,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains('charlie: missing PL-007 re-add media proof fields'),
+      );
+    });
+
+    test('PL-007 rejects Charlie removed-window media leakage or residue', () {
+      final leaked = _validPrivateReaddCurrentVerdicts();
+      leaked[2] = {
+        ...leaked[2],
+        'pl007ReaddMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            leaked[2]['pl007ReaddMediaProof'] as Map,
+          ),
+          'removedWindowMediaMessageCount': 1,
+          'removedWindowMediaRowsAfterReadd': 1,
+          'removedWindowPendingDownloadsBeforeReadd': 1,
+          'pendingDownloadsAfterPostReadd': 1,
+          'removedWindowDirectDownloadDenied': false,
+          'removedWindowDirectDownloadOk': true,
+          'removedWindowDirectDownloadOutputBytes': 4,
+          'noRemovedWindowMediaPlaintext': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: leaked,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl007ReaddMediaProof.removedWindowMediaMessageCount must be 0',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl007ReaddMediaProof.removedWindowDirectDownloadOk must be false',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl007ReaddMediaProof.noRemovedWindowMediaPlaintext must be true',
+        ),
+      );
+    });
+
+    test('PL-007 rejects missing Charlie post-readd media download', () {
+      final missingDownload = _validPrivateReaddCurrentVerdicts();
+      missingDownload[2] = {
+        ...missingDownload[2],
+        'pl007ReaddMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            missingDownload[2]['pl007ReaddMediaProof'] as Map,
+          ),
+          'postReaddMediaRows': 0,
+          'postReaddMediaDownloaded': false,
+          'postReaddMediaPersisted': false,
+          'postReaddMediaDecrypted': false,
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: missingDownload,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl007ReaddMediaProof.postReaddMediaDownloaded must be true',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains('charlie: pl007ReaddMediaProof.postReaddMediaRows must be 1'),
+      );
+    });
+
+    test('PL-007 rejects mismatched media blob id or window proof', () {
+      final mismatched = _validPrivateReaddCurrentVerdicts();
+      mismatched[1] = {
+        ...mismatched[1],
+        'pl007ReaddMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            mismatched[1]['pl007ReaddMediaProof'] as Map,
+          ),
+          'removedWindowMediaBlobId': 'wrong-removed-window-media',
+        },
+      };
+      mismatched[2] = {
+        ...mismatched[2],
+        'pl007ReaddMediaProof': <String, Object?>{
+          ...Map<String, Object?>.from(
+            mismatched[2]['pl007ReaddMediaProof'] as Map,
+          ),
+          'postReaddMessageKey': 'aliceDuringCharlieRemoval',
+          'postReaddMediaBlobId': 'wrong-post-readd-media',
+        },
+      };
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_readd_current',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: mismatched,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'bob: pl007ReaddMediaProof.removedWindowMediaBlobId must match Alice removed-window media',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl007ReaddMediaProof.postReaddMessageKey must be aliceAfterImmediateReadd',
+        ),
+      );
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: pl007ReaddMediaProof.postReaddMediaBlobId must match Alice post-readd media',
+        ),
+      );
+    });
+
+    test(
       'accepts private_readd_current RA-006 delayed old key proof verdicts',
       () {
         final verdict = evaluateGroupMultiPartyVerdicts(
@@ -19446,6 +19610,34 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'quoteTargetVisibleBeforeQuotedDelivery': true,
           'finalEpoch': 2,
         },
+        'pl007ReaddMediaProof': <String, Object?>{
+          'rowId': 'PL-007',
+          'removedPeerId': 'charlie-peer',
+          'removedCharlie': true,
+          'readdedCharlie': true,
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowMessageKey': 'aliceDuringCharlieRemoval',
+          'postReaddMessageKey': 'aliceAfterImmediateReadd',
+          'removedWindowMediaBlobId': 'pl007-removed-window-media',
+          'postReaddMediaBlobId': 'pl007-post-readd-media',
+          'removedWindowSentWhileCharlieRemoved': true,
+          'postReaddMediaSentAfterReadd': true,
+          'removedWindowMediaSentAtCurrentEpoch': true,
+          'postReaddMediaSentAtCurrentEpoch': true,
+          'removedWindowAllowedPeers': <String>['alice-peer', 'bob-peer'],
+          'removedWindowAllowedPeersExcludeCharlie': true,
+          'removedWindowAllowedPeersIncludeActive': true,
+          'removedWindowAllowedPeersCount': 2,
+          'postReaddAllowedPeers': <String>[
+            'alice-peer',
+            'bob-peer',
+            'charlie-peer',
+          ],
+          'postReaddAllowedPeersIncludeAll': true,
+          'postReaddAllowedPeersCount': 3,
+          'finalEpoch': 2,
+        },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
           'rowId': 'RA-002',
           'removedCharlieWhileOnline': true,
@@ -19650,6 +19842,25 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'sentQuotedMessageId': 'ml007-a-after',
           'sentQuotedPostReaddLive': true,
           'quoteTargetVisibleBeforeSend': true,
+          'finalEpoch': 2,
+        },
+        'pl007ReaddMediaProof': <String, Object?>{
+          'rowId': 'PL-007',
+          'removedPeerId': 'charlie-peer',
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowMessageKey': 'aliceDuringCharlieRemoval',
+          'postReaddMessageKey': 'aliceAfterImmediateReadd',
+          'removedWindowMediaBlobId': 'pl007-removed-window-media',
+          'postReaddMediaBlobId': 'pl007-post-readd-media',
+          'retainedActiveMembershipDuringRemovedWindow': true,
+          'removedWindowMediaMessageReceived': true,
+          'removedWindowMediaDownloaded': true,
+          'removedWindowMediaPersisted': true,
+          'postReaddMediaMessageReceived': true,
+          'postReaddMediaDownloaded': true,
+          'postReaddMediaPersisted': true,
+          'postReaddMediaDecrypted': true,
           'finalEpoch': 2,
         },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{
@@ -19857,6 +20068,33 @@ List<Map<String, dynamic>> _validPrivateReaddCurrentVerdicts() {
           'receivedQuotedPostReaddLive': true,
           'quoteTargetVisibleBeforeQuotedDelivery': true,
           'removedWindowPlaintextCount': 0,
+          'finalEpoch': 2,
+        },
+        'pl007ReaddMediaProof': <String, Object?>{
+          'rowId': 'PL-007',
+          'removedPeerId': 'charlie-peer',
+          'memberListIncludesAliceBob': true,
+          'memberListIncludesCharlie': true,
+          'removedWindowMediaBlobId': 'pl007-removed-window-media',
+          'postReaddMediaBlobId': 'pl007-post-readd-media',
+          'removedWindowMessageKey': 'aliceDuringCharlieRemoval',
+          'postReaddMessageKey': 'aliceAfterImmediateReadd',
+          'removedWindowMediaMessageCount': 0,
+          'removedWindowMediaRowsBeforeReadd': 0,
+          'removedWindowMediaRowsAfterReadd': 0,
+          'removedWindowPendingDownloadsBeforeReadd': 0,
+          'pendingDownloadsAfterPostReadd': 0,
+          'removedWindowDirectDownloadAttempted': true,
+          'removedWindowDirectDownloadDenied': true,
+          'removedWindowDirectDownloadOk': false,
+          'removedWindowDirectDownloadOutputBytes': 0,
+          'noRemovedWindowMediaPlaintext': true,
+          'postReaddMediaMessageReceived': true,
+          'postReaddMediaRows': 1,
+          'postReaddMediaDownloaded': true,
+          'postReaddMediaPersisted': true,
+          'postReaddMediaDecrypted': true,
+          'postReaddMediaEpoch': 2,
           'finalEpoch': 2,
         },
         'ra002OnlineSubscribedReaddProof': <String, Object?>{

@@ -1176,6 +1176,259 @@ void main() {
       },
     );
 
+    test('PL-007 re-added member downloads only post-readd media', () async {
+      final alice = GroupTestUser.create(
+        peerId: 'alice-pl007-media-peer',
+        username: 'Alice',
+        network: network,
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'bob-pl007-media-peer',
+        username: 'Bob',
+        network: network,
+        bridge: _DownloadWritingBridge(),
+        mediaFileManager: _ScopedMediaFileManager('bob-pl007-media'),
+      );
+      final charlie = GroupTestUser.create(
+        peerId: 'charlie-pl007-media-peer',
+        username: 'Charlie',
+        network: network,
+        bridge: _DownloadWritingBridge(),
+        mediaFileManager: _ScopedMediaFileManager('charlie-pl007-media'),
+      );
+      addTearDown(() {
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      });
+
+      const groupId = 'group-pl007-readd-media-window';
+      await alice.createGroup(groupId: groupId, name: 'PL007 Readd Media');
+      await saveLatestKey(user: alice, groupId: groupId, epoch: 1);
+      await alice.addMember(groupId: groupId, invitee: bob);
+      await saveLatestKey(user: bob, groupId: groupId, epoch: 1);
+      await alice.addMember(groupId: groupId, invitee: charlie);
+      await saveLatestKey(user: charlie, groupId: groupId, epoch: 1);
+
+      alice.start();
+      bob.start();
+      charlie.start();
+      await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+      await pump();
+
+      await alice.removeMember(
+        groupId: groupId,
+        memberPeerId: charlie.peerId,
+        memberUsername: charlie.username,
+      );
+      await pump();
+
+      await saveLatestKey(user: alice, groupId: groupId, epoch: 2);
+      await saveLatestKey(user: bob, groupId: groupId, epoch: 2);
+
+      expect(await charlie.groupRepo.getGroup(groupId), isNull);
+      expect(await charlie.groupRepo.getKeyByGeneration(groupId, 2), isNull);
+      expect(network.isSubscribed(groupId, charlie.peerId), isFalse);
+
+      network.resetCounters();
+      final removedWindowMedia = attachment(
+        id: 'blob-pl007-removed-window-image',
+        mime: 'image/jpeg',
+        size: 4,
+        width: 320,
+        height: 240,
+      );
+      final (removedResult, removedSent) = await alice
+          .sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: 'PL-007 removed-window media',
+            messageId: 'msg-pl007-removed-window-media',
+            timestamp: DateTime.now().toUtc().add(const Duration(seconds: 1)),
+            mediaAttachments: [removedWindowMedia],
+          );
+      expect(removedResult, group_send.SendGroupMessageResult.success);
+      expect(removedSent, isNotNull);
+      expect(removedSent!.keyGeneration, 2);
+      expect(network.totalDeliveries, 1);
+
+      await waitForDownloads(user: bob, expectedCount: 1);
+      await waitForDownloadedAttachments(
+        user: bob,
+        groupId: groupId,
+        messageTexts: const ['PL-007 removed-window media'],
+      );
+      await expectSingleAttachment(
+        user: bob,
+        groupId: groupId,
+        messageText: 'PL-007 removed-window media',
+        sent: removedWindowMedia,
+        expectDownloaded: true,
+      );
+
+      final charlieDuringRemovalMessages = await charlie.loadGroupMessages(
+        groupId,
+      );
+      expect(
+        charlieDuringRemovalMessages.where(
+          (message) => message.id == removedSent.id,
+        ),
+        isEmpty,
+      );
+      expect(
+        charlieDuringRemovalMessages.where(
+          (message) => message.text == 'PL-007 removed-window media',
+        ),
+        isEmpty,
+      );
+      expect(
+        await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
+          removedSent.id,
+        ),
+        isEmpty,
+      );
+      expect(await charlie.mediaAttachmentRepo.getPendingDownloads(), isEmpty);
+      expect(charlie.bridge.commandLog, isNot(contains('media:download')));
+      expect(charlie.bridge.commandLog, isNot(contains('blob:decrypt')));
+
+      final removedInboxPayload = alice.bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:inboxStore')
+          .map((message) => message['payload'] as Map<String, dynamic>)
+          .last;
+      expect(
+        (removedInboxPayload['recipientPeerIds'] as List<dynamic>)
+            .cast<String>(),
+        unorderedEquals([bob.peerId]),
+      );
+
+      await alice.addMember(groupId: groupId, invitee: charlie);
+      await saveLatestKey(user: charlie, groupId: groupId, epoch: 2);
+      await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+      await pump();
+
+      expect(
+        (await alice.groupRepo.getMembers(
+          groupId,
+        )).map((member) => member.peerId),
+        unorderedEquals([alice.peerId, bob.peerId, charlie.peerId]),
+      );
+      expect(
+        (await charlie.groupRepo.getMembers(
+          groupId,
+        )).map((member) => member.peerId),
+        unorderedEquals([alice.peerId, bob.peerId, charlie.peerId]),
+      );
+      expect(await charlie.groupRepo.getKeyByGeneration(groupId, 2), isNotNull);
+      expect(network.isSubscribed(groupId, charlie.peerId), isTrue);
+
+      network.resetCounters();
+      final postReaddMedia = attachment(
+        id: 'blob-pl007-post-readd-image',
+        mime: 'image/png',
+        size: 4,
+        width: 640,
+        height: 480,
+      );
+      final (postResult, postSent) = await alice.sendGroupMessageViaBridge(
+        groupId: groupId,
+        text: 'PL-007 post-readd media',
+        messageId: 'msg-pl007-post-readd-media',
+        timestamp: DateTime.now().toUtc().add(const Duration(seconds: 2)),
+        mediaAttachments: [postReaddMedia],
+      );
+      expect(postResult, group_send.SendGroupMessageResult.success);
+      expect(postSent, isNotNull);
+      expect(postSent!.keyGeneration, 2);
+      expect(network.totalDeliveries, 2);
+
+      await waitForDownloads(user: bob, expectedCount: 2);
+      await waitForDownloadedAttachments(
+        user: bob,
+        groupId: groupId,
+        messageTexts: const [
+          'PL-007 removed-window media',
+          'PL-007 post-readd media',
+        ],
+      );
+      await waitForDownloads(user: charlie, expectedCount: 1);
+      await waitForDownloadedAttachments(
+        user: charlie,
+        groupId: groupId,
+        messageTexts: const ['PL-007 post-readd media'],
+      );
+
+      await expectSingleAttachment(
+        user: bob,
+        groupId: groupId,
+        messageText: 'PL-007 post-readd media',
+        sent: postReaddMedia,
+        expectDownloaded: true,
+      );
+      final charliePostAttachment = await expectSingleAttachment(
+        user: charlie,
+        groupId: groupId,
+        messageText: 'PL-007 post-readd media',
+        sent: postReaddMedia,
+        expectDownloaded: true,
+      );
+      expect(charliePostAttachment.localPath, isNotNull);
+      expect(await charlie.mediaAttachmentRepo.getPendingDownloads(), isEmpty);
+
+      final charlieAfterReaddMessages = await charlie.loadGroupMessages(
+        groupId,
+      );
+      expect(
+        charlieAfterReaddMessages.where(
+          (message) => message.id == removedSent.id,
+        ),
+        isEmpty,
+      );
+      expect(
+        charlieAfterReaddMessages.where(
+          (message) => message.text == 'PL-007 removed-window media',
+        ),
+        isEmpty,
+      );
+      expect(
+        await charlie.mediaAttachmentRepo.getAttachmentsForMessage(
+          removedSent.id,
+        ),
+        isEmpty,
+      );
+
+      final charlieDownloads = charlie.bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'media:download')
+          .map((message) => message['payload'] as Map<String, dynamic>)
+          .toList(growable: false);
+      expect(
+        charlieDownloads.map((payload) => payload['id'] as String?),
+        contains(postReaddMedia.id),
+      );
+      expect(
+        charlieDownloads.map((payload) => payload['id'] as String?),
+        isNot(contains(removedWindowMedia.id)),
+      );
+      expect(
+        charlie.bridge.sentMessages.where(
+          (raw) =>
+              raw.contains('"cmd":"blob:decrypt"') &&
+              raw.contains(removedWindowMedia.id),
+        ),
+        isEmpty,
+      );
+
+      final postInboxPayload = alice.bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((message) => message['cmd'] == 'group:inboxStore')
+          .map((message) => message['payload'] as Map<String, dynamic>)
+          .last;
+      expect(
+        (postInboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+        unorderedEquals([bob.peerId, charlie.peerId]),
+      );
+    });
+
     test(
       'tampered fake-network media download fails integrity before done',
       () async {
