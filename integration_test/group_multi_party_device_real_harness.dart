@@ -12,6 +12,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p_connection;
@@ -40,6 +41,7 @@ import 'package:flutter_app/features/groups/application/revoke_pending_group_inv
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_backlog_retention_policy.dart';
@@ -122,6 +124,7 @@ const _rolesByScenario = <String, List<String>>{
   'ir015': <String>['alice', 'bob', 'charlie'],
   'ir016': <String>['alice', 'bob', 'charlie'],
   'pl002': <String>['alice', 'bob', 'charlie'],
+  'private_reaction_roundtrip': <String>['alice', 'bob', 'charlie'],
   'private_abc_create': <String>['alice', 'bob', 'charlie'],
   'private_full_mesh_online': <String>['alice', 'bob', 'charlie'],
   'private_relay_only_delivery': <String>['alice', 'bob', 'charlie'],
@@ -1150,6 +1153,134 @@ Future<Map<String, dynamic>> _attemptPl006DirectMediaDownload({
       'errorMessage': error.toString(),
     };
   }
+}
+
+Future<Map<String, dynamic>> _sendProofReaction({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required String messageId,
+  required String key,
+  required String emoji,
+}) async {
+  final stopwatch = Stopwatch()..start();
+  final result = await sendGroupReaction(
+    bridge: stack.bridge,
+    groupRepo: stack.groupRepo,
+    msgRepo: stack.groupMsgRepo,
+    reactionRepo: stack.reactionRepo,
+    reactionReplayOutboxRepo: stack.reactionReplayOutboxRepo,
+    groupId: groupId,
+    messageId: messageId,
+    emoji: emoji,
+    senderPeerId: stack.identity.peerId,
+    senderPublicKey: stack.identity.publicKey,
+    senderPrivateKey: stack.identity.privateKey,
+  );
+  stopwatch.stop();
+
+  final reaction = result.$2;
+  final sent = <String, dynamic>{
+    'key': key,
+    'groupId': groupId,
+    'messageId': messageId,
+    'outcome': result.$1.name,
+    'senderPeerId': stack.identity.peerId,
+    'emoji': emoji,
+    if (reaction != null) 'reactionId': reaction.id,
+    if (reaction != null) 'timestamp': reaction.timestamp,
+    'sendMs': stopwatch.elapsedMilliseconds,
+    'accepted': result.$1 == SendGroupReactionResult.success,
+  };
+  if (result.$1 != SendGroupReactionResult.success || reaction == null) {
+    writeSharedJson(_signalName('${_role}_reaction_$key.json'), sent);
+    throw StateError('$_role failed to send reaction $key: ${result.$1.name}');
+  }
+
+  final stored = await _reactionStorageProof(
+    stack: stack,
+    key: key,
+    messageId: messageId,
+    reactorPeerId: stack.identity.peerId,
+    emoji: emoji,
+    streamReceived: false,
+  );
+  sent['localReactionCount'] = stored['persistedReactionCount'];
+  writeSharedJson(_signalName('${_role}_reaction_$key.json'), sent);
+  return sent;
+}
+
+Future<Map<String, dynamic>> _reactionStorageProof({
+  required GroupMultiDeviceTestStack stack,
+  required String key,
+  required String messageId,
+  required String reactorPeerId,
+  required String emoji,
+  required bool streamReceived,
+  String? changeType,
+  Duration timeout = const Duration(seconds: 120),
+}) async {
+  final stopwatch = Stopwatch()..start();
+  await waitForCondition(() async {
+    final reactions = await stack.reactionRepo.getReactionsForMessage(
+      messageId,
+    );
+    return reactions.any(
+      (reaction) =>
+          reaction.senderPeerId == reactorPeerId && reaction.emoji == emoji,
+    );
+  }, timeout: timeout);
+  await Future<void>.delayed(const Duration(seconds: 2));
+
+  final reactions = await stack.reactionRepo.getReactionsForMessage(messageId);
+  final matches = reactions
+      .where(
+        (reaction) =>
+            reaction.senderPeerId == reactorPeerId && reaction.emoji == emoji,
+      )
+      .toList(growable: false);
+  final proof = <String, dynamic>{
+    'key': key,
+    'messageId': messageId,
+    'reactorPeerId': reactorPeerId,
+    'emoji': emoji,
+    'streamReceived': streamReceived,
+    'changeType': ?changeType,
+    'persistedReactionCount': matches.length,
+    if (matches.isNotEmpty) 'reactionId': matches.first.id,
+    'e2eMs': stopwatch.elapsedMilliseconds,
+    'appliedOnceToTarget': matches.length == 1,
+  };
+  writeSharedJson(_signalName('${_role}_reaction_observed_$key.json'), proof);
+  return proof;
+}
+
+Future<Map<String, dynamic>> _waitForReactionChangeAndStorage({
+  required GroupMultiDeviceTestStack stack,
+  required Future<ReactionChange> changeFuture,
+  required String key,
+  required String messageId,
+  required String reactorPeerId,
+  required String emoji,
+}) async {
+  final change = await changeFuture.timeout(const Duration(seconds: 120));
+  if (change.messageId != messageId ||
+      change.senderPeerId != reactorPeerId ||
+      change.reaction?.emoji != emoji) {
+    throw StateError(
+      '$_role observed unexpected reaction change for $key: '
+      'message=${change.messageId} sender=${change.senderPeerId} '
+      'emoji=${change.reaction?.emoji}',
+    );
+  }
+  return _reactionStorageProof(
+    stack: stack,
+    key: key,
+    messageId: messageId,
+    reactorPeerId: reactorPeerId,
+    emoji: emoji,
+    streamReceived: true,
+    changeType: change.type.name,
+  );
 }
 
 String _ra013IdentityString(
@@ -3048,6 +3179,242 @@ Future<void> _runPrivateAbcCreateInvitee(
             text: selfJoinText,
           ),
           receivedAliceInitialAfterInviteAccept: true,
+        ),
+      },
+    );
+  } finally {
+    inviteListener.dispose();
+  }
+}
+
+Map<String, dynamic> _pl009ReactionRoundtripProof({
+  required String targetMessageId,
+  required Map<String, dynamic> reaction,
+  required Map<String, dynamic> observation,
+  required bool aliceObservedSignal,
+  required bool charlieObservedSignal,
+}) {
+  return <String, dynamic>{
+    'rowId': 'PL-009',
+    'activeRoles': const <String>['alice', 'bob', 'charlie'],
+    'targetMessageId': targetMessageId,
+    'reactorRole': 'bob',
+    'reactionEmoji': reaction['emoji'],
+    'reactionOutcome': reaction['outcome'],
+    'reactionAccepted': reaction['accepted'] == true,
+    'observedByRole': _role,
+    'receivedViaGroupReactionStream': observation['streamReceived'] == true,
+    'appliedOnceToTarget': observation['appliedOnceToTarget'] == true,
+    'persistedReactionCount': observation['persistedReactionCount'],
+    'aliceObservedSignal': aliceObservedSignal,
+    'charlieObservedSignal': charlieObservedSignal,
+  };
+}
+
+Future<void> _runPl009ReactionAlice(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  await waitForSharedSignal(_signalName('bob_pl009_invite_listener_ready'));
+  await waitForSharedSignal(_signalName('charlie_pl009_invite_listener_ready'));
+
+  final (groupId, createProof) = await _createMl001PrivateAbcGroup(
+    stack: stack,
+    identities: identities,
+  );
+  await waitForSharedSignal(_signalName('bob_pl009_invite_accepted'));
+  await waitForSharedSignal(_signalName('charlie_pl009_invite_accepted'));
+  await _waitForTimelineTexts(
+    stack: stack,
+    groupId: groupId,
+    texts: const <String>[
+      'GM Bob joined the group',
+      'GM Charlie joined the group',
+    ],
+  );
+
+  final target = await _sendProofMessage(
+    stack: stack,
+    groupId: groupId,
+    key: 'aliceReactionTarget',
+    text: 'PL-009 Alice reaction target $_runId',
+  );
+  await waitForSharedSignal(
+    _signalName('bob_received_aliceReactionTarget.json'),
+  );
+  await waitForSharedSignal(
+    _signalName('charlie_received_aliceReactionTarget.json'),
+  );
+
+  final bobPeerId = identities['bob']!['peerId'] as String;
+  final messageId = target['messageId'] as String;
+  final reactionChangeFuture = stack.groupListener.groupReactionChangeStream
+      .firstWhere(
+        (change) =>
+            change.messageId == messageId && change.senderPeerId == bobPeerId,
+      );
+  writeSharedText(_signalName('alice_pl009_reaction_receiver_ready'), 'ok');
+
+  final bobReaction = await waitForSharedJson(
+    _signalName('bob_reaction_bobOnAliceTarget.json'),
+  );
+  final observation = await _waitForReactionChangeAndStorage(
+    stack: stack,
+    changeFuture: reactionChangeFuture,
+    key: 'bobOnAliceTarget',
+    messageId: messageId,
+    reactorPeerId: bobPeerId,
+    emoji: bobReaction['emoji'] as String,
+  );
+  writeSharedText(_signalName('alice_observed_bobOnAliceTarget'), 'ok');
+  await waitForSharedSignal(_signalName('charlie_observed_bobOnAliceTarget'));
+
+  await _writeVerdict(
+    stack: stack,
+    groupId: groupId,
+    sentMessages: <Map<String, dynamic>>[target],
+    receivedMessages: const <Map<String, dynamic>>[],
+    extra: <String, dynamic>{
+      'ml001CreateInviteProof': _ml001AliceProof(
+        createProof: createProof,
+        bobAcceptedSignal: true,
+        charlieAcceptedSignal: true,
+        readableJoinTimelineObserved: true,
+      ),
+      'pl009ReactionRoundtripProof': _pl009ReactionRoundtripProof(
+        targetMessageId: messageId,
+        reaction: bobReaction,
+        observation: observation,
+        aliceObservedSignal: true,
+        charlieObservedSignal: true,
+      ),
+    },
+  );
+}
+
+Future<void> _runPl009ReactionInvitee(
+  GroupMultiDeviceTestStack stack,
+  Map<String, Map<String, dynamic>> identities,
+) async {
+  final pendingInviteRepo = InMemoryPendingGroupInviteRepository();
+  final inviteListener = GroupInviteListener(
+    groupInviteStream: stack.messageRouter.groupInviteStream,
+    groupRepo: stack.groupRepo,
+    pendingInviteRepo: pendingInviteRepo,
+    contactRepo: stack.contactRepo,
+    bridge: stack.bridge,
+    getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
+    getOwnPeerId: () async => stack.identity.peerId,
+    getOwnDeviceId: () async => stack.p2pService.currentState.peerId,
+    getOwnTransportPeerId: () async => stack.p2pService.currentState.peerId,
+    getOwnMlKemPublicKey: () async => stack.identity.mlKemPublicKey,
+    msgRepo: stack.groupMsgRepo,
+  );
+  inviteListener.start();
+  try {
+    writeSharedText(_signalName('${_role}_pl009_invite_listener_ready'), 'ok');
+    final invite = await _waitForMl001PendingInvite(
+      pendingInviteRepo: pendingInviteRepo,
+    );
+    final (acceptResult, acceptedGroup) = await acceptPendingGroupInvite(
+      pendingInviteRepo: pendingInviteRepo,
+      groupRepo: stack.groupRepo,
+      contactRepo: stack.contactRepo,
+      msgRepo: stack.groupMsgRepo,
+      bridge: stack.bridge,
+      groupId: invite.groupId,
+      groupMessageListener: stack.groupListener,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      ownDeviceId: stack.p2pService.currentState.peerId,
+      ownTransportPeerId: stack.p2pService.currentState.peerId,
+      ownMlKemPublicKey: stack.identity.mlKemPublicKey,
+    );
+    expect(acceptResult, AcceptPendingGroupInviteResult.success);
+    expect(acceptedGroup, isNotNull);
+    writeSharedText(_signalName('${_role}_pl009_invite_accepted'), 'ok');
+
+    final target = await waitForSharedJson(
+      _signalName('alice_sent_aliceReactionTarget.json'),
+    );
+    final received = await _waitForReceivedProofMessage(
+      stack: stack,
+      groupId: invite.groupId,
+      key: 'aliceReactionTarget',
+      text: target['text'] as String,
+      senderPeerId: identities['alice']!['peerId'] as String,
+    );
+    final messageId = target['messageId'] as String;
+    final bobPeerId = identities['bob']!['peerId'] as String;
+
+    Map<String, dynamic> bobReaction;
+    Map<String, dynamic> observation;
+    if (_role == 'bob') {
+      await waitForSharedSignal(
+        _signalName('alice_pl009_reaction_receiver_ready'),
+      );
+      await waitForSharedSignal(
+        _signalName('charlie_pl009_reaction_receiver_ready'),
+      );
+      bobReaction = await _sendProofReaction(
+        stack: stack,
+        groupId: invite.groupId,
+        messageId: messageId,
+        key: 'bobOnAliceTarget',
+        emoji: '🔥',
+      );
+      observation = await _reactionStorageProof(
+        stack: stack,
+        key: 'bobOnAliceTarget',
+        messageId: messageId,
+        reactorPeerId: stack.identity.peerId,
+        emoji: bobReaction['emoji'] as String,
+        streamReceived: false,
+      );
+      await waitForSharedSignal(_signalName('alice_observed_bobOnAliceTarget'));
+      await waitForSharedSignal(
+        _signalName('charlie_observed_bobOnAliceTarget'),
+      );
+    } else {
+      final reactionChangeFuture = stack.groupListener.groupReactionChangeStream
+          .firstWhere(
+            (change) =>
+                change.messageId == messageId &&
+                change.senderPeerId == bobPeerId,
+          );
+      writeSharedText(
+        _signalName('charlie_pl009_reaction_receiver_ready'),
+        'ok',
+      );
+      bobReaction = await waitForSharedJson(
+        _signalName('bob_reaction_bobOnAliceTarget.json'),
+      );
+      observation = await _waitForReactionChangeAndStorage(
+        stack: stack,
+        changeFuture: reactionChangeFuture,
+        key: 'bobOnAliceTarget',
+        messageId: messageId,
+        reactorPeerId: bobPeerId,
+        emoji: bobReaction['emoji'] as String,
+      );
+      writeSharedText(_signalName('charlie_observed_bobOnAliceTarget'), 'ok');
+      await waitForSharedSignal(_signalName('alice_observed_bobOnAliceTarget'));
+    }
+
+    await _writeVerdict(
+      stack: stack,
+      groupId: invite.groupId,
+      sentMessages: const <Map<String, dynamic>>[],
+      receivedMessages: <Map<String, dynamic>>[received],
+      extra: <String, dynamic>{
+        'pl009ReactionRoundtripProof': _pl009ReactionRoundtripProof(
+          targetMessageId: messageId,
+          reaction: bobReaction,
+          observation: observation,
+          aliceObservedSignal: true,
+          charlieObservedSignal: true,
         ),
       },
     );
@@ -35481,6 +35848,15 @@ Future<void> _runScenarioRole() async {
         await _runPrivateAbcCreateAlice(stack, identities);
       } else {
         await _runPrivateAbcCreateInvitee(stack, identities);
+      }
+      return;
+    }
+
+    if (_scenario == 'private_reaction_roundtrip') {
+      if (_role == 'alice') {
+        await _runPl009ReactionAlice(stack, identities);
+      } else {
+        await _runPl009ReactionInvitee(stack, identities);
       }
       return;
     }

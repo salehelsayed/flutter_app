@@ -674,6 +674,52 @@ void main() {
       },
     );
 
+    test('PL-009 accepts private reaction roundtrip verdicts', () {
+      expect(scenarioRequirement('private_reaction_roundtrip').roles, [
+        'alice',
+        'bob',
+        'charlie',
+      ]);
+      expect(
+        scenarioRequirement('private_reaction_roundtrip').requiredDeviceCount,
+        3,
+      );
+
+      final verdict = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_reaction_roundtrip',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: _validPrivateReactionRoundtripVerdicts(),
+      );
+
+      expect(verdict.ok, isTrue, reason: verdict.detail);
+      expect(
+        verdict.detail,
+        contains('private_reaction_roundtrip verdicts valid'),
+      );
+    });
+
+    test('PL-009 rejects reaction proofs without receiver stream evidence', () {
+      final verdicts = _validPrivateReactionRoundtripVerdicts();
+      verdicts[2] = _withPl009ProofOverrides(
+        verdicts[2],
+        const <String, Object?>{'receivedViaGroupReactionStream': false},
+      );
+
+      final rejected = evaluateGroupMultiPartyVerdicts(
+        scenario: 'private_reaction_roundtrip',
+        relayAddresses: expectedMultiPartyRelayAddresses,
+        verdicts: verdicts,
+      );
+
+      expect(rejected.ok, isFalse);
+      expect(
+        rejected.detail,
+        contains(
+          'charlie: PL-009 reaction must arrive through group reaction stream',
+        ),
+      );
+    });
+
     test('accepts valid GM-001 A/B/C receiver persistence verdicts', () {
       final verdict = evaluateGroupMultiPartyVerdicts(
         scenario: 'gm001',
@@ -17923,6 +17969,118 @@ Map<String, Object?> _ml001InviteeProof() {
     'joinedViaGroupJoin': true,
     'readableSelfJoinTimeline': true,
     'receivedAliceInitialAfterInviteAccept': true,
+  };
+}
+
+List<Map<String, dynamic>> _validPrivateReactionRoundtripVerdicts() {
+  const scenario = 'private_reaction_roundtrip';
+  const groupId = 'group-pl009';
+  const alicePeerId = 'alice-peer';
+  const bobPeerId = 'bob-peer';
+  const charliePeerId = 'charlie-peer';
+  const members = <String>[alicePeerId, bobPeerId, charliePeerId];
+  const targetMessage = <String, Object?>{
+    'key': 'aliceReactionTarget',
+    'messageId': 'msg-pl009-target',
+    'groupId': groupId,
+    'text': 'PL-009 Alice reaction target',
+    'outcome': 'success',
+    'senderPeerId': alicePeerId,
+    'keyEpoch': 1,
+    'timestamp': '2026-05-13T00:00:00.000Z',
+    'accepted': true,
+  };
+
+  Map<String, Object?> proofFor(String role, {required bool streamReceived}) {
+    return <String, Object?>{
+      'rowId': 'PL-009',
+      'activeRoles': const <String>['alice', 'bob', 'charlie'],
+      'targetMessageId': 'msg-pl009-target',
+      'reactorRole': 'bob',
+      'reactionEmoji': '🔥',
+      'reactionOutcome': 'success',
+      'reactionAccepted': true,
+      'observedByRole': role,
+      'receivedViaGroupReactionStream': streamReceived,
+      'appliedOnceToTarget': true,
+      'persistedReactionCount': 1,
+      'aliceObservedSignal': true,
+      'charlieObservedSignal': true,
+    };
+  }
+
+  return <Map<String, dynamic>>[
+    _baseVerdict(
+      scenario: scenario,
+      role: 'alice',
+      peerId: alicePeerId,
+      groupId: groupId,
+      memberPeerIds: members,
+      sentMessages: const <Map<String, Object?>>[targetMessage],
+      extra: <String, Object?>{
+        'pl009ReactionRoundtripProof': proofFor('alice', streamReceived: true),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'bob',
+      peerId: bobPeerId,
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceReactionTarget',
+          'msg-pl009-target',
+          'PL-009 Alice reaction target',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceReactionTarget': 1},
+      extra: <String, Object?>{
+        'pl009ReactionRoundtripProof': proofFor('bob', streamReceived: false),
+      },
+    ),
+    _baseVerdict(
+      scenario: scenario,
+      role: 'charlie',
+      peerId: charliePeerId,
+      groupId: groupId,
+      memberPeerIds: members,
+      receivedMessages: <Map<String, Object?>>[
+        _received(
+          'aliceReactionTarget',
+          'msg-pl009-target',
+          'PL-009 Alice reaction target',
+          alicePeerId,
+          groupId: groupId,
+          keyEpoch: 1,
+        ),
+      ],
+      persistedMessageCounts: const <String, int>{'aliceReactionTarget': 1},
+      extra: <String, Object?>{
+        'pl009ReactionRoundtripProof': proofFor(
+          'charlie',
+          streamReceived: true,
+        ),
+      },
+    ),
+  ];
+}
+
+Map<String, dynamic> _withPl009ProofOverrides(
+  Map<String, dynamic> verdict,
+  Map<String, Object?> overrides,
+) {
+  return <String, dynamic>{
+    ...verdict,
+    'pl009ReactionRoundtripProof': <String, Object?>{
+      ...Map<String, Object?>.from(
+        verdict['pl009ReactionRoundtripProof'] as Map,
+      ),
+      ...overrides,
+    },
   };
 }
 

@@ -16,9 +16,11 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
@@ -92,6 +94,7 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -106,6 +109,7 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
@@ -412,11 +416,14 @@ class GroupMultiDeviceTestStack {
   final GroupRepositoryImpl groupRepo;
   final GroupMessageRepositoryImpl groupMsgRepo;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepo;
+  final ReactionRepositoryImpl reactionRepo;
+  final GroupReactionReplayOutboxRepositoryImpl reactionReplayOutboxRepo;
   final IncomingMessageRouter messageRouter;
   final GroupKeyUpdateListener groupKeyUpdateListener;
   final GroupMembershipUpdateListener groupMembershipUpdateListener;
   final GroupMessageListener groupListener;
   final StreamController<Map<String, dynamic>> groupStreamController;
+  final StreamController<Map<String, dynamic>> groupReactionStreamController;
   final FakeNotificationService notificationService;
   final IdentityModel identity;
   final ContactModel? cliContact;
@@ -431,11 +438,14 @@ class GroupMultiDeviceTestStack {
     required this.groupRepo,
     required this.groupMsgRepo,
     required this.mediaAttachmentRepo,
+    required this.reactionRepo,
+    required this.reactionReplayOutboxRepo,
     required this.messageRouter,
     required this.groupKeyUpdateListener,
     required this.groupMembershipUpdateListener,
     required this.groupListener,
     required this.groupStreamController,
+    required this.groupReactionStreamController,
     required this.notificationService,
     required this.identity,
     required this.cliContact,
@@ -447,6 +457,7 @@ class GroupMultiDeviceTestStack {
     messageRouter.dispose();
     groupListener.dispose();
     await groupStreamController.close();
+    await groupReactionStreamController.close();
     await p2pService.stopNode();
     p2pService.dispose();
     bridge.dispose();
@@ -595,6 +606,42 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         dbLoadUploadPendingAttachments(db, limit: limit),
     secureKeyStore: secureKeyStore,
   );
+  final reactionRepo = ReactionRepositoryImpl(
+    dbInsertReaction: (row) => dbInsertReaction(db, row),
+    dbLoadReactionsForMessage: (messageId) =>
+        dbLoadReactionsForMessage(db, messageId),
+    dbLoadReactionsForMessages: (messageIds) =>
+        dbLoadReactionsForMessages(db, messageIds),
+    dbDeleteReaction: (messageId, senderPeerId) =>
+        dbDeleteReaction(db, messageId, senderPeerId),
+    dbDeleteReactionsForMessage: (messageId) =>
+        dbDeleteReactionsForMessage(db, messageId),
+    dbDeleteReactionsForContact: (contactPeerId) =>
+        dbDeleteReactionsForContact(db, contactPeerId),
+  );
+  final reactionReplayOutboxRepo = GroupReactionReplayOutboxRepositoryImpl(
+    dbUpsertGroupReactionReplayOutboxEntry: (row) =>
+        dbUpsertGroupReactionReplayOutboxEntry(db, row),
+    dbLoadGroupReactionReplayOutboxEntry: (reactionId) =>
+        dbLoadGroupReactionReplayOutboxEntry(db, reactionId),
+    dbLoadRetryableGroupReactionReplayOutboxEntries: ({int limit = 20}) =>
+        dbLoadRetryableGroupReactionReplayOutboxEntries(db, limit: limit),
+    dbUpdateGroupReactionReplayOutboxEntryStatus:
+        (
+          reactionId, {
+          required deliveryStatus,
+          lastError,
+          required updatedAt,
+        }) => dbUpdateGroupReactionReplayOutboxEntryStatus(
+          db,
+          reactionId,
+          deliveryStatus: deliveryStatus,
+          lastError: lastError,
+          updatedAt: updatedAt,
+        ),
+    dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
+        dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
+  );
 
   final bridge = RecordingGoBridgeClient();
   await bridge.initialize();
@@ -701,6 +748,11 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   bridge.onGroupMessageReceived = (data) {
     groupStreamController.add(Map<String, dynamic>.from(data));
   };
+  final groupReactionStreamController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  bridge.onGroupReactionReceived = (data) {
+    groupReactionStreamController.add(Map<String, dynamic>.from(data));
+  };
 
   final groupListener = GroupMessageListener(
     groupRepo: groupRepo,
@@ -711,6 +763,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     notificationService: notificationService,
     groupConversationTracker: ActiveConversationTracker(),
     getAppLifecycleState: () => AppLifecycleState.paused,
+    reactionRepo: reactionRepo,
     groupDiagnosticEvents: groupDiagnosticEventStream,
   );
   final groupMembershipUpdateListener = GroupMembershipUpdateListener(
@@ -721,7 +774,10 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   );
   messageRouter.start();
   groupKeyUpdateListener.start();
-  groupListener.start(groupStreamController.stream);
+  groupListener.start(
+    groupStreamController.stream,
+    incomingGroupReactions: groupReactionStreamController.stream,
+  );
   groupMembershipUpdateListener.start();
 
   return GroupMultiDeviceTestStack(
@@ -734,11 +790,14 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     groupRepo: groupRepo,
     groupMsgRepo: groupMsgRepo,
     mediaAttachmentRepo: mediaAttachmentRepo,
+    reactionRepo: reactionRepo,
+    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
     messageRouter: messageRouter,
     groupKeyUpdateListener: groupKeyUpdateListener,
     groupMembershipUpdateListener: groupMembershipUpdateListener,
     groupListener: groupListener,
     groupStreamController: groupStreamController,
+    groupReactionStreamController: groupReactionStreamController,
     notificationService: notificationService,
     identity: updatedIdentity,
     cliContact: cliContact,

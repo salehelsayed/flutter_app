@@ -61,6 +61,10 @@ const _privateAbcCreateRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_abc_create',
   roles: <String>['alice', 'bob', 'charlie'],
 );
+const _privateReactionRoundtripRequirement = GroupMultiPartyScenarioRequirement(
+  scenario: 'private_reaction_roundtrip',
+  roles: <String>['alice', 'bob', 'charlie'],
+);
 const _privateFullMeshOnlineRequirement = GroupMultiPartyScenarioRequirement(
   scenario: 'private_full_mesh_online',
   roles: <String>['alice', 'bob', 'charlie'],
@@ -441,6 +445,7 @@ const _scenarioRequirements = <String, GroupMultiPartyScenarioRequirement>{
   'ir016': _ir016Requirement,
   'pl002': _pl002Requirement,
   'private_abc_create': _privateAbcCreateRequirement,
+  'private_reaction_roundtrip': _privateReactionRoundtripRequirement,
   'private_full_mesh_online': _privateFullMeshOnlineRequirement,
   'private_relay_only_delivery': _privateRelayOnlyDeliveryRequirement,
   'private_partition_readd_heal': _privatePartitionReaddHealRequirement,
@@ -1674,6 +1679,14 @@ List<_ExpectedProofMessage> _expectedMessagesForScenario(String scenario) {
           receiverRoles: <String>['bob', 'charlie'],
         ),
       ];
+    case 'private_reaction_roundtrip':
+      return const <_ExpectedProofMessage>[
+        _ExpectedProofMessage(
+          key: 'aliceReactionTarget',
+          senderRole: 'alice',
+          receiverRoles: <String>['bob', 'charlie'],
+        ),
+      ];
     case 'private_full_mesh_online':
       return const <_ExpectedProofMessage>[
         _ExpectedProofMessage(
@@ -2752,6 +2765,10 @@ void _validateScenarioProofFields({
   if (scenario == 'private_abc_create') {
     _validatePrivateAbcCreateReusableProof(byRole: byRole, failures: failures);
     _validateMl001CreateInviteProofFields(byRole: byRole, failures: failures);
+    return;
+  }
+  if (scenario == 'private_reaction_roundtrip') {
+    _validatePl009ReactionRoundtripProof(byRole: byRole, failures: failures);
     return;
   }
   if (scenario == 'private_full_mesh_online') {
@@ -4595,6 +4612,82 @@ void _validatePl002MediaOnlyProof({
 
     if (!mediaOk(entryFor(role, 'receivedMessages'))) {
       failures.add('$role: $proofName received media-only descriptor mismatch');
+    }
+  }
+}
+
+void _validatePl009ReactionRoundtripProof({
+  required Map<String, Map<String, dynamic>> byRole,
+  required List<String> failures,
+}) {
+  final aliceSent = _mapList(byRole['alice']?['sentMessages'])
+      .where((entry) => _stringValue(entry['key']) == 'aliceReactionTarget')
+      .toList(growable: false);
+  final targetMessageId = aliceSent.length == 1
+      ? _stringValue(aliceSent.single['messageId'])
+      : null;
+  if (targetMessageId == null || targetMessageId.isEmpty) {
+    failures.add('alice: missing PL-009 aliceReactionTarget sent message');
+  }
+
+  for (final role in const <String>['alice', 'bob', 'charlie']) {
+    final proof = _mapValue(byRole[role]?['pl009ReactionRoundtripProof']);
+    if (proof == null) {
+      failures.add('$role: missing pl009ReactionRoundtripProof');
+      continue;
+    }
+    if (_stringValue(proof['rowId']) != 'PL-009') {
+      failures.add('$role: pl009ReactionRoundtripProof.rowId must be PL-009');
+    }
+    final activeRoles = _stringList(proof['activeRoles']).toSet();
+    for (final expectedRole in const <String>['alice', 'bob', 'charlie']) {
+      if (!activeRoles.contains(expectedRole)) {
+        failures.add(
+          '$role: pl009ReactionRoundtripProof.activeRoles missing $expectedRole',
+        );
+      }
+    }
+    if (targetMessageId != null &&
+        _stringValue(proof['targetMessageId']) != targetMessageId) {
+      failures.add(
+        '$role: pl009ReactionRoundtripProof targetMessageId mismatch',
+      );
+    }
+    if (_stringValue(proof['reactorRole']) != 'bob') {
+      failures.add(
+        '$role: pl009ReactionRoundtripProof.reactorRole must be bob',
+      );
+    }
+    if (_stringValue(proof['reactionEmoji']) == null ||
+        _stringValue(proof['reactionEmoji'])!.isEmpty) {
+      failures.add('$role: pl009ReactionRoundtripProof missing reactionEmoji');
+    }
+    if (_stringValue(proof['reactionOutcome']) != 'success' ||
+        proof['reactionAccepted'] != true) {
+      failures.add('$role: PL-009 Bob reaction must publish successfully');
+    }
+    if (_stringValue(proof['observedByRole']) != role) {
+      failures.add(
+        '$role: pl009ReactionRoundtripProof observedByRole mismatch',
+      );
+    }
+    if (proof['appliedOnceToTarget'] != true ||
+        _intValue(proof['persistedReactionCount']) != 1) {
+      failures.add(
+        '$role: PL-009 reaction must apply exactly once to the target message',
+      );
+    }
+    if ((role == 'alice' || role == 'charlie') &&
+        proof['receivedViaGroupReactionStream'] != true) {
+      failures.add(
+        '$role: PL-009 reaction must arrive through group reaction stream',
+      );
+    }
+    if (proof['aliceObservedSignal'] != true ||
+        proof['charlieObservedSignal'] != true) {
+      failures.add(
+        '$role: PL-009 must prove Alice and Charlie observed Bob reaction',
+      );
     }
   }
 }
